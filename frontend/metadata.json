@@ -1,0 +1,8 @@
+{
+  "name": "Zero-co",
+  "description": "A high-performance, graph-based ITSM platform designed around ITIL 4 and AIOps, featuring real-time dependency mapping, telemetry ingestion, and agentic AI remediation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

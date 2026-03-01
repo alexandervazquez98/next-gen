@@ -1,0 +1,80 @@
+services:
+  # Graph Database
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: nexgen_neo4j
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/nexgen_password
+    volumes:
+      - ./docker/neo4j/data:/data
+      - ./docker/neo4j/logs:/logs
+      - ./docker/neo4j/entrypoint.sh:/entrypoint.sh
+    entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
+
+  # Python Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nexgen_backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - neo4j
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=nexgen_password
+    volumes:
+      - ./backend:/app
+
+  # Frontend (Vite Service)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nexgen_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_TARGET=http://backend:8000
+
+  # Engines / Workers
+  snmp-engine:
+    build:
+      context: .
+      dockerfile: engines/Dockerfile
+    container_name: nexgen_snmp_worker
+    depends_on:
+      - backend
+      - neo4j
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=nexgen_password
+
+      - NEO4J_PASSWORD=nexgen_password
+      - POSTGRES_USER=nexgen_admin
+      - POSTGRES_PASSWORD=nexgen_password
+      - POSTGRES_DB=nexgen_auth
+      - POSTGRES_HOST=postgres
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: nexgen_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=nexgen_admin
+      - POSTGRES_PASSWORD=nexgen_password
+      - POSTGRES_DB=nexgen_auth
+    volumes:
+      - ./docker/postgres/data:/var/lib/postgresql/data

@@ -1,0 +1,6 @@
+neo4j==5.16.0
+python-dotenv==1.0.1
+pysnmp==4.4.12
+pandas==2.2.0
+scikit-learn==1.4.0
+schedule==1.2.1
