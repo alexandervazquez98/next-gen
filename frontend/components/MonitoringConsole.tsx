@@ -71,6 +71,34 @@ const MonitoringConsole: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
+    // Bulletproof Native SVG Animation Loop for Leaflet Polylines bypassing CSS bugs
+    useEffect(() => {
+        let animationFrame: number;
+        let start = performance.now();
+
+        const animateLines = (time: number) => {
+            const elapsed = time - start;
+
+            // DEPENDS_ON lines flow from source to target (child to root)
+            const dependLinks = document.querySelectorAll('.flow-animation');
+            dependLinks.forEach(el => {
+                el.setAttribute('stroke-dashoffset', (-(elapsed / 40) % 26).toString());
+            });
+
+            // CONNECTS_TO traffic flow 
+            const trafficLinks = document.querySelectorAll('.traffic-animation');
+            trafficLinks.forEach(el => {
+                // forward flow 
+                el.setAttribute('stroke-dashoffset', ((elapsed / 20) % 110).toString());
+            });
+
+            animationFrame = requestAnimationFrame(animateLines);
+        };
+
+        animationFrame = requestAnimationFrame(animateLines);
+        return () => cancelAnimationFrame(animationFrame);
+    }, [links, nodes]);
+
     /**
      * Fetch all necessary data for the monitoring console.
      * Retrieving Nodes, Links, and Active Events in parallel.

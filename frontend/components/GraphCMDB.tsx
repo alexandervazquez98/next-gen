@@ -108,9 +108,8 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       })
       .attr("stroke-dasharray", (d: any) => {
         if (d.relationship === 'DEPENDS_ON') return "5, 8";
-        if (d.relationship === 'CONNECTS_TO') return "none"; // Base is solid now
         if (d.relationship === 'HOSTED_ON') return "2, 2";
-        return "none";
+        return null; // Let CSS handle animated dashes
       })
       .attr("class", (d: any) => {
         if (d.relationship === 'DEPENDS_ON') return "flow-animation";
@@ -207,7 +206,21 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       event.subject.fy = null;
     }
 
-    return () => simulation.stop();
+    // Bulletproof Native SVG Animation Loop
+    const timer = d3.timer((elapsed) => {
+      // Flow forward for DEPENDS_ON (Source to Target)
+      link.filter((d: any) => d.relationship === 'DEPENDS_ON')
+        .attr("stroke-dashoffset", -(elapsed / 40) % 26);
+
+      // Traffic pulse for CONNECTS_TO
+      trafficLink
+        .attr("stroke-dashoffset", (elapsed / 20) % 110);
+    });
+
+    return () => {
+      simulation.stop();
+      timer.stop();
+    };
   }, [nodes, links, onNodeClick]);
 
   return (
