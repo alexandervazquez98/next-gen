@@ -45,31 +45,6 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         .attr("fill", color);
     });
 
-    // CSS Style for flow animation
-    svg.append("style").text(`
-        @keyframes flow {
-            from { stroke-dashoffset: 20px; }
-            to { stroke-dashoffset: 0px; }
-        }
-        @keyframes flow-reverse {
-            from { stroke-dashoffset: 0px; }
-            to { stroke-dashoffset: 20px; }
-        }
-        @keyframes traffic-pulse {
-            from { stroke-dashoffset: 100px; }
-            to { stroke-dashoffset: 0px; }
-        }
-        .flow-animation {
-            animation: flow-reverse 1.2s linear infinite;
-        }
-        .flow-slow {
-            animation: flow 3s linear infinite;
-        }
-        .traffic-animation {
-            animation: traffic-pulse 1.5s linear infinite;
-        }
-    `);
-
     // Filter links to ensure valid source/target
     const validLinks = links.filter(l => {
       const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;

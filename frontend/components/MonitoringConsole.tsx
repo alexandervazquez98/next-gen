@@ -173,34 +173,6 @@ const MonitoringConsole: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col bg-surface-950 overflow-hidden relative">
-            {/* Inline styles for map flow animation - kept here as they are unique to map rendering */}
-            <style>{`
-                @keyframes leafletFlow {
-                    from { stroke-dashoffset: 20px; }
-                    to { stroke-dashoffset: 0px; }
-                }
-                @keyframes leafletFlowReverse {
-                    from { stroke-dashoffset: 0px; }
-                    to { stroke-dashoffset: 20px; }
-                }
-                @keyframes leafletTraffic {
-                    from { stroke-dashoffset: 100px; }
-                    to { stroke-dashoffset: 0px; }
-                }
-                .flow-animation {
-                    animation: leafletFlowReverse 1.2s linear infinite;
-                }
-                .traffic-animation {
-                    animation: leafletTraffic 1.5s linear infinite;
-                }
-                .flow-slow {
-                    animation: leafletFlow 3s linear infinite;
-                }
-                .leaflet-container {
-                    background: #1a1a1a !important; 
-                }
-            `}</style>
-
             {/* Header / Toolbar */}
             <div className="h-16 px-8 flex items-center justify-between border-b border-white/5 glass z-10">
                 <div className="flex items-center gap-4">
