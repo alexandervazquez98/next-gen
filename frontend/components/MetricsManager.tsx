@@ -103,11 +103,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
         const crit = overrideCriteria || criteria;
 
         const appTo = {
-            brands: crit.brands.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            models: crit.models.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            layers: crit.layers.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            names: crit.names.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            excluded_names: crit.excluded_names.split(',').map((s: string) => s.trim()).filter((s: string) => s)
+            brands: (crit.brands || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            models: (crit.models || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            layers: (crit.layers || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            names: (crit.names || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            excluded_names: (crit.excluded_names || '').split(',').map((s: string) => s.trim()).filter((s: string) => s)
         };
 
         const payload = {
