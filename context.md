@@ -40,7 +40,7 @@ El sistema sigue una arquitectura de microservicios moderna:
 | :--- | :--- | :--- |
 | **Nodes CRUD** | Gestión de Items de Configuración (CIs). | Crear, Leer, Actualizar y Eliminar dispositivos. Incluye **Reconciliación Automática de Métricas** al modificar propiedades del CI. |
 | **Links Operations** | Gestión de relaciones topológicas. | Definir dependencias (`DEPENDS_ON`, `HOSTED_ON`) entre nodos. |
-| **Metrics Engine** | Motor de Definición y Asignación de Métricas. | **(MEJORADO)** Definición de métricas con criterios de aplicabilidad granulares: <br> - **Por Grupo**: Marca, Modelo, Capa de Red. <br> - **Por Nombre**: Asignación explícita a Hosts/IDs específicos. <br> - **Exclusiones**: Lista negra de CIs (`excluded_names`) que no deben recibir la métrica aunque coincidan por grupo. <br> - **Promoción**: Capacidad de convertir una métrica en un Nodo del grafo. |
+| **Metrics Engine** | Motor de Definición y Asignación de Métricas. | **(MEJORADO)** Definición de métricas con criterios de aplicabilidad granulares y lógicas de evaluación avanzadas: <br> - **Operadores de Umbral**: Selector de regla de evaluación (`>=`, `<=`, `==`, `!=`) previniendo falsas alarmas en OIDs de estados discretos. <br> - **Por Grupo**: Marca, Modelo, Capa de Red. <br> - **Por Nombre**: Asignación explícita a Hosts/IDs específicos (corrección de bug de borrado silencioso). <br> - **Exclusiones**: Lista negra de CIs (`excluded_names`) que no deben recibir la métrica aunque coincidan por grupo. <br> - **Promoción**: Capacidad de convertir una métrica en un Nodo del grafo. |
 | **SNMP Worker** | Motor de sondeo y simulación. | Ejecuta consultas y simulaciones de valores. Ya no crea métricas genéricas automáticamente; respeta el grafo definido. |
 | **Event Management** | Ciclo de vida de incidentes. | API para gestión de eventos. |
 
@@ -48,7 +48,7 @@ El sistema sigue una arquitectura de microservicios moderna:
 
 | Componente | Descripción | Alcance |
 | :--- | :--- | :--- |
-| **MetricsManager** | **(NUEVO)** Gestor de Definiciones de Métricas. | Interfaz para crear/editar métricas. Incluye: <br> - Selector de Protocolos (SNMP, ICMP, HTTP...). <br> - Configuración de OIDs y Umbrales. <br> - **Applicability Rules**: Asignación visual por Marca/Modelo y lista de CIs explícitos. <br> - **Preview & Exclude**: Tabla de CIs afectados con opción de eliminar (excluir) dispositivos individuales. |
+| **MetricsManager** | **(NUEVO)** Gestor de Definiciones de Métricas. | Interfaz para crear/editar métricas. Incluye: <br> - Selector de Protocolos (SNMP, ICMP, HTTP...). <br> - Configuración de OIDs, Umbrales y **Reglas de Operación Lógica** con casos de uso en vivo. <br> - **Applicability Rules**: Asignación visual por Marca/Modelo y lista de CIs explícitos con buscador avanzado (corregido crash por variables UI nulas). <br> - **Preview & Exclude**: Tabla de CIs afectados con opción de eliminar (excluir) dispositivos individuales. |
 | **RelationshipManager** | Gestor de Relaciones. | **(MEJORADO)** Permite crear enlaces manuales y **Promover Métricas**: Convertir un punto de datos (ej. "CPU Load") en un nodo visual conectado al CI. |
 | **MonitoringConsole** | Panel principal. | Visualización de eventos y mapa. |
 | **GraphCMDB** | Explorador del grafo. | Visualización de topología. Click en nodo abre detalles. |

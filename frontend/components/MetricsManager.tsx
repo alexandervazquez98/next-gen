@@ -293,11 +293,14 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                         <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                                             value={formData.operator || '>='}
                                             onChange={e => setFormData({ ...formData, operator: e.target.value })}>
-                                            <option value=">=">&ge; (Greater/Eq)</option>
-                                            <option value="<=">&le; (Less/Eq)</option>
-                                            <option value="==">== (Equals)</option>
-                                            <option value="!=">&ne; (Not Equals)</option>
+                                            <option value=">=">&ge; (Greater/Eq) - For upper limits (e.g. Temp &ge; 90)</option>
+                                            <option value="<=">&le; (Less/Eq) - For lower limits (e.g. Free Space &le; 10)</option>
+                                            <option value="==">== (Equals) - For exact states (e.g. Status == 1)</option>
+                                            <option value="!=">&ne; (Not Equals) - For deviations (e.g. Status &ne; 200)</option>
                                         </select>
+                                        <div className="mt-2 text-[10px] text-neutral-500 leading-tight">
+                                            <p><strong className="text-neutral-400">💡 Tip:</strong> Use &ge; for metrics like CPU load. Use == for discrete states (e.g., if OID returns 1 for UP and 0 for DOWN, use == 0 for Critical).</p>
+                                        </div>
                                     </div>
                                     <div className="space-y-2">
                                         <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>

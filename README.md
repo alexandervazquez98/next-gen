@@ -61,6 +61,7 @@ Las principales entidades que alimentan la base de datos Neo4j para mapear el ec
 - CMDB relacional y topológica en tiempo real (Visualización en Grafo Integrada).
 - CRUD de Nodos y Operaciones de Enlaces (Links).
 - Reconciliación Automática de Métricas (Asigna sondas basándose en marca/modelo del CI).
+- **Asignación de Métricas de Alta Granularidad**: Soporte para reglas lógicas (`>=`, `==`, `!=`, etc.) en umbrales y asignación explícita (Opt-In/Opt-Out) por CIs individuales.
 - Monitorización activa vía SNMP Worker para la recolección de datos de red e infraestructura.
 - Event Management básico API (Estados: Open, Ack, Closed).
 - Agente AIOps Simulador: Un script que sondea nodos en estado "CRITICAL" e inyecta resoluciones asistidas simuladas.
