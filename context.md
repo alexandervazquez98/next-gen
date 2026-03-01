@@ -15,6 +15,7 @@ El sistema sigue una arquitectura de microservicios moderna:
     - **Gestor de Grafos**: Interactúa con Neo4j para gestionar CIs (Configuration Items) y sus relaciones.
     - **Colector SNMP**: Servicio en segundo plano (`snmp_collector_loop`) que consulta dispositivos periódicamente.
     - **Gestor de Eventos**: Procesa alertas, correlaciona incidentes y gestiona el ciclo de vida de los eventos (Open, Ack, Closed).
+    - **Gestión de Autenticación**: Utiliza PostgreSQL como fuente principal de verdad (Primary Auth Store) apoyado en JWT asimétrico, requiriendo el uso mandatorio de credenciales rotadas expuestas desde un `.env` local.
 
 ### 2.2 Frontend (Interfaz de Usuario)
 - **Tecnología**: React 18, Vite, TypeScript, TailwindCSS.
@@ -23,6 +24,7 @@ El sistema sigue una arquitectura de microservicios moderna:
     - Visualización topológica de la infraestructura.
     - Consola de monitoreo en tiempo real.
     - Gestión administrativa de CIs, Métricas y Usuarios.
+    - Interceptor Auth que fuerza el cambio de contraseña genérica "admin" en el primer login.
 
 ### 2.3 Capa de Datos
 - **Base de Datos**: Neo4j (Graph Database).

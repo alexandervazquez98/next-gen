@@ -24,15 +24,21 @@ El proyecto está completamente contenerizado, facilitando un despliegue ágil "
 
 **Pasos de Despliegue Rápidos:**
 1. Clona el repositorio en tu máquina local.
-2. Navega al directorio raíz del proyecto (`zero-co`).
-3. Construye e inicializa todo el stack de contenedores:
+2. Navega al directorio raíz del proyecto (`zero-co` o tu directorio local).
+3. Crea tu archivo de configuración de entorno basado en la plantilla segura:
+   ```bash
+   cp .env.example .env
+   ```
+   *(Asegúrate de configurar contraseñas seguras en tu nuevo `.env`)*
+4. Construye e inicializa todo el stack de contenedores:
    ```bash
    docker-compose up --build -d
    ```
-4. **Accesos:**
+5. **Accesos:**
    - **Frontend Console**: [http://localhost:3000](http://localhost:3000)
+     - *Login inicial por defecto:* Usuario: `admin` | Password: `admin` *(Requerirá cambio de clave inmediato)*
    - **Backend API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-   - **Neo4j Browser**: [http://localhost:7474](http://localhost:7474) (Auth: `neo4j` / `nexgen_password`)
+   - **Neo4j Browser**: [http://localhost:7474](http://localhost:7474) (Auth según variables de tu `.env`)
 
 ## Stack Tecnológico
 
