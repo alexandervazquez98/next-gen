@@ -68,16 +68,40 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     const validNodes = nodes.map(d => Object.create(d)); // Create shallow copy for D3 mutation
 
+    // --- Calculate Impact Analysis (Affected Derived Tree) ---
+    const criticalNodeIds = validNodes.filter(n => n.status === 'CRITICAL' || n.status === 'WARNING').map(n => n.id);
+    const affectedSet = new Set<string>(criticalNodeIds);
+    let added = true;
+    while (added) {
+      added = false;
+      validLinks.forEach(l => {
+        const sId = typeof l.source === 'object' ? (l.source as any).id : l.source;
+        const tId = typeof l.target === 'object' ? (l.target as any).id : l.target;
+
+        // In typical CMDB dependencies, Target failing impacts the Source that depends on it
+        if (affectedSet.has(tId) && !affectedSet.has(sId)) {
+          affectedSet.add(sId);
+          added = true;
+        }
+      });
+    }
+    const hasGlobalIncidents = criticalNodeIds.length > 0;
+
     const simulation = d3.forceSimulation<GraphNode>(validNodes)
       .force("link", d3.forceLink<GraphNode, GraphLink>(validLinks).id(d => d.id).distance(150))
       .force("charge", d3.forceManyBody().strength(-500))
       .force("center", d3.forceCenter(width / 2, height / 2));
 
     const link = svg.append("g")
-      .attr("stroke-opacity", 0.8)
       .selectAll("line")
       .data(validLinks)
       .join("line")
+      .attr("stroke-opacity", (d: any) => {
+        if (!hasGlobalIncidents) return 0.8;
+        const sId = typeof d.source === 'object' ? (d.source as any).id : d.source;
+        const tId = typeof d.target === 'object' ? (d.target as any).id : d.target;
+        return (affectedSet.has(sId) || affectedSet.has(tId)) ? 0.8 : 0.05;
+      })
       .attr("stroke-width", 2)
       .attr("stroke", (d: any) => {
         // Color link based on TARGET node status for dependency impact visualization
@@ -113,6 +137,10 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       .data(validNodes)
       .join("g")
       .attr("class", "cursor-pointer group")
+      .attr("opacity", d => {
+        if (!hasGlobalIncidents) return 1;
+        return affectedSet.has(d.id) ? 1 : 0.05; // Transparency >90% to isolate healthy irrelevant nodes
+      })
       .on("click", (event, d) => onNodeClick(d))
       .call(d3.drag<SVGGElement, GraphNode>()
         .on("start", dragstarted)
@@ -126,10 +154,11 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       .attr("stroke", d => {
         if (d.status === 'CRITICAL') return STATUS_COLORS.CRITICAL;
         if (d.status === 'WARNING') return STATUS_COLORS.WARNING;
+        if (affectedSet.has(d.id)) return '#f97316'; // Orange for derived affected tree
         return '#345bf2'; // Brand Color for safe nodes
       })
       .attr("stroke-width", 3)
-      .attr("class", d => d.status !== 'HEALTHY' && d.status !== 'OK' && d.status !== 'ACTIVE' ? 'animate-pulse' : '');
+      .attr("class", d => affectedSet.has(d.id) ? 'animate-pulse' : '');
 
     // Node icons (simplified labels for now)
     node.append("text")

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
@@ -369,31 +369,62 @@ const MonitoringConsole: React.FC = () => {
                                 return null;
                             })}
 
-                            {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => (
-                                <Marker
-                                    key={node.id}
-                                    position={[node.location!.lat, node.location!.long]}
-                                    icon={node.hasCritical ? CriticalIcon : DefaultIcon}
-                                >
-                                    <Popup>
-                                        <div className="p-1 min-w-[200px]">
-                                            <h3 className="font-bold text-sm mb-1">{node.label}</h3>
-                                            <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
-                                            {node.events && node.events.length > 0 ? (
-                                                <div className="space-y-1">
-                                                    {node.events.map(e => (
-                                                        <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                                            {e.message}
+                            {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => {
+                                const isCritical = node.hasCritical;
+                                const isWarning = node.hasWarning;
+                                const isHealthy = !isCritical && !isWarning;
+
+                                const critEvents = node.events?.filter(e => e.severity === 'CRITICAL').length || 0;
+                                const warnEvents = node.events?.filter(e => e.severity === 'WARNING').length || 0;
+
+                                const basePixelRadius = 6;
+                                const pixelRadius = isCritical ? basePixelRadius * 1.5 + (critEvents * 2) :
+                                    isWarning ? basePixelRadius * 1.2 + (warnEvents * 1.5) : basePixelRadius;
+
+                                const color = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#3b82f6';
+                                const opacity = isHealthy ? 0.05 : 0.9;
+                                const className = isHealthy ? '' : 'animate-pulse';
+
+                                // Optional: Geographical aura rendering
+                                const geoAuraRadius = isCritical ? 20000 + (critEvents * 10000) : isWarning ? 10000 + (warnEvents * 5000) : 0;
+
+                                return (
+                                    <React.Fragment key={node.id}>
+                                        {/* Geographical aura for the 'blast radius' */}
+                                        {!isHealthy && (
+                                            <Circle
+                                                center={[node.location!.lat, node.location!.long]}
+                                                radius={geoAuraRadius}
+                                                pathOptions={{ color: color, fillColor: color, fillOpacity: 0.1, weight: 0, className: 'animate-ping' }}
+                                            />
+                                        )}
+                                        {/* Core point */}
+                                        <CircleMarker
+                                            center={[node.location!.lat, node.location!.long]}
+                                            radius={pixelRadius}
+                                            pathOptions={{ color: color, fillColor: color, fillOpacity: opacity, weight: isHealthy ? 1 : 2, opacity: opacity, className: className }}
+                                        >
+                                            <Popup>
+                                                <div className="p-1 min-w-[200px]">
+                                                    <h3 className="font-bold text-sm mb-1">{node.label}</h3>
+                                                    <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
+                                                    {node.events && node.events.length > 0 ? (
+                                                        <div className="space-y-1">
+                                                            {node.events.map(e => (
+                                                                <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                                    {e.message}
+                                                                </div>
+                                                            ))}
                                                         </div>
-                                                    ))}
+                                                    ) : (
+                                                        <div className="text-green-500 text-xs font-bold">Status OK</div>
+                                                    )}
                                                 </div>
-                                            ) : (
-                                                <div className="text-green-500 text-xs font-bold">Status OK</div>
-                                            )}
-                                        </div>
-                                    </Popup>
-                                </Marker>
-                            ))}
+                                            </Popup>
+                                        </CircleMarker>
+                                    </React.Fragment>
+                                );
+                            })}
                         </MapContainer>
 
                         {/* Status Overlay */}
