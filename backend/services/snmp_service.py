@@ -156,22 +156,32 @@ def process_ci_metrics(ci, metrics, driver):
     
     target_metrics = []
     for m in metrics:
-        crit = m["applicable_to"]
-        match = True
-        if crit:
-            if match and crit.get("names") and ci.get("name") not in crit["names"]: match = False
-            if match and crit.get("brands") and ci_brand not in [b.lower() for b in crit["brands"]]: match = False
-            if match and crit.get("models") and ci_model not in [mod.lower() for mod in crit["models"]]: match = False
-            if match and crit.get("layers") and ci_layer not in [l.lower() for l in crit["layers"]]: match = False
+        crit = m.get("applicable_to", {})
+        match = False
+        
+        # 1. Direct Name Match
+        req_names = [n.strip().lower() for n in crit.get("names", [])]
+        if req_names and (ci.get("name", "").lower() in req_names or ci.get("id", "").lower() in req_names):
+            match = True
+        else:
+            # 2. Category Match (OR Logic)
+            req_brands = [b.lower() for b in crit.get("brands", [])]
+            req_models = [mod.lower() for mod in crit.get("models", [])]
+            req_layers = [l.lower() for l in crit.get("layers", [])]
+            
+            if req_brands and ci_brand in req_brands: match = True
+            if req_models and ci_model in req_models: match = True
+            if req_layers and ci_layer in req_layers: match = True
+            
+        # 3. Apply Exclusions
+        exc_names = [n.strip().lower() for n in crit.get("excluded_names", [])]
+        if match and (ci.get("name", "").lower() in exc_names or ci.get("id", "").lower() in exc_names):
+            match = False
         
         # Only add if match AND (OID exists OR Protocol is ICMP)
         if match:
              if m.get("oid") or m.get("protocol") == 'ICMP':
                   target_metrics.append(m)
-             else:
-                  pass # logger.warning(f"Metric Match but missing OID/Protocol: {m.get('name')}")
-        else:
-             pass # logger.debug(f"Metric {m.get('name')} mismatch for {ci.get('name')}")
 
     # Execute Polls
     executed = 0

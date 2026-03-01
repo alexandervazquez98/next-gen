@@ -24,6 +24,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     // Hardware Models for selection
     const [hardwareModels, setHardwareModels] = useState<{ brand: string, model: string }[]>([]);
     const [filterBrand, setFilterBrand] = useState('');
+    const [allNodes, setAllNodes] = useState<any[]>([]);
 
     // Usage Data
     const [usageData, setUsageData] = useState<any>(null);
@@ -52,7 +53,17 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     useEffect(() => {
         fetchMetrics();
         fetchHardwareModels();
+        fetchNodes();
     }, []);
+
+    const fetchNodes = async () => {
+        try {
+            const data = await api.get<any[]>('/nodes');
+            setAllNodes(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error(e);
+        }
+    };
 
     const fetchHardwareModels = async () => {
         try {
@@ -275,18 +286,22 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                     <option value="BOOLEAN">Boolean</option>
                                 </select>
                             </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>
-                                <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                                    placeholder="Optional"
-                                    value={formData.warning ?? ''} onChange={e => setFormData({ ...formData, warning: e.target.value ? parseFloat(e.target.value) : null })} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-neutral-500 uppercase">Critical Threshold</label>
-                                <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                                    placeholder="Optional"
-                                    value={formData.critical ?? ''} onChange={e => setFormData({ ...formData, critical: e.target.value ? parseFloat(e.target.value) : null })} />
-                            </div>
+                            {formData.protocol !== 'ICMP' && (
+                                <>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>
+                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                                            placeholder="Optional"
+                                            value={formData.warning ?? ''} onChange={e => setFormData({ ...formData, warning: e.target.value ? parseFloat(e.target.value) : null })} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Critical Threshold</label>
+                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                                            placeholder="Optional"
+                                            value={formData.critical ?? ''} onChange={e => setFormData({ ...formData, critical: e.target.value ? parseFloat(e.target.value) : null })} />
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         <div className="p-4 bg-white/5 rounded-xl border border-white/5 space-y-2">
@@ -356,8 +371,46 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                         placeholder="Target Brands (e.g. Cisco, Dell)" value={criteria.brands} onChange={e => setCriteria({ ...criteria, brands: e.target.value })} />
                                     <input className="w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
                                         placeholder="Target Layers (e.g. INFRASTRUCTURE)" value={criteria.layers} onChange={e => setCriteria({ ...criteria, layers: e.target.value })} />
-                                    <input className="col-span-2 w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
-                                        placeholder="Target specific Host Names or IDs (comma separated)" value={criteria.names} onChange={e => setCriteria({ ...criteria, names: e.target.value })} />
+                                    <div className="col-span-2 space-y-2">
+                                        <label className="text-[10px] font-bold text-neutral-500 uppercase block">Quick Add Explicit CIs</label>
+                                        <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            onChange={e => {
+                                                if (e.target.value) {
+                                                    const currentNames = (criteria.names || '').split(',').map(s => s.trim()).filter(s => s);
+                                                    if (!currentNames.includes(e.target.value)) {
+                                                        setCriteria({ ...criteria, names: [...currentNames, e.target.value].join(', ') });
+                                                    }
+                                                }
+                                                e.target.value = ""; // Reset
+                                            }}>
+                                            <option value="">Select Specific CI from Registry...</option>
+                                            {allNodes
+                                                .sort((a, b) => a.name.localeCompare(b.name))
+                                                .map((n, idx) => (
+                                                    <option key={idx} value={n.name}>
+                                                        {n.name} ({n.ip || 'No IP'})
+                                                    </option>
+                                                ))}
+                                        </select>
+
+                                        {/* Name Chips */}
+                                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-black/10 rounded-lg">
+                                            {(criteria.names || '').split(',').map(s => s.trim()).filter(s => s).length === 0 && (
+                                                <p className="text-xs text-neutral-600 italic">No explicit CIs added.</p>
+                                            )}
+                                            {(criteria.names || '').split(',').map(s => s.trim()).filter(s => s).map((name, idx) => (
+                                                <button key={idx} title="Remove"
+                                                    onClick={() => {
+                                                        const newNames = criteria.names.split(',').map(n => n.trim()).filter(n => n && n !== name);
+                                                        setCriteria({ ...criteria, names: newNames.join(', ') });
+                                                    }}
+                                                    className="text-xs px-2 py-1 rounded border bg-blue-600/30 text-blue-300 border-blue-500/50 hover:bg-red-500 hover:border-red-500 hover:text-white transition-colors flex items-center gap-1">
+                                                    {name}
+                                                    <span className="material-symbols-outlined text-[10px]">close</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
