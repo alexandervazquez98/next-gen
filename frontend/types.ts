@@ -88,6 +88,7 @@ export interface MetricDef {
   unit?: string;
   description?: string;
   criticality?: 1 | 2 | 3; // 1: Info, 2: Warning, 3: Exception (Critical)
+  operator?: string; // >=, <=, ==, !=
   applicable_to?: ApplicabilityCriteria;
 }
 

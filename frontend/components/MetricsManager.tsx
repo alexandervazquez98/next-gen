@@ -24,6 +24,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     // Hardware Models for selection
     const [hardwareModels, setHardwareModels] = useState<{ brand: string, model: string }[]>([]);
     const [filterBrand, setFilterBrand] = useState('');
+    const [allNodes, setAllNodes] = useState<any[]>([]);
 
     // Usage Data
     const [usageData, setUsageData] = useState<any>(null);
@@ -52,7 +53,17 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     useEffect(() => {
         fetchMetrics();
         fetchHardwareModels();
+        fetchNodes();
     }, []);
+
+    const fetchNodes = async () => {
+        try {
+            const data = await api.get<any[]>('/nodes');
+            setAllNodes(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error(e);
+        }
+    };
 
     const fetchHardwareModels = async () => {
         try {
@@ -92,7 +103,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
     const handleCreate = () => {
         setSelectedMetric(null);
-        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', applicable_to: {} });
+        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', operator: '>=', applicable_to: {} });
         setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
         setIsEditing(true);
         setTestResult(null);
@@ -103,11 +114,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
         const crit = overrideCriteria || criteria;
 
         const appTo = {
-            brands: crit.brands.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            models: crit.models.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            layers: crit.layers.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            names: crit.names.split(',').map((s: string) => s.trim()).filter((s: string) => s),
-            excluded_names: crit.excluded_names.split(',').map((s: string) => s.trim()).filter((s: string) => s)
+            brands: (crit.brands || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            models: (crit.models || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            layers: (crit.layers || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            names: (crit.names || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
+            excluded_names: (crit.excluded_names || '').split(',').map((s: string) => s.trim()).filter((s: string) => s)
         };
 
         const payload = {
@@ -159,7 +170,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     };
 
     const toggleModel = (modelName: string) => {
-        const currentModels = criteria.models.split(',').map(s => s.trim()).filter(s => s);
+        const currentModels = (criteria.models || '').split(',').map(s => s.trim()).filter(s => s);
         let newModels;
         if (currentModels.includes(modelName)) {
             newModels = currentModels.filter(m => m !== modelName);
@@ -264,7 +275,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                             )}
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-4 gap-4">
                             <div className="space-y-2">
                                 <label className="text-xs font-bold text-neutral-500 uppercase">Data Type</label>
                                 <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
@@ -275,18 +286,46 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                     <option value="BOOLEAN">Boolean</option>
                                 </select>
                             </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>
-                                <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                                    placeholder="Optional"
-                                    value={formData.warning ?? ''} onChange={e => setFormData({ ...formData, warning: e.target.value ? parseFloat(e.target.value) : null })} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-neutral-500 uppercase">Critical Threshold</label>
-                                <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                                    placeholder="Optional"
-                                    value={formData.critical ?? ''} onChange={e => setFormData({ ...formData, critical: e.target.value ? parseFloat(e.target.value) : null })} />
-                            </div>
+                            {formData.protocol !== 'ICMP' && (
+                                <>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Threshold Rule</label>
+                                        <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                                            value={formData.operator || '>='}
+                                            onChange={e => {
+                                                const newOperator = e.target.value;
+                                                const updates = { operator: newOperator };
+                                                if (newOperator === '==' || newOperator === '!=') {
+                                                    updates['warning'] = null;
+                                                }
+                                                setFormData({ ...formData, ...updates });
+                                            }}>
+                                            <option value=">=">&ge; (Greater/Eq) - For upper limits (e.g. Temp &ge; 90)</option>
+                                            <option value="<=">&le; (Less/Eq) - For lower limits (e.g. Free Space &le; 10)</option>
+                                            <option value="==">== (Equals) - For exact states (e.g. Status == 1)</option>
+                                            <option value="!=">&ne; (Not Equals) - For deviations (e.g. Status &ne; 200)</option>
+                                        </select>
+                                        <div className="mt-2 text-[10px] text-neutral-500 leading-tight">
+                                            <p><strong className="text-neutral-400">Tip:</strong> Use &ge; for metrics like CPU load. Use == for discrete states (e.g., if OID returns 1 for UP and 0 for DOWN, use == 0 for Critical).</p>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className={`text-xs font-bold uppercase transition-colors ${(formData.operator === '==' || formData.operator === '!=') ? 'text-neutral-600' : 'text-neutral-500'}`}>
+                                            Warning Threshold
+                                        </label>
+                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                            placeholder={(formData.operator === '==' || formData.operator === '!=') ? "N/A for Exact States" : "Optional"}
+                                            disabled={formData.operator === '==' || formData.operator === '!='}
+                                            value={formData.warning ?? ''} onChange={e => setFormData({ ...formData, warning: e.target.value ? parseFloat(e.target.value) : null })} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Critical Threshold</label>
+                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                                            placeholder="Optional"
+                                            value={formData.critical ?? ''} onChange={e => setFormData({ ...formData, critical: e.target.value ? parseFloat(e.target.value) : null })} />
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         <div className="p-4 bg-white/5 rounded-xl border border-white/5 space-y-2">
@@ -330,11 +369,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
                             {/* Selected Chips */}
                             <div className="flex flex-wrap gap-2 mt-2 max-h-32 overflow-y-auto p-2 bg-black/10 rounded-lg">
-                                {criteria.models.split(',').map(s => s.trim()).filter(s => s).length === 0 && (
+                                {(criteria.models || '').split(',').map(s => s.trim()).filter(s => s).length === 0 && (
                                     <p className="text-xs text-neutral-600 italic">No models selected.</p>
                                 )}
                                 {hardwareModels.map((hm, idx) => {
-                                    const isSelected = criteria.models.includes(hm.model);
+                                    const isSelected = (criteria.models || '').includes(hm.model);
                                     if (!isSelected) return null; // Only show selected here? 
                                     // User wants "combos ... aparescan". 
                                     // Let's show currently selected chips, and use combos to ADD.
@@ -356,8 +395,49 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                         placeholder="Target Brands (e.g. Cisco, Dell)" value={criteria.brands} onChange={e => setCriteria({ ...criteria, brands: e.target.value })} />
                                     <input className="w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
                                         placeholder="Target Layers (e.g. INFRASTRUCTURE)" value={criteria.layers} onChange={e => setCriteria({ ...criteria, layers: e.target.value })} />
-                                    <input className="col-span-2 w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
-                                        placeholder="Target specific Host Names or IDs (comma separated)" value={criteria.names} onChange={e => setCriteria({ ...criteria, names: e.target.value })} />
+                                    <div className="col-span-2 space-y-2">
+                                        <label className="text-[10px] font-bold text-neutral-500 uppercase block">Quick Add Explicit CIs</label>
+                                        <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            onChange={e => {
+                                                if (e.target.value) {
+                                                    const currentNames = (criteria.names || '').split(',').map(s => s.trim()).filter(s => s);
+                                                    if (!currentNames.includes(e.target.value)) {
+                                                        setCriteria({ ...criteria, names: [...currentNames, e.target.value].join(', ') });
+                                                    }
+                                                }
+                                                e.target.value = ""; // Reset
+                                            }}>
+                                            <option value="">Select Specific CI from Registry...</option>
+                                            {allNodes
+                                                .sort((a, b) => ((a.label || a.name) || '').localeCompare((b.label || b.name) || ''))
+                                                .map((n, idx) => {
+                                                    const displayName = n.label || n.name || n.id;
+                                                    return (
+                                                        <option key={idx} value={displayName}>
+                                                            {displayName} ({n.ip || 'No IP'})
+                                                        </option>
+                                                    );
+                                                })}
+                                        </select>
+
+                                        {/* Name Chips */}
+                                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-black/10 rounded-lg">
+                                            {(criteria.names || '').split(',').map(s => s.trim()).filter(s => s).length === 0 && (
+                                                <p className="text-xs text-neutral-600 italic">No explicit CIs added.</p>
+                                            )}
+                                            {(criteria.names || '').split(',').map(s => s.trim()).filter(s => s).map((name, idx) => (
+                                                <button key={idx} title="Remove"
+                                                    onClick={() => {
+                                                        const newNames = criteria.names.split(',').map(n => n.trim()).filter(n => n && n !== name);
+                                                        setCriteria({ ...criteria, names: newNames.join(', ') });
+                                                    }}
+                                                    className="text-xs px-2 py-1 rounded border bg-blue-600/30 text-blue-300 border-blue-500/50 hover:bg-red-500 hover:border-red-500 hover:text-white transition-colors flex items-center gap-1">
+                                                    {name}
+                                                    <span className="material-symbols-outlined text-[10px]">close</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -398,11 +478,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                                                 if (confirm(`Are you sure you want to remove '${ci.name}' from this metric's applicability list?`)) {
                                                                     // Logic: 
                                                                     // 1. Remove from NAMES (if present)
-                                                                    const currentNames = criteria.names.split(',').map(s => s.trim());
+                                                                    const currentNames = (criteria.names || '').split(',').map(s => s.trim());
                                                                     const newNames = currentNames.filter(n => n !== ci.name && n !== ci.id).join(', ');
 
                                                                     // 2. Add to EXCLUDED_NAMES
-                                                                    const currentExcluded = criteria.excluded_names.split(',').map(s => s.trim());
+                                                                    const currentExcluded = (criteria.excluded_names || '').split(',').map(s => s.trim());
                                                                     const newExcluded = [...currentExcluded];
                                                                     if (!newExcluded.includes(ci.name)) newExcluded.push(ci.name);
                                                                     // Optionally exclude by ID too for robustness
@@ -442,7 +522,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                         </div>
 
                         <div className="flex gap-4 pt-4">
-                            <button onClick={handleSave} className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition-colors">
+                            <button onClick={() => handleSave()} className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition-colors">
                                 SAVE METRIC
                             </button>
                             {selectedMetric && (

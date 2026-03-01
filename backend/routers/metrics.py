@@ -64,8 +64,6 @@ async def promote_metric_node(data: MetricPromotion):
 async def validate_oid_endpoint(req: SNMPTestRequest):
     """Validate an OID against a target agent via SNMP."""
     result = validate_snmp_oid(req.ip, req.community, req.oid, req.port)
-    if not result["success"]:
-        return JSONResponse(status_code=400, content=result)
     return result
 
 @router.get("/{node_id}/{metric_id}/history")
