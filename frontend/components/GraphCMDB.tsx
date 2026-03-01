@@ -51,11 +51,22 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
             from { stroke-dashoffset: 20; }
             to { stroke-dashoffset: 0; }
         }
+        @keyframes flow-reverse {
+            from { stroke-dashoffset: 0; }
+            to { stroke-dashoffset: 20; }
+        }
+        @keyframes traffic-pulse {
+            from { stroke-dashoffset: 100; }
+            to { stroke-dashoffset: 0; }
+        }
         .flow-animation {
-            animation: flow 1s linear infinite;
+            animation: flow-reverse 1.2s linear infinite;
         }
         .flow-slow {
             animation: flow 3s linear infinite;
+        }
+        .traffic-animation {
+            animation: traffic-pulse 1.5s linear infinite;
         }
     `);
 
@@ -97,10 +108,10 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       .data(validLinks)
       .join("line")
       .attr("stroke-opacity", (d: any) => {
-        if (!hasGlobalIncidents) return 0.8;
+        if (!hasGlobalIncidents) return 0.6;
         const sId = typeof d.source === 'object' ? (d.source as any).id : d.source;
         const tId = typeof d.target === 'object' ? (d.target as any).id : d.target;
-        return (affectedSet.has(sId) || affectedSet.has(tId)) ? 0.8 : 0.05;
+        return (affectedSet.has(sId) || affectedSet.has(tId)) ? 0.9 : 0.2;
       })
       .attr("stroke-width", 2)
       .attr("stroke", (d: any) => {
@@ -121,16 +132,27 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         return `url(#arrow-${color.replace('#', '')})`;
       })
       .attr("stroke-dasharray", (d: any) => {
-        if (d.relationship === 'DEPENDS_ON') return "5, 5";
-        if (d.relationship === 'CONNECTS_TO') return "10, 5";
+        if (d.relationship === 'DEPENDS_ON') return "5, 8";
+        if (d.relationship === 'CONNECTS_TO') return "none"; // Base is solid now
         if (d.relationship === 'HOSTED_ON') return "2, 2";
         return "none";
       })
       .attr("class", (d: any) => {
         if (d.relationship === 'DEPENDS_ON') return "flow-animation";
-        if (d.relationship === 'CONNECTS_TO') return "flow-slow";
         return "";
       });
+
+    // Extra layer for Traffic connecting lines
+    const trafficLink = svg.append("g")
+      .selectAll("line")
+      .data(validLinks.filter((d: any) => d.relationship === 'CONNECTS_TO'))
+      .join("line")
+      .attr("stroke-width", 3)
+      .attr("stroke", "#10b981") // Traffic blast
+      .attr("stroke-dasharray", "5, 50")
+      .attr("class", "traffic-animation")
+      .attr("opacity", 0.7)
+      .style("pointer-events", "none");
 
     const node = svg.append("g")
       .selectAll("g")
@@ -139,7 +161,7 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       .attr("class", "cursor-pointer group")
       .attr("opacity", d => {
         if (!hasGlobalIncidents) return 1;
-        return affectedSet.has(d.id) ? 1 : 0.05; // Transparency >90% to isolate healthy irrelevant nodes
+        return affectedSet.has(d.id) ? 1 : 0.4; // Expose healthy nodes at 40% instead of 5%
       })
       .on("click", (event, d) => onNodeClick(d))
       .call(d3.drag<SVGGElement, GraphNode>()
@@ -149,7 +171,7 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     // Node circles with health indicators
     node.append("circle")
-      .attr("r", 24)
+      .attr("r", d => d.status === 'CRITICAL' ? 32 : d.status === 'WARNING' ? 28 : 24)
       .attr("fill", "#1a1a1a")
       .attr("stroke", d => {
         if (d.status === 'CRITICAL') return STATUS_COLORS.CRITICAL;
@@ -157,7 +179,7 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         if (affectedSet.has(d.id)) return '#f97316'; // Orange for derived affected tree
         return '#345bf2'; // Brand Color for safe nodes
       })
-      .attr("stroke-width", 3)
+      .attr("stroke-width", d => affectedSet.has(d.id) || d.status === 'CRITICAL' ? 4 : 2)
       .attr("class", d => affectedSet.has(d.id) ? 'animate-pulse' : '');
 
     // Node icons (simplified labels for now)
@@ -179,6 +201,12 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     simulation.on("tick", () => {
       link
+        .attr("x1", (d: any) => d.source.x)
+        .attr("y1", (d: any) => d.source.y)
+        .attr("x2", (d: any) => d.target.x)
+        .attr("y2", (d: any) => d.target.y);
+
+      trafficLink
         .attr("x1", (d: any) => d.source.x)
         .attr("y1", (d: any) => d.source.y)
         .attr("x2", (d: any) => d.target.x)
