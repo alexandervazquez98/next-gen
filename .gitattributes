@@ -1,0 +1,5 @@
+* text=auto
+
+# Force shell scripts and dockerfiles to always use LF (Unix) line endings
+*.sh text eol=lf
+Dockerfile* text eol=lf
