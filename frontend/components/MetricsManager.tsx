@@ -292,20 +292,30 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                         <label className="text-xs font-bold text-neutral-500 uppercase">Threshold Rule</label>
                                         <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                                             value={formData.operator || '>='}
-                                            onChange={e => setFormData({ ...formData, operator: e.target.value })}>
+                                            onChange={e => {
+                                                const newOperator = e.target.value;
+                                                const updates = { operator: newOperator };
+                                                if (newOperator === '==' || newOperator === '!=') {
+                                                    updates['warning'] = null;
+                                                }
+                                                setFormData({ ...formData, ...updates });
+                                            }}>
                                             <option value=">=">&ge; (Greater/Eq) - For upper limits (e.g. Temp &ge; 90)</option>
                                             <option value="<=">&le; (Less/Eq) - For lower limits (e.g. Free Space &le; 10)</option>
                                             <option value="==">== (Equals) - For exact states (e.g. Status == 1)</option>
                                             <option value="!=">&ne; (Not Equals) - For deviations (e.g. Status &ne; 200)</option>
                                         </select>
                                         <div className="mt-2 text-[10px] text-neutral-500 leading-tight">
-                                            <p><strong className="text-neutral-400">💡 Tip:</strong> Use &ge; for metrics like CPU load. Use == for discrete states (e.g., if OID returns 1 for UP and 0 for DOWN, use == 0 for Critical).</p>
+                                            <p><strong className="text-neutral-400">Tip:</strong> Use &ge; for metrics like CPU load. Use == for discrete states (e.g., if OID returns 1 for UP and 0 for DOWN, use == 0 for Critical).</p>
                                         </div>
                                     </div>
                                     <div className="space-y-2">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>
-                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                                            placeholder="Optional"
+                                        <label className={`text-xs font-bold uppercase transition-colors ${(formData.operator === '==' || formData.operator === '!=') ? 'text-neutral-600' : 'text-neutral-500'}`}>
+                                            Warning Threshold
+                                        </label>
+                                        <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                            placeholder={(formData.operator === '==' || formData.operator === '!=') ? "N/A for Exact States" : "Optional"}
+                                            disabled={formData.operator === '==' || formData.operator === '!='}
                                             value={formData.warning ?? ''} onChange={e => setFormData({ ...formData, warning: e.target.value ? parseFloat(e.target.value) : null })} />
                                     </div>
                                     <div className="space-y-2">
