@@ -176,11 +176,22 @@ const MonitoringConsole: React.FC = () => {
             {/* Inline styles for map flow animation - kept here as they are unique to map rendering */}
             <style>{`
                 @keyframes leafletFlow {
-                    from { stroke-dashoffset: 20; }
-                    to { stroke-dashoffset: 0; }
+                    from { stroke-dashoffset: 20px; }
+                    to { stroke-dashoffset: 0px; }
+                }
+                @keyframes leafletFlowReverse {
+                    from { stroke-dashoffset: 0px; }
+                    to { stroke-dashoffset: 20px; }
+                }
+                @keyframes leafletTraffic {
+                    from { stroke-dashoffset: 100px; }
+                    to { stroke-dashoffset: 0px; }
                 }
                 .flow-animation {
-                    animation: leafletFlow 1s linear infinite;
+                    animation: leafletFlowReverse 1.2s linear infinite;
+                }
+                .traffic-animation {
+                    animation: leafletTraffic 1.5s linear infinite;
                 }
                 .flow-slow {
                     animation: leafletFlow 3s linear infinite;
@@ -347,23 +358,33 @@ const MonitoringConsole: React.FC = () => {
                                     let dashArray = undefined;
                                     let className = '';
 
+                                    let isTraffic = false;
+
                                     if (link.relationship === 'DEPENDS_ON') {
-                                        dashArray = '5, 10';
+                                        dashArray = '5, 8';
                                         className = 'flow-animation';
                                     } else if (link.relationship === 'CONNECTS_TO') {
-                                        dashArray = '10, 10';
-                                        className = 'flow-slow';
+                                        dashArray = undefined; // Base is solid
+                                        isTraffic = true;
+                                        className = '';
                                     } else if (link.relationship === 'HOSTED_ON') {
                                         dashArray = '2, 5';
                                         className = 'opacity-50';
                                     }
 
                                     return (
-                                        <Polyline
-                                            key={`link-${i}`}
-                                            positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
-                                            pathOptions={{ color: color, weight: 3, opacity: 0.8, dashArray: dashArray, className: className }}
-                                        />
+                                        <React.Fragment key={`link-${i}`}>
+                                            <Polyline
+                                                positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
+                                                pathOptions={{ color: color, weight: 3, opacity: 0.6, dashArray: dashArray, className: className }}
+                                            />
+                                            {isTraffic && (
+                                                <Polyline
+                                                    positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
+                                                    pathOptions={{ color: '#10b981', weight: 3, opacity: 0.8, dashArray: '5, 50', className: 'traffic-animation' }}
+                                                />
+                                            )}
+                                        </React.Fragment>
                                     );
                                 }
                                 return null;
@@ -382,7 +403,7 @@ const MonitoringConsole: React.FC = () => {
                                     isWarning ? basePixelRadius * 1.2 + (warnEvents * 1.5) : basePixelRadius;
 
                                 const color = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#3b82f6';
-                                const opacity = isHealthy ? 0.05 : 0.9;
+                                const opacity = isHealthy ? 0.35 : 1;
                                 const className = isHealthy ? '' : 'animate-pulse';
 
                                 // Optional: Geographical aura rendering

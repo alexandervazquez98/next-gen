@@ -48,16 +48,16 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
     // CSS Style for flow animation
     svg.append("style").text(`
         @keyframes flow {
-            from { stroke-dashoffset: 20; }
-            to { stroke-dashoffset: 0; }
+            from { stroke-dashoffset: 20px; }
+            to { stroke-dashoffset: 0px; }
         }
         @keyframes flow-reverse {
-            from { stroke-dashoffset: 0; }
-            to { stroke-dashoffset: 20; }
+            from { stroke-dashoffset: 0px; }
+            to { stroke-dashoffset: 20px; }
         }
         @keyframes traffic-pulse {
-            from { stroke-dashoffset: 100; }
-            to { stroke-dashoffset: 0; }
+            from { stroke-dashoffset: 100px; }
+            to { stroke-dashoffset: 0px; }
         }
         .flow-animation {
             animation: flow-reverse 1.2s linear infinite;
