@@ -385,12 +385,15 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                             }}>
                                             <option value="">Select Specific CI from Registry...</option>
                                             {allNodes
-                                                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                                                .map((n, idx) => (
-                                                    <option key={idx} value={n.name || n.id}>
-                                                        {n.name || n.id} ({n.ip || 'No IP'})
-                                                    </option>
-                                                ))}
+                                                .sort((a, b) => ((a.label || a.name) || '').localeCompare((b.label || b.name) || ''))
+                                                .map((n, idx) => {
+                                                    const displayName = n.label || n.name || n.id;
+                                                    return (
+                                                        <option key={idx} value={displayName}>
+                                                            {displayName} ({n.ip || 'No IP'})
+                                                        </option>
+                                                    );
+                                                })}
                                         </select>
 
                                         {/* Name Chips */}
