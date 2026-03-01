@@ -32,6 +32,7 @@ def get_metrics() -> List[Dict[str, Any]]:
                 "dataType": m.get("dataType"),
                 "unit": m.get("unit"),
                 "description": m.get("description"),
+                "operator": m.get("operator", ">="),
                 "criticality": m.get("criticality", 1),
                 "applicable_to": criteria
             })
@@ -50,11 +51,11 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
             SET m.protocol = $prot, m.warning = $warn, m.critical = $crit,
                 m.oid = $oid, m.dataType = $dtype, m.unit = $unit,
                 m.description = $desc, m.applicable_to = $criteria,
-                m.criticality = $criticality
+                m.operator = $operator, m.criticality = $criticality
         """, id=metric.id, prot=metric.protocol, warn=metric.warning, 
              crit=metric.critical, oid=metric.oid, dtype=metric.dataType,
              unit=metric.unit, desc=metric.description, criteria=criteria_str,
-             criticality=metric.criticality or 1)
+             operator=metric.operator or ">=", criticality=metric.criticality or 1)
     return {"message": "Metric defined"}
 
 def delete_metric(metric_id: str) -> Dict[str, str]:

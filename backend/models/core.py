@@ -45,6 +45,7 @@ class MetricDef(BaseModel):
     dataType: Optional[str] = "INTEGER"
     unit: Optional[str] = None
     description: Optional[str] = None
+    operator: Optional[str] = ">="
     criticality: Optional[int] = 1 # 1: Info, 2: Warning, 3: Exception
     applicable_to: Optional[Dict[str, List[str]]] = None
 

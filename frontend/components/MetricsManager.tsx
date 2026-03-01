@@ -103,7 +103,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
     const handleCreate = () => {
         setSelectedMetric(null);
-        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', applicable_to: {} });
+        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', operator: '>=', applicable_to: {} });
         setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
         setIsEditing(true);
         setTestResult(null);
@@ -275,7 +275,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                             )}
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-4 gap-4">
                             <div className="space-y-2">
                                 <label className="text-xs font-bold text-neutral-500 uppercase">Data Type</label>
                                 <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
@@ -288,6 +288,17 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                             </div>
                             {formData.protocol !== 'ICMP' && (
                                 <>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Threshold Rule</label>
+                                        <select className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                                            value={formData.operator || '>='}
+                                            onChange={e => setFormData({ ...formData, operator: e.target.value })}>
+                                            <option value=">=">&ge; (Greater/Eq)</option>
+                                            <option value="<=">&le; (Less/Eq)</option>
+                                            <option value="==">== (Equals)</option>
+                                            <option value="!=">&ne; (Not Equals)</option>
+                                        </select>
+                                    </div>
                                     <div className="space-y-2">
                                         <label className="text-xs font-bold text-neutral-500 uppercase">Warning Threshold</label>
                                         <input type="number" className="w-full bg-black/40 border border-white/10 p-2 rounded text-white"

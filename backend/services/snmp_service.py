@@ -110,6 +110,7 @@ def run_snmp_cycle_sync(driver):
                 "criticality": m.get("criticality", 1),
                 "warning": m.get("warning"),
                 "critical": m.get("critical"),
+                "operator": m.get("operator", ">="),
                 "applicable_to": criteria
             })
 
@@ -304,18 +305,26 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             is_availability_metric = metric_def.get("protocol") == 'ICMP' or metric_def.get("name") == 'mariadb-GS'
             
             if not is_availability_metric:
-                if metric_def.get("critical") is not None and num_val >= float(metric_def["critical"]):
+                op = metric_def.get("operator", ">=")
+                def check_op(v, t, oper):
+                    if oper == '>=': return v >= t
+                    if oper == '<=': return v <= t
+                    if oper == '==': return v == t
+                    if oper == '!=': return v != t
+                    return v >= t
+                
+                if metric_def.get("critical") is not None and check_op(num_val, float(metric_def["critical"]), op):
                     status = 'CRITICAL'
                     severity = 'CRITICAL'
                     is_breach = True
-                    message = f"Critical Threshold Breached: {val} >= {metric_def['critical']}"
+                    message = f"Critical Threshold Breached: {val} {op} {metric_def['critical']}"
                 
                 # Check Warning (Only if not already Critical)
-                elif metric_def.get("warning") is not None and num_val >= float(metric_def["warning"]):
+                elif metric_def.get("warning") is not None and check_op(num_val, float(metric_def["warning"]), op):
                     status = 'WARNING'
                     severity = 'WARNING'
                     is_breach = True
-                    message = f"Warning Threshold Breached: {val} >= {metric_def['warning']}"
+                    message = f"Warning Threshold Breached: {val} {op} {metric_def['warning']}"
                 
             # SPECIAL CASE: ICMP/Availability (1=UP, 0=DOWN)
             if is_availability_metric and float(val) == 0:
