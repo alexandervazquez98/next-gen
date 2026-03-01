@@ -170,7 +170,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     };
 
     const toggleModel = (modelName: string) => {
-        const currentModels = criteria.models.split(',').map(s => s.trim()).filter(s => s);
+        const currentModels = (criteria.models || '').split(',').map(s => s.trim()).filter(s => s);
         let newModels;
         if (currentModels.includes(modelName)) {
             newModels = currentModels.filter(m => m !== modelName);
@@ -345,11 +345,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
                             {/* Selected Chips */}
                             <div className="flex flex-wrap gap-2 mt-2 max-h-32 overflow-y-auto p-2 bg-black/10 rounded-lg">
-                                {criteria.models.split(',').map(s => s.trim()).filter(s => s).length === 0 && (
+                                {(criteria.models || '').split(',').map(s => s.trim()).filter(s => s).length === 0 && (
                                     <p className="text-xs text-neutral-600 italic">No models selected.</p>
                                 )}
                                 {hardwareModels.map((hm, idx) => {
-                                    const isSelected = criteria.models.includes(hm.model);
+                                    const isSelected = (criteria.models || '').includes(hm.model);
                                     if (!isSelected) return null; // Only show selected here? 
                                     // User wants "combos ... aparescan". 
                                     // Let's show currently selected chips, and use combos to ADD.
@@ -385,10 +385,10 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                             }}>
                                             <option value="">Select Specific CI from Registry...</option>
                                             {allNodes
-                                                .sort((a, b) => a.name.localeCompare(b.name))
+                                                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                                                 .map((n, idx) => (
-                                                    <option key={idx} value={n.name}>
-                                                        {n.name} ({n.ip || 'No IP'})
+                                                    <option key={idx} value={n.name || n.id}>
+                                                        {n.name || n.id} ({n.ip || 'No IP'})
                                                     </option>
                                                 ))}
                                         </select>
@@ -451,11 +451,11 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                                                 if (confirm(`Are you sure you want to remove '${ci.name}' from this metric's applicability list?`)) {
                                                                     // Logic: 
                                                                     // 1. Remove from NAMES (if present)
-                                                                    const currentNames = criteria.names.split(',').map(s => s.trim());
+                                                                    const currentNames = (criteria.names || '').split(',').map(s => s.trim());
                                                                     const newNames = currentNames.filter(n => n !== ci.name && n !== ci.id).join(', ');
 
                                                                     // 2. Add to EXCLUDED_NAMES
-                                                                    const currentExcluded = criteria.excluded_names.split(',').map(s => s.trim());
+                                                                    const currentExcluded = (criteria.excluded_names || '').split(',').map(s => s.trim());
                                                                     const newExcluded = [...currentExcluded];
                                                                     if (!newExcluded.includes(ci.name)) newExcluded.push(ci.name);
                                                                     // Optionally exclude by ID too for robustness
