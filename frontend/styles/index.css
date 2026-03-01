@@ -79,13 +79,13 @@ option {
     }
 }
 
-@keyframes link-flow-reverse {
+@keyframes link-flow-forward {
     0% {
-        stroke-dashoffset: 0px;
+        stroke-dashoffset: 26px;
     }
 
     100% {
-        stroke-dashoffset: 26px;
+        stroke-dashoffset: 0px;
     }
 }
 
@@ -101,7 +101,7 @@ option {
 
 .flow-animation {
     stroke-dasharray: 5px 8px !important;
-    animation: link-flow-reverse 1.2s linear infinite !important;
+    animation: link-flow-forward 1.2s linear infinite !important;
 }
 
 .traffic-animation {
