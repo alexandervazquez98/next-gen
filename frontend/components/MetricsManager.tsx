@@ -498,7 +498,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                         </div>
 
                         <div className="flex gap-4 pt-4">
-                            <button onClick={handleSave} className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition-colors">
+                            <button onClick={() => handleSave()} className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition-colors">
                                 SAVE METRIC
                             </button>
                             {selectedMetric && (
