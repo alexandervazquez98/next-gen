@@ -70,47 +70,47 @@ option {
 
 /* Topology Data Flow Animations */
 @keyframes link-flow {
-    to {
-        stroke-dashoffset: 0;
+    0% {
+        stroke-dashoffset: 20px;
     }
 
-    from {
-        stroke-dashoffset: 20px;
+    100% {
+        stroke-dashoffset: 0px;
     }
 }
 
 @keyframes link-flow-reverse {
-    to {
-        stroke-dashoffset: 20px;
+    0% {
+        stroke-dashoffset: 0px;
     }
 
-    from {
-        stroke-dashoffset: 0;
+    100% {
+        stroke-dashoffset: 26px;
     }
 }
 
 @keyframes link-traffic {
-    to {
-        stroke-dashoffset: 0;
+    0% {
+        stroke-dashoffset: 110px;
     }
 
-    from {
-        stroke-dashoffset: 100px;
+    100% {
+        stroke-dashoffset: 0px;
     }
 }
 
 .flow-animation {
-    stroke-dasharray: 5, 8;
-    animation: link-flow-reverse 1.2s linear infinite;
+    stroke-dasharray: 5px 8px !important;
+    animation: link-flow-reverse 1.2s linear infinite !important;
 }
 
 .traffic-animation {
-    stroke-dasharray: 5, 50;
-    animation: link-traffic 1.5s linear infinite;
+    stroke-dasharray: 5px 50px !important;
+    animation: link-traffic 1.2s linear infinite !important;
 }
 
 .flow-slow {
-    stroke-dasharray: 10, 10;
+    stroke-dasharray: 10 10 !important;
     animation: link-flow 3s linear infinite;
 }
 
