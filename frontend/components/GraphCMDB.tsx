@@ -113,11 +113,20 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         return "none";
       })
       .attr("class", (d: any) => {
-        if (d.relationship === 'DEPENDS_ON') return "flow-animation";
+        if (d.relationship === 'HOSTED_ON') return "opacity-50";
         return "";
-      });
+      })
+      .attr("opacity", 0.6)
+      .style("pointer-events", "none");
 
-    // Extra layer for Traffic connecting lines
+    // Declarative SVG Animate - DEPENDS_ON Flow
+    link.filter((d: any) => d.relationship === 'DEPENDS_ON')
+      .append("animate")
+      .attr("attributeName", "stroke-dashoffset")
+      .attr("from", "26")
+      .attr("to", "0")
+      .attr("dur", "1s")
+      .attr("repeatCount", "indefinite");
     const trafficLink = svg.append("g")
       .selectAll("line")
       .data(validLinks.filter((d: any) => d.relationship === 'CONNECTS_TO'))
@@ -125,9 +134,16 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
       .attr("stroke-width", 3)
       .attr("stroke", "#10b981") // Traffic blast
       .attr("stroke-dasharray", "5, 50")
-      .attr("class", "traffic-animation")
       .attr("opacity", 0.7)
       .style("pointer-events", "none");
+
+    // Declarative SVG Animate - CONNECTS_TO Traffic
+    trafficLink.append("animate")
+      .attr("attributeName", "stroke-dashoffset")
+      .attr("from", "0")
+      .attr("to", "110")
+      .attr("dur", "2.5s")
+      .attr("repeatCount", "indefinite");
 
     const node = svg.append("g")
       .selectAll("g")
