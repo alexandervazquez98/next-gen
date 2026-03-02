@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
@@ -29,6 +29,42 @@ const CriticalIcon = L.icon({
     popupAnchor: [1, -34],
     shadowSize: [41, 41]
 });
+const WarningIcon = L.icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-gold.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
+/**
+ * AnimatedPolyline Component
+ * Bypasses React-Leaflet's virtual DOM by deterministically appending a declarative SVG <animate> tag.
+ */
+const AnimatedPolyline: React.FC<any> = ({ positions, pathOptions, animationConfig }) => {
+    const polyRef = React.useRef<any>(null);
+
+    React.useEffect(() => {
+        if (polyRef.current && polyRef.current._path && animationConfig) {
+            const path: SVGElement = polyRef.current._path;
+
+            // Prevent duplicate animate tags on re-renders
+            if (path.querySelector('animate')) return;
+
+            const animateTag = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+            animateTag.setAttribute('attributeName', 'stroke-dashoffset');
+            animateTag.setAttribute('from', animationConfig.from);
+            animateTag.setAttribute('to', animationConfig.to);
+            animateTag.setAttribute('dur', animationConfig.dur);
+            animateTag.setAttribute('repeatCount', 'indefinite');
+
+            path.appendChild(animateTag);
+        }
+    }, [polyRef.current, animationConfig]);
+
+    return <Polyline ref={polyRef} positions={positions} pathOptions={pathOptions} />;
+};
 
 /**
  * Auto-Zoom Component used inside MapContainer to fit bounds of nodes.
@@ -173,23 +209,6 @@ const MonitoringConsole: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col bg-surface-950 overflow-hidden relative">
-            {/* Inline styles for map flow animation - kept here as they are unique to map rendering */}
-            <style>{`
-                @keyframes leafletFlow {
-                    from { stroke-dashoffset: 20; }
-                    to { stroke-dashoffset: 0; }
-                }
-                .flow-animation {
-                    animation: leafletFlow 1s linear infinite;
-                }
-                .flow-slow {
-                    animation: leafletFlow 3s linear infinite;
-                }
-                .leaflet-container {
-                    background: #1a1a1a !important; 
-                }
-            `}</style>
-
             {/* Header / Toolbar */}
             <div className="h-16 px-8 flex items-center justify-between border-b border-white/5 glass z-10">
                 <div className="flex items-center gap-4">
@@ -344,56 +363,98 @@ const MonitoringConsole: React.FC = () => {
                                     else if (target.hasWarning) color = STATUS_COLORS.WARNING;
                                     else if (target.status === 'ACTIVE' || target.status === 'OK') color = STATUS_COLORS.OK;
 
-                                    let dashArray = undefined;
+                                    let animConfig: any = null;
+                                    let dashArray: string | undefined = undefined;
                                     let className = '';
+                                    let isTraffic = false;
 
                                     if (link.relationship === 'DEPENDS_ON') {
-                                        dashArray = '5, 10';
-                                        className = 'flow-animation';
+                                        dashArray = '5, 8';
+                                        animConfig = { from: '26', to: '0', dur: '1s' };
                                     } else if (link.relationship === 'CONNECTS_TO') {
-                                        dashArray = '10, 10';
-                                        className = 'flow-slow';
+                                        dashArray = undefined; // Base is solid
+                                        isTraffic = true;
                                     } else if (link.relationship === 'HOSTED_ON') {
                                         dashArray = '2, 5';
                                         className = 'opacity-50';
                                     }
 
                                     return (
-                                        <Polyline
-                                            key={`link-${i}`}
-                                            positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
-                                            pathOptions={{ color: color, weight: 3, opacity: 0.8, dashArray: dashArray, className: className }}
-                                        />
+                                        <React.Fragment key={`link-${i}`}>
+                                            <AnimatedPolyline
+                                                positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
+                                                pathOptions={{ color: color, weight: 3, opacity: 0.6, dashArray: dashArray, className: className }}
+                                                animationConfig={animConfig}
+                                            />
+                                            {isTraffic && (
+                                                <AnimatedPolyline
+                                                    positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
+                                                    pathOptions={{ color: '#10b981', weight: 3, opacity: 0.8, dashArray: '5, 50' }}
+                                                    animationConfig={{ from: '0', to: '110', dur: '2.5s' }}
+                                                />
+                                            )}
+                                        </React.Fragment>
                                     );
                                 }
                                 return null;
                             })}
 
-                            {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => (
-                                <Marker
-                                    key={node.id}
-                                    position={[node.location!.lat, node.location!.long]}
-                                    icon={node.hasCritical ? CriticalIcon : DefaultIcon}
-                                >
-                                    <Popup>
-                                        <div className="p-1 min-w-[200px]">
-                                            <h3 className="font-bold text-sm mb-1">{node.label}</h3>
-                                            <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
-                                            {node.events && node.events.length > 0 ? (
-                                                <div className="space-y-1">
-                                                    {node.events.map(e => (
-                                                        <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                                            {e.message}
+                            {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => {
+                                const isCritical = node.hasCritical;
+                                const isWarning = node.hasWarning;
+                                const isHealthy = !isCritical && !isWarning;
+
+                                const critEvents = node.events?.filter(e => e.severity === 'CRITICAL').length || 0;
+                                const warnEvents = node.events?.filter(e => e.severity === 'WARNING').length || 0;
+
+                                const basePixelRadius = 6;
+                                const pixelRadius = isCritical ? basePixelRadius * 1.5 + (critEvents * 2) :
+                                    isWarning ? basePixelRadius * 1.2 + (warnEvents * 1.5) : basePixelRadius;
+
+                                const color = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#3b82f6';
+                                const opacity = isHealthy ? 0.35 : 1;
+                                const className = isHealthy ? '' : 'animate-pulse';
+
+                                // Optional: Geographical aura rendering
+                                const geoAuraRadius = isCritical ? 20000 + (critEvents * 10000) : isWarning ? 10000 + (warnEvents * 5000) : 0;
+
+                                return (
+                                    <React.Fragment key={node.id}>
+                                        {/* Geographical aura for the 'blast radius' */}
+                                        {!isHealthy && (
+                                            <Circle
+                                                center={[node.location!.lat, node.location!.long]}
+                                                radius={geoAuraRadius}
+                                                pathOptions={{ color: color, fillColor: color, fillOpacity: 0.1, weight: 0, className: 'animate-ping' }}
+                                            />
+                                        )}
+                                        {/* Core point */}
+                                        <CircleMarker
+                                            center={[node.location!.lat, node.location!.long]}
+                                            radius={pixelRadius}
+                                            pathOptions={{ color: color, fillColor: color, fillOpacity: opacity, weight: isHealthy ? 1 : 2, opacity: opacity, className: className }}
+                                        >
+                                            <Popup>
+                                                <div className="p-1 min-w-[200px]">
+                                                    <h3 className="font-bold text-sm mb-1">{node.label}</h3>
+                                                    <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
+                                                    {node.events && node.events.length > 0 ? (
+                                                        <div className="space-y-1">
+                                                            {node.events.map(e => (
+                                                                <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                                    {e.message}
+                                                                </div>
+                                                            ))}
                                                         </div>
-                                                    ))}
+                                                    ) : (
+                                                        <div className="text-green-500 text-xs font-bold">Status OK</div>
+                                                    )}
                                                 </div>
-                                            ) : (
-                                                <div className="text-green-500 text-xs font-bold">Status OK</div>
-                                            )}
-                                        </div>
-                                    </Popup>
-                                </Marker>
-                            ))}
+                                            </Popup>
+                                        </CircleMarker>
+                                    </React.Fragment>
+                                );
+                            })}
                         </MapContainer>
 
                         {/* Status Overlay */}

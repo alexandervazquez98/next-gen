@@ -45,20 +45,6 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         .attr("fill", color);
     });
 
-    // CSS Style for flow animation
-    svg.append("style").text(`
-        @keyframes flow {
-            from { stroke-dashoffset: 20; }
-            to { stroke-dashoffset: 0; }
-        }
-        .flow-animation {
-            animation: flow 1s linear infinite;
-        }
-        .flow-slow {
-            animation: flow 3s linear infinite;
-        }
-    `);
-
     // Filter links to ensure valid source/target
     const validLinks = links.filter(l => {
       const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
@@ -68,16 +54,40 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     const validNodes = nodes.map(d => Object.create(d)); // Create shallow copy for D3 mutation
 
+    // --- Calculate Impact Analysis (Affected Derived Tree) ---
+    const criticalNodeIds = validNodes.filter(n => n.status === 'CRITICAL' || n.status === 'WARNING').map(n => n.id);
+    const affectedSet = new Set<string>(criticalNodeIds);
+    let added = true;
+    while (added) {
+      added = false;
+      validLinks.forEach(l => {
+        const sId = typeof l.source === 'object' ? (l.source as any).id : l.source;
+        const tId = typeof l.target === 'object' ? (l.target as any).id : l.target;
+
+        // In typical CMDB dependencies, Target failing impacts the Source that depends on it
+        if (affectedSet.has(tId) && !affectedSet.has(sId)) {
+          affectedSet.add(sId);
+          added = true;
+        }
+      });
+    }
+    const hasGlobalIncidents = criticalNodeIds.length > 0;
+
     const simulation = d3.forceSimulation<GraphNode>(validNodes)
       .force("link", d3.forceLink<GraphNode, GraphLink>(validLinks).id(d => d.id).distance(150))
       .force("charge", d3.forceManyBody().strength(-500))
       .force("center", d3.forceCenter(width / 2, height / 2));
 
     const link = svg.append("g")
-      .attr("stroke-opacity", 0.8)
       .selectAll("line")
       .data(validLinks)
       .join("line")
+      .attr("stroke-opacity", (d: any) => {
+        if (!hasGlobalIncidents) return 0.6;
+        const sId = typeof d.source === 'object' ? (d.source as any).id : d.source;
+        const tId = typeof d.target === 'object' ? (d.target as any).id : d.target;
+        return (affectedSet.has(sId) || affectedSet.has(tId)) ? 0.9 : 0.2;
+      })
       .attr("stroke-width", 2)
       .attr("stroke", (d: any) => {
         // Color link based on TARGET node status for dependency impact visualization
@@ -97,22 +107,53 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
         return `url(#arrow-${color.replace('#', '')})`;
       })
       .attr("stroke-dasharray", (d: any) => {
-        if (d.relationship === 'DEPENDS_ON') return "5, 5";
-        if (d.relationship === 'CONNECTS_TO') return "10, 5";
+        if (d.relationship === 'DEPENDS_ON') return "5, 8";
+        if (d.relationship === 'CONNECTS_TO') return "none"; // Base is solid now
         if (d.relationship === 'HOSTED_ON') return "2, 2";
         return "none";
       })
       .attr("class", (d: any) => {
-        if (d.relationship === 'DEPENDS_ON') return "flow-animation";
-        if (d.relationship === 'CONNECTS_TO') return "flow-slow";
+        if (d.relationship === 'HOSTED_ON') return "opacity-50";
         return "";
-      });
+      })
+      .attr("opacity", 0.6)
+      .style("pointer-events", "none");
+
+    // Declarative SVG Animate - DEPENDS_ON Flow
+    link.filter((d: any) => d.relationship === 'DEPENDS_ON')
+      .append("animate")
+      .attr("attributeName", "stroke-dashoffset")
+      .attr("from", "26")
+      .attr("to", "0")
+      .attr("dur", "1s")
+      .attr("repeatCount", "indefinite");
+    const trafficLink = svg.append("g")
+      .selectAll("line")
+      .data(validLinks.filter((d: any) => d.relationship === 'CONNECTS_TO'))
+      .join("line")
+      .attr("stroke-width", 3)
+      .attr("stroke", "#10b981") // Traffic blast
+      .attr("stroke-dasharray", "5, 50")
+      .attr("opacity", 0.7)
+      .style("pointer-events", "none");
+
+    // Declarative SVG Animate - CONNECTS_TO Traffic
+    trafficLink.append("animate")
+      .attr("attributeName", "stroke-dashoffset")
+      .attr("from", "0")
+      .attr("to", "110")
+      .attr("dur", "2.5s")
+      .attr("repeatCount", "indefinite");
 
     const node = svg.append("g")
       .selectAll("g")
       .data(validNodes)
       .join("g")
       .attr("class", "cursor-pointer group")
+      .attr("opacity", d => {
+        if (!hasGlobalIncidents) return 1;
+        return affectedSet.has(d.id) ? 1 : 0.4; // Expose healthy nodes at 40% instead of 5%
+      })
       .on("click", (event, d) => onNodeClick(d))
       .call(d3.drag<SVGGElement, GraphNode>()
         .on("start", dragstarted)
@@ -121,15 +162,16 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     // Node circles with health indicators
     node.append("circle")
-      .attr("r", 24)
+      .attr("r", d => d.status === 'CRITICAL' ? 32 : d.status === 'WARNING' ? 28 : 24)
       .attr("fill", "#1a1a1a")
       .attr("stroke", d => {
         if (d.status === 'CRITICAL') return STATUS_COLORS.CRITICAL;
         if (d.status === 'WARNING') return STATUS_COLORS.WARNING;
+        if (affectedSet.has(d.id)) return '#f97316'; // Orange for derived affected tree
         return '#345bf2'; // Brand Color for safe nodes
       })
-      .attr("stroke-width", 3)
-      .attr("class", d => d.status !== 'HEALTHY' && d.status !== 'OK' && d.status !== 'ACTIVE' ? 'animate-pulse' : '');
+      .attr("stroke-width", d => affectedSet.has(d.id) || d.status === 'CRITICAL' ? 4 : 2)
+      .attr("class", d => affectedSet.has(d.id) ? 'animate-pulse' : '');
 
     // Node icons (simplified labels for now)
     node.append("text")
@@ -150,6 +192,12 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
 
     simulation.on("tick", () => {
       link
+        .attr("x1", (d: any) => d.source.x)
+        .attr("y1", (d: any) => d.source.y)
+        .attr("x2", (d: any) => d.target.x)
+        .attr("y2", (d: any) => d.target.y);
+
+      trafficLink
         .attr("x1", (d: any) => d.source.x)
         .attr("y1", (d: any) => d.source.y)
         .attr("x2", (d: any) => d.target.x)

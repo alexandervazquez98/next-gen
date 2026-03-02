@@ -67,3 +67,53 @@ option {
     /* White text */
     padding: 10px;
 }
+
+/* Topology Data Flow Animations */
+@keyframes link-flow {
+    0% {
+        stroke-dashoffset: 20px;
+    }
+
+    100% {
+        stroke-dashoffset: 0px;
+    }
+}
+
+@keyframes link-flow-forward {
+    0% {
+        stroke-dashoffset: 26px;
+    }
+
+    100% {
+        stroke-dashoffset: 0px;
+    }
+}
+
+@keyframes link-traffic {
+    0% {
+        stroke-dashoffset: 110px;
+    }
+
+    100% {
+        stroke-dashoffset: 0px;
+    }
+}
+
+.flow-animation {
+    stroke-dasharray: 5px 8px !important;
+    animation: link-flow-forward 1.2s linear infinite !important;
+}
+
+.traffic-animation {
+    stroke-dasharray: 5px 50px !important;
+    animation: link-traffic 1.2s linear infinite !important;
+}
+
+.flow-slow {
+    stroke-dasharray: 10 10 !important;
+    animation: link-flow 3s linear infinite;
+}
+
+.leaflet-container {
+    background: #1a1a1a !important;
+}

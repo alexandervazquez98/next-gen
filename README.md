@@ -59,6 +59,7 @@ Las principales entidades que alimentan la base de datos Neo4j para mapear el ec
 
 **Funcionalidades Implementadas:**
 - CMDB relacional y topológica en tiempo real (Visualización en Grafo Integrada).
+- **Análisis Visual de Impacto AIOps (Blast Radius)**: Mapas geoespaciales interactivos al rojo vivo ("Heatmaps") y filtros dinámicos de transparencia D3-Force  (>90% a nodos sanos), iluminando exclusivamente la falla troncal y la propagación de impacto por dependencias.
 - CRUD de Nodos y Operaciones de Enlaces (Links).
 - Reconciliación Automática de Métricas (Asigna sondas basándose en marca/modelo del CI).
 - **Asignación de Métricas de Alta Granularidad**: Soporte para reglas lógicas (`>=`, `==`, `!=`, etc.) en umbrales y asignación explícita (Opt-In/Opt-Out) por CIs individuales.
