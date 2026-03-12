@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import { AntPath } from 'leaflet-ant-path';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import DependencyMiniMap from './DependencyMiniMap';
@@ -357,43 +358,28 @@ const MonitoringConsole: React.FC = () => {
                                 const target = nodesWithEvents.find(n => n.id === link.target);
 
                                 if (source?.location?.lat && target?.location?.lat) {
-                                    // Use Shared Status Colors
-                                    let color = STATUS_COLORS.UNKNOWN;
-                                    if (target.hasCritical) color = STATUS_COLORS.CRITICAL;
-                                    else if (target.hasWarning) color = STATUS_COLORS.WARNING;
-                                    else if (target.status === 'ACTIVE' || target.status === 'OK') color = STATUS_COLORS.OK;
+                                    const latlngs: [number, number][] = [
+                                        [source.location.lat, source.location.long],
+                                        [target.location.lat, target.location.long]
+                                    ];
 
-                                    let animConfig: any = null;
-                                    let dashArray: string | undefined = undefined;
-                                    let className = '';
-                                    let isTraffic = false;
+                                    const status = target.hasCritical ? 'critical' : target.hasWarning ? 'warning' : 'normal';
+                                    const type = link.relationship;
 
-                                    if (link.relationship === 'DEPENDS_ON') {
-                                        dashArray = '5, 8';
-                                        animConfig = { from: '26', to: '0', dur: '1s' };
-                                    } else if (link.relationship === 'CONNECTS_TO') {
-                                        dashArray = undefined; // Base is solid
-                                        isTraffic = true;
-                                    } else if (link.relationship === 'HOSTED_ON') {
-                                        dashArray = '2, 5';
-                                        className = 'opacity-50';
-                                    }
+                                    const antPathOptions = status === 'critical'
+                                        ? { delay: 1000, pulseColor: '#ff0000', weight: 4, color: STATUS_COLORS.CRITICAL, opacity: 0.8 }
+                                        : status === 'warning'
+                                            ? { delay: 2000, pulseColor: '#ffa500', weight: 3, color: STATUS_COLORS.WARNING, opacity: 0.7 }
+                                            : { delay: 3000, pulseColor: '#3388ff', weight: 2, color: STATUS_COLORS.OK || '#3388ff', opacity: 0.6 };
 
                                     return (
-                                        <React.Fragment key={`link-${i}`}>
-                                            <AnimatedPolyline
-                                                positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
-                                                pathOptions={{ color: color, weight: 3, opacity: 0.6, dashArray: dashArray, className: className }}
-                                                animationConfig={animConfig}
-                                            />
-                                            {isTraffic && (
-                                                <AnimatedPolyline
-                                                    positions={[[source.location.lat, source.location.long], [target.location.lat, target.location.long]]}
-                                                    pathOptions={{ color: '#10b981', weight: 3, opacity: 0.8, dashArray: '5, 50' }}
-                                                    animationConfig={{ from: '0', to: '110', dur: '2.5s' }}
-                                                />
-                                            )}
-                                        </React.Fragment>
+                                        <AntPath
+                                            key={`link-${i}`}
+                                            latlngs={latlngs}
+                                            status={status}
+                                            type={type}
+                                            options={antPathOptions}
+                                        />
                                     );
                                 }
                                 return null;
