@@ -727,8 +727,28 @@ const MonitoringConsole: React.FC = () => {
                                         </span>
                                         <h3 className="text-xl font-black text-white uppercase tracking-tight truncate">{evt.message}</h3>
                                     </div>
-                                    <div className="mt-2 text-neutral-400 text-xs flex flex-wrap gap-x-4 gap-y-1">
-                                        <span><strong className="text-neutral-300">CI:</strong> {evt.ci_name || '—'}</span>
+                                     <div className="mt-2 text-neutral-400 text-xs flex flex-wrap gap-x-4 gap-y-1">
+                                        <span>
+                                            <strong className="text-neutral-300">CI ID:</strong>{' '}
+                                            {evt.ci_node_id
+                                                ? <span className="font-mono text-brand-400">{evt.ci_node_id}</span>
+                                                : <span className="text-neutral-600 italic">—</span>}
+                                        </span>
+                                        <span>
+                                            <strong className="text-neutral-300">Host:</strong>{' '}
+                                            {evt.ci_name
+                                                ? <span className="text-white">{evt.ci_name}</span>
+                                                : <span className="text-neutral-600 italic">—</span>}
+                                            {evt.ci_hostname && (
+                                                <span className="text-neutral-500 ml-1">({evt.ci_hostname})</span>
+                                            )}
+                                        </span>
+                                        {evt.ci_location_name && (
+                                            <span>
+                                                <strong className="text-neutral-300">Ubicación:</strong>{' '}
+                                                <span className="text-white">{evt.ci_location_name}</span>
+                                            </span>
+                                        )}
                                         <span><strong className="text-neutral-300">Métrica:</strong> {evt.metric_name || '—'}</span>
                                         <span><strong className="text-neutral-300">Protocolo:</strong> {evt.metric_protocol || 'N/A'}</span>
                                         <span><strong className="text-neutral-300">Inicio:</strong> {new Date(evt.created_at).toLocaleString()}</span>
