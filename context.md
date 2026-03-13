@@ -79,3 +79,47 @@ El sistema garantiza que las métricas asignadas a un CI estén siempre sincroni
 - **Alertas Predictivas**: Usar IA para predecir fallos.
 - **Agentes Remotos**: Soporte para agentes en OS.
 - **Integración ITSM**: Jira/ServiceNow.
+
+### 5.1 Mejoras Pendientes — Modal de Detalle de Evento (Fase 2)
+
+Estos campos están marcados como **🚧 En Desarrollo** porque dependen de infraestructura de datos que aún no existe:
+
+#### SLA Restante (Funcional — post catálogo de servicios)
+- **Bloqueado por**: Catálogo de servicios con SLAs definidos por categoría de CI y tier de atención.
+- **Plan**: Crear entidad `ServiceCatalog` en Neo4j con campo `sla_minutes` por categoría y tier. Vincular al evento en el momento en que se dispara. Actualmente el campo se lee de `node.metadata.sla_minutes` (fallback manual).
+- **Impacto**: Sin catálogo, el SLA Restante muestra "No configurado" para la mayoría de los CIs.
+
+#### Servicio de negocio + Usuarios impactados (Fase 2 — post catálogo)
+- **Bloqueado por**: Mapeo manual CI → servicio de negocio y definición de responsables T1/T2/T3 por servicio.
+- **Plan**: Crear entidad `BusinessService` en Neo4j. Relación `(ci:CI)-[:BELONGS_TO]->(bs:BusinessService)`. El `BusinessService` contiene: `name`, `owner_t1`, `owner_t2`, `owner_t3`, `impacted_users_count`.
+- **Query sugerida**:
+  ```cypher
+  MATCH (ci:CI {id: $ci_id})-[:BELONGS_TO]->(bs:BusinessService)
+  RETURN bs.name, bs.impacted_users_count
+  ```
+
+---
+
+## 6. Estado de Desarrollo por Campo — Modal de Detalle de Evento (MonitoringConsole)
+
+> Leyenda: ✅ Funcional | 🚧 En Desarrollo (Fase 2) | ❌ No implementado
+
+### 6.1 Cabecera del Modal (Información del CI)
+
+| Campo | Estado | Fuente de datos | Notas |
+| :--- | :---: | :--- | :--- |
+| **CI ID** | ✅ Funcional | `ci.id` — Neo4j (backend query) | Identificador único del nodo CI en el grafo. |
+| **Nombre del Host** | ✅ Funcional | `ci.label` — Neo4j (backend query) | Label del CI tal como está registrado en la CMDB. |
+| **Hostname / IP** | ✅ Funcional | `ci.ip` — Neo4j (backend query) | Dirección IP o nombre de host del dispositivo. Puede ser `null` si no se configuró. |
+| **Location Name** | ✅ Funcional | `ci.locationName` — Neo4j (backend query) | Nombre de la ubicación física (ej. "Madrid HQ"). Puede ser `null`. |
+| **Categoría CI** | ✅ Funcional | `node.category` / `node.type` — CMDB | Tipo de dispositivo (router, server, app, etc.). |
+
+### 6.2 Banda de Contexto de Negocio (Business Context Band)
+
+| Campo | Estado | Bloqueado por | Plan |
+| :--- | :---: | :--- | :--- |
+| **Servicio de negocio** | 🚧 En Desarrollo — Fase 2 | Requiere catálogo de servicios con mapeo manual CI → servicio de negocio y definición de responsables T1/T2/T3 por servicio. | Crear entidad `BusinessService` en Neo4j y relación `CI -[:BELONGS_TO]-> BusinessService`. |
+| **Usuarios impactados** | 🚧 En Desarrollo — Fase 2 | Requiere mapeo CI → servicio de negocio y definición de número de usuarios por servicio. | Depende de la implementación del catálogo de servicios. |
+| **Sede** | ✅ Funcional | — | Se muestra `ci.locationName` si está disponible; coordenadas como fallback. |
+| **Categoría CI** | ✅ Funcional | — | Extraído de `node.category` / `node.type`. |
+| **SLA Restante** | 🚧 En Desarrollo — Fase 2 | Requiere catálogo de servicios con SLAs definidos por categoría de CI y tier de atención. Sin este catálogo no hay SLA objetivo con qué calcular el tiempo restante. | Crear entidad `ServiceCatalog` con campo `sla_minutes` por categoría y tier. Vincular al evento al dispararse. |
