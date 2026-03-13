@@ -36,7 +36,6 @@ export interface GraphNode {
   thresholds?: MonitoringThresholds;
   metrics?: MetricValue[]; // Live metrics
   ip?: string;
-  owner?: string; // Top-level owner group (matches backend Node.owner)
   category?: string; // Optional helper
   location?: { lat: number; long: number };
   serialNumber?: string;
@@ -62,12 +61,6 @@ export interface Event {
   id: string;
   ci_id: string;
   ci_name?: string;
-  /** Real Neo4j node ID of the CI — populated by backend (ci.id) */
-  ci_node_id?: string;
-  /** IP address or hostname of the CI — populated by backend (ci.ip) */
-  ci_hostname?: string;
-  /** Human-readable location name — populated by backend (ci.locationName) */
-  ci_location_name?: string;
   metric_id: string;
   metric_name?: string;
   metric_protocol?: string;

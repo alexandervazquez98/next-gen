@@ -166,27 +166,6 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
 
             <div className="grid grid-cols-2 gap-3">
               <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Serial Number</span>
-                <input
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none font-mono"
-                  value={formData.serialNumber || ''}
-                  onChange={e => setFormData({ ...formData, serialNumber: e.target.value })}
-                  placeholder="e.g. SN12345678"
-                />
-              </label>
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Firmware Version</span>
-                <input
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none font-mono"
-                  value={formData.firmwareVersion || ''}
-                  onChange={e => setFormData({ ...formData, firmwareVersion: e.target.value })}
-                  placeholder="e.g. 17.3.1"
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label>
                 <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">IP Address</span>
                 <input
                   className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
@@ -199,8 +178,8 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
                 <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Owner Group</span>
                 <select
                   className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                  value={formData.owner || ''}
-                  onChange={e => setFormData({ ...formData, owner: e.target.value })}
+                  value={formData.metadata?.owner || ''}
+                  onChange={e => setFormData({ ...formData, metadata: { ...formData.metadata, owner: e.target.value } })}
                 >
                   <option value="">Select Group...</option>
                   {owners.map(o => <option key={o.name} value={o.name}>{o.name}</option>)}
@@ -330,17 +309,6 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
                 />
               </label>
             )}
-            <label className="col-span-2">
-              <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Polling Interval (seconds)</span>
-              <input
-                type="number"
-                min={10}
-                className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
-                value={formData.pollingInterval ?? 60}
-                onChange={e => setFormData({ ...formData, pollingInterval: parseInt(e.target.value) || 60 })}
-                placeholder="60"
-              />
-            </label>
           </div>
         </section>
       </form>
