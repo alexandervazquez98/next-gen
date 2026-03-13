@@ -769,9 +769,17 @@ const MonitoringConsole: React.FC = () => {
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Usuarios impactados</div>
                                     <div className="text-white font-semibold">{(node?.metadata?.impacted_users as string) || <span className="text-neutral-600 italic">No configurado</span>}</div>
                                 </div>
-                                <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                                 <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Sede</div>
-                                     <div className="text-white font-semibold">{(node?.metadata?.site as string) ? (node?.metadata?.site as string) : node?.location ? `${node?.location?.lat?.toFixed(2)}, ${node?.location?.long?.toFixed(2)}` : <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                     <div className="text-white font-semibold">
+                                        {evt.ci_location_name
+                                            ? evt.ci_location_name
+                                            : node?.locationName
+                                                ? node.locationName
+                                                : (node?.metadata?.site as string)
+                                                    ? (node?.metadata?.site as string)
+                                                    : <span className="text-neutral-600 italic">No configurado</span>}
+                                    </div>
                                 </div>
                                 <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Categoría CI</div>
