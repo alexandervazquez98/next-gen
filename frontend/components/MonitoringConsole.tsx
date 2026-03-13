@@ -307,21 +307,67 @@ const MonitoringConsole: React.FC = () => {
     const [commentText, setCommentText] = useState("");
     const [isDiagnosing, setIsDiagnosing] = useState(false);
 
+    // M5: Close flow state
+    const [closeFlowOpen, setCloseFlowOpen] = useState(false);
+    const [closeRootCause, setCloseRootCause] = useState('');
+    const [closeNote, setCloseNote] = useState('');
+    const [closeForcedMode, setCloseForcedMode] = useState(false);
+    const [closeForcedReason, setCloseForcedReason] = useState('');
+
+    // M2: Ownership
+    const CURRENT_USER = 'Admin'; // TODO: replace with real auth context
+    const CURRENT_TIER = 'T2';    // TODO: replace with real auth context
+
     const handleOpenComment = (id: string) => {
         setSelectedEventId(id);
         setCommentText("");
+        setCloseFlowOpen(false);
+        setCloseRootCause('');
+        setCloseNote('');
+        setCloseForcedMode(false);
+        setCloseForcedReason('');
         setCommentModalOpen(true);
     };
 
     const submitComment = async () => {
         if (!selectedEventId || !commentText.trim()) return;
-
         await api.post(`/events/${selectedEventId}/comment`, {
             message: commentText,
-            user: 'Admin'
+            user: CURRENT_USER
         });
+        setCommentText("");
+        fetchData();
+    };
 
+    // M2: Take ownership
+    const handleTakeCase = async (id: string) => {
+        await api.post(`/events/${id}/comment`, {
+            message: `[OWNERSHIP] Caso tomado por ${CURRENT_USER} — Tier ${CURRENT_TIER}`,
+            user: CURRENT_USER
+        });
+        await api.post(`/events/${id}/ack`, {});
+        fetchData();
+    };
+
+    // M5: Structured close
+    const handleStructuredClose = async () => {
+        if (!selectedEventId) return;
+        if (closeForcedMode) {
+            if (!closeForcedReason.trim()) return;
+            await api.post(`/events/${selectedEventId}/comment`, {
+                message: `[CIERRE FORZADO — ${CURRENT_TIER}] Motivo: ${closeForcedReason}`,
+                user: CURRENT_USER
+            });
+        } else {
+            if (!closeRootCause || closeNote.trim().length < 20) return;
+            await api.post(`/events/${selectedEventId}/comment`, {
+                message: `[CIERRE] Causa raíz: ${closeRootCause}\nNota: ${closeNote}`,
+                user: CURRENT_USER
+            });
+        }
+        await api.post(`/events/${selectedEventId}/close`, {});
         setCommentModalOpen(false);
+        setCloseFlowOpen(false);
         fetchData();
     };
 
@@ -621,133 +667,402 @@ const MonitoringConsole: React.FC = () => {
                 )}
             </div>
 
-            {commentModalOpen && selectedEventId && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8">
-                    <div className="bg-surface-900 border border-white/10 rounded-2xl w-full max-w-[95%] 2xl:max-w-[85%] h-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-                        {/* Modal Header */}
-                        <div className="p-6 border-b border-white/10 flex justify-between items-start bg-black/20">
-                            <div>
-                                <h3 className="text-2xl font-black text-white uppercase tracking-tight flex items-center gap-3">
-                                    <span className={`px-3 py-1 rounded text-sm font-bold ${events.find(e => e.id === selectedEventId)?.severity === 'CRITICAL' ? 'bg-red-500' : events.find(e => e.id === selectedEventId)?.severity === 'WARNING' ? 'bg-yellow-500 text-black' : 'bg-blue-500'}`}>
-                                        {events.find(e => e.id === selectedEventId)?.severity}
-                                    </span>
-                                    Event Details
-                                </h3>
-                                <div className="mt-2 text-neutral-400 text-sm flex gap-4">
-                                    <span><strong>CI:</strong> {events.find(e => e.id === selectedEventId)?.ci_name}</span>
-                                    <span><strong>Metric:</strong> {events.find(e => e.id === selectedEventId)?.metric_name}</span>
-                                    <span><strong>Protocol:</strong> {events.find(e => e.id === selectedEventId)?.metric_protocol || 'N/A'}</span>
+            {commentModalOpen && selectedEventId && (() => {
+                const evt = events.find(e => e.id === selectedEventId);
+                if (!evt) return null;
+
+                const node = nodesWithEvents.find(n => n.id === evt.ci_id);
+                const isAssigned = evt.ack && evt.ack_by;
+                const assignedTo = evt.ack_by || null;
+
+                // SLA calculation (mock — field not in model yet)
+                const slaMinutes: number | null = (node?.metadata?.sla_minutes as number) ?? null;
+                const ageMs = Date.now() - new Date(evt.created_at).getTime();
+                const ageMinutes = Math.floor(ageMs / 60000);
+                const slaRemaining = slaMinutes !== null ? slaMinutes - ageMinutes : null;
+                const slaCritical = slaRemaining !== null && slaRemaining <= 30;
+
+                // M3: Parse timeline entries from comments[]
+                const parseTimelineEntry = (raw: string) => {
+                    const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
+                    if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
+                    const ownerMatch = raw.match(/^\[OWNERSHIP\] (.+)$/m);
+                    if (ownerMatch) return { type: 'ownership' as const, user: '', body: ownerMatch[1], raw };
+                    const closeMatch = raw.match(/^\[CIERRE/);
+                    if (closeMatch) return { type: 'close' as const, user: '', body: raw, raw };
+                    const forceMatch = raw.match(/^\[CIERRE FORZADO/);
+                    if (forceMatch) return { type: 'force_close' as const, user: '', body: raw, raw };
+                    // Standard format: "user: message (datetime)"
+                    const stdMatch = raw.match(/^(.+?):\s([\s\S]+?)\s\((.+)\)$/);
+                    if (stdMatch) return { type: 'note' as const, user: stdMatch[1], body: stdMatch[2], ts: stdMatch[3], raw };
+                    return { type: 'note' as const, user: 'Sistema', body: raw, raw };
+                };
+
+                const timelineEntries = (evt.comments || []).map(parseTimelineEntry);
+
+                const entryIcon = (type: string) => {
+                    if (type === 'diagnostic') return { icon: 'build', color: 'border-brand-500 text-brand-400' };
+                    if (type === 'ownership') return { icon: 'person_check', color: 'border-emerald-500 text-emerald-400' };
+                    if (type === 'close' || type === 'force_close') return { icon: 'check_circle', color: 'border-neutral-500 text-neutral-400' };
+                    return { icon: 'chat', color: 'border-brand-500 text-brand-400' };
+                };
+
+                // M5 close button state
+                const canClose = closeForcedMode
+                    ? closeForcedReason.trim().length > 0
+                    : closeRootCause !== '' && closeNote.trim().length >= 20;
+
+                return (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-6">
+                    <div className="bg-[#0f1117] border border-white/10 rounded-2xl w-full max-w-[96%] 2xl:max-w-[88%] h-full max-h-[92vh] shadow-2xl flex flex-col overflow-hidden">
+
+                        {/* ── M1: Header — Banda de Contexto de Negocio ── */}
+                        <div className="flex-shrink-0 border-b border-white/10 bg-black/30">
+                            {/* Top row: severity badge + title + close */}
+                            <div className="px-6 pt-5 pb-3 flex justify-between items-start gap-4">
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                        <span className={`px-3 py-1 rounded text-xs font-black uppercase tracking-wider flex-shrink-0 ${evt.severity === 'CRITICAL' ? 'bg-red-500 text-white' : evt.severity === 'WARNING' ? 'bg-yellow-400 text-black' : 'bg-blue-500 text-white'}`}>
+                                            {evt.severity}
+                                        </span>
+                                        <h3 className="text-xl font-black text-white uppercase tracking-tight truncate">{evt.message}</h3>
+                                    </div>
+                                    <div className="mt-2 text-neutral-400 text-xs flex flex-wrap gap-x-4 gap-y-1">
+                                        <span><strong className="text-neutral-300">CI:</strong> {evt.ci_name || '—'}</span>
+                                        <span><strong className="text-neutral-300">Métrica:</strong> {evt.metric_name || '—'}</span>
+                                        <span><strong className="text-neutral-300">Protocolo:</strong> {evt.metric_protocol || 'N/A'}</span>
+                                        <span><strong className="text-neutral-300">Inicio:</strong> {new Date(evt.created_at).toLocaleString()}</span>
+                                    </div>
+                                </div>
+                                <button onClick={() => setCommentModalOpen(false)} className="text-neutral-500 hover:text-white transition-colors flex-shrink-0 mt-1">
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+
+                            {/* Business context strip */}
+                            <div className="px-6 pb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                                <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                                    <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Servicio de negocio</div>
+                                    <div className="text-white font-semibold truncate">{(node?.metadata?.business_service as string) || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                </div>
+                                <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                                    <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Usuarios impactados</div>
+                                    <div className="text-white font-semibold">{(node?.metadata?.impacted_users as string) || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                </div>
+                                <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                                    <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Sede</div>
+                                     <div className="text-white font-semibold">{(node?.metadata?.site as string) ? (node?.metadata?.site as string) : node?.location ? `${node?.location?.lat?.toFixed(2)}, ${node?.location?.long?.toFixed(2)}` : <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                </div>
+                                <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                                    <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Categoría CI</div>
+                                    <div className="text-white font-semibold">{node?.category || node?.type || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                </div>
+                                <div className={`rounded-lg px-3 py-2 text-xs ${slaCritical ? 'bg-red-500/20 border border-red-500/40' : 'bg-white/5'}`}>
+                                    <div className={`uppercase font-bold tracking-wider mb-0.5 ${slaCritical ? 'text-red-400' : 'text-neutral-500'}`}>SLA Restante</div>
+                                    <div className={`font-black text-sm ${slaCritical ? 'text-red-400' : 'text-white'}`}>
+                                        {slaRemaining !== null
+                                            ? slaCritical
+                                                ? `⚠ ${slaRemaining} min`
+                                                : `${slaRemaining} min`
+                                            : <span className="text-neutral-600 italic text-xs">No configurado</span>
+                                        }
+                                    </div>
                                 </div>
                             </div>
-                            <button onClick={() => setCommentModalOpen(false)} className="text-neutral-500 hover:text-white transition-colors">
-                                <span className="material-symbols-outlined">close</span>
-                            </button>
+
+                            {/* ── M2: Ownership Bar ── */}
+                            <div className={`px-6 py-2 border-t border-white/5 flex flex-wrap items-center gap-4 text-xs ${!isAssigned ? 'bg-red-950/30' : 'bg-black/20'}`}>
+                                {/* Assigned to */}
+                                <div className="flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-sm text-neutral-500">person</span>
+                                    {isAssigned ? (
+                                        <span className="text-white font-bold">{assignedTo}</span>
+                                    ) : (
+                                        <span className="flex items-center gap-2">
+                                            <span className="text-red-400 font-bold animate-pulse">Sin asignar</span>
+                                            <button
+                                                onClick={() => handleTakeCase(evt.id)}
+                                                className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold uppercase tracking-wide transition-colors"
+                                            >Tomar caso</button>
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="w-px h-4 bg-white/10" />
+                                {/* Tier */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-neutral-500 uppercase font-bold">Tier:</span>
+                                    <span className="px-2 py-0.5 bg-brand-600/30 border border-brand-500/40 rounded text-brand-300 font-black">{CURRENT_TIER}</span>
+                                </div>
+                                <div className="w-px h-4 bg-white/10" />
+                                {/* Estado */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-neutral-500 uppercase font-bold">Estado:</span>
+                                    <span className={`px-2 py-0.5 rounded font-black uppercase text-[10px] ${
+                                        evt.status === 'OPEN' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                                        evt.status === 'ACK'  ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                                        'bg-neutral-500/20 text-neutral-400 border border-neutral-500/30'
+                                    }`}>{
+                                        evt.status === 'OPEN' ? 'Nuevo' :
+                                        evt.status === 'ACK'  ? 'En atención' :
+                                        evt.status === 'CLOSED' ? 'Cerrado' : evt.status
+                                    }</span>
+                                </div>
+                                <div className="w-px h-4 bg-white/10" />
+                                {/* Opened by */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-neutral-500 uppercase font-bold">Abierto por:</span>
+                                    <span className="text-neutral-300">Sistema / SNMP Collector</span>
+                                </div>
+                                <div className="w-px h-4 bg-white/10" />
+                                {/* Age */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-neutral-500 uppercase font-bold">Tiempo activo:</span>
+                                    <span className="text-neutral-200 font-mono">{ageMinutes < 60 ? `${ageMinutes}m` : `${Math.floor(ageMinutes/60)}h ${ageMinutes%60}m`}</span>
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="flex-1 flex overflow-hidden">
-                            {/* Left: Timeline (Fixed Width - Responsive) */}
-                            <div className="w-[250px] lg:w-[300px] xl:w-[350px] flex-shrink-0 p-4 md:p-6 overflow-y-auto custom-scrollbar border-r border-white/10 flex flex-col bg-surface-900 transition-all">
-                                <h4 className="text-sm font-bold text-neutral-400 uppercase mb-4 flex items-center gap-2">
-                                    <span className="material-symbols-outlined text-brand-400">history</span>
-                                    Investigation Timeline
-                                </h4>
-                                <div className="space-y-4 flex-1">
-                                    <div className="relative pl-6 border-l-2 border-red-500/30 pb-4">
-                                        <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-surface-900 border-2 border-red-500 flex items-center justify-center">
-                                            <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
-                                        </div>
-                                        <div className="text-xs text-neutral-500 mb-1">{new Date(events.find(e => e.id === selectedEventId)?.created_at || '').toLocaleString()}</div>
-                                        <div className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm text-neutral-200">
-                                            <span className="text-red-400 font-bold">EVENT TRIGGERED:</span> {events.find(e => e.id === selectedEventId)?.message}
-                                        </div>
-                                    </div>
-                                    {events.find(e => e.id === selectedEventId)?.comments?.map((c, i) => (
-                                        <div key={i} className="relative pl-6 border-l-2 border-brand-500/30 pb-4">
-                                            <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-surface-900 border-2 border-brand-500 flex items-center justify-center">
-                                                <span className="material-symbols-outlined text-[10px] text-brand-400">chat</span>
-                                            </div>
-                                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 text-sm text-neutral-300 whitespace-pre-wrap font-mono">
-                                                {c}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                        {/* ── Body: 3 columns ── */}
+                        <div className="flex-1 flex overflow-hidden min-h-0">
 
-                            {/* Middle: Topology Mini-Map (Fluid - Takes remaining space) */}
-                            <div className="flex-1 border-r border-white/10 bg-black/20 flex flex-col min-w-[200px]">
-                                <div className="p-4 md:p-6 border-b border-white/10 flex-1 flex flex-col min-h-0">
-                                    <h4 className="text-sm font-bold text-neutral-400 uppercase mb-4 flex items-center gap-2 flex-shrink-0">
-                                        <span className="material-symbols-outlined text-brand-400">hub</span>
-                                        Dependency Impact
+                            {/* Left: M3 Timeline */}
+                            <div className="w-[270px] lg:w-[310px] xl:w-[360px] flex-shrink-0 flex flex-col border-r border-white/10 bg-[#0f1117]">
+                                <div className="px-5 pt-5 pb-3 flex-shrink-0 border-b border-white/5">
+                                    <h4 className="text-xs font-black text-neutral-400 uppercase tracking-widest flex items-center gap-2">
+                                        <span className="material-symbols-outlined text-brand-400 text-sm">history</span>
+                                        Timeline de Investigación
                                     </h4>
-                                    <div className="flex-1 min-h-0 w-full relative">
-                                        <DependencyMiniMap
-                                            ciId={events.find(e => e.id === selectedEventId)?.ci_id}
-                                            nodes={nodesWithEvents}
-                                            links={links}
-                                            event={events.find(e => e.id === selectedEventId)}
-                                        />
+                                    <p className="text-[10px] text-neutral-600 mt-1">Registro append-only · fuente de auditoría</p>
+                                </div>
+                                <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 space-y-3">
+                                    {/* Fixed first entry */}
+                                    <div className="relative pl-6 border-l-2 border-red-500/40 pb-3">
+                                        <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-[#0f1117] border-2 border-red-500 flex items-center justify-center">
+                                            <div className="w-1.5 h-1.5 bg-red-500 rounded-full" />
+                                        </div>
+                                        <div className="text-[10px] text-neutral-600 font-mono mb-1">{new Date(evt.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · Sistema · Evento disparador</div>
+                                        <div className="bg-red-950/30 border border-red-500/20 p-2.5 rounded-lg text-xs text-red-200 leading-relaxed">
+                                            <span className="font-black text-red-400">DISPARADOR:</span> {evt.message}
+                                        </div>
                                     </div>
-                                    <div className="mt-4 text-xs text-neutral-500 text-center italic flex-shrink-0">
-                                        Visualizing direct dependencies and impact propagation.
-                                    </div>
+
+                                    {/* Dynamic entries */}
+                                    {timelineEntries.map((entry, i) => {
+                                        const { icon, color } = entryIcon(entry.type);
+                                        return (
+                                            <div key={i} className={`relative pl-6 border-l-2 ${color.includes('emerald') ? 'border-emerald-500/30' : color.includes('neutral') ? 'border-neutral-500/30' : 'border-brand-500/30'} pb-3`}>
+                                                <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-[#0f1117] border-2 ${color.includes('emerald') ? 'border-emerald-500' : color.includes('neutral') ? 'border-neutral-500' : 'border-brand-500'} flex items-center justify-center`}>
+                                                    <span className={`material-symbols-outlined text-[8px] ${color.split(' ')[1]}`}>{icon}</span>
+                                                </div>
+                                                <div className={`text-[10px] font-mono mb-1 ${color.includes('emerald') ? 'text-emerald-600' : color.includes('neutral') ? 'text-neutral-600' : 'text-neutral-600'}`}>
+                                                    {entry.ts ? new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'} · {entry.user || CURRENT_USER} · {
+                                                        entry.type === 'diagnostic' ? 'Diagnóstico ejecutado' :
+                                                        entry.type === 'ownership' ? 'Ownership asignado' :
+                                                        entry.type === 'close' ? 'Evento cerrado' :
+                                                        entry.type === 'force_close' ? 'Cierre forzado' :
+                                                        'Nota de investigación'
+                                                    }
+                                                </div>
+                                                <div className={`p-2.5 rounded-lg text-xs leading-relaxed whitespace-pre-wrap font-mono border ${
+                                                    entry.type === 'diagnostic' ? 'bg-brand-950/30 border-brand-500/15 text-brand-200' :
+                                                    entry.type === 'ownership' ? 'bg-emerald-950/30 border-emerald-500/15 text-emerald-200' :
+                                                    entry.type === 'close' || entry.type === 'force_close' ? 'bg-neutral-900/50 border-neutral-700/30 text-neutral-300' :
+                                                    'bg-white/5 border-white/5 text-neutral-300'
+                                                }`}>
+                                                    {entry.body}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Add note */}
+                                <div className="flex-shrink-0 border-t border-white/5 px-5 py-4">
+                                    <h4 className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-2">Agregar nota</h4>
+                                    <textarea
+                                        className="w-full bg-black/50 border border-white/10 rounded-lg p-2.5 text-xs text-white outline-none focus:border-brand-500 h-20 resize-none mb-2"
+                                        placeholder="Escribe tus notas de investigación..."
+                                        value={commentText}
+                                        onChange={e => setCommentText(e.target.value)}
+                                    />
+                                    <button
+                                        onClick={submitComment}
+                                        disabled={!commentText.trim()}
+                                        className="w-full py-2 bg-brand-700 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded text-xs font-bold transition-colors"
+                                    >Guardar nota</button>
                                 </div>
                             </div>
 
-                            {/* Right: Actions & Related (Fixed Width - Responsive) */}
-                            <div className="w-[250px] lg:w-[300px] xl:w-[320px] flex-shrink-0 bg-black/20 p-4 md:p-6 flex flex-col gap-6 dark-scroll-area overflow-y-auto transition-all">
-                                <RelatedAlarmsPanel ciId={events.find(e => e.id === selectedEventId)?.ci_id} currentEventId={selectedEventId} />
+                            {/* Center: M4 Dependency Impact (dominant) */}
+                            <div className="flex-1 flex flex-col min-w-0 bg-black/20 border-r border-white/10">
+                                <div className="px-5 pt-5 pb-3 flex-shrink-0 border-b border-white/5 flex items-center justify-between">
+                                    <h4 className="text-xs font-black text-neutral-400 uppercase tracking-widest flex items-center gap-2">
+                                        <span className="material-symbols-outlined text-brand-400 text-sm">hub</span>
+                                        Mapa de Impacto y Dependencias
+                                    </h4>
+                                    <span className="text-[10px] text-neutral-600">Arrastra para mover · Scroll para zoom</span>
+                                </div>
+                                <div className="flex-1 min-h-0 p-4">
+                                    <DependencyMiniMap
+                                        ciId={evt.ci_id}
+                                        nodes={nodesWithEvents}
+                                        links={links}
+                                        event={evt}
+                                    />
+                                </div>
+                                <div className="flex-shrink-0 px-5 pb-3 text-[10px] text-neutral-600 text-center italic">
+                                    Blast radius visualizado hasta 3 niveles de dependencia directa
+                                </div>
+                            </div>
 
-                                <div className="border-t border-white/5 pt-4">
-                                    <h4 className="text-xs font-bold text-neutral-500 uppercase mb-3">Quick Actions</h4>
+                            {/* Right: Actions */}
+                            <div className="w-[260px] lg:w-[300px] xl:w-[330px] flex-shrink-0 flex flex-col bg-[#0f1117] overflow-y-auto custom-scrollbar">
+
+                                {/* Related alarms */}
+                                <div className="px-5 pt-5 pb-3 border-b border-white/5">
+                                    <RelatedAlarmsPanel ciId={evt.ci_id} currentEventId={selectedEventId} />
+                                </div>
+
+                                {/* Quick actions */}
+                                <div className="px-5 py-4 border-b border-white/5">
+                                    <h4 className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-3">Acciones rápidas</h4>
                                     <div className="flex flex-col gap-2">
-                                        {events.find(e => e.id === selectedEventId)?.status === 'OPEN' && (
-                                            <button onClick={() => handleAck(selectedEventId!)} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-bold text-white flex items-center justify-center gap-2"><span className="material-symbols-outlined text-lg">check_circle</span>Acknowledge</button>
-                                        )}
-                                        <button onClick={() => handleClose(selectedEventId!)} className="w-full py-2 bg-neutral-700 hover:bg-neutral-600 rounded text-sm font-bold text-white flex items-center justify-center gap-2"><span className="material-symbols-outlined text-lg">cancel</span>Force Close</button>
-                                    </div>
-                                </div>
-                                <div className="flex-1">
-                                    <h4 className="text-xs font-bold text-neutral-500 uppercase mb-3 text-brand-400">Troubleshooting Tools</h4>
-                                    <div className="bg-surface-950 rounded-xl p-1 shadow-inner border border-white/5">
-                                        <div className="p-3">
-                                            <div className="text-xs font-bold text-white mb-2">Automated Diagnostics</div>
+                                        {evt.status === 'OPEN' && (
                                             <button
-                                                onClick={async () => {
-                                                    setIsDiagnosing(true);
-                                                    try {
-                                                        await api.post(`/events/${selectedEventId}/diagnose`, {});
-                                                        await fetchData();
-                                                    } catch (e) {
-                                                        console.error(e);
-                                                    } finally {
-                                                        setIsDiagnosing(false);
-                                                    }
-                                                }}
-                                                disabled={isDiagnosing}
-                                                className={`w-full py-2 border border-brand-500/30 rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 ${isDiagnosing ? 'bg-brand-900/20 text-brand-500 cursor-wait' : 'bg-brand-900/50 hover:bg-brand-900 text-brand-400'}`}
+                                                onClick={() => handleAck(selectedEventId!)}
+                                                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-colors"
                                             >
-                                                <span className={`material-symbols-outlined text-sm ${isDiagnosing ? 'animate-spin' : ''}`}>
-                                                    {isDiagnosing ? 'progress_activity' : 'build'}
-                                                </span>
-                                                {isDiagnosing ? 'Running Checks...' : 'Run Check'}
+                                                <span className="material-symbols-outlined text-base">check_circle</span>
+                                                Reconocer (Ack)
                                             </button>
-                                        </div>
+                                        )}
+
+                                        {/* M5: Close flow */}
+                                        {!closeFlowOpen ? (
+                                            <button
+                                                onClick={() => setCloseFlowOpen(true)}
+                                                className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-700 border border-white/10 rounded-lg text-sm font-bold text-neutral-300 flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined text-base">cancel</span>
+                                                Cerrar Evento
+                                            </button>
+                                        ) : (
+                                            <div className="bg-neutral-900/80 border border-white/10 rounded-xl p-4 space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <h5 className="text-xs font-black text-white uppercase">Cierre de Evento</h5>
+                                                    <button onClick={() => setCloseFlowOpen(false)} className="text-neutral-600 hover:text-white">
+                                                        <span className="material-symbols-outlined text-sm">close</span>
+                                                    </button>
+                                                </div>
+
+                                                {!closeForcedMode ? (
+                                                    <>
+                                                        {/* Step 1: Root cause */}
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">
+                                                                1. Causa raíz <span className="text-red-500">*</span>
+                                                            </label>
+                                                            <select
+                                                                value={closeRootCause}
+                                                                onChange={e => setCloseRootCause(e.target.value)}
+                                                                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-xs text-white outline-none focus:border-brand-500"
+                                                            >
+                                                                <option value="">Seleccionar causa...</option>
+                                                                <option value="Falla de hardware">Falla de hardware</option>
+                                                                <option value="Error de configuración">Error de configuración</option>
+                                                                <option value="Problema de capacidad / recursos">Problema de capacidad / recursos</option>
+                                                                <option value="Falla de proveedor / enlace externo">Falla de proveedor / enlace externo</option>
+                                                                <option value="Causa desconocida">Causa desconocida (requiere nota)</option>
+                                                            </select>
+                                                        </div>
+
+                                                        {/* Step 2: Close note */}
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">
+                                                                2. Nota de cierre <span className="text-neutral-600">(mín. 20 chars)</span> <span className="text-red-500">*</span>
+                                                            </label>
+                                                            <textarea
+                                                                value={closeNote}
+                                                                onChange={e => setCloseNote(e.target.value)}
+                                                                placeholder="Describe la resolución del incidente..."
+                                                                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-xs text-white outline-none focus:border-brand-500 h-20 resize-none"
+                                                            />
+                                                            <div className={`text-[10px] mt-0.5 text-right ${closeNote.length < 20 ? 'text-neutral-600' : 'text-emerald-500'}`}>
+                                                                {closeNote.length}/20 mín
+                                                            </div>
+                                                        </div>
+
+                                                        <button
+                                                            onClick={handleStructuredClose}
+                                                            disabled={!canClose}
+                                                            className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black uppercase transition-colors"
+                                                        >Confirmar Cierre</button>
+
+                                                        {/* T2+ forced close option */}
+                                                        {(CURRENT_TIER === 'T2' || CURRENT_TIER === 'T3') && (
+                                                            <button
+                                                                onClick={() => setCloseForcedMode(true)}
+                                                                className="w-full py-1.5 text-[10px] text-neutral-600 hover:text-red-400 transition-colors uppercase font-bold"
+                                                            >Cierre forzado ({CURRENT_TIER})</button>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div className="text-[10px] text-red-400 font-bold uppercase bg-red-950/30 border border-red-500/20 rounded px-2 py-1">
+                                                            ⚠ Cierre forzado — quedará registrado en el timeline
+                                                        </div>
+                                                        <textarea
+                                                            value={closeForcedReason}
+                                                            onChange={e => setCloseForcedReason(e.target.value)}
+                                                            placeholder="Motivo del cierre forzado..."
+                                                            className="w-full bg-black/50 border border-red-500/30 rounded-lg p-2 text-xs text-white outline-none focus:border-red-500 h-20 resize-none"
+                                                        />
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => setCloseForcedMode(false)} className="flex-1 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs font-bold">Cancelar</button>
+                                                            <button
+                                                                onClick={handleStructuredClose}
+                                                                disabled={!canClose}
+                                                                className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white rounded-lg text-xs font-black transition-colors"
+                                                            >Forzar Cierre</button>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
-                                <div>
-                                    <h4 className="text-xs font-bold text-neutral-500 uppercase mb-3">Add Note</h4>
-                                    <textarea className="w-full bg-black/50 border border-white/10 rounded-lg p-3 text-xs text-white outline-none focus:border-brand-500 h-24 resize-none mb-2" placeholder="Enter investigation notes..." value={commentText} onChange={e => setCommentText(e.target.value)} />
-                                    <button onClick={submitComment} className="w-full py-2 bg-white/10 hover:bg-white/20 text-white rounded text-sm font-bold">Save Note</button>
+                                {/* Diagnostics */}
+                                <div className="px-5 py-4">
+                                    <h4 className="text-[10px] font-black text-brand-400 uppercase tracking-widest mb-3">Herramientas de Diagnóstico</h4>
+                                    <div className="bg-black/40 rounded-xl border border-white/5 p-3">
+                                        <div className="text-xs font-bold text-white mb-2">Diagnóstico automatizado</div>
+                                        <button
+                                            onClick={async () => {
+                                                setIsDiagnosing(true);
+                                                try {
+                                                    await api.post(`/events/${selectedEventId}/diagnose`, {});
+                                                    await fetchData();
+                                                } catch (e) { console.error(e); }
+                                                finally { setIsDiagnosing(false); }
+                                            }}
+                                            disabled={isDiagnosing}
+                                            className={`w-full py-2.5 border border-brand-500/30 rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 ${isDiagnosing ? 'bg-brand-900/20 text-brand-500 cursor-wait' : 'bg-brand-900/50 hover:bg-brand-900 text-brand-400'}`}
+                                        >
+                                            <span className={`material-symbols-outlined text-sm ${isDiagnosing ? 'animate-spin' : ''}`}>
+                                                {isDiagnosing ? 'progress_activity' : 'build'}
+                                            </span>
+                                            {isDiagnosing ? 'Ejecutando...' : 'Ejecutar diagnóstico'}
+                                        </button>
+                                        <p className="text-[10px] text-neutral-600 mt-2 leading-relaxed">El resultado se registrará automáticamente en el timeline.</p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            )
-            }
+                );
+            })()}
         </div >
     );
 };
