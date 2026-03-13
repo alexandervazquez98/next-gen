@@ -57,18 +57,21 @@ export interface NodeRenderConfig {
  */
 export function buildLinkConfig(
     link: { relationship?: string },
-    _source: { hasCritical?: boolean; hasWarning?: boolean },
+    source: { hasCritical?: boolean; hasWarning?: boolean },
     target: { hasCritical?: boolean; hasWarning?: boolean }
 ): LinkRenderConfig {
-    const isCritical = Boolean(target.hasCritical);
-    const isWarning = Boolean(target.hasWarning);
+    // Use the worst status across BOTH endpoints so that a CRITICAL source
+    // (e.g. an alarmed CI connecting toward the root) is always reflected in
+    // the line color — not just when the target is the alarmed node.
+    const isCritical = Boolean(source.hasCritical) || Boolean(target.hasCritical);
+    const isWarning  = !isCritical && (Boolean(source.hasWarning) || Boolean(target.hasWarning));
 
-    // Resolve base color from target status
+    // Resolve base color from worst-endpoint status
     const color = isCritical
-        ? STATUS_COLORS.CRITICAL ?? '#ef4444'
+        ? STATUS_COLORS.CRITICAL   // '#ef4444'
         : isWarning
-            ? '#f97316'
-            : STATUS_COLORS.OK ?? '#3b82f6';
+            ? STATUS_COLORS.WARNING    // '#f59e0b'
+            : STATUS_COLORS.OK;        // '#10b981'
 
     const relationship = link.relationship ?? 'DEPENDS_ON';
 
@@ -76,8 +79,8 @@ export function buildLinkConfig(
         case 'CONNECTS_TO':
             return {
                 color,
-                weight: isCritical ? 3 : 2,
-                opacity: 0.75,
+                weight: isCritical ? 5 : isWarning ? 4 : 3,
+                opacity: 0.85,
                 dashArray: undefined,
                 animate: false,
                 animFrom: '0',
@@ -88,9 +91,10 @@ export function buildLinkConfig(
 
         case 'HOSTED_ON':
             return {
-                color: 'rgba(156,163,175,0.5)',
-                weight: 1,
-                opacity: 0.45,
+                // Keep subtle for HOSTED_ON but still reflect critical state
+                color: isCritical ? STATUS_COLORS.CRITICAL : isWarning ? STATUS_COLORS.WARNING : 'rgba(156,163,175,0.5)',
+                weight: isCritical ? 3 : isWarning ? 2 : 1.5,
+                opacity: isCritical ? 0.6 : 0.45,
                 dashArray: '2, 5',
                 animate: false,
                 animFrom: '0',
@@ -105,11 +109,11 @@ export function buildLinkConfig(
             const dur = isCritical ? '0.8s' : isWarning ? '1.6s' : '2.4s';
             return {
                 color,
-                weight: isCritical ? 3 : isWarning ? 2.5 : 2,
-                opacity: 0.8,
-                dashArray: '5, 8',
+                weight: isCritical ? 5 : isWarning ? 4 : 3,
+                opacity: 0.9,
+                dashArray: '6, 8',
                 animate: true,
-                animFrom: '26',
+                animFrom: '28',
                 animTo: '0',
                 animDur: dur,
                 showTrafficPulse: false,
