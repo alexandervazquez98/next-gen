@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -9,8 +10,8 @@ from postgres_db import get_pg_db
 from repositories import user_repo
 from utils.security import verify_password, get_password_hash
 
-# SECRET CONFIG (Should be in .env)
-SECRET_KEY = "super-secret-key-change-me-in-production"
+# SECRET CONFIG
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key-change-me-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480 # 8 Hours
 
