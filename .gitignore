@@ -133,3 +133,6 @@ coverage.xml
 *.cover
 .eslintcache
 .stylelintcache
+
+# Artifacts de OpenCode
+.artifacts/

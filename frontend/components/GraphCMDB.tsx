@@ -1,8 +1,19 @@
 
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef, RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import { GraphNode, GraphLink } from '../types';
 import { STATUS_COLORS } from '../utils/status';
+import { api } from '../services/api';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TopologyResponse {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
 
 interface GraphCMDBProps {
   nodes: GraphNode[];
@@ -10,14 +21,202 @@ interface GraphCMDBProps {
   onNodeClick: (node: GraphNode) => void;
 }
 
+interface AnimatedLinksLayerProps {
+  svgRef: RefObject<SVGSVGElement | null>;
+  /** Stable ref that holds the latest graph data — never causes re-renders */
+  dataRef: RefObject<TopologyResponse | null>;
+  /** Callback ref set by GraphCMDB so AnimatedLinksLayer can register its D3 updater */
+  onD3UpdaterReady: RefObject<((links: GraphLink[]) => void) | null>;
+}
+
+// ---------------------------------------------------------------------------
+// useGraphData — polling hook
+// ---------------------------------------------------------------------------
+
+/**
+ * useGraphData
+ *
+ * Polls /api/topology every `intervalMs` milliseconds.
+ * Data is stored exclusively in a Ref — no React state is ever updated,
+ * so polling never triggers a component re-render.
+ *
+ * The `onNewData` callback ref is called with the fresh payload so that
+ * D3 visualizations can update their DOM directly.
+ *
+ * @param onNewData - Stable RefObject pointing to a D3 updater fn (or null)
+ * @param intervalMs - Polling interval in milliseconds (default 30 000)
+ * @returns dataRef — a Ref always containing the latest topology data
+ */
+function useGraphData(
+  onNewData: RefObject<((data: TopologyResponse) => void) | null>,
+  intervalMs = 30_000,
+): RefObject<TopologyResponse | null> {
+  const dataRef = useRef<TopologyResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchTopology = async () => {
+      try {
+        const data = await api.get<TopologyResponse>('/topology');
+        if (cancelled || !data) return;
+
+        // Store latest data in ref — no setState, no re-render
+        dataRef.current = data;
+
+        // Notify D3 updater if one is registered
+        onNewData.current?.(data);
+      } catch (err) {
+        // Network / auth errors are handled by api.ts (401 → redirect, etc.)
+        console.error('[useGraphData] fetch error:', err);
+      }
+    };
+
+    // Kick off immediately, then repeat on interval
+    fetchTopology();
+    const intervalId = setInterval(fetchTopology, intervalMs);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [onNewData, intervalMs]); // onNewData is a stable ref, intervalMs is a primitive
+
+  return dataRef;
+}
+
+/**
+ * AnimatedLinksLayer Component
+ *
+ * Renders animated D3 link overlays via React Portal into #d3-portal-root.
+ * This component is intentionally decoupled from React's render cycle:
+ * - useRef provides direct DOM access without triggering re-renders
+ * - useEffect with empty dependency array initializes D3 animations once on mount
+ *
+ * Portal ensures the SVG overlay sits outside the React component tree,
+ * preventing React reconciliation from interfering with D3 mutations.
+ *
+ * Polling integration:
+ * - onD3UpdaterReady receives a D3 update function after mount.
+ * - When useGraphData fetches new data it calls that function directly,
+ *   updating pulse circle counts via DOM mutation — zero React re-renders.
+ */
+const AnimatedLinksLayer = ({ svgRef, dataRef, onD3UpdaterReady }: AnimatedLinksLayerProps) => {
+  const portalSvgRef = useRef<SVGSVGElement>(null);
+
+  // Initialize D3 animations once — intentionally empty dep array
+  // to prevent D3 from being re-initialized on every React render
+  useEffect(() => {
+    const portalRoot = document.getElementById('d3-portal-root');
+    if (!portalRoot || !portalSvgRef.current || !svgRef.current) return;
+
+    // Mirror the host SVG dimensions via direct DOM access (no React state)
+    const hostRect = svgRef.current.getBoundingClientRect();
+    const portalSvg = d3.select(portalSvgRef.current)
+      .attr('width', hostRect.width)
+      .attr('height', hostRect.height)
+      .style('position', 'absolute')
+      .style('top', `${hostRect.top + window.scrollY}px`)
+      .style('left', `${hostRect.left + window.scrollX}px`)
+      .style('pointer-events', 'none')
+      .style('overflow', 'visible');
+
+    // D3 pulse animation group — lives entirely outside React tree
+    const pulseGroup = portalSvg.append('g').attr('class', 'd3-pulse-layer');
+
+    /**
+     * renderPulseMarkers
+     *
+     * Performs a D3 data-join on CONNECTS_TO links.
+     * Called once on mount (with initial links from dataRef) and then
+     * directly from the polling callback whenever new data arrives —
+     * without ever going through React's render cycle.
+     */
+    const renderPulseMarkers = (links: GraphLink[]) => {
+      const CONNECTS_TO = links.filter((l: any) => l.relationship === 'CONNECTS_TO');
+
+      // D3 key-join so existing circles are reused, new ones are added,
+      // removed ones are cleaned up — all as direct DOM mutations.
+      pulseGroup
+        .selectAll<SVGCircleElement, GraphLink>('circle')
+        .data(CONNECTS_TO, (d: any) => d.id)
+        .join(
+          enter => enter.append('circle')
+            .attr('r', 5)
+            .attr('fill', '#10b981')
+            .attr('opacity', 0.8),
+          update => update, // no attribute change needed on update
+          exit => exit.remove(),
+        );
+    };
+
+    // Seed with whatever data is already in the ref (may be null on very first render)
+    const initialLinks = dataRef.current?.links ?? [];
+    renderPulseMarkers(initialLinks);
+
+    // Register the D3 updater so useGraphData can call it directly on poll
+    onD3UpdaterReady.current = (links: GraphLink[]) => renderPulseMarkers(links);
+
+    // Sync portal SVG position on window resize via direct DOM — no React state
+    const handleResize = () => {
+      if (!svgRef.current || !portalSvgRef.current) return;
+      const rect = svgRef.current.getBoundingClientRect();
+      d3.select(portalSvgRef.current)
+        .attr('width', rect.width)
+        .attr('height', rect.height)
+        .style('top', `${rect.top + window.scrollY}px`)
+        .style('left', `${rect.left + window.scrollX}px`);
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      // Unregister updater and clean up DOM — bypasses React reconciliation intentionally
+      onD3UpdaterReady.current = null;
+      portalSvg.selectAll('*').remove();
+    };
+  }, []); // Empty array: D3 owns this DOM subtree after mount
+
+  const portalRoot = document.getElementById('d3-portal-root');
+  if (!portalRoot) return null;
+
+  return createPortal(
+    <svg ref={portalSvgRef} style={{ position: 'absolute', pointerEvents: 'none' }} />,
+    portalRoot
+  );
+};
+
 /**
  * GraphCMDB Component
- * 
+ *
  * Visualizes the topology of Configuration Items (CIs) and their relationships using D3.js.
  * Implements force-directed graph with auto-centering and status-based coloring.
+ *
+ * Polling architecture:
+ * - useGraphData polls /api/topology every 30 s and stores data in a Ref.
+ * - d3UpdaterRef is a callback ref bridging useGraphData → AnimatedLinksLayer.
+ *   When new data arrives, useGraphData calls d3UpdaterRef.current(data) which
+ *   updates the pulse markers directly in the D3 DOM — no React state, no re-renders.
+ * - The force-simulation (nodes / links props) can still be driven externally;
+ *   the polling data augments it without replacing the prop-driven flow.
  */
-const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
+const GraphCMDB = ({ nodes, links, onNodeClick }: GraphCMDBProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Ref that AnimatedLinksLayer will populate with its D3 updater function
+  const d3UpdaterRef = useRef<((links: GraphLink[]) => void) | null>(null);
+
+  // Adapter: useGraphData calls back with TopologyResponse; we forward only links to D3.
+  // Assigned inline (not in useEffect) so it always captures the latest d3UpdaterRef
+  // without creating a new function reference on every render (React Compiler handles this).
+  const onNewDataRef = useRef<((data: TopologyResponse) => void) | null>(null);
+  onNewDataRef.current = (data: TopologyResponse) => {
+    d3UpdaterRef.current?.(data.links);
+  };
+
+  // Start polling — dataRef holds the latest snapshot without triggering re-renders
+  const dataRef = useGraphData(onNewDataRef);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -229,6 +428,11 @@ const GraphCMDB: React.FC<GraphCMDBProps> = ({ nodes, links, onNodeClick }) => {
   return (
     <div className="w-full h-full relative overflow-hidden bg-surface-950 grid-bg">
       <svg ref={svgRef} className="w-full h-full" />
+      <AnimatedLinksLayer
+        svgRef={svgRef}
+        dataRef={dataRef}
+        onD3UpdaterReady={d3UpdaterRef}
+      />
       <div className="absolute bottom-4 left-4 flex flex-col gap-2 p-3 glass rounded-lg text-xs pointer-events-none select-none">
         <div className="flex items-center gap-2"><div className="w-3 h-3 bg-brand-500 rounded-full"></div> Healthy CI</div>
         <div className="flex items-center gap-2"><div className="w-3 h-3 bg-orange-500 rounded-full"></div> Performance Warning</div>

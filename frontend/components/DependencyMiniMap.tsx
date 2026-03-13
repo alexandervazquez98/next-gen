@@ -115,7 +115,7 @@ const DependencyMiniMap: React.FC<DependencyMiniMapProps> = ({ ciId, nodes, link
         const width = 800;
         const centerX = width / 2;
         const START_Y = 80;
-        const LEVEL_HEIGHT = 160;   // Vertical space between rows
+        const LEVEL_HEIGHT = 185;   // Vertical space between rows (increased for M4 status label)
         const NODE_SPACING_X = 180; // Horizontal space between nodes
 
         const finalNodes: any[] = [];
@@ -438,24 +438,34 @@ const DependencyMiniMap: React.FC<DependencyMiniMapProps> = ({ ciId, nodes, link
                         const isRoot = n.level === 0;
                         const size = isRoot ? 45 : 32;
 
-                        // Determine label position based on hierarchy or preference
-                        // Standard: Below the node
+                        // M4: Status text & color — always visible, no hover required
+                        const isCritical = n.hasCritical;
+                        const isWarning = !isCritical && n.hasWarning;
+                        const statusText = isCritical ? 'CAÍDO' : isWarning ? 'WARNING' : 'ok';
+                        const statusColor = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#10b981';
+                        const borderColor = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#3f3f46';
 
                         return (
-                            <g key={`label-${n.id}`} transform={`translate(${n.x},${n.y}) pointer-events-none`}>
-                                <g transform={`translate(0, ${size + 22})`}>
-                                    {/* Pill Background for Readability */}
-                                    <rect x="-60" y="-12" width="120" height="20" rx="6" fill="rgba(0,0,0,0.85)" stroke={n.hasCritical ? '#ef4444' : n.hasWarning ? '#eab308' : '#3f3f46'} strokeWidth="1" />
-                                    <text y="2" textAnchor="middle" fill="#fff" fontSize="10" fontWeight="bold" className="select-none tracking-wide">{n.label}</text>
-                                </g>
-
-                                {/* Root Badge */}
+                            <g key={`label-${n.id}`} transform={`translate(${n.x},${n.y})`} style={{ pointerEvents: 'none' }}>
+                                {/* Root Badge — above the node, prominent blue */}
                                 {isRoot && (
-                                    <g transform={`translate(0, ${-size - 18})`}>
-                                        <rect x="-35" y="-10" width="70" height="16" rx="4" fill="#3b82f6" stroke="#3b82f6" strokeWidth="1" />
-                                        <text y="2" textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold">ROOT CI</text>
+                                    <g transform={`translate(0, ${-size - 22})`}>
+                                        <rect x="-40" y="-11" width="80" height="18" rx="5" fill="#2563eb" stroke="#60a5fa" strokeWidth="1.5" />
+                                        <text y="3" textAnchor="middle" fill="#fff" fontSize="11" fontWeight="bold">ROOT CI</text>
                                     </g>
                                 )}
+
+                                {/* Name pill — below node, min 12px font */}
+                                <g transform={`translate(0, ${size + 18})`}>
+                                    <rect x="-62" y="-13" width="124" height="22" rx="6" fill="rgba(0,0,0,0.88)" stroke={borderColor} strokeWidth="1.2" />
+                                    <text y="3" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold" fontFamily="monospace">{n.label}</text>
+                                </g>
+
+                                {/* M4: Status sub-label — always visible below name pill */}
+                                <g transform={`translate(0, ${size + 46})`}>
+                                    <rect x="-30" y="-10" width="60" height="16" rx="4" fill="rgba(0,0,0,0.75)" stroke={statusColor} strokeWidth="1" />
+                                    <text y="2" textAnchor="middle" fill={statusColor} fontSize="11" fontWeight="bold" letterSpacing="0.5">{statusText}</text>
+                                </g>
                             </g>
                         );
                     })}
