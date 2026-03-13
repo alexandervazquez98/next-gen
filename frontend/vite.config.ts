@@ -25,7 +25,17 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
-    }
+    },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: ['./test-setup.ts'],
+      include: ['**/__tests__/**/*.{test,spec}.{ts,tsx}'],
+      coverage: {
+        reporter: ['text', 'lcov'],
+        include: ['components/**/*.{ts,tsx}'],
+      },
+    },
   };
 });
 // Trigger Re-build

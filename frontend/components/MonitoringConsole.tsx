@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Circle, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AntPath } from 'leaflet-ant-path';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import DependencyMiniMap from './DependencyMiniMap';
@@ -21,29 +20,174 @@ const DefaultIcon = L.icon({
 
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// Custom Icons for Map
-const CriticalIcon = L.icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
-});
-const WarningIcon = L.icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-gold.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
-});
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface LinkRenderConfig {
+    color: string;
+    weight: number;
+    opacity: number;
+    dashArray?: string;
+    animate: boolean;
+    animFrom: string;
+    animTo: string;
+    animDur: string;
+    showTrafficPulse: boolean;
+}
+
+export interface NodeRenderConfig {
+    color: string;
+    pixelRadius: number;
+    fillOpacity: number;
+    weight: number;
+    showAura: boolean;
+    auraRadius: number;
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers — exported for unit tests
+// ---------------------------------------------------------------------------
 
 /**
- * AnimatedPolyline Component
- * Bypasses React-Leaflet's virtual DOM by deterministically appending a declarative SVG <animate> tag.
+ * buildLinkConfig
+ *
+ * Determines how to render a map link based on relationship type and
+ * the status of the target node. Pure function — no side effects.
  */
-const AnimatedPolyline: React.FC<any> = ({ positions, pathOptions, animationConfig }) => {
+export function buildLinkConfig(
+    link: { relationship?: string },
+    _source: { hasCritical?: boolean; hasWarning?: boolean },
+    target: { hasCritical?: boolean; hasWarning?: boolean }
+): LinkRenderConfig {
+    const isCritical = Boolean(target.hasCritical);
+    const isWarning = Boolean(target.hasWarning);
+
+    // Resolve base color from target status
+    const color = isCritical
+        ? STATUS_COLORS.CRITICAL ?? '#ef4444'
+        : isWarning
+            ? '#f97316'
+            : STATUS_COLORS.OK ?? '#3b82f6';
+
+    const relationship = link.relationship ?? 'DEPENDS_ON';
+
+    switch (relationship) {
+        case 'CONNECTS_TO':
+            return {
+                color,
+                weight: isCritical ? 3 : 2,
+                opacity: 0.75,
+                dashArray: undefined,
+                animate: false,
+                animFrom: '0',
+                animTo: '0',
+                animDur: '0s',
+                showTrafficPulse: true,
+            };
+
+        case 'HOSTED_ON':
+            return {
+                color: 'rgba(156,163,175,0.5)',
+                weight: 1,
+                opacity: 0.45,
+                dashArray: '2, 5',
+                animate: false,
+                animFrom: '0',
+                animTo: '0',
+                animDur: '0s',
+                showTrafficPulse: false,
+            };
+
+        case 'DEPENDS_ON':
+        default: {
+            // +20% speed vs original: 1s→0.8s, 2s→1.6s, 3s→2.4s
+            const dur = isCritical ? '0.8s' : isWarning ? '1.6s' : '2.4s';
+            return {
+                color,
+                weight: isCritical ? 3 : isWarning ? 2.5 : 2,
+                opacity: 0.8,
+                dashArray: '5, 8',
+                animate: true,
+                animFrom: '26',
+                animTo: '0',
+                animDur: dur,
+                showTrafficPulse: false,
+            };
+        }
+    }
+}
+
+/**
+ * getNodeRenderConfig
+ *
+ * Determines how to render a CI node marker on the map. Pure function.
+ * Does NOT use Tailwind animate-pulse / animate-ping — those caused
+ * full-map red flashing on critical events.
+ */
+export function getNodeRenderConfig(node: {
+    hasCritical?: boolean;
+    hasWarning?: boolean;
+    events?: { severity: string }[];
+}): NodeRenderConfig {
+    const isCritical = Boolean(node.hasCritical);
+    const isWarning = Boolean(node.hasWarning);
+    const critCount = node.events?.filter(e => e.severity === 'CRITICAL').length ?? 0;
+    const warnCount = node.events?.filter(e => e.severity === 'WARNING').length ?? 0;
+
+    const BASE_RADIUS = 6;
+
+    if (isCritical) {
+        return {
+            color: '#ef4444',
+            pixelRadius: BASE_RADIUS * 1.5 + critCount * 2,
+            fillOpacity: 1,
+            weight: 2,
+            showAura: true,
+            auraRadius: 20000 + critCount * 10000,
+        };
+    }
+    if (isWarning) {
+        return {
+            color: '#eab308',
+            pixelRadius: BASE_RADIUS * 1.2 + warnCount * 1.5,
+            fillOpacity: 1,
+            weight: 2,
+            showAura: true,
+            auraRadius: 10000 + warnCount * 5000,
+        };
+    }
+    return {
+        color: '#3b82f6',
+        pixelRadius: BASE_RADIUS,
+        fillOpacity: 0.35,
+        weight: 1,
+        showAura: false,
+        auraRadius: 0,
+    };
+}
+
+/**
+ * AnimatedPolyline
+ *
+ * Renders a Leaflet Polyline and optionally injects a declarative SVG <animate>
+ * tag for stroke-dashoffset animation. Bypasses React-Leaflet's virtual DOM
+ * intentionally — D3/SVG owns this DOM subtree after mount.
+ *
+ * Guard: `if (path.querySelector('animate')) return;` prevents duplicate tags
+ * on the 10s re-render cycle triggered by MonitoringConsole's data polling.
+ */
+interface AnimationConfig {
+    from: string;
+    to: string;
+    dur: string;
+}
+
+const AnimatedPolyline: React.FC<{
+    positions: [number, number][];
+    pathOptions: Record<string, unknown>;
+    animationConfig: AnimationConfig | null;
+}> = ({ positions, pathOptions, animationConfig }) => {
     const polyRef = React.useRef<any>(null);
 
     React.useEffect(() => {
@@ -62,7 +206,7 @@ const AnimatedPolyline: React.FC<any> = ({ positions, pathOptions, animationConf
 
             path.appendChild(animateTag);
         }
-    }, [polyRef.current, animationConfig]);
+    }, [animationConfig]);
 
     return <Polyline ref={polyRef} positions={positions} pathOptions={pathOptions} />;
 };
@@ -358,67 +502,79 @@ const MonitoringConsole: React.FC = () => {
                                 const target = nodesWithEvents.find(n => n.id === link.target);
 
                                 if (source?.location?.lat && target?.location?.lat) {
-                                    const latlngs: [number, number][] = [
+                                    const positions: [number, number][] = [
                                         [source.location.lat, source.location.long],
                                         [target.location.lat, target.location.long]
                                     ];
 
-                                    const status = target.hasCritical ? 'critical' : target.hasWarning ? 'warning' : 'normal';
-                                    const type = link.relationship;
-
-                                    const antPathOptions = status === 'critical'
-                                        ? { delay: 1000, pulseColor: '#ff0000', weight: 4, color: STATUS_COLORS.CRITICAL, opacity: 0.8 }
-                                        : status === 'warning'
-                                            ? { delay: 2000, pulseColor: '#ffa500', weight: 3, color: STATUS_COLORS.WARNING, opacity: 0.7 }
-                                            : { delay: 3000, pulseColor: '#3388ff', weight: 2, color: STATUS_COLORS.OK || '#3388ff', opacity: 0.6 };
+                                    const cfg = buildLinkConfig(link, source, target);
 
                                     return (
-                                        <AntPath
-                                            key={`link-${i}`}
-                                            latlngs={latlngs}
-                                            status={status}
-                                            type={type}
-                                            options={antPathOptions}
-                                        />
+                                        <React.Fragment key={`link-${i}`}>
+                                            {/* Base line — animated for DEPENDS_ON, solid for CONNECTS_TO */}
+                                            <AnimatedPolyline
+                                                positions={positions}
+                                                pathOptions={{
+                                                    color: cfg.color,
+                                                    weight: cfg.weight,
+                                                    opacity: cfg.opacity,
+                                                    dashArray: cfg.dashArray,
+                                                }}
+                                                animationConfig={cfg.animate
+                                                    ? { from: cfg.animFrom, to: cfg.animTo, dur: cfg.animDur }
+                                                    : null
+                                                }
+                                            />
+                                            {/* Traffic-pulse overlay for CONNECTS_TO links — +20% speed (2.5s→2s) */}
+                                            {cfg.showTrafficPulse && (
+                                                <AnimatedPolyline
+                                                    positions={positions}
+                                                    pathOptions={{
+                                                        color: '#10b981',
+                                                        weight: cfg.weight,
+                                                        opacity: 0.8,
+                                                        dashArray: '5, 50',
+                                                    }}
+                                                    animationConfig={{ from: '0', to: '110', dur: '2s' }}
+                                                />
+                                            )}
+                                        </React.Fragment>
                                     );
                                 }
                                 return null;
                             })}
 
                             {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => {
-                                const isCritical = node.hasCritical;
-                                const isWarning = node.hasWarning;
-                                const isHealthy = !isCritical && !isWarning;
-
-                                const critEvents = node.events?.filter(e => e.severity === 'CRITICAL').length || 0;
-                                const warnEvents = node.events?.filter(e => e.severity === 'WARNING').length || 0;
-
-                                const basePixelRadius = 6;
-                                const pixelRadius = isCritical ? basePixelRadius * 1.5 + (critEvents * 2) :
-                                    isWarning ? basePixelRadius * 1.2 + (warnEvents * 1.5) : basePixelRadius;
-
-                                const color = isCritical ? '#ef4444' : isWarning ? '#eab308' : '#3b82f6';
-                                const opacity = isHealthy ? 0.35 : 1;
-                                const className = isHealthy ? '' : 'animate-pulse';
-
-                                // Optional: Geographical aura rendering
-                                const geoAuraRadius = isCritical ? 20000 + (critEvents * 10000) : isWarning ? 10000 + (warnEvents * 5000) : 0;
+                                const cfg = getNodeRenderConfig(node);
 
                                 return (
                                     <React.Fragment key={node.id}>
-                                        {/* Geographical aura for the 'blast radius' */}
-                                        {!isHealthy && (
+                                        {/* Geographical aura — subtle border ring only, no fill to avoid map tinting */}
+                                        {cfg.showAura && (
                                             <Circle
                                                 center={[node.location!.lat, node.location!.long]}
-                                                radius={geoAuraRadius}
-                                                pathOptions={{ color: color, fillColor: color, fillOpacity: 0.1, weight: 0, className: 'animate-ping' }}
+                                                radius={cfg.auraRadius}
+                                                pathOptions={{
+                                                    color: cfg.color,
+                                                    fillColor: '#1a1a2e',
+                                                    fillOpacity: 0.04,
+                                                    weight: 1,
+                                                    opacity: 0.25,
+                                                    dashArray: '4, 6',
+                                                }}
                                             />
                                         )}
-                                        {/* Core point */}
+                                        {/* Core point — no animate-pulse, color drives urgency */}
                                         <CircleMarker
                                             center={[node.location!.lat, node.location!.long]}
-                                            radius={pixelRadius}
-                                            pathOptions={{ color: color, fillColor: color, fillOpacity: opacity, weight: isHealthy ? 1 : 2, opacity: opacity, className: className }}
+                                            radius={cfg.pixelRadius}
+                                            pathOptions={{
+                                                color: cfg.color,
+                                                fillColor: cfg.color,
+                                                fillOpacity: cfg.fillOpacity,
+                                                weight: cfg.weight,
+                                                opacity: cfg.fillOpacity,
+                                            }}
                                         >
                                             <Popup>
                                                 <div className="p-1 min-w-[200px]">
@@ -426,7 +582,7 @@ const MonitoringConsole: React.FC = () => {
                                                     <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
                                                     {node.events && node.events.length > 0 ? (
                                                         <div className="space-y-1">
-                                                            {node.events.map(e => (
+                                                            {node.events.map((e: any) => (
                                                                 <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
                                                                     {e.message}
                                                                 </div>
