@@ -58,3 +58,17 @@ class HardwareModel(BaseModel):
 class OwnerGroup(BaseModel):
     name: str
     users: Optional[List[dict]] = []
+
+class AgentRegistration(BaseModel):
+    """Payload sent by a remote Antigravity agent on first registration."""
+    hostname: str
+    ip: Optional[str] = None
+    os: Optional[str] = None
+    version: Optional[str] = None
+    ci_id: Optional[str] = None  # Optional link to an existing CI
+
+class AgentMetricPush(BaseModel):
+    """Telemetry payload pushed by a remote agent."""
+    metric_id: str
+    value: float
+    unit: Optional[str] = None

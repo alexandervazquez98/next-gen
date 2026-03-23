@@ -106,3 +106,44 @@ export interface ApplicabilityCriteria {
   names?: string[];
   excluded_names?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// AI / Incident types (used by geminiService)
+// ---------------------------------------------------------------------------
+
+export interface IncidentEvent {
+  id: string;
+  title: string;
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  ci_id?: string;
+  ci_name?: string;
+  message?: string;
+  created_at: string;
+}
+
+export interface AIAction {
+  id: string;
+  timestamp: string;
+  incidentId: string;
+  remedy: string;
+  reasoning: string;
+  confidence: number;
+  executed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Remote Antigravity Agent
+// ---------------------------------------------------------------------------
+
+export interface Agent {
+  id: string;
+  hostname: string;
+  ip?: string;
+  os?: string;
+  version?: string;
+  status: 'ONLINE' | 'OFFLINE' | 'DEGRADED';
+  registered_at: string;
+  last_seen: string;
+  ci_id?: string;
+  ci_label?: string;
+}

@@ -18,6 +18,7 @@ import UserManager from './components/UserManager';
 import RoleManager from './components/RoleManager';
 import CIDetailModal from './components/CIDetailModal';
 import MetricAnalytics from './components/MetricAnalytics';
+import AgentManager from './components/AgentManager';
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -149,6 +150,10 @@ const MainLayout: React.FC = () => {
             <NavItem to="/analytics" icon="monitoring" label="Analytics" />
           )}
 
+          {(hasPermission('ADMIN') || hasPermission('CI_EDIT')) && (
+            <NavItem to="/agents" icon="smart_toy" label="Agents" />
+          )}
+
           {(hasPermission('ADMIN') || hasPermission('USER_MANAGE')) && (
             <NavItem to="/users" icon="manage_accounts" label="User Management" />
           )}
@@ -209,6 +214,7 @@ const MainLayout: React.FC = () => {
               <Route path="cmdb" element={<GraphCMDB nodes={nodes} links={links} onNodeClick={(n) => { setSelectedNode(n); setShowDetailModal(true); }} />} />
               <Route path="network" element={<NetworkVisualizer />} />
               <Route path="analytics" element={<MetricAnalytics />} />
+              <Route path="agents" element={<AgentManager />} />
               <Route path="inventory" element={<GlobalInventory />} />
             </Routes>
           </div>
