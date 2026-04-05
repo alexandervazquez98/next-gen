@@ -57,6 +57,29 @@ class TestUserModel:
         user = User(username="test", role="VIEWER")
         assert user.force_password_change is False
 
+    def test_default_tier_is_T1(self):
+        """User model should default tier to 'T1'."""
+        user = User(username="test", role="VIEWER")
+        assert user.tier == "T1"
+
+    def test_explicit_tier_is_preserved(self):
+        """Explicitly set tier should be preserved."""
+        user = User(username="test", role="ADMIN", tier="T3")
+        assert user.tier == "T3"
+
+
+class TestUserPermissionEnum:
+    """Tests for UserPermission enum completeness."""
+
+    def test_event_forced_close_exists(self):
+        """EVENT_FORCED_CLOSE must be defined in UserPermission enum."""
+        assert hasattr(UserPermission, "EVENT_FORCED_CLOSE")
+        assert UserPermission.EVENT_FORCED_CLOSE.value == "EVENT_FORCED_CLOSE"
+
+    def test_event_forced_close_is_string(self):
+        """EVENT_FORCED_CLOSE value must be a string (str enum)."""
+        assert isinstance(UserPermission.EVENT_FORCED_CLOSE, str)
+
 
 class TestTokenModel:
     """Tests for Token Pydantic model."""

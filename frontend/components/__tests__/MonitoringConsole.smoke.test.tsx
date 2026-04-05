@@ -60,6 +60,18 @@ vi.mock('../../hooks/useEventCorrelation', () => ({
     useEventCorrelation: (_events: any[], _links: any[]) => [],
 }));
 
+// Mock AuthContext — MonitoringConsole now reads user/tier/hasPermission from useAuth
+vi.mock('../../context/AuthContext', () => ({
+    useAuth: vi.fn(() => ({
+        user: { username: 'admin', role: 'ADMIN', permissions: [], tier: 'T3', allowed_locations: [] },
+        hasPermission: (_perm: string) => true,
+        isAuthenticated: true,
+        token: 'mock-token',
+        login: vi.fn(),
+        logout: vi.fn(),
+    })),
+}));
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

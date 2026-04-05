@@ -220,11 +220,44 @@ class MockNeo4jSession:
                 return MockNeo4jResult(records)
         return MockNeo4jResult(self._default_response)
 
+    def begin_transaction(self):
+        """Return a separate transaction object to properly test atomicity."""
+        return MockNeo4jTransaction(self)
+
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
         pass
+
+
+class MockNeo4jTransaction:
+    """Simulates a Neo4j explicit transaction with commit/rollback tracking."""
+
+    def __init__(self, session: MockNeo4jSession):
+        self._session = session
+        self.committed = False
+        self.rolled_back = False
+
+    def run(self, query: str, **params):
+        """Delegate query execution to the parent session for capture."""
+        return self._session.run(query, **params)
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, *args):
+        if exc_type:
+            self.rolled_back = True
+        else:
+            self.committed = True
+        return False  # don't suppress exceptions
 
 
 class MockNeo4jDriver:

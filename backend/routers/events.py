@@ -16,6 +16,10 @@ class EventComment(BaseModel):
     message: str
 
 
+class CloseRequest(BaseModel):
+    forced: bool = False
+
+
 @router.get("", response_model=List[Dict[str, Any]])
 async def get_events(status: Optional[str] = None):
     """
@@ -50,14 +54,26 @@ async def ack_event(
 
 @router.post("/{event_id}/close")
 async def close_event(
-    event_id: str, current_user: User = Depends(get_current_active_user)
+    event_id: str,
+    close_req: CloseRequest = CloseRequest(),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Close an Event manually.
+    If forced=True, the caller must also hold EVENT_FORCED_CLOSE permission.
     """
     if not check_permission(UserPermission.EVENT_CLOSE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to close events")
-    return event_service.close_event(event_id, current_user.username)
+    if close_req.forced and not check_permission(
+        UserPermission.EVENT_FORCED_CLOSE, current_user
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to force-close events (EVENT_FORCED_CLOSE required)",
+        )
+    return event_service.close_event(
+        event_id, current_user.username, forced=close_req.forced
+    )
 
 
 @router.post("/{event_id}/comment")

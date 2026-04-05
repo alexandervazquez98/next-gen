@@ -786,6 +786,7 @@ class TestOwnersRouter:
                 "allowed_ci_types": None,
                 "phone": "+541100000000",
                 "email": "alice@example.com",
+                "tier": "T1",
                 "disabled": False,
                 "force_password_change": False,
             },

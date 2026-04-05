@@ -7,6 +7,7 @@ import { STATUS_COLORS } from '../utils/status';
 import DependencyMiniMap from './DependencyMiniMap';
 import { useEventCorrelation } from '../hooks/useEventCorrelation';
 import L from 'leaflet';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * Configure Leaflet Default Icon
@@ -292,14 +293,6 @@ const MonitoringConsole: React.FC = () => {
         fetchData();
     };
 
-    /**
-     * Close an event (Resolved/False Positive).
-     */
-    const handleClose = async (id: string) => {
-        await api.post(`/events/${id}/close`, {});
-        fetchData();
-    };
-
     // --- Comment / Modal State ---
 
     const [commentModalOpen, setCommentModalOpen] = useState(false);
@@ -314,9 +307,10 @@ const MonitoringConsole: React.FC = () => {
     const [closeForcedMode, setCloseForcedMode] = useState(false);
     const [closeForcedReason, setCloseForcedReason] = useState('');
 
-    // M2: Ownership
-    const CURRENT_USER = 'Admin'; // TODO: replace with real auth context
-    const CURRENT_TIER = 'T2';    // TODO: replace with real auth context
+    // M2: Ownership — driven by real auth context
+    const { user, hasPermission } = useAuth();
+    const CURRENT_USER = user?.username ?? 'unknown';
+    const CURRENT_TIER = user?.tier ?? 'T1';
 
     const handleOpenComment = (id: string) => {
         setSelectedEventId(id);
@@ -365,7 +359,7 @@ const MonitoringConsole: React.FC = () => {
                 user: CURRENT_USER
             });
         }
-        await api.post(`/events/${selectedEventId}/close`, {});
+        await api.post(`/events/${selectedEventId}/close`, { forced: closeForcedMode });
         setCommentModalOpen(false);
         setCloseFlowOpen(false);
         fetchData();
@@ -530,7 +524,6 @@ const MonitoringConsole: React.FC = () => {
                                                             {evt.status === 'OPEN' && (
                                                                 <button onClick={() => handleAck(evt.id)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold uppercase">Ack</button>
                                                             )}
-                                                            <button onClick={() => handleClose(evt.id)} className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-white rounded text-xs font-bold uppercase">Close</button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1026,8 +1019,8 @@ const MonitoringConsole: React.FC = () => {
                                                             className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black uppercase transition-colors"
                                                         >Confirmar Cierre</button>
 
-                                                        {/* T2+ forced close option */}
-                                                        {(CURRENT_TIER === 'T2' || CURRENT_TIER === 'T3') && (
+                                                        {/* Forced close — requires EVENT_FORCED_CLOSE permission */}
+                                                        {hasPermission('EVENT_FORCED_CLOSE') && (
                                                             <button
                                                                 onClick={() => setCloseForcedMode(true)}
                                                                 className="w-full py-1.5 text-[10px] text-neutral-600 hover:text-red-400 transition-colors uppercase font-bold"

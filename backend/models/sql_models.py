@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, ARRAY
 from postgres_db import Base
 
+
 class User(Base):
     __tablename__ = "users"
 
@@ -12,7 +13,9 @@ class User(Base):
     role = Column(String, default="VIEWER")
     is_active = Column(Boolean, default=True)
     force_password_change = Column(Boolean, default=False)
-    
+
+    tier = Column(String, default="T1")
+
     # RBAC & ACLs stored as Arrays of Strings
     permissions = Column(ARRAY(String), default=[])
     allowed_locations = Column(ARRAY(String), default=[])

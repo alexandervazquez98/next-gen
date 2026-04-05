@@ -1154,3 +1154,96 @@ class TestEventsDiagnose:
         assert "Diagnostic run" in data["message"]
 
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+class TestEventsForcedCloseAuthorization:
+    """Tests for forced close authorization on POST /api/events/{event_id}/close.
+
+    Scenarios:
+    - F4-T1: EVENT_CLOSE only + forced=False → 200 (normal close still works)
+    - F4-T2: EVENT_CLOSE only + forced=True  → 403 (no EVENT_FORCED_CLOSE)
+    - F4-T3: EVENT_CLOSE + EVENT_FORCED_CLOSE + forced=True → 200
+    """
+
+    def test_normal_close_without_forced_close_perm_succeeds(self, mock_neo4j_driver):
+        """User with EVENT_CLOSE but no EVENT_FORCED_CLOSE can do a normal close (forced=False)."""
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE],
+        )
+
+        async def override():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        mock_session = MagicMock()
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
+            return_value=mock_session
+        )
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.post(
+                "/api/events/evt-001/close",
+                json={"forced": False},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "Closed" in data["message"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_forced_close_without_forced_close_perm_is_403(self):
+        """User with EVENT_CLOSE but no EVENT_FORCED_CLOSE is denied forced close."""
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE],
+        )
+
+        async def override():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        response = client.post(
+            "/api/events/evt-001/close",
+            json={"forced": True},
+        )
+
+        assert response.status_code == 403
+        assert "EVENT_FORCED_CLOSE" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_forced_close_with_forced_close_perm_succeeds(self, mock_neo4j_driver):
+        """User with both EVENT_CLOSE and EVENT_FORCED_CLOSE can force-close an event."""
+        fake_user = _make_pydantic_user(
+            username="t2operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE, UserPermission.EVENT_FORCED_CLOSE],
+        )
+
+        async def override():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        mock_session = MagicMock()
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
+            return_value=mock_session
+        )
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.post(
+                "/api/events/evt-001/close",
+                json={"forced": True},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "Closed" in data["message"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)

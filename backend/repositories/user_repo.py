@@ -22,6 +22,7 @@ def create_user(db: Session, user: UserCreate):
         username=user.username,
         hashed_password=hashed_password,
         role=user.role,
+        tier=user.tier,
         permissions=permissions_str,
         allowed_locations=user.allowed_locations,
         allowed_ci_types=user.allowed_ci_types,
@@ -45,6 +46,8 @@ def update_user(db: Session, username: str, user_update: UserUpdate):
         db_user.hashed_password = get_password_hash(user_update.password)
     if user_update.role:
         db_user.role = user_update.role
+    if user_update.tier is not None:
+        db_user.tier = user_update.tier
     if user_update.permissions is not None:
         db_user.permissions = [p.value for p in user_update.permissions]
     if user_update.allowed_locations is not None:

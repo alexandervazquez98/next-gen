@@ -65,6 +65,7 @@ def _make_pydantic_user(
     role: str = "OPERATOR",
     permissions: list[UserPermission] | None = None,
     disabled: bool = False,
+    tier: str = "T1",
 ) -> User:
     """Create a Pydantic User for injection via dependency override."""
     return User(
@@ -73,6 +74,7 @@ def _make_pydantic_user(
         permissions=permissions or [],
         allowed_locations=[],
         disabled=disabled,
+        tier=tier,
     )
 
 
@@ -82,6 +84,7 @@ def _make_pydantic_user_in_db(
     permissions: list[UserPermission] | None = None,
     disabled: bool = False,
     hashed_password: str = "$pbkdf2-sha256$fakehash",
+    tier: str = "T1",
 ) -> UserInDB:
     """Create a UserInDB for auth endpoint tests."""
     return UserInDB(
@@ -91,6 +94,7 @@ def _make_pydantic_user_in_db(
         allowed_locations=[],
         disabled=disabled,
         password=hashed_password,
+        tier=tier,
     )
 
 
@@ -100,11 +104,13 @@ def _make_mock_pg_user(
     permissions: list | None = None,
     is_active: bool = True,
     hashed_password: str = "$pbkdf2-sha256$fakehash",
+    tier: str = "T1",
 ):
     """Create a mock SQLAlchemy User object (simulates DB row)."""
     mock = MagicMock()
     mock.username = username
     mock.role = role
+    mock.tier = tier
     mock.permissions = permissions or []
     mock.is_active = is_active
     mock.hashed_password = hashed_password

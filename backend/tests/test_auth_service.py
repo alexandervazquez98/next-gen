@@ -35,6 +35,21 @@ class TestCreateAccessToken:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         assert payload["role"] == "ADMIN"
 
+    def test_token_contains_tier_claim(self):
+        """JWT should include 'tier' claim when provided."""
+        token = create_access_token(
+            data={"sub": "admin", "role": "ADMIN", "tier": "T3"}
+        )
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        assert payload["tier"] == "T3"
+
+    def test_token_tier_defaults_fallback(self):
+        """When tier is absent from token data, the claim is simply not present (caller provides it)."""
+        token = create_access_token(data={"sub": "user1", "role": "OPERATOR"})
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # No tier in data → not present in JWT; get_current_user applies the 'or T1' fallback
+        assert payload.get("tier") is None
+
     def test_token_invalid_after_tampering(self):
         token = create_access_token(data={"sub": "testuser"})
         tampered = token[:-5] + "XXXXX"
