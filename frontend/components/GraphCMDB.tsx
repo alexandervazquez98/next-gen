@@ -36,7 +36,7 @@ interface AnimatedLinksLayerProps {
 /**
  * useGraphData
  *
- * Polls /api/topology every `intervalMs` milliseconds.
+  * Polls /api/graph/full every `intervalMs` milliseconds.
  * Data is stored exclusively in a Ref — no React state is ever updated,
  * so polling never triggers a component re-render.
  *
@@ -58,7 +58,7 @@ function useGraphData(
 
     const fetchTopology = async () => {
       try {
-        const data = await api.get<TopologyResponse>('/topology');
+        const data = await api.get<TopologyResponse>('/graph/full');
         if (cancelled || !data) return;
 
         // Store latest data in ref — no setState, no re-render
@@ -194,7 +194,7 @@ const AnimatedLinksLayer = ({ svgRef, dataRef, onD3UpdaterReady }: AnimatedLinks
  * Implements force-directed graph with auto-centering and status-based coloring.
  *
  * Polling architecture:
- * - useGraphData polls /api/topology every 30 s and stores data in a Ref.
+  * - useGraphData polls /api/graph/full every 30 s and stores data in a Ref.
  * - d3UpdaterRef is a callback ref bridging useGraphData → AnimatedLinksLayer.
  *   When new data arrives, useGraphData calls d3UpdaterRef.current(data) which
  *   updates the pulse markers directly in the D3 DOM — no React state, no re-renders.
