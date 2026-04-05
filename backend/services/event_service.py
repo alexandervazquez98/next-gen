@@ -89,17 +89,24 @@ def ack_event(event_id: str, user: str) -> Dict[str, str]:
     return {"message": "Event Acknowledged"}
 
 
-def close_event(event_id: str, user: str) -> Dict[str, str]:
+def close_event(event_id: str, user: str, forced: bool = False) -> Dict[str, str]:
     driver = get_db()
+    audit_msg = f"[FORCED CLOSE] Closed by {user}" if forced else ""
     with driver.session() as session:
-        session.run(
-            """
-            MATCH (e:Event {id: $eid})
-            SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
-        """,
-            eid=event_id,
-            user=user,
-        )
+        with session.begin_transaction() as tx:
+            tx.run(
+                """
+                MATCH (e:Event {id: $eid})
+                SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+                WITH e
+                WHERE $forced
+                SET e.comments = coalesce(e.comments, []) + ($msg + ' (' + toString(datetime()) + ')')
+                """,
+                eid=event_id,
+                user=user,
+                forced=forced,
+                msg=audit_msg,
+            )
     return {"message": "Event Closed"}
 
 

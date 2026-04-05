@@ -171,6 +171,33 @@ class TestGetCurrentActiveUser:
 
         assert exc_info.value.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_active_user_tier_is_preserved(self):
+        """get_current_active_user should preserve tier on the returned user."""
+        active_user = User(
+            username="tier_user",
+            role="OPERATOR",
+            permissions=[],
+            allowed_locations=[],
+            disabled=False,
+            tier="T2",
+        )
+        result = await get_current_active_user(active_user)
+        assert result.tier == "T2"
+
+    @pytest.mark.asyncio
+    async def test_active_user_default_tier_is_T1(self):
+        """When no tier is provided, it should default to 'T1'."""
+        active_user = User(
+            username="default_tier_user",
+            role="VIEWER",
+            permissions=[],
+            allowed_locations=[],
+            disabled=False,
+        )
+        result = await get_current_active_user(active_user)
+        assert result.tier == "T1"
+
 
 # ---------------------------------------------------------------------------
 # Tests: Extended permission scenarios
@@ -585,6 +612,7 @@ class TestPermissionSecurity:
             UserPermission.EVENT_VIEW,
             UserPermission.EVENT_ACK,
             UserPermission.EVENT_CLOSE,
+            UserPermission.EVENT_FORCED_CLOSE,
             UserPermission.CI_VIEW,
             UserPermission.CI_EDIT,
             UserPermission.CI_DELETE,

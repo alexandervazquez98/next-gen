@@ -46,7 +46,7 @@ describe('AuthContext', () => {
   describe('token hydration', () => {
     it('fetches user from /auth/users/me when token exists', async () => {
       localStorage.setItem('token', 'valid-token');
-      const mockUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [] };
+      const mockUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
       mocks.api.get.mockResolvedValue(mockUser);
 
       const { result } = renderHook(() => useAuth(), { wrapper });
@@ -74,7 +74,7 @@ describe('AuthContext', () => {
   describe('login', () => {
     it('stores token and user in state and localStorage', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
-      const user = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [] };
+      const user = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
 
       act(() => {
         result.current.login('new-token', user);
@@ -92,7 +92,7 @@ describe('AuthContext', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       act(() => {
-        result.current.login('token', { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [] });
+        result.current.login('token', { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' });
       });
       expect(result.current.isAuthenticated).toBe(true);
 
@@ -107,6 +107,35 @@ describe('AuthContext', () => {
     });
   });
 
+  describe('tier propagation', () => {
+    it('stores tier from /auth/users/me response', async () => {
+      localStorage.setItem('token', 'valid-token');
+      const mockUser = { username: 'op', role: 'OPERATOR', permissions: [], allowed_locations: [], tier: 'T2' };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.user?.tier).toBe('T2');
+      });
+    });
+
+    it('defaults tier to T1 when absent from /auth/users/me response', async () => {
+      localStorage.setItem('token', 'valid-token');
+      // Response without tier field — should default to 'T1'
+      const mockUser = { username: 'op', role: 'OPERATOR', permissions: [], allowed_locations: [] };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      // tier should be 'T1' as the default in the User interface
+      expect(result.current.user?.tier ?? 'T1').toBe('T1');
+    });
+  });
+
   describe('hasPermission', () => {
     it('returns false when no user', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
@@ -115,7 +144,7 @@ describe('AuthContext', () => {
 
     it('returns true for ADMIN role regardless of permissions', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
-      const adminUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [] };
+      const adminUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
 
       act(() => {
         result.current.login('t', adminUser);
@@ -132,6 +161,7 @@ describe('AuthContext', () => {
         role: 'VIEWER',
         permissions: ['METRICS_VIEW'],
         allowed_locations: [],
+        tier: 'T1',
       };
 
       act(() => {

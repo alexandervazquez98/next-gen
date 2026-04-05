@@ -7,6 +7,7 @@ interface User {
     permissions: string[];
     allowed_locations: string[];
     force_password_change?: boolean;
+    tier: string;
 }
 
 interface AuthContextType {

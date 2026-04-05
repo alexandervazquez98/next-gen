@@ -156,3 +156,23 @@ class TestUserRepoCreateUser:
 
         db.commit.assert_called_once()
         db.refresh.assert_called_once()
+
+    def test_create_user_default_tier_is_T1(self):
+        """New users created without explicit tier should default to 'T1'."""
+        db = self._make_mock_db()
+        user_in = UserCreate(username="tiertest", password="pass123")
+
+        user_repo.create_user(db, user_in)
+
+        db_user = db.add.call_args[0][0]
+        assert db_user.tier == "T1"
+
+    def test_create_user_explicit_tier_is_persisted(self):
+        """New users with explicit tier should have it persisted to the DB model."""
+        db = self._make_mock_db()
+        user_in = UserCreate(username="adminuser", password="pass123", tier="T3")
+
+        user_repo.create_user(db, user_in)
+
+        db_user = db.add.call_args[0][0]
+        assert db_user.tier == "T3"

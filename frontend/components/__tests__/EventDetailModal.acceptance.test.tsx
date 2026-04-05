@@ -136,6 +136,18 @@ vi.mock('../../hooks/useEventCorrelation', () => ({
     useEventCorrelation: (events: any[], _links: any[]) => events,
 }));
 
+// Mock AuthContext — MonitoringConsole now reads user/tier/hasPermission from here
+vi.mock('../../context/AuthContext', () => ({
+    useAuth: vi.fn(() => ({
+        user: { username: 'testop', role: 'OPERATOR', permissions: ['EVENT_FORCED_CLOSE'], tier: 'T2', allowed_locations: [] },
+        hasPermission: (perm: string) => perm === 'EVENT_FORCED_CLOSE' || ['EVENT_VIEW', 'EVENT_ACK', 'EVENT_CLOSE'].includes(perm),
+        isAuthenticated: true,
+        token: 'mock-token',
+        login: vi.fn(),
+        logout: vi.fn(),
+    })),
+}));
+
 // ---------------------------------------------------------------------------
 // Helper: render MonitoringConsole and open the event detail modal
 // ---------------------------------------------------------------------------
@@ -404,6 +416,71 @@ describe('M4 — DependencyMiniMap label improvements', () => {
         const miniMap = screen.getByTestId('dependency-mini-map');
         expect(miniMap).toBeDefined();
         expect(miniMap.getAttribute('data-ci-id')).toBe('node-1');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Auth Context Integration
+// ---------------------------------------------------------------------------
+
+describe('Auth Context Integration', () => {
+    afterEach(() => vi.clearAllMocks());
+
+    it('GIVEN authenticated user WHEN modal opens THEN CURRENT_USER displays authenticated username', async () => {
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+        // The comment ownership message should use the authenticated username from AuthContext
+        // Trigger "Tomar caso" and assert the username sent to API
+        const { api } = await import('../../services/api');
+        fireEvent.click(screen.getByText('Tomar caso'));
+
+        await waitFor(() => {
+            const calls = (api.post as any).mock.calls;
+            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
+            expect(commentCall).toBeDefined();
+            // Should use 'testop' (from mock useAuth), NOT hardcoded 'Admin'
+            expect(commentCall[1].message).toContain('testop');
+        });
+    });
+
+    it('GIVEN user WITH EVENT_FORCED_CLOSE permission WHEN close form opens THEN forced close button is visible', async () => {
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+        fireEvent.click(screen.getByText('Cerrar Evento'));
+
+        await waitFor(() => {
+            expect(screen.getByText(/Cierre forzado/)).toBeDefined();
+        });
+    });
+
+    it('GIVEN user WITHOUT EVENT_FORCED_CLOSE permission WHEN close form opens THEN forced close button is hidden', async () => {
+        // Override the mock with a persistent implementation for this test
+        const { useAuth } = await import('../../context/AuthContext');
+        const viewerAuth = {
+            user: { username: 'viewer', role: 'VIEWER', permissions: [], tier: 'T1', allowed_locations: [] },
+            hasPermission: (_perm: string) => false,
+            isAuthenticated: true,
+            token: 'mock-token',
+            login: vi.fn(),
+            logout: vi.fn(),
+        };
+        (useAuth as any).mockImplementation(() => viewerAuth);
+
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+        fireEvent.click(screen.getByText('Cerrar Evento'));
+
+        await waitFor(() => screen.getByText('Confirmar Cierre'));
+
+        // Forced close button must NOT be present for user without permission
+        expect(screen.queryByText(/Cierre forzado/)).toBeNull();
+
+        // Restore the default mock for subsequent tests
+        (useAuth as any).mockImplementation(() => ({
+            user: { username: 'testop', role: 'OPERATOR', permissions: ['EVENT_FORCED_CLOSE'], tier: 'T2', allowed_locations: [] },
+            hasPermission: (perm: string) => perm === 'EVENT_FORCED_CLOSE' || ['EVENT_VIEW', 'EVENT_ACK', 'EVENT_CLOSE'].includes(perm),
+            isAuthenticated: true,
+            token: 'mock-token',
+            login: vi.fn(),
+            logout: vi.fn(),
+        }));
     });
 });
 
