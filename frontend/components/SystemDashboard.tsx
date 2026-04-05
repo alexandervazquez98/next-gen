@@ -1,43 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import Tooltip from './Tooltip';
-
-interface SystemStatus {
-    cpu: number;
-    ram: number;
-    disk: number;
-    neo4j: 'CONNECTED' | 'DISCONNECTED' | 'UNKNOWN';
-    collector: {
-        status: string;
-        last_run: string | null;
-        stats: {
-            cis_monitored: number;
-            metrics_collected: number;
-            metrics_failed: number;
-            cycle_duration: number;
-            jobs_per_min: number;
-        }
-    };
-}
+import { useSystemStatusQuery } from '../hooks/queries/useSystemStatusQuery';
 
 const SystemDashboard: React.FC = () => {
-    const [status, setStatus] = useState<SystemStatus | null>(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const fetchStatus = () => {
-            fetch('/api/system/status')
-                .then(res => res.json())
-                .then(data => {
-                    setStatus(data);
-                    setLoading(false);
-                })
-                .catch(err => console.error("Failed to fetch system status:", err));
-        };
-
-        fetchStatus();
-        const interval = setInterval(fetchStatus, 3000); // 3s polling
-        return () => clearInterval(interval);
-    }, []);
+    const { data: status, isLoading: loading } = useSystemStatusQuery();
 
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';

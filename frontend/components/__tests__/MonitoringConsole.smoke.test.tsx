@@ -10,8 +10,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const { mockApiGet, mockApiPost } = vi.hoisted(() => ({
+    mockApiGet: vi.fn(),
+    mockApiPost: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -20,8 +26,8 @@ import React from 'react';
 // Mock api service — returns empty arrays to avoid fetch errors in jsdom
 vi.mock('../../services/api', () => ({
     api: {
-        get: vi.fn().mockResolvedValue([]),
-        post: vi.fn().mockResolvedValue({ message: 'ok' }),
+        get: mockApiGet,
+        post: mockApiPost,
     },
 }));
 
@@ -57,7 +63,7 @@ vi.mock('../DependencyMiniMap', () => ({
 }));
 
 vi.mock('../../hooks/useEventCorrelation', () => ({
-    useEventCorrelation: (_events: any[], _links: any[]) => [],
+    useEventCorrelation: (events: any[]) => events,
 }));
 
 // Mock AuthContext — MonitoringConsole now reads user/tier/hasPermission from useAuth
@@ -77,23 +83,125 @@ vi.mock('../../context/AuthContext', () => ({
 // ---------------------------------------------------------------------------
 
 describe('MonitoringConsole smoke tests', () => {
+    const renderWithQueryClient = (ui: React.ReactElement) => {
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+        return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+    };
+
     beforeEach(() => {
         vi.clearAllMocks();
+        mockApiPost.mockResolvedValue({ message: 'ok' });
+        mockApiGet.mockResolvedValue([]);
     });
 
     it('GIVEN the component WHEN rendered with empty data THEN mounts without throwing', async () => {
         // Dynamic import after mocks are registered
         const { default: MonitoringConsole } = await import('../MonitoringConsole');
 
-        expect(() => render(<MonitoringConsole />)).not.toThrow();
+        expect(() => renderWithQueryClient(<MonitoringConsole />)).not.toThrow();
     });
 
     it('GIVEN the component WHEN rendered THEN Event Console header is visible', async () => {
         const { default: MonitoringConsole } = await import('../MonitoringConsole');
 
-        render(<MonitoringConsole />);
+        renderWithQueryClient(<MonitoringConsole />);
 
         expect(screen.getByText('Event Console')).toBeDefined();
+    });
+
+    it('GIVEN an ack action succeeds WHEN shared active events refetch THEN widgets and table converge without refetching nodes or links', async () => {
+        const { default: MonitoringConsole } = await import('../MonitoringConsole');
+
+        let activeEventsCalls = 0;
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/nodes') {
+                return Promise.resolve([
+                    {
+                        id: 'ci-1',
+                        label: 'Router-01',
+                        type: 'INFRASTRUCTURE',
+                        status: 'OK',
+                        metadata: {},
+                        category: 'NETWORK',
+                        ip: '10.0.0.1',
+                        location: { lat: 40.4, long: -3.7 },
+                        locationName: 'Madrid HQ',
+                    },
+                ]);
+            }
+            if (url === '/links') return Promise.resolve([]);
+            if (url === '/categories') return Promise.resolve([{ name: 'NETWORK' }]);
+            if (url === '/events?status=ACTIVE') {
+                activeEventsCalls += 1;
+                return Promise.resolve(activeEventsCalls === 1
+                    ? [{
+                        id: 'evt-1',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-1',
+                        metric_name: 'CPU',
+                        metric_protocol: 'SNMP',
+                        status: 'OPEN',
+                        severity: 'CRITICAL',
+                        message: 'CPU over threshold',
+                        created_at: '2026-04-04T20:00:00.000Z',
+                        last_seen: '2026-04-04T20:00:00.000Z',
+                        ack: false,
+                        comments: [],
+                    }]
+                    : [{
+                        id: 'evt-1',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-1',
+                        metric_name: 'CPU',
+                        metric_protocol: 'SNMP',
+                        status: 'ACK',
+                        severity: 'CRITICAL',
+                        message: 'CPU over threshold',
+                        created_at: '2026-04-04T20:00:00.000Z',
+                        last_seen: '2026-04-04T20:00:00.000Z',
+                        ack: true,
+                        ack_by: 'admin',
+                        comments: [],
+                    }]);
+            }
+            return Promise.resolve([]);
+        });
+
+        renderWithQueryClient(<MonitoringConsole />);
+
+        expect(await screen.findByText('CPU over threshold')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Ack' })).toBeInTheDocument();
+
+        const criticalCard = screen.getByText('Critical Events').closest('div');
+        const acknowledgedCard = screen.getByText('Acknowledged').closest('div');
+        expect(criticalCard?.textContent).toContain('1');
+        expect(acknowledgedCard?.textContent).toContain('0');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Ack' }));
+
+        await waitFor(() => {
+            expect(mockApiPost).toHaveBeenCalledWith('/events/evt-1/ack', {});
+        });
+
+        await waitFor(() => {
+            expect(screen.getByText('ACK')).toBeInTheDocument();
+        });
+
+        expect(screen.queryByRole('button', { name: 'Ack' })).toBeNull();
+        expect(criticalCard?.textContent).toContain('0');
+        expect(acknowledgedCard?.textContent).toContain('1');
+
+        const endpointCalls = mockApiGet.mock.calls.reduce<Record<string, number>>((counts, [url]) => {
+            counts[url] = (counts[url] ?? 0) + 1;
+            return counts;
+        }, {});
+
+        expect(endpointCalls['/nodes']).toBe(1);
+        expect(endpointCalls['/links']).toBe(1);
+        expect(endpointCalls['/categories']).toBe(1);
+        expect(endpointCalls['/events?status=ACTIVE']).toBe(2);
     });
 
     it('GIVEN the module WHEN imported THEN has no reference to leaflet-ant-path', async () => {

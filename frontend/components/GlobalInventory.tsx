@@ -1,7 +1,9 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { GraphNode } from '../types';
 import { getStatusClasses } from '../utils/status';
+import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
+import { useNodesQuery } from '../hooks/queries/useNodesQuery';
 
 /**
  * GlobalInventory Component
@@ -10,73 +12,18 @@ import { getStatusClasses } from '../utils/status';
  * Supports filtering by category and search by name/IP.
  */
 const GlobalInventory: React.FC = () => {
-    // Unify on GraphNode for consistency
-    const [inventory, setInventory] = useState<GraphNode[]>([]);
-    const [filteredInventory, setFilteredInventory] = useState<GraphNode[]>([]);
-    const [categories, setCategories] = useState<string[]>([]);
+    const { data: inventoryData } = useNodesQuery();
+    const { data: categoryData } = useCategoriesQuery();
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-    const [selectedItem, setSelectedItem] = useState<GraphNode | null>(null);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const selectedItemRef = useRef<GraphNode | null>(null);
+    const inventory = inventoryData ?? [];
+    const categories = useMemo(
+        () => (categoryData ?? []).map((category) => category.name),
+        [categoryData],
+    );
 
-    useEffect(() => {
-        selectedItemRef.current = selectedItem;
-    }, [selectedItem]);
-
-    const fetchData = () => {
-        const token = localStorage.getItem('token');
-        const headers = { 'Authorization': `Bearer ${token}` };
-
-        // Fetch Inventory (CIs with Metrics)
-        fetch('/api/nodes', { headers })
-            .then(res => {
-                if (!res.ok) throw new Error(res.statusText);
-                return res.json();
-            })
-            .then(data => {
-                if (Array.isArray(data)) {
-                    setInventory(data);
-                    const currentSelectedItem = selectedItemRef.current;
-                    if (currentSelectedItem) {
-                        // Real-time update of selected item
-                        const updated = data.find((i: GraphNode) => i.id === currentSelectedItem.id);
-                        if (updated) {
-                            setSelectedItem(updated);
-                        } else {
-                            setSelectedItem(null);
-                        }
-                    }
-                } else {
-                    console.error("Expected array for inventory but got:", data);
-                    setInventory([]);
-                }
-            })
-            .catch(err => console.error("Failed to fetch inventory:", err));
-
-        fetch('/api/categories', { headers })
-            .then(res => {
-                if (!res.ok) throw new Error(res.statusText);
-                return res.json();
-            })
-            .then(data => {
-                if (Array.isArray(data)) {
-                    setCategories(data.map((c: any) => c.name));
-                } else {
-                    console.error("Expected array for categories but got:", data);
-                    setCategories([]);
-                }
-            })
-            .catch(err => console.error("Failed to fetch categories:", err));
-    };
-
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 5000);
-        return () => clearInterval(interval);
-    }, []);
-
-    // Filter Logic
-    useEffect(() => {
+    const filteredInventory = useMemo(() => {
         let res = inventory;
         if (selectedCategory !== 'ALL') {
             res = res.filter(i => i.category === selectedCategory || i.type === selectedCategory);
@@ -88,8 +35,19 @@ const GlobalInventory: React.FC = () => {
                 i.ip?.toLowerCase().includes(lower)
             );
         }
-        setFilteredInventory(res);
-    }, [inventory, selectedCategory, searchTerm]);
+        return res;
+    }, [inventory, searchTerm, selectedCategory]);
+
+    const selectedItem = useMemo(
+        () => inventory.find((item) => item.id === selectedId) ?? null,
+        [inventory, selectedId],
+    );
+
+    useEffect(() => {
+        if (selectedId && !selectedItem) {
+            setSelectedId(null);
+        }
+    }, [selectedId, selectedItem]);
 
     return (
         <div className="h-full flex flex-col p-6 overflow-hidden">
@@ -123,8 +81,8 @@ const GlobalInventory: React.FC = () => {
                     {filteredInventory.map(item => (
                         <div
                             key={item.id}
-                            onClick={() => setSelectedItem(item)}
-                            className={`p-4 rounded-xl border cursor-pointer transition-all group ${selectedItem?.id === item.id
+                            onClick={() => setSelectedId(item.id)}
+                            className={`p-4 rounded-xl border cursor-pointer transition-all group ${selectedId === item.id
                                 ? 'bg-brand-600/10 border-brand-500/50 shadow-[0_0_15px_rgba(59,130,246,0.15)]'
                                 : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10'
                                 }`}
@@ -133,7 +91,7 @@ const GlobalInventory: React.FC = () => {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className={`w-2 h-2 rounded-full ${item.metrics?.some(m => m.status === 'CRITICAL') ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></span>
-                                        <h3 className={`text-sm font-black ${selectedItem?.id === item.id ? 'text-brand-400' : 'text-white'}`}>{item.label || item.id}</h3>
+                                        <h3 className={`text-sm font-black ${selectedId === item.id ? 'text-brand-400' : 'text-white'}`}>{item.label || item.id}</h3>
                                     </div>
                                     <div className="flex gap-2 mt-1">
                                         <span className="text-[10px] font-mono text-neutral-500">{item.ip || 'NO IP'}</span>

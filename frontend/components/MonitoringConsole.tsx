@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../services/api';
 import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Circle, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
@@ -8,6 +7,9 @@ import DependencyMiniMap from './DependencyMiniMap';
 import { useEventCorrelation } from '../hooks/useEventCorrelation';
 import L from 'leaflet';
 import { useAuth } from '../context/AuthContext';
+import { useEventMutations } from '../hooks/queries/useEventMutations';
+import { useMonitoringConsoleData } from '../hooks/queries/useMonitoringConsoleData';
+import { useRelatedEventsQuery } from '../hooks/queries/useRelatedEventsQuery';
 
 /**
  * Configure Leaflet Default Icon
@@ -244,44 +246,9 @@ const MapBounds = ({ nodes }: { nodes: GraphNode[] }) => {
  */
 const MonitoringConsole: React.FC = () => {
     const [viewMode, setViewMode] = useState<'DASHBOARD' | 'MAP'>('DASHBOARD');
-    const [events, setEvents] = useState<Event[]>([]);
-    const [nodes, setNodes] = useState<GraphNode[]>([]);
-    const [links, setLinks] = useState<any[]>([]);
     const [filterCategory, setFilterCategory] = useState<string>('ALL');
-    const [categories, setCategories] = useState<string[]>([]);
-
-    // Auto-refresh interval (10s)
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 10000);
-        return () => clearInterval(interval);
-    }, []);
-
-    /**
-     * Fetch all necessary data for the monitoring console.
-     * Retrieving Nodes, Links, and Active Events in parallel.
-     */
-    const fetchData = async () => {
-        try {
-            const [dataNodes, dataLinks, dataEvents] = await Promise.all([
-                api.get<GraphNode[]>('/nodes'),
-                api.get<any[]>('/links'),
-                api.get<Event[]>('/events?status=ACTIVE')
-            ]);
-
-            if (Array.isArray(dataNodes)) {
-                setNodes(dataNodes);
-                const cats = Array.from(new Set(dataNodes.map((n: GraphNode) => n.type))).sort();
-                setCategories(cats as string[]);
-            }
-
-            if (Array.isArray(dataLinks)) setLinks(dataLinks);
-            if (Array.isArray(dataEvents)) setEvents(dataEvents);
-
-        } catch (e) {
-            console.error("Failed to fetch monitoring data", e);
-        }
-    };
+    const { nodes, links, events, categories } = useMonitoringConsoleData();
+    const eventMutations = useEventMutations();
 
     // --- Actions ---
 
@@ -289,8 +256,7 @@ const MonitoringConsole: React.FC = () => {
      * Ackowledge an event (Operator is working on it).
      */
     const handleAck = async (id: string) => {
-        await api.post(`/events/${id}/ack`, {});
-        fetchData();
+        await eventMutations.ackEvent(id);
     };
 
     // --- Comment / Modal State ---
@@ -325,22 +291,19 @@ const MonitoringConsole: React.FC = () => {
 
     const submitComment = async () => {
         if (!selectedEventId || !commentText.trim()) return;
-        await api.post(`/events/${selectedEventId}/comment`, {
+        await eventMutations.commentEvent(selectedEventId, {
             message: commentText,
             user: CURRENT_USER
         });
         setCommentText("");
-        fetchData();
     };
 
     // M2: Take ownership
     const handleTakeCase = async (id: string) => {
-        await api.post(`/events/${id}/comment`, {
-            message: `[OWNERSHIP] Caso tomado por ${CURRENT_USER} — Tier ${CURRENT_TIER}`,
-            user: CURRENT_USER
+        await eventMutations.takeEvent(id, {
+            user: CURRENT_USER,
+            tier: CURRENT_TIER,
         });
-        await api.post(`/events/${id}/ack`, {});
-        fetchData();
     };
 
     // M5: Structured close
@@ -348,28 +311,27 @@ const MonitoringConsole: React.FC = () => {
         if (!selectedEventId) return;
         if (closeForcedMode) {
             if (!closeForcedReason.trim()) return;
-            await api.post(`/events/${selectedEventId}/comment`, {
+            await eventMutations.commentEvent(selectedEventId, {
                 message: `[CIERRE FORZADO — ${CURRENT_TIER}] Motivo: ${closeForcedReason}`,
                 user: CURRENT_USER
             });
         } else {
             if (!closeRootCause || closeNote.trim().length < 20) return;
-            await api.post(`/events/${selectedEventId}/comment`, {
+            await eventMutations.commentEvent(selectedEventId, {
                 message: `[CIERRE] Causa raíz: ${closeRootCause}\nNota: ${closeNote}`,
                 user: CURRENT_USER
             });
         }
-        await api.post(`/events/${selectedEventId}/close`, { forced: closeForcedMode });
+        await eventMutations.closeEvent(selectedEventId, { forced: closeForcedMode });
         setCommentModalOpen(false);
         setCloseFlowOpen(false);
-        fetchData();
     };
 
     // --- Data Processing for Visualization ---
 
     const filteredNodes = filterCategory === 'ALL'
         ? nodes
-        : nodes.filter(n => n.type === filterCategory);
+        : nodes.filter(n => (n.category ?? n.type) === filterCategory);
 
     // Enriched Nodes with Event Status
     const nodesWithEvents = filteredNodes.map(node => {
@@ -417,9 +379,8 @@ const MonitoringConsole: React.FC = () => {
                         onClick={async () => {
                             if (cleanableCount === 0) return;
                             if (!window.confirm(`About to close ${cleanableCount} RECOVERED events that have no Acks or Comments. Proceed?`)) return;
-                            const res: any = await api.post('/events/prune', {});
+                            const res: any = await eventMutations.pruneEvents();
                             alert(res.message);
-                            fetchData();
                         }}
                         disabled={cleanableCount === 0}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all ${cleanableCount > 0 ? 'bg-brand-600 hover:bg-brand-500 text-white animate-pulse' : 'bg-white/5 text-neutral-600 opacity-30 cursor-not-allowed'}`}
@@ -1062,8 +1023,7 @@ const MonitoringConsole: React.FC = () => {
                                             onClick={async () => {
                                                 setIsDiagnosing(true);
                                                 try {
-                                                    await api.post(`/events/${selectedEventId}/diagnose`, {});
-                                                    await fetchData();
+                                                    await eventMutations.diagnoseEvent(selectedEventId, { user: CURRENT_USER });
                                                 } catch (e) { console.error(e); }
                                                 finally { setIsDiagnosing(false); }
                                             }}
@@ -1114,15 +1074,7 @@ const StatCard = ({ label, value, icon, color, bg, animate }: any) => (
  * Useful for spotting correlated issues (e.g. CPU High + Latency High).
  */
 const RelatedAlarmsPanel = ({ ciId, currentEventId }: { ciId?: string, currentEventId?: string | null }) => {
-    const [related, setRelated] = useState<any[]>([]);
-
-    useEffect(() => {
-        if (ciId) {
-            api.get<any[]>(`/events/related/${ciId}`)
-                .then(data => setRelated(data))
-                .catch(err => console.error("Failed to load related events", err));
-        }
-    }, [ciId]);
+    const { data: related = [] } = useRelatedEventsQuery(ciId);
 
     // Filter out current event
     const displayed = related.filter(e => e.id !== currentEventId);

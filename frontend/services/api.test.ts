@@ -78,14 +78,20 @@ describe('api client', () => {
       });
     });
 
-    it('returns null for 404 responses', async () => {
+    it('throws ApiError for 404 responses', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         status: 404,
         ok: false,
+        statusText: 'Not Found',
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ detail: 'Not found' }),
       });
 
-      const result = await api.get('/nonexistent');
-      expect(result).toBeNull();
+      await expect(api.get('/nonexistent')).rejects.toBeInstanceOf(ApiError);
+      await expect(api.get('/nonexistent')).rejects.toMatchObject({
+        status: 404,
+        message: 'Not found',
+      });
     });
 
     it('throws ApiError for non-2xx responses', async () => {
@@ -133,6 +139,29 @@ describe('api client', () => {
       });
       expect(result).toEqual(created);
     });
+
+    it('forwards signal without dropping auth and json headers', async () => {
+      const signal = new AbortController().signal;
+      localStorage.setItem('token', 'fake-token');
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ ok: true }),
+      });
+
+      await api.post('/nodes', { name: 'test' }, { signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/nodes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer fake-token',
+        },
+        body: JSON.stringify({ name: 'test' }),
+        signal,
+      });
+    });
   });
 
   describe('put', () => {
@@ -153,6 +182,25 @@ describe('api client', () => {
         body: JSON.stringify({ name: 'updated' }),
       });
       expect(result).toEqual(updated);
+    });
+
+    it('forwards signal for put requests', async () => {
+      const signal = new AbortController().signal;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ ok: true }),
+      });
+
+      await api.put('/nodes/1', { name: 'updated' }, { signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/nodes/1', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'updated' }),
+        signal,
+      });
     });
   });
 
@@ -188,6 +236,71 @@ describe('api client', () => {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true }),
+      });
+    });
+
+    it('forwards signal for delete requests', async () => {
+      const signal = new AbortController().signal;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({}),
+      });
+
+      await api.delete('/nodes/1', { force: true }, { signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/nodes/1', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+        signal,
+      });
+    });
+  });
+
+  describe('request forwarding', () => {
+    it('forwards signal for request and keeps caller headers', async () => {
+      const signal = new AbortController().signal;
+      localStorage.setItem('token', 'fake-token');
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ ok: true }),
+      });
+
+      await api.request('/custom', {
+        method: 'GET',
+        signal,
+        headers: { Accept: 'application/json' },
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/custom', {
+        method: 'GET',
+        signal,
+        headers: {
+          Authorization: 'Bearer fake-token',
+          Accept: 'application/json',
+        },
+      });
+    });
+
+    it('forwards signal for get requests', async () => {
+      const signal = new AbortController().signal;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ ok: true }),
+      });
+
+      await api.get('/nodes', { signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/nodes', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
       });
     });
   });
