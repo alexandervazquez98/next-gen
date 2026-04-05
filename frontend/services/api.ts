@@ -1,5 +1,3 @@
-import { useNavigate } from 'react-router-dom';
-
 const API_BASE = '/api';
 
 /**
@@ -47,11 +45,6 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
         headers,
     });
 
-    // Handle 404
-    if (response.status === 404) {
-        return null as any;
-    }
-
     // Handle 401 Unauthorized
     if (response.status === 401) {
         localStorage.removeItem('token');
@@ -75,10 +68,19 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
 }
 
 export const api = {
-    get: <T>(endpoint: string) => request<T>(endpoint, { method: 'GET' }),
-    post: <T>(endpoint: string, body: any) => request<T>(endpoint, { method: 'POST', body: JSON.stringify(body) }),
-    put: <T>(endpoint: string, body: any) => request<T>(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
-    delete: <T>(endpoint: string, body?: any) => request<T>(endpoint, {
+    get: <T>(endpoint: string, config: RequestInit = {}) => request<T>(endpoint, { ...config, method: 'GET' }),
+    post: <T>(endpoint: string, body: any, config: RequestInit = {}) => request<T>(endpoint, {
+        ...config,
+        method: 'POST',
+        body: JSON.stringify(body),
+    }),
+    put: <T>(endpoint: string, body: any, config: RequestInit = {}) => request<T>(endpoint, {
+        ...config,
+        method: 'PUT',
+        body: JSON.stringify(body),
+    }),
+    delete: <T>(endpoint: string, body?: any, config: RequestInit = {}) => request<T>(endpoint, {
+        ...config,
         method: 'DELETE',
         body: body ? JSON.stringify(body) : undefined
     }),

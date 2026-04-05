@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before dynamic imports
@@ -111,7 +112,12 @@ async function renderConsoleWithEvent() {
     });
 
     await act(async () => {
-        render(<MonitoringConsole />);
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+        render(
+            <QueryClientProvider client={client}>
+                <MonitoringConsole />
+            </QueryClientProvider>
+        );
     });
 
     return { MonitoringConsole };

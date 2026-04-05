@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './components/LoginPage';
-import { GraphNode, GraphLink } from './types';
+import { GraphNode } from './types';
+import { api } from './services/api';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from './services/queryKeys';
 
 // Components
 import GraphCMDB from './components/GraphCMDB';
@@ -38,93 +41,59 @@ const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
 // --- Main Layout (Authenticated) ---
 const MainLayout: React.FC = () => {
   const { user, logout, hasPermission } = useAuth();
-  const [nodes, setNodes] = useState<GraphNode[]>([]);
-  const [links, setLinks] = useState<GraphLink[]>([]);
+  const queryClient = useQueryClient();
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-
-  useEffect(() => {
-    fetchNodes();
-    fetchLinks();
-  }, []);
-
-  const fetchNodes = () => {
-    fetch('/api/nodes', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-      .then(res => {
-        if (res.status === 401) logout();
-        if (!res.ok) throw new Error(res.statusText);
-        return res.json();
-      })
-      .then(data => {
-        if (Array.isArray(data)) setNodes(data);
-      })
-      .catch(err => console.error(err));
-  };
-
-  const fetchLinks = () => {
-    fetch('/api/links', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-      .then(res => {
-        if (!res.ok) throw new Error(res.statusText);
-        return res.json();
-      })
-      .then(data => {
-        if (Array.isArray(data)) setLinks(data);
-      })
-      .catch(err => console.error(err));
-  };
+  const cachedNodes = queryClient.getQueryData<GraphNode[]>(queryKeys.nodes()) ?? [];
 
   const [isEditing, setIsEditing] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAIAgent, setShowAIAgent] = useState(false);
 
   // --- CRUD Functions ---
-  const handleSaveCI = (newNode: GraphNode) => {
-    fetch('/api/nodes', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      },
-      body: JSON.stringify(newNode)
-    })
-      .then(res => res.json())
-      .then(savedNode => {
-        setNodes(prev => {
-          const exists = prev.find(n => n.id === savedNode.id);
-          if (exists) return prev.map(n => n.id === savedNode.id ? savedNode : n);
-          return [...prev, savedNode];
-        });
-        setIsEditing(false);
-        setSelectedNode(null);
-      })
-      .catch(err => console.error(err));
+  const refreshTopologyResources = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.graphTopology() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.nodes() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.links() }),
+    ]);
   };
 
-  const handleDeleteCI = (id: string) => {
-    fetch(`/api/nodes/${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-      .then(() => {
-        setNodes(prev => prev.filter(n => n.id !== id));
-        setLinks(prev => prev.filter(l => l.source !== id && l.target !== id));
-        setIsEditing(false);
-        setSelectedNode(null);
-      })
-      .catch(err => console.error(err));
+  const handleSaveCI = async (newNode: GraphNode) => {
+    try {
+      await api.post('/nodes', newNode);
+      await refreshTopologyResources();
+      setIsEditing(false);
+      setSelectedNode(null);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const exportToPythonAgent = () => {
-    const data = JSON.stringify({ nodes, links }, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'cmdb_inventory.json';
-    a.click();
+  const handleDeleteCI = async (id: string) => {
+    try {
+      await api.delete(`/nodes/${id}`);
+      await refreshTopologyResources();
+      setIsEditing(false);
+      setSelectedNode(null);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const exportToPythonAgent = async () => {
+    try {
+      const topology = await api.get<{ nodes: GraphNode[]; links: unknown[] }>('/graph/full');
+      const data = JSON.stringify(topology, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cmdb_inventory.json';
+      a.click();
+    } catch (err) {
+      console.error('Failed to export CMDB inventory for Python agent.', err);
+      alert('No se pudo exportar el inventario. Verificá tu conexion o volve a iniciar sesion.');
+    }
   };
 
   return (
@@ -183,7 +152,7 @@ const MainLayout: React.FC = () => {
             <h1 className="text-lg font-bold text-white tracking-tight uppercase tracking-widest">Platform Engine v3.2</h1>
             <div className="hidden md:flex items-center gap-2 bg-neutral-900 border border-white/5 px-3 py-1 rounded-full text-[10px] font-black text-accent-cyan">
               <span className="w-2 h-2 bg-accent-cyan rounded-full animate-pulse"></span>
-              SNMP Polling: ACTIVE ({nodes.length} Nodes)
+              SNMP Polling: ACTIVE ({cachedNodes.length} Nodes)
             </div>
           </div>
 
@@ -206,7 +175,7 @@ const MainLayout: React.FC = () => {
               <Route path="monitoring" element={<MonitoringConsole />} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="users" element={<UserManager />} />
-              <Route path="cmdb" element={<GraphCMDB nodes={nodes} links={links} onNodeClick={(n) => { setSelectedNode(n); setShowDetailModal(true); }} />} />
+              <Route path="cmdb" element={<GraphCMDB onNodeClick={(n) => { setSelectedNode(n); setShowDetailModal(true); }} />} />
               <Route path="network" element={<NetworkVisualizer />} />
               <Route path="analytics" element={<MetricAnalytics />} />
               <Route path="inventory" element={<GlobalInventory />} />
