@@ -103,7 +103,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
     const handleCreate = () => {
         setSelectedMetric(null);
-        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', operator: '>=', applicable_to: {} });
+        setFormData({ protocol: 'SNMP', dataType: 'INTEGER', operator: '>=', criticality: 1, applicable_to: {} });
         setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
         setIsEditing(true);
         setTestResult(null);
@@ -111,7 +111,9 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
 
     const handleSave = async (overrideCriteria?: any) => {
         // Prepare applicable_to
-        const crit = overrideCriteria || criteria;
+        const crit = overrideCriteria && typeof overrideCriteria === 'object' && 'brands' in overrideCriteria
+            ? overrideCriteria
+            : criteria;
 
         const appTo = {
             brands: (crit.brands || '').split(',').map((s: string) => s.trim()).filter((s: string) => s),
@@ -134,6 +136,71 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
             setIsEditing(false);
             setFormData({});
             setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
+            fetchMetrics();
+        } catch (e) {
+            alert('Error saving metric');
+        }
+    };
+
+    const buildCriteriaStrings = (applicableTo?: MetricDef['applicable_to']) => ({
+        brands: (applicableTo?.brands || []).join(', '),
+        models: (applicableTo?.models || []).join(', '),
+        layers: (applicableTo?.layers || []).join(', '),
+        names: (applicableTo?.names || []).join(', '),
+        excluded_names: (applicableTo?.excluded_names || []).join(', ')
+    });
+
+    const buildMetricPayload = (applicableTo: MetricDef['applicable_to']) => ({
+        ...formData,
+        warning: formData.warning === undefined || formData.warning === null || String(formData.warning) === '' ? null : Number(formData.warning),
+        critical: formData.critical === undefined || formData.critical === null || String(formData.critical) === '' ? null : Number(formData.critical),
+        applicable_to: applicableTo,
+    });
+
+    const handleExcludeAssociatedCI = async (ci: any) => {
+        if (!selectedMetric) return;
+
+        const currentNames = criteria.names.split(',').map(s => s.trim()).filter(s => s);
+        const newNames = currentNames.filter(n => n !== ci.name && n !== ci.id);
+
+        const currentExcluded = criteria.excluded_names.split(',').map(s => s.trim()).filter(s => s);
+        const newExcluded = [...currentExcluded];
+        if (!newExcluded.includes(ci.name)) newExcluded.push(ci.name);
+        if (!newExcluded.includes(ci.id)) newExcluded.push(ci.id);
+
+        const updatedApplicableTo = {
+            brands: criteria.brands.split(',').map(s => s.trim()).filter(s => s),
+            models: criteria.models.split(',').map(s => s.trim()).filter(s => s),
+            layers: criteria.layers.split(',').map(s => s.trim()).filter(s => s),
+            names: newNames,
+            excluded_names: newExcluded,
+        };
+
+        const payload = buildMetricPayload(updatedApplicableTo);
+
+        try {
+            await api.post('/metrics', payload);
+
+            const updatedMetric = {
+                ...selectedMetric,
+                ...payload,
+                applicable_to: updatedApplicableTo,
+            };
+
+            const nextCriteria = {
+                ...criteria,
+                names: newNames.join(', '),
+                excluded_names: newExcluded.join(', '),
+            };
+
+            setFormData(payload);
+            setSelectedMetric(updatedMetric);
+            setCriteria(nextCriteria);
+            setUsageData((prev: any) => prev ? {
+                ...prev,
+                count: Math.max((prev.count || 1) - 1, 0),
+                cis: Array.isArray(prev.cis) ? prev.cis.filter((item: any) => item.id !== ci.id) : [],
+            } : prev);
             fetchMetrics();
         } catch (e) {
             alert('Error saving metric');
@@ -476,31 +543,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 if (confirm(`Are you sure you want to remove '${ci.name}' from this metric's applicability list?`)) {
-                                                                    // Logic: 
-                                                                    // 1. Remove from NAMES (if present)
-                                                                    const currentNames = (criteria.names || '').split(',').map(s => s.trim());
-                                                                    const newNames = currentNames.filter(n => n !== ci.name && n !== ci.id).join(', ');
-
-                                                                    // 2. Add to EXCLUDED_NAMES
-                                                                    const currentExcluded = (criteria.excluded_names || '').split(',').map(s => s.trim());
-                                                                    const newExcluded = [...currentExcluded];
-                                                                    if (!newExcluded.includes(ci.name)) newExcluded.push(ci.name);
-                                                                    // Optionally exclude by ID too for robustness
-                                                                    if (!newExcluded.includes(ci.id)) newExcluded.push(ci.id);
-
-                                                                    const newExcludedStr = newExcluded.filter(s => s).join(', ');
-
-                                                                    // Update State
-                                                                    const newCriteria = {
-                                                                        ...criteria,
-                                                                        names: newNames,
-                                                                        excluded_names: newExcludedStr
-                                                                    };
-                                                                    setCriteria(newCriteria);
-
-                                                                    // 3. PERSIST IMMEDIATELY
-                                                                    // Pass overridden criteria because state update might be async
-                                                                    handleSave(newCriteria);
+                                                                    handleExcludeAssociatedCI(ci);
                                                                 }
                                                             }}
                                                             className="text-neutral-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"

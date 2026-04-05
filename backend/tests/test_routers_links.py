@@ -1,0 +1,332 @@
+"""Router-level tests for links endpoints — mocked dependencies.
+
+Focus areas:
+- Links: NO auth on any endpoint (documented gap). All endpoints are public.
+- GET /api/links — list all relationship links
+- POST /api/links — create a relationship
+- DELETE /api/links — delete a relationship
+- GET /api/graph/full — fetch complete graph topology
+
+Strategy:
+- Patch Neo4j driver BEFORE importing main (avoids real connection at import)
+- Use FastAPI TestClient
+- Mock topology_repo functions for service-layer isolation
+- Document the auth gap (no endpoint requires authentication)
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch
+from fastapi.testclient import TestClient
+
+# ---------------------------------------------------------------------------
+# Patch Neo4j driver BEFORE importing anything that touches database.py
+# ---------------------------------------------------------------------------
+_mock_neo4j_driver = MagicMock()
+with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
+    from main import app
+    from database import get_db
+
+# ---------------------------------------------------------------------------
+# TestClient
+# ---------------------------------------------------------------------------
+client = TestClient(app)
+
+
+# ===========================================================================
+# LINKS ROUTER TESTS
+# ===========================================================================
+# NOTE: The links router has NO authentication. All endpoints are public.
+# This is a known security gap — these tests document the current behavior.
+# ===========================================================================
+
+
+class TestLinksList:
+    """Tests for GET /api/links — list all relationship links."""
+
+    def test_list_links_returns_empty(self):
+        """Should return empty list when no links exist."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_links.return_value = []
+
+            response = client.get("/api/links")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 0
+
+    def test_list_links_returns_data(self):
+        """Should return link definitions when they exist."""
+        sample_links = [
+            {
+                "source": "ci-001",
+                "source_label": "Router-01",
+                "target": "ci-002",
+                "target_label": "Switch-01",
+                "relationship": "CONNECTS_TO",
+            },
+            {
+                "source": "ci-002",
+                "source_label": "Switch-01",
+                "target": "ci-003",
+                "target_label": "Server-01",
+                "relationship": "HOSTED_ON",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_links.return_value = sample_links
+
+            response = client.get("/api/links")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["source"] == "ci-001"
+        assert data[0]["relationship"] == "CONNECTS_TO"
+        assert data[1]["relationship"] == "HOSTED_ON"
+
+    def test_list_links_no_auth_required(self):
+        """Links list should NOT require authentication (documented gap)."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_links.return_value = []
+
+            response = client.get("/api/links")
+
+        assert response.status_code == 200
+        assert response.status_code != 401
+        assert response.status_code != 403
+
+
+class TestLinksCreate:
+    """Tests for POST /api/links — create a relationship."""
+
+    def test_create_link_success(self):
+        """Should create a link between two nodes."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.create_link.return_value = None
+
+            response = client.post(
+                "/api/links",
+                json={
+                    "source": "ci-001",
+                    "target": "ci-002",
+                    "relationship": "DEPENDS_ON",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "Link created" in data["message"]
+        mock_repo.create_link.assert_called_once_with("ci-001", "ci-002", "DEPENDS_ON")
+
+    def test_create_link_validates_required_fields(self):
+        """Should reject request missing required fields (source, target, relationship)."""
+        response = client.post(
+            "/api/links",
+            json={"source": "ci-001"},
+        )
+
+        assert response.status_code == 422
+
+    def test_create_link_no_auth_required(self):
+        """Create link should NOT require auth (documented gap)."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.create_link.return_value = None
+
+            response = client.post(
+                "/api/links",
+                json={
+                    "source": "ci-001",
+                    "target": "ci-002",
+                    "relationship": "CONNECTS_TO",
+                },
+            )
+
+        assert response.status_code != 401
+        assert response.status_code != 403
+
+
+class TestLinksDelete:
+    """Tests for DELETE /api/links — delete a relationship."""
+
+    def test_delete_link_success(self):
+        """Should delete a link between two nodes."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.delete_link.return_value = None
+
+            response = client.request(
+                "DELETE",
+                "/api/links",
+                json={
+                    "source": "ci-001",
+                    "target": "ci-002",
+                    "relationship": "DEPENDS_ON",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "Link deleted" in data["message"]
+        mock_repo.delete_link.assert_called_once_with("ci-001", "ci-002", "DEPENDS_ON")
+
+    def test_delete_link_validates_required_fields(self):
+        """Should reject request missing required fields."""
+        response = client.request(
+            "DELETE",
+            "/api/links",
+            json={"source": "ci-001"},
+        )
+
+        assert response.status_code == 422
+
+    def test_delete_link_no_auth_required(self):
+        """Delete link should NOT require auth (documented gap)."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.delete_link.return_value = None
+
+            response = client.request(
+                "DELETE",
+                "/api/links",
+                json={
+                    "source": "ci-001",
+                    "target": "ci-002",
+                    "relationship": "CONNECTS_TO",
+                },
+            )
+
+        assert response.status_code != 401
+        assert response.status_code != 403
+
+
+class TestGraphFull:
+    """Tests for GET /api/graph/full — fetch complete graph topology."""
+
+    def test_full_graph_returns_empty(self):
+        """Should return empty graph when no data exists."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_full_graph_data.return_value = ([], [])
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        assert "links" in data
+        assert len(data["nodes"]) == 0
+        assert len(data["links"]) == 0
+
+    def test_full_graph_returns_data(self):
+        """Should return formatted nodes and links from graph data."""
+        raw_nodes = [
+            {
+                "id": "ci-001",
+                "name": "Router-01",
+                "status": "OK",
+                "_labels": ["CI"],
+            },
+            {
+                "id": "ci-002",
+                "name": "Switch-01",
+                "status": "WARNING",
+                "_labels": ["CI"],
+            },
+            {
+                "id": "cpu-load",
+                "protocol": "SNMP",
+                "_labels": ["MetricDef"],
+            },
+        ]
+        raw_links = [
+            {
+                "source_node": {"id": "ci-001", "name": "Router-01"},
+                "target_node": {"id": "ci-002", "name": "Switch-01"},
+                "type": "CONNECTS_TO",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_full_graph_data.return_value = (raw_nodes, raw_links)
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["nodes"]) == 3
+        assert len(data["links"]) == 1
+        assert data["links"][0]["source"] == "ci-001"
+        assert data["links"][0]["target"] == "ci-002"
+        assert data["links"][0]["relationship"] == "CONNECTS_TO"
+
+    def test_full_graph_handles_fallback_ids(self):
+        """Should handle nodes without explicit ID using name/label fallback."""
+        raw_nodes = [
+            {
+                "name": "Router-01",
+                "status": "OK",
+                "_labels": ["CI"],
+            },
+            {
+                "brand": "Cisco",
+                "model": "ASR-1000",
+                "_labels": ["HardwareModel"],
+            },
+        ]
+        raw_links = []
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_full_graph_data.return_value = (raw_nodes, raw_links)
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["nodes"]) == 2
+        # First node: uses name as fallback
+        assert data["nodes"][0]["id"] == "Router-01"
+        assert data["nodes"][0]["type"] == "CI"
+        # Second node: uses "Brand Model" as fallback
+        assert data["nodes"][1]["id"] == "Cisco ASR-1000"
+        assert data["nodes"][1]["type"] == "Hardware"
+
+    def test_full_graph_categorizes_node_types(self):
+        """Should correctly categorize nodes by their Neo4j labels."""
+        raw_nodes = [
+            {"id": "cat-1", "name": "Router", "_labels": ["Category"]},
+            {"id": "owner-1", "name": "NetOps", "_labels": ["OwnerGroup"]},
+            {"id": "user-1", "name": "admin", "_labels": ["User"]},
+            {
+                "id": "hw-1",
+                "brand": "Cisco",
+                "model": "ISR4K",
+                "_labels": ["HardwareModel"],
+            },
+            {"id": "metric-1", "protocol": "SNMP", "_labels": ["MetricDef"]},
+            {"id": "unknown-1", "name": "Something", "_labels": ["CustomLabel"]},
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_full_graph_data.return_value = (raw_nodes, [])
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        types = {n["id"]: n["type"] for n in data["nodes"]}
+        assert types["cat-1"] == "Category"
+        assert types["owner-1"] == "Owner"
+        assert types["user-1"] == "User"
+        assert types["hw-1"] == "Hardware"
+        assert types["metric-1"] == "Metric"
+        assert types["unknown-1"] == "Unknown"
+
+    def test_full_graph_no_auth_required(self):
+        """Full graph should NOT require authentication (documented gap)."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_full_graph_data.return_value = ([], [])
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        assert response.status_code != 401
+        assert response.status_code != 403

@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -29,13 +30,20 @@ export default defineConfig(({ mode }) => {
     test: {
       globals: true,
       environment: 'jsdom',
-      setupFiles: ['./test-setup.ts'],
-      include: ['**/__tests__/**/*.{test,spec}.{ts,tsx}'],
+      setupFiles: ['./test/setup.ts'],
+      include: ['**/*.test.{ts,tsx}'],
       coverage: {
+        provider: 'v8',
         reporter: ['text', 'lcov'],
-        include: ['components/**/*.{ts,tsx}'],
+        include: ['**/*.{ts,tsx}'],
+        exclude: [
+          'test/**',
+          'node_modules/**',
+          'dist/**',
+          '**/*.d.ts',
+          '**/*.config.*',
+        ],
       },
     },
   };
 });
-// Trigger Re-build
