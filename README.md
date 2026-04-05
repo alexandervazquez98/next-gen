@@ -1,79 +1,64 @@
-# NEX-GEN Platform (NEX-GEN ITOM)
+# NEX-GEN Platform
 
-## Descripción General
-NEX-GEN es una plataforma avanzada de gestión de operaciones de TI (ITOM) diseñada bajo los más altos estándares de arquitectura. Su núcleo está centrado en una CMDB basada en grafos (Neo4j), que permite no solo un inventario preciso, sino una visualización y gestión relacional profunda de la infraestructura. Integra telemetría en tiempo real, recolección de métricas dinámicas vía SNMP, y diagnósticos asistidos mediante un motor de analítica (AIOps). Su propósito es brindar una visión holística de la salud tecnológica, gestionando incidentes de forma proactiva y ofreciendo correlación visual y lógica de dependencias.
+NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada en grafos, telemetria en tiempo real y una consola de eventos orientada a contexto operacional.
 
-## Arquitectura
-El sistema operativo se estructura bajo el estándar de microservicios de Antigravity, garantizando escalabilidad, resiliencia y separación de responsabilidades:
+## Que resuelve
 
-- **Backend (API & Lógica de Negocio)**: Desarrollado en Python (FastAPI). Centraliza la lógica de negocio, expone la API RESTful para la interfaz de usuario, interactúa directamente con la base de datos de grafos para la gestión de topología, y coordina los ciclos de vida de eventos/incidentes (alineado con ITIL 4).
-- **Frontend (Interfaz de Usuario)**: Aplicación SPA (Single Page Application) construida estáticamente con React 18, Vite, TypeScript y TailwindCSS. Incorpora representaciones en 2D/3D (D3/Force Graph) y mapas geoespaciales (Leaflet) para un control situacional en tiempo real.
-- **Capa de Datos**:
-  - **Neo4j**: Base de datos de grafos para la topología, CMDB, y relaciones lógicas complejas.
-  - **TimescaleDB (PostgreSQL 16)**: Repositorio optimizado para métricas de series temporales y persistencia de autenticación/roles.
-- **Motores/Workers (AIOps & Sondeo)**:
-  - **SNMP Worker**: Proceso asíncrono para recolección continua de telemetría de red.
-  - **Analytics Worker (AIOps)**: Motor que busca proactivamente estados críticos en la topología, con capacidad heurística para simular diagnósticos o resolución automática de incidentes (Auto-Fix).
+- Modela CIs, relaciones topologicas y definiciones de metricas sobre Neo4j.
+- Recolecta telemetria via SNMP/ICMP y genera eventos con snapshot de contexto de negocio.
+- Expone un backend FastAPI y un frontend React para monitoreo, diagnostico y gestion de incidentes.
+- Mantiene el feed `/api/events` liviano y usa `GET /api/events/{event_id}` para el detalle enriquecido del modal.
 
-## Instalación y Configuración
+## Arquitectura Rapida
 
-El proyecto está completamente contenerizado, facilitando un despliegue ágil "Zero-Config" en entornos de desarrollo.
+| Capa | Stack | Responsabilidad |
+| --- | --- | --- |
+| Backend | Python, FastAPI, Pydantic | API, reglas de negocio, enriquecimiento de eventos, auth |
+| Frontend | React, Vite, TypeScript, Tailwind | Console, inventario, visualizacion de topologia y modal de detalle |
+| Grafo | Neo4j | CIs, relaciones, metricas, BusinessService, ServiceCatalog |
+| Series temporales | TimescaleDB / PostgreSQL | Historico de metricas |
+| Workers | SNMP / ICMP polling | Ingesta, thresholding y apertura/recuperacion de eventos |
 
-**Requisitos Previos:**
-- Docker y Docker Compose instalados.
+## Flujo de detalle de evento
 
-**Pasos de Despliegue Rápidos:**
-1. Clona el repositorio en tu máquina local.
-2. Navega al directorio raíz del proyecto (`zero-co` o tu directorio local).
-3. Crea tu archivo de configuración de entorno basado en la plantilla segura:
-   ```bash
-   cp .env.example .env
-   ```
-   *(Asegúrate de configurar contraseñas seguras en tu nuevo `.env`)*
-4. Construye e inicializa todo el stack de contenedores:
-   ```bash
-   docker-compose up --build -d
-   ```
-5. **Accesos:**
-   - **Frontend Console**: [http://localhost:3000](http://localhost:3000)
-     - *Login inicial por defecto:* Usuario: `admin` | Password: `admin` *(Requerirá cambio de clave inmediato)*
-   - **Backend API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-   - **Neo4j Browser**: [http://localhost:7474](http://localhost:7474) (Auth según variables de tu `.env`)
+1. El worker detecta una brecha y crea/actualiza un `Event`.
+2. Cuando el evento es nuevo, guarda snapshot de `BusinessService`, `ServiceCatalog`, owners, sitio e SLA.
+3. La grilla sigue consultando `/api/events?status=ACTIVE`.
+4. Al abrir el modal, el frontend consulta `/api/events/{event_id}`.
+5. El backend devuelve `event`, `business_context` e `itsm_context`, priorizando snapshot y usando fallback del grafo para eventos historicos.
 
-## Stack Tecnológico
+## Documentacion Canonica
 
-| Componente | Tecnologías |
-| :--- | :--- |
-| **Backend** | Python 3.10+, FastAPI, Uvicorn, SQLAlchemy, Pydantic, PySNMP, Pandas |
-| **Frontend** | React 18, TypeScript, Vite, TailwindCSS, React Leaflet, D3-Force, Recharts, @google/genai |
-| **Base de Datos** | Neo4j 5.15.0, TimescaleDB (PostgreSQL 16) |
-| **Infraestructura** | Docker, Docker Compose |
-| **Protocolos** | HTTP/REST, SNMP (Polling), Bolt (Neo4j) |
+- [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
+- [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
+- [`modelo_entidad_relacion.md`](modelo_entidad_relacion.md) - referencia tecnica de entidades, relaciones y payloads relevantes.
+- [`CONTEXT.md`](CONTEXT.md) - contexto funcional y roadmap del sistema.
 
-## Identificación de Entidades (Graph DB Modelo)
-Las principales entidades que alimentan la base de datos Neo4j para mapear el ecosistema ITIL son:
+## API relevante
 
-- **`CI` (Configuration Item)**: Representa activos, dispositivos de red, servidores o aplicaciones.
-- **`MetricDef`**: Definición de métricas de telemetría asignables dinámicamente.
-- **`Event`**: Incidentes, Alertas o Cambios de estado en la infraestructura.
-- **`Category`**: Clasificaciones lógicas de inventario de hardware y software.
-- **`OwnerGroup`**: Agrupaciones lógicas de responsables o usuarios de soporte.
+- `GET /api/events?status=ACTIVE` - resumen para polling del stream.
+- `GET /api/events/{event_id}` - detalle enriquecido para el modal.
+- `POST /api/events/{event_id}/ack` - reconocimiento.
+- `POST /api/events/{event_id}/comment` - auditoria append-only.
+- `POST /api/events/{event_id}/close` - cierre estructurado o forzado.
+- `POST /api/events/{event_id}/diagnose` - diagnostico on-demand.
 
-*Principales Relaciones (Edges):* `DEPENDS_ON`, `HOSTED_ON`, `CONNECTS_TO`, `HAS_METRIC`, `TRIGGERED_BY`.
+## Setup local
 
-## Estado del Proyecto (Roadmap & Features)
+1. Copia variables base: `cp .env.example .env`.
+2. Levanta servicios: `docker-compose up -d`.
+3. Frontend: `http://localhost:3000`.
+4. Backend docs: `http://localhost:8000/docs`.
+5. Neo4j Browser: `http://localhost:7474`.
 
-**Funcionalidades Implementadas:**
-- CMDB relacional y topológica en tiempo real (Visualización en Grafo Integrada).
-- **Análisis Visual de Impacto AIOps (Blast Radius)**: Mapas geoespaciales interactivos al rojo vivo ("Heatmaps") y filtros dinámicos de transparencia D3-Force  (>90% a nodos sanos), iluminando exclusivamente la falla troncal y la propagación de impacto por dependencias.
-- CRUD de Nodos y Operaciones de Enlaces (Links).
-- Reconciliación Automática de Métricas (Asigna sondas basándose en marca/modelo del CI).
-- **Asignación de Métricas de Alta Granularidad**: Soporte para reglas lógicas (`>=`, `==`, `!=`, etc.) en umbrales y asignación explícita (Opt-In/Opt-Out) por CIs individuales.
-- Monitorización activa vía SNMP Worker para la recolección de datos de red e infraestructura.
-- Event Management básico API (Estados: Open, Ack, Closed).
-- Agente AIOps Simulador: Un script que sondea nodos en estado "CRITICAL" e inyecta resoluciones asistidas simuladas.
+## Tests focalizados
 
-**Pendiente de Definición / Roadmap Futuro:**
-- **Alertas Predictivas Nativas**: Integración profunda del SDK de @google/genai para predecir fallos basándose en patrones anómalos de series temporales (descrito en roadmap pero requiere clarificación en el flujo de backend).
-- **Agentes Remotos**: Compatibilidad confirmada en contexto, pero el mecanismo de despliegue y push-telemetry (vs polling) está *Pendiente de Definición*.
-- **Integración ITSM**: Conectores bidireccionales formales para Jira / ServiceNow *Pendientes de Definición* arquitectónica.
+- Desde la raiz del repo:
+  - Backend: `python -m pytest backend/tests/test_event_service_smoke.py backend/tests/test_routers_metrics_events.py backend/tests/test_snmp_service_snapshots.py`
+  - Frontend: `npm --prefix frontend run test:run -- hooks/queries/resourceQueries.test.tsx components/__tests__/EventDetailModal.acceptance.test.tsx`
+
+## Estado actual
+
+- El modal de detalle ya consume contexto real de negocio e ITSM mediante endpoint dedicado.
+- Los eventos nuevos conservan snapshot historico; los viejos siguen funcionando con fallback por relaciones actuales.
+- La integracion externa con Jira/ServiceNow sigue pendiente; el contrato ya deja listo el punto de acople.

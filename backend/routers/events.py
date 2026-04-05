@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import services.event_service as event_service
 from services.auth_service import get_current_active_user, check_permission
+from models.core import EventDetailResponse, EventFeedSummary
 from models.user import User, UserPermission
 
 router = APIRouter(
@@ -16,11 +17,16 @@ class EventComment(BaseModel):
     message: str
 
 
+class AckRequest(BaseModel):
+    comment_message: Optional[str] = None
+
+
 class CloseRequest(BaseModel):
     forced: bool = False
+    comment_message: Optional[str] = None
 
 
-@router.get("", response_model=List[Dict[str, Any]])
+@router.get("", response_model=List[EventFeedSummary])
 async def get_events(status: Optional[str] = None):
     """
     Fetch system events filtered by status.
@@ -30,17 +36,33 @@ async def get_events(status: Optional[str] = None):
     return event_service.get_events(status)
 
 
+@router.get("/{event_id}", response_model=EventDetailResponse)
+async def get_event_detail(
+    event_id: str, current_user: User = Depends(get_current_active_user)
+):
+    """Fetch modal-specific event detail without bloating the summary feed."""
+    if not check_permission(UserPermission.EVENT_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view events")
+    return event_service.get_event_detail(event_id)
+
+
 @router.get("/related/{ci_id}", response_model=List[Dict[str, Any]])
-async def get_related_events(ci_id: str):
+async def get_related_events(
+    ci_id: str, current_user: User = Depends(get_current_active_user)
+):
     """
     Fetch all ACTIVE (OPEN, ACK) events for a specific CI.
     """
+    if not check_permission(UserPermission.EVENT_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view events")
     return event_service.get_related_events(ci_id)
 
 
 @router.post("/{event_id}/ack")
 async def ack_event(
-    event_id: str, current_user: User = Depends(get_current_active_user)
+    event_id: str,
+    ack_req: AckRequest = AckRequest(),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Acknowledge an Event.
@@ -49,7 +71,11 @@ async def ack_event(
         raise HTTPException(
             status_code=403, detail="Not authorized to acknowledge events"
         )
-    return event_service.ack_event(event_id, current_user.username)
+    return event_service.ack_event(
+        event_id,
+        current_user.username,
+        comment_message=ack_req.comment_message,
+    )
 
 
 @router.post("/{event_id}/close")
@@ -72,7 +98,10 @@ async def close_event(
             detail="Not authorized to force-close events (EVENT_FORCED_CLOSE required)",
         )
     return event_service.close_event(
-        event_id, current_user.username, forced=close_req.forced
+        event_id,
+        current_user.username,
+        forced=close_req.forced,
+        comment_message=close_req.comment_message,
     )
 
 
@@ -85,6 +114,10 @@ async def add_event_comment(
     """
     Append a user comment to the Event history.
     """
+    if not check_permission(UserPermission.EVENT_ACK, current_user):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to comment on events"
+        )
     return event_service.add_event_comment(
         event_id, current_user.username, comment.message
     )

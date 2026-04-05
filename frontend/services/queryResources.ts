@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Event, GraphLink, GraphNode } from '../types';
+import type { EventDetail, EventSummary, GraphLink, GraphNode } from '../types';
 
 export interface SystemStatus {
   cpu: number;
@@ -41,10 +41,13 @@ export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<CategoryRecord[]>('/categories', { signal });
 
 export const fetchActiveEvents = ({ signal }: { signal?: AbortSignal } = {}) =>
-  api.get<Event[]>('/events?status=ACTIVE', { signal });
+  api.get<EventSummary[]>('/events?status=ACTIVE', { signal });
+
+export const fetchEventDetail = (eventId: string, { signal }: { signal?: AbortSignal } = {}) =>
+  api.get<EventDetail>(`/events/${eventId}`, { signal });
 
 export const fetchRelatedEvents = (ciId: string, { signal }: { signal?: AbortSignal } = {}) =>
-  api.get<Event[]>(`/events/related/${ciId}`, { signal });
+  api.get<EventSummary[]>(`/events/related/${ciId}`, { signal });
 
 export const fetchGraphTopology = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<GraphTopologyResponse>('/graph/full', { signal });

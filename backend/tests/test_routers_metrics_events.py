@@ -15,8 +15,11 @@ Strategy:
 """
 
 import pytest
+import sys
+import types
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 # ---------------------------------------------------------------------------
@@ -24,6 +27,22 @@ from sqlalchemy.orm import Session
 # The driver is created at module import time and tries to connect immediately
 # ---------------------------------------------------------------------------
 _mock_neo4j_driver = MagicMock()
+_snmp_service_stub = types.ModuleType("services.snmp_service")
+setattr(_snmp_service_stub, "snmp_collector_loop", lambda: None)
+setattr(
+    _snmp_service_stub,
+    "get_collector_status",
+    lambda: {
+        "last_run": None,
+        "status": "STOPPED",
+        "stats": {},
+    },
+)
+setattr(
+    _snmp_service_stub, "validate_snmp_oid", lambda *args, **kwargs: {"success": False}
+)
+setattr(_snmp_service_stub, "run_diagnostic", lambda *args, **kwargs: "diagnostic-ok")
+sys.modules["services.snmp_service"] = _snmp_service_stub
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
     from database import get_db
@@ -647,14 +666,29 @@ class TestEventsList:
                                         "status": "OPEN",
                                         "severity": "CRITICAL",
                                         "ci_id": "ci-001",
+                                        "metric_id": "cpu-load",
                                         "value": 97.5,
                                         "message": "CPU exceeded threshold",
                                         "created_at": datetime.utcnow(),
+                                        "last_seen": datetime.utcnow(),
+                                        "ack": False,
                                     }
                                 ),
-                                "ci_name": "Router-01",
-                                "metric_name": "cpu-load",
-                                "metric_protocol": "SNMP",
+                                "ci": _FakeNeo4jNode(
+                                    {
+                                        "id": "ci-001",
+                                        "label": "Router-01",
+                                        "ip": "10.0.0.1",
+                                        "locationName": "Madrid HQ",
+                                    }
+                                ),
+                                "m": _FakeNeo4jNode(
+                                    {
+                                        "id": "cpu-load",
+                                        "name": "cpu-load",
+                                        "protocol": "SNMP",
+                                    }
+                                ),
                             }
                         )
                     ]
@@ -717,12 +751,254 @@ class TestEventsList:
         assert response.status_code != 401
         assert response.status_code != 403
 
+    def test_list_events_remains_summary_only(self):
+        """Summary polling must not expose modal-only business context payloads."""
+        payload = [
+            {
+                "id": "evt-lean",
+                "ci_id": "ci-001",
+                "ci_name": "Router-01",
+                "ci_node_id": "ci-001",
+                "metric_id": "cpu-load",
+                "metric_name": "cpu-load",
+                "metric_protocol": "SNMP",
+                "status": "OPEN",
+                "severity": "CRITICAL",
+                "message": "CPU exceeded threshold",
+                "created_at": "2026-04-05T11:00:00+00:00",
+                "last_seen": "2026-04-05T11:00:00+00:00",
+                "ack": False,
+                "ack_by": "operator-1",
+                "closed_by": "operator-2",
+                "comments": [
+                    "[AUDIT][CLOSE] Evento cerrado por operator-2\nNota: detalle interno"
+                ],
+            }
+        ]
+
+        with patch("routers.events.event_service.get_events", return_value=payload):
+            response = client.get("/api/events")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "business_context" not in data[0]
+        assert "itsm_context" not in data[0]
+        assert "comments" not in data[0]
+        assert "ack_by" not in data[0]
+        assert "closed_by" not in data[0]
+
+
+class TestEventsDetail:
+    """Tests for GET /api/events/{event_id} — modal detail payload."""
+
+    def test_get_event_detail_success(self):
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        payload = {
+            "event": {
+                "id": "evt-001",
+                "ci_id": "ci-001",
+                "ci_name": "Router-01",
+                "metric_id": "cpu-load",
+                "metric_name": "cpu-load",
+                "metric_protocol": "SNMP",
+                "status": "OPEN",
+                "severity": "CRITICAL",
+                "message": "CPU exceeded threshold",
+                "created_at": "2026-04-05T11:25:00+00:00",
+                "last_seen": "2026-04-05T11:25:00+00:00",
+                "ack": False,
+                "ci_ref": {
+                    "id": "ci-001",
+                    "label": "Router-01",
+                    "hostname": "10.0.0.1",
+                    "location_name": "Madrid HQ",
+                },
+            },
+            "business_context": {
+                "source": "snapshot",
+                "business_service": {
+                    "id": "svc-001",
+                    "name": "Corp-WAN",
+                    "owner_t1": "Mesa N1",
+                    "owner_t2": "NetOps",
+                    "owner_t3": "Arquitectura",
+                },
+                "service_catalog": {
+                    "id": "sla-001",
+                    "category": "NETWORK",
+                    "service_tier": "Gold",
+                    "sla_minutes": 60,
+                },
+                "impacted_users": 350,
+                "sla_remaining_minutes": 25,
+                "site": "Madrid HQ",
+            },
+            "itsm_context": {
+                "assignment_state": "unassigned",
+                "assigned_to": None,
+                "opened_by": "system",
+                "escalation_tier": "T2",
+                "external_ticket": None,
+            },
+        }
+
+        with patch(
+            "routers.events.event_service.get_event_detail", return_value=payload
+        ):
+            response = client.get("/api/events/evt-001")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["event"]["ci_ref"]["id"] == "ci-001"
+        assert data["business_context"]["source"] == "snapshot"
+        assert data["business_context"]["sla_remaining_minutes"] == 25
+        assert data["itsm_context"]["opened_by"] == "system"
+
+    def test_get_event_detail_requires_authentication(self):
+        response = client.get("/api/events/evt-001")
+
+        assert response.status_code == 401
+
+    def test_get_event_detail_forbidden_without_event_view_permission(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_ACK],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/events/evt-001")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to view events"
+
+    def test_get_event_detail_real_contract_handles_partial_snapshot(
+        self, mock_neo4j_driver
+    ):
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        class FakeRecord(dict):
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+            def get(self, key, default=None):
+                return super().get(key, default)
+
+        mock_session = MagicMock()
+        mock_session.run.return_value.single.return_value = FakeRecord(
+            {
+                "e": _FakeNeo4jNode(
+                    {
+                        "id": "evt-legacy",
+                        "ci_id": "ci-legacy",
+                        "metric_id": "ping",
+                        "status": "OPEN",
+                        "severity": "WARNING",
+                        "message": "Legacy event without full snapshot",
+                        "created_at": "not-a-datetime",
+                        "last_seen": "not-a-datetime",
+                        "ack": False,
+                        "business_service_name": "Legacy Payments",
+                    }
+                ),
+                "ci": _FakeNeo4jNode(
+                    {
+                        "id": "ci-legacy",
+                        "label": "Router-99",
+                        "ip": "10.0.0.99",
+                        "locationName": None,
+                    }
+                ),
+                "m": _FakeNeo4jNode({"id": "ping", "protocol": "ICMP"}),
+                "bs": None,
+                "sc": _FakeNeo4jNode({"id": "sla-legacy", "category": "NETWORK"}),
+            }
+        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
+            return_value=mock_session
+        )
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.get("/api/events/evt-legacy")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["business_context"]["source"] == "mixed"
+        assert data["business_context"]["business_service"] is None
+        assert data["business_context"]["service_catalog"]["id"] == "sla-legacy"
+        assert data["business_context"]["service_catalog"].get("service_tier") is None
+        assert data["business_context"]["sla_remaining_minutes"] is None
+
+    def test_get_event_detail_404(self):
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch(
+            "routers.events.event_service.get_event_detail",
+            side_effect=HTTPException(status_code=404, detail="Event not found"),
+        ):
+            response = client.get("/api/events/missing")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Event not found"
+
 
 class TestEventsRelated:
     """Tests for GET /api/events/related/{ci_id} — events for a CI."""
 
     def test_related_events_returns_data(self, mock_neo4j_driver):
         """Should return active events for a specific CI."""
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
 
         class FakeEventNode:
             def __init__(self, data):
@@ -783,20 +1059,38 @@ class TestEventsRelated:
         data = response.json()
         assert len(data) == 1
         assert data[0]["metric_name"] == "cpu-load"
+        app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_related_events_no_auth_required(self):
-        """Related events should NOT require auth (by design)."""
-        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):
-            with patch("database.driver", MagicMock()):
-                response = client.get("/api/events/related/ci-001")
-        assert response.status_code != 401
-        assert response.status_code != 403
+    def test_related_events_requires_authentication(self):
+        response = client.get("/api/events/related/ci-001")
+
+        assert response.status_code == 401
+
+    def test_related_events_forbidden_without_event_view_permission(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_ACK],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/events/related/ci-001")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to view events"
+        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 class TestEventsAck:
     """Tests for POST /api/events/{event_id}/ack — acknowledge event (auth required)."""
 
-    def test_ack_event_success(self, mock_neo4j_driver):
+    def test_ack_event_success(self):
         """Authenticated user should be able to ack an event."""
         fake_user = _make_pydantic_user(
             username="operator",
@@ -811,17 +1105,48 @@ class TestEventsAck:
             override_get_current_active_user
         )
 
-        mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
-
-        with patch("database.driver", mock_neo4j_driver):
+        with patch("routers.events.event_service.ack_event") as mock_ack_event:
+            mock_ack_event.return_value = {"message": "Event Acknowledged"}
             response = client.post("/api/events/evt-001/ack")
 
         assert response.status_code == 200
         data = response.json()
         assert "Acknowledged" in data["message"]
+        mock_ack_event.assert_called_once_with(
+            "evt-001", "operator", comment_message=None
+        )
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ack_event_accepts_atomic_ownership_comment(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_ACK],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.events.event_service.ack_event") as mock_ack_event:
+            mock_ack_event.return_value = {"message": "Event Acknowledged"}
+            response = client.post(
+                "/api/events/evt-001/ack",
+                json={
+                    "comment_message": "[OWNERSHIP] Caso tomado por operator - Tier T2"
+                },
+            )
+
+        assert response.status_code == 200
+        mock_ack_event.assert_called_once_with(
+            "evt-001",
+            "operator",
+            comment_message="[OWNERSHIP] Caso tomado por operator - Tier T2",
+        )
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -852,7 +1177,7 @@ class TestEventsAck:
 class TestEventsClose:
     """Tests for POST /api/events/{event_id}/close — close event (auth required)."""
 
-    def test_close_event_success(self, mock_neo4j_driver):
+    def test_close_event_success(self):
         """Authenticated user should be able to close an event."""
         fake_user = _make_pydantic_user(
             username="operator",
@@ -867,17 +1192,50 @@ class TestEventsClose:
             override_get_current_active_user
         )
 
-        mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
-
-        with patch("database.driver", mock_neo4j_driver):
+        with patch("routers.events.event_service.close_event") as mock_close_event:
+            mock_close_event.return_value = {"message": "Event Closed"}
             response = client.post("/api/events/evt-001/close")
 
         assert response.status_code == 200
         data = response.json()
         assert "Closed" in data["message"]
+        mock_close_event.assert_called_once_with(
+            "evt-001", "operator", forced=False, comment_message=None
+        )
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_close_event_accepts_atomic_closure_comment(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.events.event_service.close_event") as mock_close_event:
+            mock_close_event.return_value = {"message": "Event Closed"}
+            response = client.post(
+                "/api/events/evt-001/close",
+                json={
+                    "forced": False,
+                    "comment_message": "[CIERRE] Causa raíz: Error de configuración\nNota: Se corrigió la configuración BGP",
+                },
+            )
+
+        assert response.status_code == 200
+        mock_close_event.assert_called_once_with(
+            "evt-001",
+            "operator",
+            forced=False,
+            comment_message="[CIERRE] Causa raíz: Error de configuración\nNota: Se corrigió la configuración BGP",
+        )
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -904,9 +1262,59 @@ class TestEventsClose:
 
         assert response.status_code == 403
 
+    def test_close_event_requires_structured_root_cause_and_note(
+        self, mock_neo4j_driver
+    ):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.post(
+                "/api/events/evt-001/close",
+                json={"forced": False, "comment_message": "Nota: corto"},
+            )
+
+        assert response.status_code == 400
+        assert "Causa raíz" in response.json()["detail"]
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_forced_close_requires_reason(self, mock_neo4j_driver):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_CLOSE, UserPermission.EVENT_FORCED_CLOSE],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.post(
+                "/api/events/evt-001/close",
+                json={"forced": True, "comment_message": "   "},
+            )
+
+        assert response.status_code == 400
+        assert "Forced close requires a reason" in response.json()["detail"]
+        app.dependency_overrides.pop(get_current_active_user, None)
+
 
 class TestEventsComment:
-    """Tests for POST /api/events/{event_id}/comment — add comment (auth required)."""
+    """Tests for POST /api/events/{event_id}/comment — add comment (auth + permission)."""
 
     def test_add_comment_unauthenticated(self):
         response = client.post(
@@ -920,7 +1328,7 @@ class TestEventsComment:
         fake_user = _make_pydantic_user(
             username="operator",
             role="OPERATOR",
-            permissions=[UserPermission.EVENT_VIEW],
+            permissions=[UserPermission.EVENT_ACK],
         )
 
         async def override_get_current_active_user():
@@ -945,6 +1353,29 @@ class TestEventsComment:
         mock_add_comment.assert_called_once_with(
             "evt-001", "operator", "Investigating the issue"
         )
+
+    def test_add_comment_forbidden_without_event_permission(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.post(
+            "/api/events/evt-001/comment",
+            json={"message": "Investigating the issue"},
+        )
+
+        assert response.status_code == 403
+
+        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 class TestEventsPrune:
@@ -1186,7 +1617,10 @@ class TestEventsForcedCloseAuthorization:
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(
                 "/api/events/evt-001/close",
-                json={"forced": False},
+                json={
+                    "forced": False,
+                    "comment_message": "Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo principal averiado",
+                },
             )
 
         assert response.status_code == 200
@@ -1239,7 +1673,10 @@ class TestEventsForcedCloseAuthorization:
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(
                 "/api/events/evt-001/close",
-                json={"forced": True},
+                json={
+                    "forced": True,
+                    "comment_message": "Motivo: Ventana de mantenimiento aprobada",
+                },
             )
 
         assert response.status_code == 200

@@ -49,7 +49,7 @@ export interface GraphNode {
   // UI Helpers (optional, added during runtime)
   hasCritical?: boolean;
   hasWarning?: boolean;
-  events?: Event[];
+  events?: EventSummary[];
 }
 
 export interface GraphLink {
@@ -59,7 +59,7 @@ export interface GraphLink {
   relationship: 'DEPENDS_ON' | 'RUNS_ON' | 'PART_OF' | 'MANAGED_BY';
 }
 
-export interface Event {
+export interface EventSummary {
   id: string;
   ci_id: string;
   ci_name?: string;
@@ -85,6 +85,64 @@ export interface Event {
   recovered_at?: string;
   comments?: string[];
 }
+
+export interface CIRef {
+  id: string;
+  label?: string | null;
+  hostname?: string | null;
+  location_name?: string | null;
+}
+
+export interface BusinessServiceRef {
+  id: string;
+  name: string;
+  tier?: string | null;
+  owner_t1?: string | null;
+  owner_t2?: string | null;
+  owner_t3?: string | null;
+}
+
+export interface ServiceCatalogRef {
+  id: string;
+  category: string;
+  service_tier?: string | null;
+  sla_minutes?: number | null;
+}
+
+export interface BusinessContext {
+  source: 'snapshot' | 'resolved' | 'mixed' | 'unavailable';
+  business_service?: BusinessServiceRef | null;
+  service_catalog?: ServiceCatalogRef | null;
+  impacted_users?: number | null;
+  sla_remaining_minutes?: number | null;
+  site?: string | null;
+}
+
+export interface ExternalTicketRef {
+  system: 'Jira' | 'ServiceNow';
+  key: string;
+  status?: string | null;
+}
+
+export interface ItsmContext {
+  assignment_state: 'unassigned' | 'assigned';
+  assigned_to?: string | null;
+  opened_by: 'system';
+  escalation_tier?: 'T1' | 'T2' | 'T3' | null;
+  external_ticket?: ExternalTicketRef | null;
+}
+
+export interface EventDetailEvent extends EventSummary {
+  ci_ref: CIRef;
+}
+
+export interface EventDetail {
+  event: EventDetailEvent;
+  business_context: BusinessContext;
+  itsm_context: ItsmContext;
+}
+
+export type Event = EventSummary;
 
 export interface MetricDef {
   id: string;
