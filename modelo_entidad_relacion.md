@@ -1,156 +1,151 @@
-# 📊 Modelo Entidad-Relación (NEX-GEN ITOM)
+# Modelo Entidad-Relacion (NEX-GEN ITOM)
 
-Este documento detalla el Modelo Entidad-Relación (ER) completo de la plataforma NEX-GEN, agrupado por la base de datos de persistencia en donde reside cada entidad. Todos los campos extraídos del código backend (`backend/models`) están descritos con sus respectivos tipos de datos.
+Documento tecnico de referencia para las entidades persistidas y los contratos que hoy alimentan la consola operativa.
 
----
+## 1. Neo4j / Grafo operacional
 
-## 🟢 1. Base de Datos de Grafos (Neo4j)
+### `Node` / `CI`
 
-Las entidades de Graph DB están modeladas usando Pydantic y representan topología y configuraciones estructurales (CIs, relacionales, métricas lógicas).
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `id` | `str` | Identificador canonico del CI |
+| `label` | `str` | Nombre visible |
+| `type` | `str` | Categoria base |
+| `status` | `str` | Estado general |
+| `ip` | `str?` | Hostname/IP |
+| `locationName` | `str?` | Sitio legible |
+| `metadata` | `dict?` | Fallback transitorio, no fuente canonica del modal |
+| `owner` | `str?` | Grupo responsable legacy |
+| `brand`, `model`, `serialNumber`, `firmwareVersion` | `str?` | Inventario |
 
-### Entidad: `Node` (Configuration Item / CI)
-Representa un activo, componente de red o dispositivo.
+### `MetricDef`
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `id` | `str` | Sí | Identificador único del Nodo. |
-| `label` | `str` | Sí | Nombre / Etiqueta visible del Nodo. |
-| `type` | `str` | Sí | Tipo o Categoría base del CI. |
-| `status` | `str` | No | `"OK"` (Estado general de salud). |
-| `ip` | `str` | No | Dirección IP del host. |
-| `location` | `dict` | No | Objeto con coordenadas/detalles espaciales. |
-| `metadata` | `dict` | No | Campos arbitrarios adicionales (tags). |
-| `owner` | `str` | No | Propietario o Response Group responsable. |
-| `locationName` | `str` | No | Nombre legible de la localización física. |
-| `pollingInterval` | `int` | No | `60` (Frecuencia de sondeo en segundos). |
-| `snmp` | `Union[dict, str]` | No | Configuración/Comunidad SNMP asíncrona. |
-| `brand` | `str` | No | Marca o fabricante del CI. |
-| `model` | `str` | No | Modelo del dispositivo físico. |
-| `serialNumber` | `str` | No | Número de serie. |
-| `firmwareVersion` | `str` | No | Versión de firmware/OS. |
-| `metrics` | `List[Dict[str, Any]]`| No | Lista pre-calculada de las métricas que afectan al CI. |
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `id` | `str` | Identificador de metrica |
+| `protocol` | `str` | SNMP, ICMP, HTTP, etc. |
+| `oid` | `str?` | OID o referencia tecnica |
+| `warning`, `critical` | `float?` | Umbrales |
+| `operator` | `str?` | `>=`, `<=`, `==`, `!=` |
+| `criticality` | `int?` | Mapeo base a severidad |
+| `applicable_to` | `dict?` | Reglas de aplicabilidad |
 
-### Entidad: `Link` (Relaciones Topológicas / Edges)
-Rutas conectivas o dependencias de nivel de arquitectura.
+### `BusinessService`
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `source` | `str` | Sí | `id` del Nodo origen. |
-| `target` | `str` | Sí | `id` del Nodo de destino. |
-| `relationship` | `str` | Sí | Tipo de conexión (Ej. `DEPENDS_ON`, `CONNECTS_TO`). |
-| `id` | `str` | No | Identificador del Link (opcional). |
-| `source_label` | `str` | No | Etiqueta del Nodo Origen (desnormalizado). |
-| `target_label` | `str` | No | Etiqueta del Nodo Destino. |
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `id` | `str` | Identificador del servicio |
+| `name` | `str` | Nombre de negocio |
+| `tier` | `str?` | Tier operativo opcional |
+| `owner_t1` | `str?` | Responsable esperado T1 |
+| `owner_t2` | `str?` | Responsable esperado T2 |
+| `owner_t3` | `str?` | Responsable esperado T3 |
+| `impacted_users_count` | `int?` | Magnitud estimada de impacto |
 
-### Entidad: `MetricDef` (Definición Lógica de Métrica)
-Define el patrón y alertas base de telemetría a asociar contra los CIs.
+### `ServiceCatalog`
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `id` | `str` | Sí | Identificador de definición de Métrica. |
-| `protocol` | `str` | Sí | `"SNMP"` (U otros agentes de sondeo). |
-| `oid` | `str` | No | Identificador SNMP para consulta técnica. |
-| `warning` | `float` | No | Umbral de advertencia para alarmas. |
-| `critical` | `float` | No | Umbral crítico para fallos inminentes. |
-| `dataType` | `str` | No | `"INTEGER"` |
-| `unit` | `str` | No | Unidad de medición (%, Kbps, C°). |
-| `description` | `str` | No | Detalles funcionales de la métrica. |
-| `criticality` | `int` | No | Nivel base (1: Info, 2: Warning, 3: Exception). |
-| `applicable_to` | `Dict[str, List[str]]` | No | Diccionario para auto-reconciliación por marca/modelo o CIs explícitos. |
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `id` | `str` | Identificador del SLA/catálogo |
+| `category` | `str` | Categoria funcional del servicio |
+| `service_tier` | `str?` | Tier opcional para segmentar el SLA |
+| `sla_minutes` | `int?` | Objetivo de tiempo |
 
-### Entidad: `Category`
-Entidad para clasificación semántica base de inventarios.
+### `Event`
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `name` | `str` | Sí | Nombre unívoco de una categoría de equipos. |
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `id` | `str` | Identificador del evento |
+| `ci_id` | `str` | Referencia canonica al CI |
+| `metric_id` | `str` | Metrica detonante |
+| `status` | `str` | `OPEN`, `ACK`, `RECOVERED`, `CLOSED` |
+| `severity` | `str` | `CRITICAL`, `WARNING`, `INFO` |
+| `message` | `str` | Mensaje operativo |
+| `created_at` | `datetime` | Apertura |
+| `last_seen` | `datetime?` | Ultima observacion |
+| `ack`, `ack_at`, `ack_by` | `bool/datetime/str?` | Ownership actual |
+| `closed_at`, `closed_by`, `recovered_at` | `datetime/str?` | Cierre/recuperacion |
+| `comments` | `list[str]?` | Timeline append-only |
+| `business_service_id` | `str?` | Snapshot |
+| `business_service_name` | `str?` | Snapshot |
+| `business_service_tier` | `str?` | Snapshot |
+| `owner_t1`, `owner_t2`, `owner_t3` | `str?` | Snapshot |
+| `impacted_users` | `int?` | Snapshot |
+| `site` | `str?` | Snapshot |
+| `service_catalog_id` | `str?` | Snapshot |
+| `service_category` | `str?` | Snapshot |
+| `service_tier` | `str?` | Snapshot |
+| `sla_minutes` | `int?` | Snapshot |
 
-### Entidad: `HardwareModel`
-Diccionario canónico de fabricantes y variantes de dispositivos de la infraestructura.
+## 2. Relaciones relevantes
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `brand` | `str` | Sí | Nombre del fabricante (Ej. Cisco, HP). |
-| `model` | `str` | Sí | SKU específico. |
-| `category` | `str` | No | Referencia lógica a `Category`. |
-| `owner` | `str` | No | Enlace a la unidad/group de propiedad. |
+| Relacion | Origen | Destino | Proposito |
+| --- | --- | --- | --- |
+| `HAS_METRIC` | `CI` | `MetricDef` | Asignacion de metrica |
+| `HAS_EVENT` | `CI` | `Event` | Eventos abiertos / historicos |
+| `TRIGGERED_BY` | `Event` | `MetricDef` | Metrica que disparo el evento |
+| `BELONGS_TO` | `CI` | `BusinessService` | Mapeo de negocio |
+| `USES_SLA` | `BusinessService` | `ServiceCatalog` | SLA esperado |
+| `DEPENDS_ON`, `HOSTED_ON`, `CONNECTS_TO` | `CI` | `CI` | Topologia |
 
-### Entidad: `OwnerGroup`
-Agrupación de técnicos L1/L2 para escalado de incidentes o inventario de CIs.
+## 3. Contratos API relevantes
 
-| Campo | Tipo / Formato | Obligatorio | Valor por Defecto / Detalles |
-| :--- | :--- | :---: | :--- |
-| `name` | `str` | Sí | Nombre descriptivo del Grupo Soporte. |
-| `users` | `List[dict]` | No | Array de diccionarios referenciando a usuarios internos. |
+### Resumen (`GET /api/events`)
 
----
+- Mantiene payload liviano para polling.
+- Sigue exponiendo `ci_node_id` por compatibilidad legacy.
+- NO incluye `business_context` ni `itsm_context`.
 
-## 📈 2. Base de Datos de Series Temporales (TimescaleDB / PostgreSQL)
+### Detalle (`GET /api/events/{event_id}`)
 
-Almacenamiento optimizado de telemetría e ingesta por workers. 
-
-### Entidad/Tabla: `metric_values`
-Registra el historial síncrono muestreado por los colectores de métricas.
-
-| Columna SQL | Tipo SQL | PK | Índice | Obligatorio | Detalles |
-| :--- | :--- | :---: | :---: | :---: | :--- |
-| `time` | `DateTime(timezone=True)`| **Sí** | - | Sí | Timestamp del Muestreo (Hiper-tabla Timescale). |
-| `node_id` | `String` | **Sí** | Sí (Cy) | Sí | Referencia al `id` del Node (CI Neo4j). |
-| `metric_id` | `String` | **Sí** | - | Sí | Referencia a la entidad de la `MetricDef`. |
-| `value` | `Float` | - | - | Sí | Valor numérico devuelto por el protocolo en T. |
-
-> **Nota de Índices**: Cuenta con un composite index `idx_metric_values_node_time` integrando `(node_id, time)` para máxima eficiencia de renderizado o cálculos AIOps sobre secuencias.
-
----
-
-## 🔒 3. Base de Datos Relacional / IAM (PostgreSQL)
-
-El módulo IAM interactúa con PostgreSQL (mediante SQLAlchemy / Pydantic) para el Control de Acceso Basado en Roles (RBAC).
-
-### Entidad/Tabla: `users`
-Manejo local de cuentas y su control fino de visibilidad sectorial.
-
-| Columna SQL | Tipo SQL | PK / Único | Obligatorio | Detalles |
-| :--- | :--- | :---: | :---: | :--- |
-| `id` | `Integer` | **PK** | Sí | ID numérico indexado por SQLAlchemy. |
-| `username` | `String` | Único / IDx | Sí | Alias del operador o administrador. |
-| `hashed_password` | `String` | - | Sí | Hash asimétrico seguro de credenciales. |
-| `email` | `String` | IDx | No | Correo electrónico de notificaciones. |
-| `phone` | `String` | - | No | Teléfono de guardia/directorio. |
-| `role` | `String` | - | No | Valor default: `"VIEWER"`. |
-| `is_active` | `Boolean` | - | No | Bloqueo o deshabilitación. Default: `True` |
-| `force_password_change` | `Boolean` | - | No | Petición para cambio al primer Login. Default: `False` |
-| `permissions` | `ARRAY(String)` | - | No | Vector explícito de privilegios (`['EVENT_VIEW', 'CI_EDIT']...`) |
-| `allowed_locations` | `ARRAY(String)` | - | No | Filtro geofísico de multi-tenancy. Funciona para esconder graneros. |
-| `allowed_ci_types` | `ARRAY(String)` | - | No | Restricciones operativas (Ej: Ver sólo Router, no Switches). |
-
-### Pydantic - RBAC/ACL Core Structure (App Memory)
-Modelos secundarios que alimentan las validaciones Auth y Roles integrados en FastApi (`user.py`):
-
-- **UserPermission (Enumeración Fija)**: 
-  - Subcategorías del sistema para: Eventos (`EVENT_VIEW`, `EVENT_ACK`, `EVENT_CLOSE`), CMDB/CIs (`CI_VIEW`, `CI_EDIT`, `CI_DELETE`), Diagnósticos avanzados (`RUN_DIAGNOSTICS`), Sistema (`USER_MANAGE`, `ROLE_MANAGE`) y Telemetría visual (`METRICS_VIEW`).
-- **Role (Clase lógica Pydantic)**:
-  - Estructuración de roles personalizados en IAM (`name`, `description`, Array de sub-permisos (`UserPermission`), bool de `is_system` asegurando el grupo Inmutable).
-
----
-
-## 🗺️ Mapa Interaccional del Ecosistema (Diagrama Relacional Virtual)
-
-```mermaid
-erDiagram
-    %% Capa Postgres/SQL (RBAC)
-    User ||--o{ Role : "Posee un (String Enum)"
-    
-    %% Capa Pydantic/Neo4j (CMDB Topológica)
-    Node ||--|| Category : "Clasificado Como (type)"
-    Node ||--o{ MetricDef : "Sondea OIDs por (HAS_METRIC)"
-    HardwareModel ||--o{ Node : "Define Fabricante de"
-    HardwareModel ||--o| Category : "Base categorizada"
-    Link ||--|| Node : "Enlaza (Source)"
-    Link ||--|| Node : "Afecta / Impacta (Target)"
-    Node }o--o{ OwnerGroup : "(owner) Operado por"
-
-    %% Capa TimescaleDB  (Métricas)
-    Node ||--o{ MetricValue : "(node_id) Produce historial de telemetría"
-    MetricDef ||--o{ MetricValue : "(metric_id) Definición atada al dato numérico"
+```json
+{
+  "event": {
+    "id": "evt-001",
+    "ci_id": "ci-001",
+    "ci_ref": {
+      "id": "ci-001",
+      "label": "Router-01",
+      "hostname": "10.0.0.1",
+      "location_name": "Madrid HQ"
+    }
+  },
+  "business_context": {
+    "source": "snapshot|resolved|mixed|unavailable",
+    "business_service": { "id": "svc-001", "name": "Corp-WAN" },
+    "service_catalog": { "id": "sla-001", "category": "NETWORK", "sla_minutes": 60 },
+    "impacted_users": 350,
+    "sla_remaining_minutes": 25,
+    "site": "Madrid HQ"
+  },
+  "itsm_context": {
+    "assignment_state": "unassigned|assigned",
+    "assigned_to": null,
+    "opened_by": "system",
+    "escalation_tier": "T1|T2|T3|null",
+    "external_ticket": null
+  }
+}
 ```
+
+## 4. Identificadores normalizados
+
+- `ci_ref.id` es el identificador canonico del CI en el endpoint de detalle.
+- `ci_id` sigue siendo la referencia del evento al CI.
+- `ci_node_id` queda relegado al resumen por compatibilidad con consumidores existentes.
+
+## 5. Persistencia relacional
+
+### TimescaleDB / PostgreSQL
+
+- `metric_values(time, node_id, metric_id, value)` mantiene historico de telemetria.
+
+### IAM / PostgreSQL
+
+- `users` mantiene credenciales, permisos, ubicaciones y `tier` operativo del usuario autenticado.
+
+## 6. Lecturas relacionadas
+
+- `README.md`
+- `docs/domain/business-model.md`
+- `docs/itsm/event-flow.md`

@@ -4,6 +4,7 @@ export const queryKeys = {
   links: () => ['links'] as const,
   categories: () => ['categories'] as const,
   activeEvents: () => ['events', 'ACTIVE'] as const,
+  eventDetail: (eventId: string) => ['events', 'detail', eventId] as const,
   graphTopology: () => ['graph-topology'] as const,
   relatedEvents: (ciId: string) => ['events', 'related', ciId] as const,
 };

@@ -1,372 +1,424 @@
+from __future__ import annotations
+
 import asyncio
-import time
-from datetime import datetime
+import ast
 import json
 import logging
 import subprocess
+import time
+from datetime import datetime
+from typing import Any, Dict
+
 from database import get_db
 
-# Configure Logging
 logger = logging.getLogger(__name__)
 
-# Try to import PySNMP (Optional Dependency)
-# Try to import PySNMP (Optional Dependency)
 try:
-    from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity
+    from pysnmp.hlapi import (
+        CommunityData,
+        ContextData,
+        ObjectIdentity,
+        ObjectType,
+        SnmpEngine,
+        UdpTransportTarget,
+        getCmd,
+    )
+
     SNMP_AVAILABLE = True
 except ImportError:
     SNMP_AVAILABLE = False
     logger.warning("PySNMP not installed. SNMP features will be disabled.")
+
+LAST_COLLECTION_TIME = None
 COLLECTOR_STATUS = "STOPPED"
 GLOBAL_STATS = {
     "cis_monitored": 0,
     "metrics_collected": 0,
     "metrics_failed": 0,
     "cycle_duration": 0.0,
-    "jobs_per_min": 0.0
+    "jobs_per_min": 0.0,
 }
+
 
 def get_collector_status():
     return {
         "last_run": LAST_COLLECTION_TIME,
         "status": COLLECTOR_STATUS,
-        "stats": GLOBAL_STATS
+        "stats": GLOBAL_STATS,
     }
 
+
+def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
+    if not snmp_raw:
+        return {}
+    if isinstance(snmp_raw, dict):
+        return snmp_raw
+    try:
+        return json.loads(snmp_raw)
+    except Exception:
+        try:
+            return ast.literal_eval(snmp_raw)
+        except Exception:
+            return {}
+
+
+def resolve_event_snapshot(session, ci_id: str) -> Dict[str, Any]:
+    record = session.run(
+        """
+        MATCH (ci:CI {id: $ci_id})
+        OPTIONAL MATCH (ci)-[:BELONGS_TO]->(bs:BusinessService)
+        OPTIONAL MATCH (bs)-[:USES_SLA]->(sc:ServiceCatalog)
+        RETURN ci.locationName AS site,
+               bs.id AS business_service_id,
+               bs.name AS business_service_name,
+               bs.tier AS business_service_tier,
+               bs.owner_t1 AS owner_t1,
+               bs.owner_t2 AS owner_t2,
+               bs.owner_t3 AS owner_t3,
+               bs.impacted_users_count AS impacted_users,
+               sc.id AS service_catalog_id,
+               sc.category AS service_category,
+               sc.service_tier AS service_tier,
+               sc.sla_minutes AS sla_minutes
+        """,
+        ci_id=ci_id,
+    ).single()
+
+    if not record:
+        return {}
+
+    return {
+        "business_service_id": record.get("business_service_id"),
+        "business_service_name": record.get("business_service_name"),
+        "business_service_tier": record.get("business_service_tier"),
+        "owner_t1": record.get("owner_t1"),
+        "owner_t2": record.get("owner_t2"),
+        "owner_t3": record.get("owner_t3"),
+        "impacted_users": record.get("impacted_users"),
+        "site": record.get("site"),
+        "service_catalog_id": record.get("service_catalog_id"),
+        "service_category": record.get("service_category"),
+        "service_tier": record.get("service_tier"),
+        "sla_minutes": record.get("sla_minutes"),
+    }
+
+
 async def snmp_collector_loop():
-    """
-    Background task to poll CIs based on their pollingInterval and applicable metrics.
-    Runs indefinitely in the background.
-    """
     if not SNMP_AVAILABLE:
         logger.warning("SNMP Collector disabled due to missing pysnmp.")
         return
 
     global LAST_COLLECTION_TIME, COLLECTOR_STATUS
-    
+
     driver = get_db()
     COLLECTOR_STATUS = "RUNNING"
-    
+
     while True:
         try:
             logger.info("[Collector] Starting Poll Cycle (Thread Offload)...")
             start_time = time.time()
-            
-            # Offload the entire blocking cycle to a separate thread
             stats = await asyncio.to_thread(run_snmp_cycle_sync, driver)
-
             elapsed = time.time() - start_time
             LAST_COLLECTION_TIME = datetime.now().isoformat()
-            
-            # Update Global Stats
+
             GLOBAL_STATS["cycle_duration"] = round(elapsed, 2)
             GLOBAL_STATS["cis_monitored"] = stats.get("cis", 0)
             GLOBAL_STATS["metrics_collected"] = stats.get("total", 0)
             GLOBAL_STATS["metrics_failed"] = stats.get("errors", 0)
-            
-            # Calculate Throughput (Metrics per minute equivalent)
             if elapsed > 0:
-                GLOBAL_STATS["jobs_per_min"] = round((stats.get("total", 0) / elapsed) * 60, 1)
+                GLOBAL_STATS["jobs_per_min"] = round(
+                    (stats.get("total", 0) / elapsed) * 60, 1
+                )
 
-            logger.info(f"[Collector] Cycle finished in {elapsed:.2f}s. Stats: {GLOBAL_STATS}")
-            
-            # Simple fixed sleep (Demo Mode)
-            await asyncio.sleep(60) 
-            
-        except Exception as e:
-             logger.error(f"[Collector] Critical Loop Error: {e}", exc_info=True)
-             COLLECTOR_STATUS = "ERROR"
-             await asyncio.sleep(10)
+            logger.info(
+                "[Collector] Cycle finished in %.2fs. Stats: %s", elapsed, GLOBAL_STATS
+            )
+            await asyncio.sleep(60)
+        except Exception as exc:
+            logger.error("[Collector] Critical Loop Error: %s", exc, exc_info=True)
+            COLLECTOR_STATUS = "ERROR"
+            await asyncio.sleep(10)
+
 
 def run_snmp_cycle_sync(driver):
-    """
-    Synchronous wrapper for the polling cycle to run in a thread.
-    """
     with driver.session() as session:
-        # 1. Fetch Candidates (Relaxed: Allow CIs without SNMP if they have IP)
-        cis_result = session.run("""
-            MATCH (n:CI) 
+        cis_result = session.run(
+            """
+            MATCH (n:CI)
             WHERE n.ip IS NOT NULL AND n.status <> 'EXCEPTION'
             RETURN n
-        """)
+        """
+        )
         cis = [dict(record["n"]) for record in cis_result]
-        logger.info(f"[Collector] Found {len(cis)} candidate CIs for monitoring.")
-        
-        # 2. Fetch Metric Definitions
+        logger.info("[Collector] Found %s candidate CIs for monitoring.", len(cis))
+
         metrics_result = session.run("MATCH (m:MetricDef) RETURN m")
         metrics = []
         for record in metrics_result:
-            m = dict(record["m"])
+            metric = dict(record["m"])
             criteria = {}
-            if m.get("applicable_to"):
-                try: criteria = json.loads(m.get("applicable_to"))
-                except: pass
-            
-            metrics.append({
-                "id": m.get("id"),
-                "name": m.get("name") or m.get("id"),
-                "oid": m.get("oid"),
-                "protocol": m.get("protocol"),
-                "criticality": m.get("criticality", 1),
-                "warning": m.get("warning"),
-                "critical": m.get("critical"),
-                "operator": m.get("operator", ">="),
-                "applicable_to": criteria
-            })
+            if metric.get("applicable_to"):
+                try:
+                    criteria = json.loads(metric.get("applicable_to"))
+                except Exception:
+                    criteria = {}
 
-    # 3. Process Each Node
-    logger.info(f"[Collector] Processing {len(cis)} Nodes vs {len(metrics)} MetricDefs...")
-    
+            metrics.append(
+                {
+                    "id": metric.get("id"),
+                    "name": metric.get("name") or metric.get("id"),
+                    "oid": metric.get("oid"),
+                    "protocol": metric.get("protocol"),
+                    "criticality": metric.get("criticality", 1),
+                    "warning": metric.get("warning"),
+                    "critical": metric.get("critical"),
+                    "operator": metric.get("operator", ">="),
+                    "applicable_to": criteria,
+                }
+            )
+
     total_metrics = 0
     total_errors = 0
-    
     for ci in cis:
-        # Debug Log for individual CI processing
-        # logger.debug(f"[Collector] Checking CI: {ci.get('name')} ({ci.get('ip')})")
-        t, e = process_ci_metrics(ci, metrics, driver)
-        total_metrics += t
-        total_errors += e
-        
+        executed, errors = process_ci_metrics(ci, metrics, driver)
+        total_metrics += executed
+        total_errors += errors
+
     return {"cis": len(cis), "total": total_metrics, "errors": total_errors}
 
+
 def process_ci_metrics(ci, metrics, driver):
-    """
-    Evaluates which metrics apply to the CI and executes them.
-    Returns (total_executed, total_errors)
-    """
-    # Parse SNMP config
-    snmp_conf = {}
-    snmp_raw = ci.get("snmp")
-    if snmp_raw:
-        try:
-            snmp_conf = json.loads(snmp_raw)
-        except:
-             try:
-                 import ast
-                 snmp_conf = ast.literal_eval(snmp_raw)
-             except: pass
-    
-    # Validation for SNMP only (skip if ICMP/API)
-    # But we can't skip entirely if we have ICMP metrics.
-    # Refactor: Only require SNMP conf if we have SNMP metrics to run.
-    
-    # Determine applicable metrics
+    snmp_conf = _parse_snmp_config(ci.get("snmp"))
     ci_brand = ci.get("brand", "").lower() if ci.get("brand") else ""
     ci_model = ci.get("model", "").lower() if ci.get("model") else ""
     ci_layer = ci.get("layer", "").lower() if ci.get("layer") else ""
-    
+
     target_metrics = []
-    for m in metrics:
-        crit = m.get("applicable_to", {})
+    for metric in metrics:
+        criteria = metric.get("applicable_to", {})
         match = False
-        
-        # 1. Direct Name Match
-        req_names = [n.strip().lower() for n in crit.get("names", [])]
-        if req_names and (ci.get("name", "").lower() in req_names or ci.get("id", "").lower() in req_names):
+        requested_names = [name.strip().lower() for name in criteria.get("names", [])]
+
+        if requested_names and (
+            ci.get("name", "").lower() in requested_names
+            or ci.get("id", "").lower() in requested_names
+        ):
             match = True
         else:
-            # 2. Category Match (OR Logic)
-            req_brands = [b.lower() for b in crit.get("brands", [])]
-            req_models = [mod.lower() for mod in crit.get("models", [])]
-            req_layers = [l.lower() for l in crit.get("layers", [])]
-            
-            if req_brands and ci_brand in req_brands: match = True
-            if req_models and ci_model in req_models: match = True
-            if req_layers and ci_layer in req_layers: match = True
-            
-        # 3. Apply Exclusions
-        exc_names = [n.strip().lower() for n in crit.get("excluded_names", [])]
-        if match and (ci.get("name", "").lower() in exc_names or ci.get("id", "").lower() in exc_names):
-            match = False
-        
-        # Only add if match AND (OID exists OR Protocol is ICMP)
-        if match:
-             if m.get("oid") or m.get("protocol") == 'ICMP':
-                  target_metrics.append(m)
+            requested_brands = [brand.lower() for brand in criteria.get("brands", [])]
+            requested_models = [model.lower() for model in criteria.get("models", [])]
+            requested_layers = [layer.lower() for layer in criteria.get("layers", [])]
 
-    # Execute Polls
+            if requested_brands and ci_brand in requested_brands:
+                match = True
+            if requested_models and ci_model in requested_models:
+                match = True
+            if requested_layers and ci_layer in requested_layers:
+                match = True
+
+        excluded_names = [
+            name.strip().lower() for name in criteria.get("excluded_names", [])
+        ]
+        if match and (
+            ci.get("name", "").lower() in excluded_names
+            or ci.get("id", "").lower() in excluded_names
+        ):
+            match = False
+
+        if match and (metric.get("oid") or metric.get("protocol") == "ICMP"):
+            target_metrics.append(metric)
+
     executed = 0
     errors = 0
-    
-    for tm in target_metrics:
+    for target_metric in target_metrics:
         try:
             executed += 1
-            # Check SNMP prerequisites if needed
-            if tm.get("protocol") == 'SNMP' and (not snmp_conf or not snmp_conf.get("readCommunity")):
-                 # logger.warning(f"[Collector] Skipping SNMP metric {tm.get('name')} for {ci.get('name')} (No Community String)")
-                 continue
-            
-            # logger.debug(f"[Collector] Polling {tm.get('name')} for {ci.get('name')}...")
-            val, status, err_msg = poll_metric(ci, tm, snmp_conf)
-            # logger.debug(f"[Collector] Poll Result: {val}, {status}")
-            
-            # Always store result
-            store_metric_result(ci, tm, val, status, err_msg, driver)
-            
-        except Exception as e:
+            if target_metric.get("protocol") == "SNMP" and (
+                not snmp_conf or not snmp_conf.get("readCommunity")
+            ):
+                continue
+
+            value, status, error_message = poll_metric(ci, target_metric, snmp_conf)
+            store_metric_result(ci, target_metric, value, status, error_message, driver)
+        except Exception as exc:
             errors += 1
-            logger.error(f"[Collector] Error processing metric {tm.get('name')} for {ci.get('name')}: {e}", exc_info=True)
-            
-    return (executed, errors)
+            logger.error(
+                "[Collector] Error processing metric %s for %s: %s",
+                target_metric.get("name"),
+                ci.get("name"),
+                exc,
+                exc_info=True,
+            )
+
+    return executed, errors
+
 
 def poll_metric(ci, metric_def, snmp_conf):
-    """
-    Executes the actual poll (ICMP or SNMP).
-    Returns (value, status, error_message).
-    Status: 'OK', 'TIMEOUT', 'ERROR'
-    """
     proto = str(metric_def.get("protocol", "")).upper().strip()
-    
-    # 1. ICMP PING
-    if proto == 'ICMP':
+
+    if proto == "ICMP":
         import platform
-        # Detect OS for correct Ping Flag
-        param = '-n' if platform.system().lower() == 'windows' else '-c'
-        
-        command = ['ping', param, '1', ci.get("ip")]
-        logger.debug(f"[Collector] Executing ICMP: {' '.join(command)}")
+
+        param = "-n" if platform.system().lower() == "windows" else "-c"
+        command = ["ping", param, "1", ci.get("ip")]
         try:
-            # 0 = Success (UP), 1 = Fail (DOWN)
-            res = subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res == 0:
-                return (1, 'OK', None)
-            else:
-                return (0, 'OK', None) # Valid result, value is 0 (Down)
-        except Exception as e:
-            logger.error(f"PING Exception for {ci.get('ip')}: {e}")
-            return (0, 'ERROR', str(e))
-    
-    # 2. SNMP
-    elif metric_def.get("oid") and metric_def.get("oid") != 'ICMP' and SNMP_AVAILABLE:
+            result = subprocess.call(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return (1, "OK", None) if result == 0 else (0, "OK", None)
+        except Exception as exc:
+            logger.error("PING Exception for %s: %s", ci.get("ip"), exc)
+            return 0, "ERROR", str(exc)
+
+    if metric_def.get("oid") and metric_def.get("oid") != "ICMP" and SNMP_AVAILABLE:
         try:
             oid = metric_def["oid"]
-            # logger.debug(f"[Collector] SNMP GET {oid} from {ci.get('ip')}...")
-            
-            errorIndication, errorStatus, errorIndex, varBinds = next(
-                getCmd(SnmpEngine(),
+            error_indication, error_status, error_index, var_binds = next(
+                getCmd(
+                    SnmpEngine(),
                     CommunityData(snmp_conf.get("readCommunity")),
-                    UdpTransportTarget((ci.get("ip"), snmp_conf.get("port", 161)), timeout=1.0, retries=0),
+                    UdpTransportTarget(
+                        (ci.get("ip"), snmp_conf.get("port", 161)),
+                        timeout=1.0,
+                        retries=0,
+                    ),
                     ContextData(),
-                    ObjectType(ObjectIdentity(oid)))
+                    ObjectType(ObjectIdentity(oid)),
+                )
             )
-            
-            if errorIndication:
-                logger.warning(f"[Collector] SNMP Timeout for {ci.get('name')} (OID: {oid}): {errorIndication}")
-                return (None, 'TIMEOUT', str(errorIndication))
-            elif errorStatus:
-                err = f"{errorStatus.prettyPrint()} at {errorIndex and varBinds[int(errorIndex) - 1][0] or '?'}"
-                logger.error(f"[Collector] SNMP Error for {ci.get('name')} (OID: {oid}): {err}")
-                return (None, 'ERROR', err)
-            else:
-                val = str(varBinds[0][1])
-                # logger.debug(f"[Collector] SNMP Success {ci.get('name')} (OID: {oid}): {val}")
-                return (val, 'OK', None)
-                
-        except Exception as snmp_err:
-            logger.error(f"SNMP Error {ci.get('id')}: {snmp_err}")
-            return (None, 'ERROR', str(snmp_err))
-    
-    return (None, 'ERROR', 'Unknown Protocol or OID')
+
+            if error_indication:
+                return None, "TIMEOUT", str(error_indication)
+            if error_status:
+                error = f"{error_status.prettyPrint()} at {error_index and var_binds[int(error_index) - 1][0] or '?'}"
+                return None, "ERROR", error
+            return str(var_binds[0][1]), "OK", None
+        except Exception as exc:
+            logger.error("SNMP Error %s: %s", ci.get("id"), exc)
+            return None, "ERROR", str(exc)
+
+    return None, "ERROR", "Unknown Protocol or OID"
+
 
 def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
-    """
-    Stores the metric result and triggers event logic.
-    """
-    # 1. Resolve Criticality to Severity
-    # 1 -> INFO, 2 -> WARNING, 3 -> CRITICAL (Exception)
-    crit_level = metric_def.get("criticality", 1) # Default Info
-    base_severity = 'INFO'
-    if crit_level == 2: base_severity = 'WARNING'
-    if crit_level == 3: base_severity = 'CRITICAL'
+    crit_level = metric_def.get("criticality", 1)
+    base_severity = "INFO"
+    if crit_level == 2:
+        base_severity = "WARNING"
+    if crit_level == 3:
+        base_severity = "CRITICAL"
 
-    # Default State
-    status = 'OK'
-    severity = 'INFO' # For the event
+    status = "OK"
+    severity = "INFO"
     is_breach = False
     message = f"Metric {metric_def.get('name', metric_def['id'])} is OK. Value: {val}"
-    
-    # 1. Handle Poll Failures (Timeout/Error)
-    if poll_status != 'OK':
-        status = 'CRITICAL'
-        severity = base_severity # Use the metric's criticality level for the alert
+
+    if poll_status != "OK":
+        status = "CRITICAL"
+        severity = base_severity
         is_breach = True
         message = f"Metric Collection Failed: {err_msg or 'Timeout'}"
         val = "N/A"
-    
-    # 2. Handle Threshold Validations (If Poll OK)
     elif val is not None:
         try:
-            # Normalize Value
             num_val = float(val)
-            
-            # Check Critical
-            # EXCLUDE ICMP and Availability Checks (mariadb-GS) from generic '>=' checks.
-            # For these, 1=GOOD (UP) and 0=BAD (DOWN).
-            is_availability_metric = metric_def.get("protocol") == 'ICMP' or metric_def.get("name") == 'mariadb-GS'
-            
+            is_availability_metric = (
+                metric_def.get("protocol") == "ICMP"
+                or metric_def.get("name") == "mariadb-GS"
+            )
+
             if not is_availability_metric:
-                op = metric_def.get("operator", ">=")
-                def check_op(v, t, oper):
-                    if oper == '>=': return v >= t
-                    if oper == '<=': return v <= t
-                    if oper == '==': return v == t
-                    if oper == '!=': return v != t
-                    return v >= t
-                
-                if metric_def.get("critical") is not None and check_op(num_val, float(metric_def["critical"]), op):
-                    status = 'CRITICAL'
-                    severity = 'CRITICAL'
+                operator = metric_def.get("operator", ">=")
+
+                def check_op(left, right, oper):
+                    if oper == ">=":
+                        return left >= right
+                    if oper == "<=":
+                        return left <= right
+                    if oper == "==":
+                        return left == right
+                    if oper == "!=":
+                        return left != right
+                    return left >= right
+
+                if metric_def.get("critical") is not None and check_op(
+                    num_val, float(metric_def["critical"]), operator
+                ):
+                    status = "CRITICAL"
+                    severity = "CRITICAL"
                     is_breach = True
-                    message = f"Critical Threshold Breached: {val} {op} {metric_def['critical']}"
-                
-                # Check Warning (Only if not already Critical)
-                elif metric_def.get("warning") is not None and check_op(num_val, float(metric_def["warning"]), op):
-                    status = 'WARNING'
-                    severity = 'WARNING'
+                    message = f"Critical Threshold Breached: {val} {operator} {metric_def['critical']}"
+                elif metric_def.get("warning") is not None and check_op(
+                    num_val, float(metric_def["warning"]), operator
+                ):
+                    status = "WARNING"
+                    severity = "WARNING"
                     is_breach = True
-                    message = f"Warning Threshold Breached: {val} {op} {metric_def['warning']}"
-                
-            # SPECIAL CASE: ICMP/Availability (1=UP, 0=DOWN)
+                    message = f"Warning Threshold Breached: {val} {operator} {metric_def['warning']}"
+
             if is_availability_metric and float(val) == 0:
-                 status = 'CRITICAL'
-                 severity = base_severity # Use mapped criticality (e.g. Exception/Level 3)
-                 is_breach = True
-                 message = f"Service/Host Down: {metric_def.get('name')}"
-                 
+                status = "CRITICAL"
+                severity = base_severity
+                is_breach = True
+                message = f"Service/Host Down: {metric_def.get('name')}"
         except ValueError:
-            # String Value Comparison logic could go here
             pass
 
     with driver.session() as session:
-        # 1. Store Raw Result (History)
-        session.run("""
+        session.run(
+            """
             MATCH (n:CI {id: $nid})
             MATCH (m:MetricDef {id: $mid})
             MERGE (n)-[r:HAS_METRIC]->(m)
             SET r.last_value = $val, r.last_updated = datetime(), r.status = $status, r.last_message = $msg
-            
+
             CREATE (res:MetricResult {
-                timestamp: datetime(), 
+                timestamp: datetime(),
                 value: $val,
                 status: $status
             })
             CREATE (n)-[:HAS_RESULT]->(res)
             CREATE (res)-[:FOR_METRIC]->(m)
-        """, nid=ci.get("id"), mid=metric_def["id"], val=str(val), status=status, msg=message)
-        
-        # logger.info(f"[Collector] Stored Metric for {ci.get('name')}: {metric_def.get('name')} = {val} ({status})")
+        """,
+            nid=ci.get("id"),
+            mid=metric_def["id"],
+            val=str(val),
+            status=status,
+            msg=message,
+        )
 
-        # 2. Event Management Logic
         if is_breach:
-            # Upsert OPEN Event
-            session.run("""
-                MATCH (n:CI {id: $nid})
-                MATCH (m:MetricDef {id: $mid})
-                
-                OPTIONAL MATCH (existing:Event)
+            existing = session.run(
+                """
+                MATCH (existing:Event)
                 WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK']
-                
-                FOREACH (ignoreMe IN CASE WHEN existing IS NULL THEN [1] ELSE [] END | 
+                RETURN existing
+                LIMIT 1
+            """,
+                nid=ci.get("id"),
+                mid=metric_def["id"],
+            ).single()
+
+            if existing:
+                session.run(
+                    """
+                    MATCH (existing:Event)
+                    WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK']
+                    SET existing.last_seen = datetime(),
+                        existing.message = $msg,
+                        existing.severity = $sev
+                """,
+                    nid=ci.get("id"),
+                    mid=metric_def["id"],
+                    msg=message,
+                    sev=severity,
+                )
+            else:
+                snapshot = resolve_event_snapshot(session, ci.get("id"))
+                session.run(
+                    """
+                    MATCH (n:CI {id: $nid})
+                    MATCH (m:MetricDef {id: $mid})
                     CREATE (e:Event {
                         id: randomUUID(),
                         ci_id: $nid,
@@ -376,95 +428,101 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         message: $msg,
                         created_at: datetime(),
                         last_seen: datetime(),
-                        ack: false
+                        ack: false,
+                        business_service_id: $business_service_id,
+                        business_service_name: $business_service_name,
+                        business_service_tier: $business_service_tier,
+                        owner_t1: $owner_t1,
+                        owner_t2: $owner_t2,
+                        owner_t3: $owner_t3,
+                        impacted_users: $impacted_users,
+                        site: $site,
+                        service_catalog_id: $service_catalog_id,
+                        service_category: $service_category,
+                        service_tier: $service_tier,
+                        sla_minutes: $sla_minutes
                     })
                     MERGE (n)-[:HAS_EVENT]->(e)
                     MERGE (e)-[:TRIGGERED_BY]->(m)
+                """,
+                    nid=ci.get("id"),
+                    mid=metric_def["id"],
+                    sev=severity,
+                    msg=message,
+                    **snapshot,
                 )
-                
-                FOREACH (ignoreMe IN CASE WHEN existing IS NOT NULL THEN [1] ELSE [] END | 
-                    SET existing.last_seen = datetime(),
-                        existing.message = $msg,
-                        existing.severity = $sev
-                )
-            """, nid=ci.get("id"), mid=metric_def["id"], val=str(val), sev=severity, msg=message)
-        
         else:
-            # Recovery Logic
-            session.run("""
+            session.run(
+                """
                 MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
                 WHERE e.status IN ['OPEN', 'ACK']
                 SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
-            """, nid=ci.get("id"), mid=metric_def["id"], msg=message)
+            """,
+                nid=ci.get("id"),
+                mid=metric_def["id"],
+                msg=message,
+            )
+
 
 def run_diagnostic(ci, metric):
-    """
-    Runs an on-demand diagnostic based on protocol.
-    Returns the diagnostic message.
-    """
     protocol = metric.get("protocol")
-    diag_msg = ""
-    
-    if protocol == 'ICMP':
+    if protocol == "ICMP":
         try:
-            # Run ping count 3
-            process = subprocess.Popen(['ping', '-c', '3', ci.get("ip")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ping_flag = "-n" if subprocess.os.name == "nt" else "-c"
+            process = subprocess.Popen(
+                ["ping", ping_flag, "3", ci.get("ip")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
             stdout, stderr = process.communicate()
-            
             if process.returncode == 0:
-                 diag_msg = f"[SUCCESS] PING CHECK PASSED\nOutput:\n{stdout.decode()}"
-            else:
-                 diag_msg = f"[FAILED] PING CHECK FAILED\nError:\n{stderr.decode() or stdout.decode()}"
-        except Exception as e:
-            diag_msg = f"[ERROR] Diagnostic Error: {str(e)}"
-            
-    elif protocol == 'SNMP':
-         diag_msg = f"[INFO] SNMP Diagnostic initiated for OID {metric.get('oid')}. \n(Verify connectivity manually to {ci.get('ip')})"
-    else:
-         diag_msg = f"[INFO] No automated diagnostic available for protocol {protocol}"
+                return f"[SUCCESS] PING CHECK PASSED\nOutput:\n{stdout.decode()}"
+            return f"[FAILED] PING CHECK FAILED\nError:\n{stderr.decode() or stdout.decode()}"
+        except Exception as exc:
+            return f"[ERROR] Diagnostic Error: {str(exc)}"
 
-    return diag_msg
+    if protocol == "SNMP":
+        return f"[INFO] SNMP Diagnostic initiated for OID {metric.get('oid')}. \n(Verify connectivity manually to {ci.get('ip')})"
+
+    return f"[INFO] No automated diagnostic available for protocol {protocol}"
+
 
 def validate_snmp_oid(ip, community, oid, port=161):
-    """
-    Validates an SNMP OID against a target IP.
-    Returns dict with success status and value/type.
-    """
     if not SNMP_AVAILABLE:
         return {"success": False, "error": "PySNMP not installed"}
 
     try:
-        errorIndication, errorStatus, errorIndex, varBinds = next(
-            getCmd(SnmpEngine(),
+        error_indication, error_status, error_index, var_binds = next(
+            getCmd(
+                SnmpEngine(),
                 CommunityData(community),
                 UdpTransportTarget((ip, port), timeout=2.0, retries=1),
                 ContextData(),
-                ObjectType(ObjectIdentity(oid)))
+                ObjectType(ObjectIdentity(oid)),
+            )
         )
 
-        if errorIndication:
-            return {"success": False, "error": str(errorIndication)}
-        elif errorStatus:
-             return {"success": False, "error": f"{errorStatus.prettyPrint()} at {errorIndex and varBinds[int(errorIndex) - 1][0] or '?'}"}
-        else:
-            # Success - Analyze type
-            vb = varBinds[0]
-            val = vb[1]
-            val_type = type(val).__name__
-            pretty_val = str(val)
-            
-            # Simple heuristic mapping
-            dtype = "STRING"
-            if "Integer" in val_type or "Gauge" in val_type or "Counter" in val_type:
-                dtype = "INTEGER"
-            elif "Float" in val_type:
-                dtype = "FLOAT"
-            
+        if error_indication:
+            return {"success": False, "error": str(error_indication)}
+        if error_status:
             return {
-                "success": True, 
-                "value": pretty_val, 
-                "detectedType": dtype, 
-                "rawType": val_type
+                "success": False,
+                "error": f"{error_status.prettyPrint()} at {error_index and var_binds[int(error_index) - 1][0] or '?'}",
             }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+
+        value = var_binds[0][1]
+        value_type = type(value).__name__
+        detected_type = "STRING"
+        if "Integer" in value_type or "Gauge" in value_type or "Counter" in value_type:
+            detected_type = "INTEGER"
+        elif "Float" in value_type:
+            detected_type = "FLOAT"
+
+        return {
+            "success": True,
+            "value": str(value),
+            "detectedType": detected_type,
+            "rawType": value_type,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}

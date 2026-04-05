@@ -1,6 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
-import { queryKeys } from '../../services/queryKeys';
 
 interface CommentPayload {
   message: string;
@@ -14,6 +13,7 @@ interface TakePayload {
 
 interface ClosePayload {
   forced: boolean;
+  comment_message?: string;
 }
 
 interface DiagnosePayload {
@@ -23,43 +23,39 @@ interface DiagnosePayload {
 export const useEventMutations = () => {
   const queryClient = useQueryClient();
 
-  const refreshActiveEvents = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.activeEvents() });
+  const refreshEventQueries = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['events'] });
   };
 
   return {
     ackEvent: async (id: string) => {
       const result = await api.post(`/events/${id}/ack`, {});
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
     commentEvent: async (id: string, payload: CommentPayload) => {
       const result = await api.post(`/events/${id}/comment`, payload);
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
-    takeEvent: async (id: string, payload: TakePayload) => {
-      await api.post(`/events/${id}/comment`, {
-        message: `[OWNERSHIP] Caso tomado por ${payload.user} - Tier ${payload.tier}`,
-        user: payload.user,
-      });
+    takeEvent: async (id: string, _payload: TakePayload) => {
       const result = await api.post(`/events/${id}/ack`, {});
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
     closeEvent: async (id: string, payload: ClosePayload) => {
       const result = await api.post(`/events/${id}/close`, payload);
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
     pruneEvents: async () => {
       const result = await api.post('/events/prune', {});
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
     diagnoseEvent: async (id: string, _payload: DiagnosePayload) => {
       const result = await api.post(`/events/${id}/diagnose`, {});
-      await refreshActiveEvents();
+      await refreshEventQueries();
       return result;
     },
   };

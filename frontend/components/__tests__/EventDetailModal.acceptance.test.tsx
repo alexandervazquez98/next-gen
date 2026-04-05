@@ -45,6 +45,54 @@ const MOCK_NODE = {
     metrics: [],
 };
 
+function buildEventDetail(event: any, node: any, overrides: any = {}) {
+    const metadata = node?.metadata ?? {};
+    const createdAt = new Date(event.created_at).getTime();
+    const ageMinutes = Math.floor((Date.now() - createdAt) / 60000);
+    const defaultSla = typeof metadata.sla_minutes === 'number' ? metadata.sla_minutes : null;
+
+    return {
+        event: {
+            ...event,
+            ci_ref: {
+                id: event.ci_id,
+                label: event.ci_name,
+                hostname: node?.ip ?? null,
+                location_name: event.ci_location_name ?? node?.locationName ?? metadata.site ?? null,
+            },
+        },
+        business_context: {
+            source: metadata.business_service || metadata.impacted_users || metadata.sla_minutes ? 'snapshot' : 'unavailable',
+            business_service: metadata.business_service ? {
+                id: 'svc-001',
+                name: metadata.business_service,
+                owner_t1: 'Mesa N1',
+                owner_t2: 'NetOps',
+                owner_t3: 'Arquitectura',
+            } : null,
+            service_catalog: defaultSla !== null ? {
+                id: 'sla-001',
+                category: node?.category ?? node?.type ?? 'UNKNOWN',
+                service_tier: 'Gold',
+                sla_minutes: defaultSla,
+            } : null,
+            impacted_users: metadata.impacted_users ? Number(metadata.impacted_users) : null,
+            sla_remaining_minutes: defaultSla !== null ? defaultSla - ageMinutes : null,
+            site: event.ci_location_name ?? node?.locationName ?? metadata.site ?? null,
+            ...overrides.business_context,
+        },
+        itsm_context: {
+            assignment_state: event.ack && event.ack_by ? 'assigned' : 'unassigned',
+            assigned_to: event.ack_by ?? null,
+            opened_by: 'system',
+            escalation_tier: 'T2',
+            external_ticket: null,
+            ...overrides.itsm_context,
+        },
+        ...overrides,
+    };
+}
+
 // Event created 5 minutes ago (well within SLA)
 const MOCK_EVENT_WITHIN_SLA: any = {
     id: 'evt-1',
@@ -99,6 +147,7 @@ vi.mock('../../services/api', () => ({
             if (url === '/nodes') return [MOCK_NODE];
             if (url === '/links') return [];
             if (url.startsWith('/events?')) return [MOCK_EVENT_WITHIN_SLA];
+            if (url === `/events/${MOCK_EVENT_WITHIN_SLA.id}`) return buildEventDetail(MOCK_EVENT_WITHIN_SLA, MOCK_NODE);
             if (url.startsWith('/events/related/')) return [];
             return [];
         }),
@@ -153,15 +202,17 @@ vi.mock('../../context/AuthContext', () => ({
 // Helper: render MonitoringConsole and open the event detail modal
 // ---------------------------------------------------------------------------
 
-async function renderAndOpenModal(eventOverride?: any, nodeOverride?: any) {
+async function renderAndOpenModal(eventOverride?: any, nodeOverride?: any, detailOverride?: any) {
     const { api } = await import('../../services/api');
     const mockEvent = eventOverride ?? MOCK_EVENT_WITHIN_SLA;
     const mockNode = nodeOverride ?? MOCK_NODE;
+    const mockDetail = detailOverride ?? buildEventDetail(mockEvent, mockNode);
 
     (api.get as any).mockImplementation(async (url: string) => {
         if (url === '/nodes') return [mockNode];
         if (url === '/links') return [];
         if (url.startsWith('/events?')) return [mockEvent];
+        if (url === `/events/${mockEvent.id}`) return mockDetail;
         if (url.startsWith('/events/related/')) return [];
         return [];
     });
@@ -191,6 +242,18 @@ async function renderAndOpenModal(eventOverride?: any, nodeOverride?: any) {
     return result;
 }
 
+function createDeferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+
+    return { promise, resolve, reject };
+}
+
 // ---------------------------------------------------------------------------
 // M1: Business Context Band
 // ---------------------------------------------------------------------------
@@ -200,18 +263,23 @@ describe('M1 — Business Context Band', () => {
 
     it('GIVEN an event with business metadata WHEN modal opens THEN business service is visible without scroll', async () => {
         await renderAndOpenModal();
-        // Business service card should be present
-        expect(screen.getByText('Corp-WAN')).toBeDefined();
+        await waitFor(() => {
+            expect(screen.getByText('Corp-WAN')).toBeDefined();
+        });
     });
 
     it('GIVEN an event with impacted_users metadata WHEN modal opens THEN users count is visible', async () => {
         await renderAndOpenModal();
-        expect(screen.getByText('350')).toBeDefined();
+        await waitFor(() => {
+            expect(screen.getByText('350')).toBeDefined();
+        });
     });
 
     it('GIVEN an event with site metadata WHEN modal opens THEN site is visible', async () => {
         await renderAndOpenModal();
-        expect(screen.getByText('Madrid HQ')).toBeDefined();
+        await waitFor(() => {
+            expect(screen.getAllByText('Madrid HQ').length).toBeGreaterThanOrEqual(1);
+        });
     });
 
     it('GIVEN SLA remaining > 30 min WHEN modal opens THEN SLA label is NOT in red/critical state', async () => {
@@ -237,6 +305,124 @@ describe('M1 — Business Context Band', () => {
         // At least 3 cards should show "No configurado" (service, users, site, sla)
         expect(placeholders.length).toBeGreaterThanOrEqual(3);
     });
+
+    it('GIVEN detail API returns business context WHEN modal opens THEN modal prefers detail payload over node metadata', async () => {
+        const staleNode = {
+            ...MOCK_NODE,
+            metadata: {
+                ...MOCK_NODE.metadata,
+                business_service: 'Legacy Metadata Service',
+            },
+        };
+
+        await renderAndOpenModal(
+            MOCK_EVENT_WITHIN_SLA,
+            staleNode,
+            buildEventDetail(MOCK_EVENT_WITHIN_SLA, staleNode, {
+                business_context: {
+                    source: 'snapshot',
+                    business_service: {
+                        id: 'svc-001',
+                        name: 'Corp-WAN API',
+                        owner_t1: 'Mesa N1',
+                        owner_t2: 'NetOps',
+                        owner_t3: 'Arquitectura',
+                    },
+                },
+            })
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('Corp-WAN API')).toBeDefined();
+        });
+        expect(screen.queryByText('Legacy Metadata Service')).toBeNull();
+    });
+
+    it('GIVEN detail query is pending WHEN modal opens THEN loading state is rendered', async () => {
+        const { api } = await import('../../services/api');
+        const deferred = createDeferred<any>();
+        const staleNode = {
+            ...MOCK_NODE,
+            metadata: {
+                ...MOCK_NODE.metadata,
+                business_service: 'Legacy Metadata Service',
+            },
+        };
+
+        (api.get as any).mockImplementation(async (url: string) => {
+            if (url === '/nodes') return [staleNode];
+            if (url === '/links') return [];
+            if (url.startsWith('/events?')) return [MOCK_EVENT_WITHIN_SLA];
+            if (url === `/events/${MOCK_EVENT_WITHIN_SLA.id}`) return deferred.promise;
+            if (url.startsWith('/events/related/')) return [];
+            return [];
+        });
+
+        const { default: MonitoringConsole } = await import('../MonitoringConsole');
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
+        render(
+            <QueryClientProvider client={client}>
+                <MonitoringConsole />
+            </QueryClientProvider>
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText(MOCK_EVENT_WITHIN_SLA.message)).toBeDefined();
+        });
+
+        fireEvent.click(screen.getByText('Details'));
+
+        expect(await screen.findByText('Cargando contexto extendido del evento...')).toBeDefined();
+        expect(screen.getByText('Timeline de Investigación')).toBeDefined();
+        expect(screen.queryByText('Legacy Metadata Service')).toBeNull();
+        expect(screen.getByText(/Contexto de negocio: cargando/i)).toBeDefined();
+
+        deferred.resolve(buildEventDetail(MOCK_EVENT_WITHIN_SLA, MOCK_NODE));
+        await waitFor(() => {
+            expect(screen.getByText('Timeline de Investigación')).toBeDefined();
+        });
+    });
+
+    it('GIVEN detail query fails WHEN modal opens THEN error state is rendered', async () => {
+        const { api } = await import('../../services/api');
+        const staleNode = {
+            ...MOCK_NODE,
+            metadata: {
+                ...MOCK_NODE.metadata,
+                business_service: 'Legacy Metadata Service',
+            },
+        };
+
+        (api.get as any).mockImplementation(async (url: string) => {
+            if (url === '/nodes') return [staleNode];
+            if (url === '/links') return [];
+            if (url.startsWith('/events?')) return [MOCK_EVENT_WITHIN_SLA];
+            if (url === `/events/${MOCK_EVENT_WITHIN_SLA.id}`) throw new Error('detail-down');
+            if (url.startsWith('/events/related/')) return [];
+            return [];
+        });
+
+        const { default: MonitoringConsole } = await import('../MonitoringConsole');
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
+        render(
+            <QueryClientProvider client={client}>
+                <MonitoringConsole />
+            </QueryClientProvider>
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText(MOCK_EVENT_WITHIN_SLA.message)).toBeDefined();
+        });
+
+        fireEvent.click(screen.getByText('Details'));
+
+        expect(await screen.findByText('No se pudo cargar el detalle protegido. Seguís trabajando con el resumen del stream.')).toBeDefined();
+        expect(screen.getByText('Timeline de Investigación')).toBeDefined();
+        expect(screen.queryByText('Legacy Metadata Service')).toBeNull();
+        expect(screen.getByText(/Contexto de negocio: degradado/i)).toBeDefined();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -256,7 +442,7 @@ describe('M2 — Ownership Bar', () => {
         expect(screen.getByText('Tomar caso')).toBeDefined();
     });
 
-    it('GIVEN an unassigned event WHEN "Tomar caso" is clicked THEN api.post is called twice (comment + ack)', async () => {
+    it('GIVEN an unassigned event WHEN "Tomar caso" is clicked THEN api.post is called once through the atomic ack flow', async () => {
         const { api } = await import('../../services/api');
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
 
@@ -265,14 +451,13 @@ describe('M2 — Ownership Bar', () => {
 
         await waitFor(() => {
             const calls = (api.post as any).mock.calls;
-            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
             const ackCall = calls.find((c: any[]) => c[0].includes('/ack'));
-            expect(commentCall).toBeDefined();
             expect(ackCall).toBeDefined();
+            expect(calls).toHaveLength(1);
         });
     });
 
-    it('GIVEN "Tomar caso" click THEN the comment message contains [OWNERSHIP] tag', async () => {
+    it('GIVEN "Tomar caso" click THEN the ack payload stays empty and leaves audit generation to the backend', async () => {
         const { api } = await import('../../services/api');
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
 
@@ -280,16 +465,18 @@ describe('M2 — Ownership Bar', () => {
 
         await waitFor(() => {
             const calls = (api.post as any).mock.calls;
-            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
-            expect(commentCall).toBeDefined();
-            expect(commentCall[1].message).toContain('[OWNERSHIP]');
+            const ackCall = calls.find((c: any[]) => c[0].includes('/ack'));
+            expect(ackCall).toBeDefined();
+            expect(ackCall[1]).toEqual({});
         });
     });
 
-    it('GIVEN modal open THEN Tier badge is always visible', async () => {
+    it('GIVEN modal open THEN event escalation tier is displayed honestly', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        // CURRENT_TIER = 'T2' is hardcoded
-        expect(screen.getByText('T2')).toBeDefined();
+        expect(screen.getByText('Tier del evento:')).toBeDefined();
+        await waitFor(() => {
+            expect(screen.getByText('T2')).toBeDefined();
+        });
     });
 
     it('GIVEN an assigned event WHEN modal opens THEN assigned username is displayed', async () => {
@@ -319,6 +506,26 @@ describe('M3 — Enriched Timeline', () => {
     it('GIVEN event with OWNERSHIP comment WHEN modal opens THEN it renders as ownership entry', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITH_COMMENTS);
         expect(screen.getByText(/Caso tomado por Admin/)).toBeDefined();
+    });
+
+    it('GIVEN event with forced close comment WHEN modal opens THEN it renders as forced-close entry', async () => {
+        await renderAndOpenModal({
+            ...MOCK_EVENT_WITH_COMMENTS,
+            id: 'evt-force',
+            comments: ['[AUDIT][FORCED_CLOSE] Cierre forzado por testop\nMotivo: Ventana de mantenimiento (2024-01-01T10:06:00)'],
+        });
+        expect(screen.getAllByText((_, node) => node?.textContent?.includes('Cierre forzado') ?? false).length).toBeGreaterThan(0);
+    });
+
+    it('GIVEN structured audit entry from another actor WHEN modal opens THEN timeline shows the real actor instead of the viewer', async () => {
+        await renderAndOpenModal({
+            ...MOCK_EVENT_WITH_COMMENTS,
+            id: 'evt-audit-actor',
+            comments: ['[AUDIT][CLOSE] Evento cerrado por alice\nCausa raíz: Error de configuración\nNota: Se corrigió la política de enrutamiento principal (2024-01-01T10:06:00)'],
+        });
+
+        expect(screen.getAllByText((_, node) => node?.textContent?.includes('alice · Evento cerrado') ?? false).length).toBeGreaterThan(0);
+        expect(screen.queryByText((_, node) => node?.textContent?.includes('testop · Evento cerrado') ?? false)).toBeNull();
     });
 
     it('GIVEN a note is typed WHEN Guardar nota is clicked THEN api.post is called with the note', async () => {
@@ -434,23 +641,52 @@ describe('Auth Context Integration', () => {
 
     it('GIVEN authenticated user WHEN modal opens THEN CURRENT_USER displays authenticated username', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        // The comment ownership message should use the authenticated username from AuthContext
-        // Trigger "Tomar caso" and assert the username sent to API
+        // Trigger "Tomar caso" and assert the atomic ack payload uses the authenticated username
         const { api } = await import('../../services/api');
         fireEvent.click(screen.getByText('Tomar caso'));
 
         await waitFor(() => {
             const calls = (api.post as any).mock.calls;
-            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
-            expect(commentCall).toBeDefined();
-            // Should use 'testop' (from mock useAuth), NOT hardcoded 'Admin'
-            expect(commentCall[1].message).toContain('testop');
+            const ackCall = calls.find((c: any[]) => c[0].includes('/ack'));
+            expect(ackCall).toBeDefined();
+            expect(ackCall[1]).toEqual({});
         });
+    });
+
+    it('GIVEN user without EVENT_VIEW but with close and diagnostics permissions WHEN modal opens THEN no detail fetch occurs and authorized actions stay available', async () => {
+        const { api } = await import('../../services/api');
+        const { useAuth } = await import('../../context/AuthContext');
+
+        (useAuth as any).mockImplementation(() => ({
+            user: { username: 'closer', role: 'OPERATOR', permissions: ['EVENT_CLOSE', 'RUN_DIAGNOSTICS'], tier: 'T2', allowed_locations: [] },
+            hasPermission: (perm: string) => ['EVENT_CLOSE', 'RUN_DIAGNOSTICS'].includes(perm),
+            isAuthenticated: true,
+            token: 'mock-token',
+            login: vi.fn(),
+            logout: vi.fn(),
+        }));
+
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+
+        expect((api.get as any).mock.calls.some((c: any[]) => c[0] === `/events/${MOCK_EVENT_WITHIN_SLA.id}`)).toBe(false);
+        expect((api.get as any).mock.calls.some((c: any[]) => c[0] === `/events/related/${MOCK_EVENT_WITHIN_SLA.ci_id}`)).toBe(false);
+        expect(await screen.findByText('Cerrar Evento')).toBeDefined();
+        expect(screen.getByText('Ejecutar diagnóstico')).toBeDefined();
+        expect(screen.getByText(/Sin permiso `EVENT_VIEW`/)).toBeDefined();
+
+        (useAuth as any).mockImplementation(() => ({
+            user: { username: 'testop', role: 'OPERATOR', permissions: ['EVENT_FORCED_CLOSE'], tier: 'T2', allowed_locations: [] },
+            hasPermission: (perm: string) => perm === 'EVENT_FORCED_CLOSE' || ['EVENT_VIEW', 'EVENT_ACK', 'EVENT_CLOSE'].includes(perm),
+            isAuthenticated: true,
+            token: 'mock-token',
+            login: vi.fn(),
+            logout: vi.fn(),
+        }));
     });
 
     it('GIVEN user WITH EVENT_FORCED_CLOSE permission WHEN close form opens THEN forced close button is visible', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => {
             expect(screen.getByText(/Cierre forzado/)).toBeDefined();
@@ -461,8 +697,8 @@ describe('Auth Context Integration', () => {
         // Override the mock with a persistent implementation for this test
         const { useAuth } = await import('../../context/AuthContext');
         const viewerAuth = {
-            user: { username: 'viewer', role: 'VIEWER', permissions: [], tier: 'T1', allowed_locations: [] },
-            hasPermission: (_perm: string) => false,
+            user: { username: 'viewer', role: 'VIEWER', permissions: ['EVENT_CLOSE'], tier: 'T1', allowed_locations: [] },
+            hasPermission: (perm: string) => perm === 'EVENT_CLOSE',
             isAuthenticated: true,
             token: 'mock-token',
             login: vi.fn(),
@@ -471,7 +707,7 @@ describe('Auth Context Integration', () => {
         (useAuth as any).mockImplementation(() => viewerAuth);
 
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Confirmar Cierre'));
 
@@ -495,11 +731,17 @@ describe('Auth Context Integration', () => {
 // ---------------------------------------------------------------------------
 
 describe('M5 — Close with mandatory root cause', () => {
+    beforeEach(async () => {
+        const { api } = await import('../../services/api');
+        (api.post as any).mockReset();
+        (api.post as any).mockResolvedValue({ message: 'ok' });
+    });
+
     afterEach(() => vi.clearAllMocks());
 
     it('GIVEN modal open WHEN "Cerrar Evento" clicked THEN close form appears', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
         await waitFor(() => {
             expect(screen.getByText('Cierre de Evento')).toBeDefined();
         });
@@ -507,7 +749,7 @@ describe('M5 — Close with mandatory root cause', () => {
 
     it('GIVEN close form open WHEN neither cause nor note filled THEN Confirmar Cierre is disabled', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Confirmar Cierre'));
         const confirmBtn = screen.getByText('Confirmar Cierre');
@@ -516,7 +758,7 @@ describe('M5 — Close with mandatory root cause', () => {
 
     it('GIVEN close form WHEN cause selected but note < 20 chars THEN Confirmar is still disabled', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Confirmar Cierre'));
 
@@ -531,7 +773,7 @@ describe('M5 — Close with mandatory root cause', () => {
 
     it('GIVEN close form WHEN cause + note (≥20 chars) filled THEN Confirmar Cierre is enabled', async () => {
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Confirmar Cierre'));
 
@@ -546,10 +788,10 @@ describe('M5 — Close with mandatory root cause', () => {
         });
     });
 
-    it('GIVEN close form filled WHEN Confirmar Cierre clicked THEN api.post comment contains root cause', async () => {
+    it('GIVEN close form filled WHEN Confirmar Cierre clicked THEN close payload contains root cause audit data', async () => {
         const { api } = await import('../../services/api');
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Confirmar Cierre'));
 
@@ -563,17 +805,71 @@ describe('M5 — Close with mandatory root cause', () => {
 
         await waitFor(() => {
             const calls = (api.post as any).mock.calls;
-            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
-            expect(commentCall).toBeDefined();
-            expect(commentCall[1].message).toContain('Error de configuración');
-            expect(commentCall[1].message).toContain('[CIERRE]');
+            const closeCall = calls.find((c: any[]) => c[0].includes('/close'));
+            expect(closeCall).toBeDefined();
+            expect(closeCall[1].comment_message).toContain('Error de configuración');
+            expect(closeCall[1].comment_message).not.toContain('[CIERRE]');
         });
     });
 
-    it('GIVEN T2 user WHEN forced close used THEN comment contains [CIERRE FORZADO — T2]', async () => {
+    it('GIVEN close succeeds WHEN structured close is submitted THEN only the atomic close request is sent', async () => {
         const { api } = await import('../../services/api');
         await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
-        fireEvent.click(screen.getByText('Cerrar Evento'));
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
+
+        await waitFor(() => screen.getByText('Confirmar Cierre'));
+
+        fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'Error de configuración' } });
+        fireEvent.change(
+            screen.getByPlaceholderText('Describe la resolución del incidente...'),
+            { target: { value: 'Se corrigió la configuración de BGP en el router principal' } }
+        );
+
+        fireEvent.click(screen.getByText('Confirmar Cierre'));
+
+        await waitFor(() => {
+            const calls = (api.post as any).mock.calls.filter((c: any[]) => c[0].includes(`/events/${MOCK_EVENT_WITHIN_SLA.id}/`));
+            expect(calls[0][0]).toContain('/close');
+            expect(calls).toHaveLength(1);
+        });
+    });
+
+    it('GIVEN close request fails WHEN structured close is submitted THEN no closure comment is written', async () => {
+        const { api } = await import('../../services/api');
+        const swallowUnhandled = (event: PromiseRejectionEvent) => event.preventDefault();
+        window.addEventListener('unhandledrejection', swallowUnhandled);
+        (api.post as any).mockImplementation(async (url: string, payload: any) => {
+            if (url === `/events/${MOCK_EVENT_WITHIN_SLA.id}/close`) {
+                throw new Error('close-down');
+            }
+            return { message: 'ok', payload };
+        });
+
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
+
+        await waitFor(() => screen.getByText('Confirmar Cierre'));
+
+        fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'Falla de hardware' } });
+        fireEvent.change(
+            screen.getByPlaceholderText('Describe la resolución del incidente...'),
+            { target: { value: 'Se reemplazó el módulo averiado durante la ventana aprobada' } }
+        );
+
+        fireEvent.click(screen.getByText('Confirmar Cierre'));
+
+        await waitFor(() => {
+            expect((api.post as any).mock.calls.some((c: any[]) => c[0] === `/events/${MOCK_EVENT_WITHIN_SLA.id}/close`)).toBe(true);
+        });
+
+        expect((api.post as any).mock.calls.some((c: any[]) => c[0] === `/events/${MOCK_EVENT_WITHIN_SLA.id}/comment`)).toBe(false);
+        window.removeEventListener('unhandledrejection', swallowUnhandled);
+    });
+
+    it('GIVEN T2 user WHEN forced close used THEN close payload sends only the operator reason', async () => {
+        const { api } = await import('../../services/api');
+        await renderAndOpenModal(MOCK_EVENT_WITHIN_SLA);
+        fireEvent.click(await screen.findByText('Cerrar Evento'));
 
         await waitFor(() => screen.getByText('Cierre forzado (T2)'));
         fireEvent.click(screen.getByText('Cierre forzado (T2)'));
@@ -588,9 +884,9 @@ describe('M5 — Close with mandatory root cause', () => {
 
         await waitFor(() => {
             const calls = (api.post as any).mock.calls;
-            const commentCall = calls.find((c: any[]) => c[0].includes('/comment'));
-            expect(commentCall).toBeDefined();
-            expect(commentCall[1].message).toContain('[CIERRE FORZADO — T2]');
+            const closeCall = calls.find((c: any[]) => c[0].includes('/close'));
+            expect(closeCall).toBeDefined();
+            expect(closeCall[1].comment_message).toBe('Motivo: Requiere cierre inmediato por ventana de mantenimiento');
         });
     });
 });

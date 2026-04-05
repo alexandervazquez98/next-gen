@@ -96,6 +96,38 @@ const MOCK_EVENT = {
     comments: [],
 };
 
+const MOCK_EVENT_DETAIL = {
+    event: {
+        ...MOCK_EVENT,
+        ci_ref: {
+            id: MOCK_EVENT.ci_id,
+            label: MOCK_EVENT.ci_name,
+            hostname: MOCK_EVENT.ci_hostname,
+            location_name: MOCK_EVENT.ci_location_name,
+        },
+    },
+    business_context: {
+        source: 'snapshot',
+        business_service: null,
+        service_catalog: {
+            id: 'sla-001',
+            category: 'NETWORK',
+            service_tier: 'Gold',
+            sla_minutes: 60,
+        },
+        impacted_users: null,
+        sla_remaining_minutes: 45,
+        site: MOCK_EVENT.ci_location_name,
+    },
+    itsm_context: {
+        assignment_state: 'unassigned',
+        assigned_to: null,
+        opened_by: 'system',
+        escalation_tier: 'T2',
+        external_ticket: null,
+    },
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -107,6 +139,7 @@ async function renderConsoleWithEvent() {
     mockApiGet.mockImplementation((url: string) => {
         if (url === '/nodes') return Promise.resolve([]);
         if (url === '/links') return Promise.resolve([]);
+        if (url === `/events/${MOCK_EVENT.id}`) return Promise.resolve(MOCK_EVENT_DETAIL);
         if (url.includes('/events')) return Promise.resolve([MOCK_EVENT]);
         return Promise.resolve([]);
     });
@@ -171,15 +204,20 @@ describe('MonitoringConsole — forced close API call', () => {
             fireEvent.click(forceSubmitBtn);
         });
 
-        // Wait for the API call
+        // Wait for the atomic close API call
         await waitFor(() => {
             const closeCalls = mockApiPost.mock.calls.filter(([url]) =>
                 url === `/events/${MOCK_EVENT.id}/close`
             );
             expect(closeCalls.length).toBeGreaterThan(0);
             const lastCloseCall = closeCalls[closeCalls.length - 1];
-            expect(lastCloseCall[1]).toEqual({ forced: true });
+            expect(lastCloseCall[1]).toEqual({
+                forced: true,
+                comment_message: 'Motivo: Mantenimiento de emergencia aprobado por CTO',
+            });
         });
+
+        expect(mockApiPost.mock.calls.some(([url]) => url === `/events/${MOCK_EVENT.id}/comment`)).toBe(false);
     });
 
     it('GIVEN standard close mode WHEN handleStructuredClose is called THEN sends { forced: false } to close endpoint', async () => {
@@ -210,15 +248,20 @@ describe('MonitoringConsole — forced close API call', () => {
             fireEvent.click(confirmBtn);
         });
 
-        // Wait for the API call
+        // Wait for the atomic close API call
         await waitFor(() => {
             const closeCalls = mockApiPost.mock.calls.filter(([url]) =>
                 url === `/events/${MOCK_EVENT.id}/close`
             );
             expect(closeCalls.length).toBeGreaterThan(0);
             const lastCloseCall = closeCalls[closeCalls.length - 1];
-            expect(lastCloseCall[1]).toEqual({ forced: false });
+            expect(lastCloseCall[1]).toEqual({
+                forced: false,
+                comment_message: 'Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo de CPU defectuoso',
+            });
         });
+
+        expect(mockApiPost.mock.calls.some(([url]) => url === `/events/${MOCK_EVENT.id}/comment`)).toBe(false);
     });
 
     it('GIVEN event table rows WHEN rendered THEN no close API call is possible without modal interaction', async () => {

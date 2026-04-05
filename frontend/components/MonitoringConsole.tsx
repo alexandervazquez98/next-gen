@@ -8,6 +8,7 @@ import { useEventCorrelation } from '../hooks/useEventCorrelation';
 import L from 'leaflet';
 import { useAuth } from '../context/AuthContext';
 import { useEventMutations } from '../hooks/queries/useEventMutations';
+import { useEventDetailQuery } from '../hooks/queries/useEventDetailQuery';
 import { useMonitoringConsoleData } from '../hooks/queries/useMonitoringConsoleData';
 import { useRelatedEventsQuery } from '../hooks/queries/useRelatedEventsQuery';
 
@@ -265,6 +266,7 @@ const MonitoringConsole: React.FC = () => {
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [commentText, setCommentText] = useState("");
     const [isDiagnosing, setIsDiagnosing] = useState(false);
+    const selectedEvent = selectedEventId ? events.find(e => e.id === selectedEventId) ?? null : null;
 
     // M5: Close flow state
     const [closeFlowOpen, setCloseFlowOpen] = useState(false);
@@ -277,6 +279,26 @@ const MonitoringConsole: React.FC = () => {
     const { user, hasPermission } = useAuth();
     const CURRENT_USER = user?.username ?? 'unknown';
     const CURRENT_TIER = user?.tier ?? 'T1';
+    const canViewEventDetail = hasPermission('EVENT_VIEW');
+    const canAckEvent = hasPermission('EVENT_ACK');
+    const canCloseEvent = hasPermission('EVENT_CLOSE');
+    const canForceCloseEvent = canCloseEvent && hasPermission('EVENT_FORCED_CLOSE');
+    const canRunDiagnostics = hasPermission('RUN_DIAGNOSTICS');
+    const canOpenEventModal = canViewEventDetail || canAckEvent || canCloseEvent || canRunDiagnostics;
+    const eventDetailQuery = useEventDetailQuery(selectedEventId, commentModalOpen && canViewEventDetail);
+    const eventDetail = eventDetailQuery.data;
+
+    const resetModalState = () => {
+        setCommentModalOpen(false);
+        setSelectedEventId(null);
+        setCommentText("");
+        setCloseFlowOpen(false);
+        setCloseRootCause('');
+        setCloseNote('');
+        setCloseForcedMode(false);
+        setCloseForcedReason('');
+        setIsDiagnosing(false);
+    };
 
     const handleOpenComment = (id: string) => {
         setSelectedEventId(id);
@@ -309,22 +331,19 @@ const MonitoringConsole: React.FC = () => {
     // M5: Structured close
     const handleStructuredClose = async () => {
         if (!selectedEventId) return;
+        const closeComment = closeForcedMode
+            ? `Motivo: ${closeForcedReason}`
+            : `Causa raíz: ${closeRootCause}\nNota: ${closeNote}`;
         if (closeForcedMode) {
             if (!closeForcedReason.trim()) return;
-            await eventMutations.commentEvent(selectedEventId, {
-                message: `[CIERRE FORZADO — ${CURRENT_TIER}] Motivo: ${closeForcedReason}`,
-                user: CURRENT_USER
-            });
         } else {
             if (!closeRootCause || closeNote.trim().length < 20) return;
-            await eventMutations.commentEvent(selectedEventId, {
-                message: `[CIERRE] Causa raíz: ${closeRootCause}\nNota: ${closeNote}`,
-                user: CURRENT_USER
-            });
         }
-        await eventMutations.closeEvent(selectedEventId, { forced: closeForcedMode });
-        setCommentModalOpen(false);
-        setCloseFlowOpen(false);
+        await eventMutations.closeEvent(selectedEventId, {
+            forced: closeForcedMode,
+            comment_message: closeComment,
+        });
+        resetModalState();
     };
 
     // --- Data Processing for Visualization ---
@@ -357,6 +376,23 @@ const MonitoringConsole: React.FC = () => {
     const groupedEvents = useEventCorrelation(events, links);
 
     const activeEventsDisplay = groupedEvents;
+
+    const extractAuditActor = (body: string): string | null => {
+        const patterns = [
+            /Caso tomado por\s+([^\n]+)/i,
+            /Evento cerrado por\s+([^\n]+)/i,
+            /Cierre forzado por\s+([^\n]+)/i,
+        ];
+
+        for (const pattern of patterns) {
+            const match = body.match(pattern);
+            if (match?.[1]) {
+                return match[1].split(/\s(?:\u2014|-)\s+Tier/i)[0].trim();
+            }
+        }
+
+        return null;
+    };
 
     return (
         <div className="h-full flex flex-col bg-surface-950 overflow-hidden relative">
@@ -479,10 +515,12 @@ const MonitoringConsole: React.FC = () => {
                                                     </td>
                                                     <td className="p-3 text-right">
                                                         <div className="flex justify-end gap-2 transition-opacity">
+                                                            {canOpenEventModal && (
                                                             <button onClick={() => handleOpenComment(evt.id)} className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-brand-400 border border-brand-500/30 rounded text-xs font-bold uppercase flex items-center gap-1">
                                                                 <span className="material-symbols-outlined text-[10px]">visibility</span> Details
                                                             </button>
-                                                            {evt.status === 'OPEN' && (
+                                                            )}
+                                                            {evt.status === 'OPEN' && canAckEvent && (
                                                                 <button onClick={() => handleAck(evt.id)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold uppercase">Ack</button>
                                                             )}
                                                         </div>
@@ -622,37 +660,73 @@ const MonitoringConsole: React.FC = () => {
             </div>
 
             {commentModalOpen && selectedEventId && (() => {
-                const evt = events.find(e => e.id === selectedEventId);
+                const evt = selectedEvent;
                 if (!evt) return null;
 
                 const node = nodesWithEvents.find(n => n.id === evt.ci_id);
-                const isAssigned = evt.ack && evt.ack_by;
-                const assignedTo = evt.ack_by || null;
-
-                // SLA calculation (mock — field not in model yet)
-                const slaMinutes: number | null = (node?.metadata?.sla_minutes as number) ?? null;
-                const ageMs = Date.now() - new Date(evt.created_at).getTime();
+                const detailEvent = eventDetail?.event;
+                const businessContext = eventDetail?.business_context;
+                const itsmContext = eventDetail?.itsm_context;
+                const displayEvent = detailEvent ?? evt;
+                 const isBusinessContextReady = canViewEventDetail && eventDetailQuery.isSuccess && Boolean(eventDetail);
+                 const businessContextStatus = isBusinessContextReady
+                     ? businessContext?.source ?? 'unavailable'
+                     : canViewEventDetail && eventDetailQuery.isError
+                         ? 'degraded'
+                         : canViewEventDetail && eventDetailQuery.isLoading
+                            ? 'loading'
+                            : 'summary-only';
+                const isAssigned = itsmContext?.assignment_state === 'assigned' || (displayEvent.ack && displayEvent.ack_by);
+                const assignedTo = itsmContext?.assigned_to || displayEvent.ack_by || null;
+                const businessServiceName = isBusinessContextReady ? businessContext?.business_service?.name ?? null : null;
+                const impactedUsers = isBusinessContextReady ? businessContext?.impacted_users ?? null : null;
+                const site = isBusinessContextReady
+                    ? businessContext?.site ?? detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.locationName ?? null
+                    : detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.locationName ?? null;
+                const category = businessContext?.service_catalog?.category ?? node?.category ?? node?.type ?? null;
+                const ageMs = Date.now() - new Date(displayEvent.created_at).getTime();
                 const ageMinutes = Math.floor(ageMs / 60000);
-                const slaRemaining = slaMinutes !== null ? slaMinutes - ageMinutes : null;
+                const slaRemaining = isBusinessContextReady ? businessContext?.sla_remaining_minutes ?? null : null;
                 const slaCritical = slaRemaining !== null && slaRemaining <= 30;
+                 const eventTier = itsmContext?.escalation_tier ?? null;
+                 const detailFetchBlocked = !canViewEventDetail;
 
                 // M3: Parse timeline entries from comments[]
-                const parseTimelineEntry = (raw: string) => {
-                    const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
-                    if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
-                    const ownerMatch = raw.match(/^\[OWNERSHIP\] (.+)$/m);
-                    if (ownerMatch) return { type: 'ownership' as const, user: '', body: ownerMatch[1], raw };
-                    const closeMatch = raw.match(/^\[CIERRE/);
-                    if (closeMatch) return { type: 'close' as const, user: '', body: raw, raw };
+                 const parseTimelineEntry = (raw: string) => {
+                     const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
+                     if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
+                    const forcedAuditMatch = raw.match(/^\[AUDIT\]\[FORCED_CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    if (forcedAuditMatch) return { type: 'force_close' as const, user: extractAuditActor(forcedAuditMatch[1]) || '', body: forcedAuditMatch[1], ts: forcedAuditMatch[2], raw };
+                    const closeAuditMatch = raw.match(/^\[AUDIT\]\[CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    if (closeAuditMatch) return { type: 'close' as const, user: extractAuditActor(closeAuditMatch[1]) || '', body: closeAuditMatch[1], ts: closeAuditMatch[2], raw };
+                    const ownershipAuditMatch = raw.match(/^\[AUDIT\]\[OWNERSHIP\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    if (ownershipAuditMatch) return { type: 'ownership' as const, user: extractAuditActor(ownershipAuditMatch[1]) || '', body: ownershipAuditMatch[1], ts: ownershipAuditMatch[2], raw };
                     const forceMatch = raw.match(/^\[CIERRE FORZADO/);
                     if (forceMatch) return { type: 'force_close' as const, user: '', body: raw, raw };
+                    const closeMatch = raw.match(/^\[CIERRE/);
+                    if (closeMatch) return { type: 'close' as const, user: '', body: raw, raw };
                     // Standard format: "user: message (datetime)"
                     const stdMatch = raw.match(/^(.+?):\s([\s\S]+?)\s\((.+)\)$/);
-                    if (stdMatch) return { type: 'note' as const, user: stdMatch[1], body: stdMatch[2], ts: stdMatch[3], raw };
+                    if (stdMatch) {
+                        const [, user, body, ts] = stdMatch;
+                        const structuredOwnershipMatch = body.match(/^\[AUDIT\]\[OWNERSHIP\]\s+([\s\S]+)$/m);
+                        if (structuredOwnershipMatch) return { type: 'ownership' as const, user, body: structuredOwnershipMatch[1], ts, raw };
+                        const structuredForceCloseMatch = body.match(/^\[AUDIT\]\[FORCED_CLOSE\]\s+([\s\S]+)$/m);
+                        if (structuredForceCloseMatch) return { type: 'force_close' as const, user, body: structuredForceCloseMatch[1], ts, raw };
+                        const structuredCloseMatch = body.match(/^\[AUDIT\]\[CLOSE\]\s+([\s\S]+)$/m);
+                        if (structuredCloseMatch) return { type: 'close' as const, user, body: structuredCloseMatch[1], ts, raw };
+                        const ownershipBodyMatch = body.match(/^\[OWNERSHIP\] (.+)$/m);
+                        if (ownershipBodyMatch) return { type: 'ownership' as const, user, body: ownershipBodyMatch[1], ts, raw };
+                        if (/^\[CIERRE FORZADO/.test(body)) return { type: 'force_close' as const, user, body, ts, raw };
+                        if (/^\[CIERRE/.test(body)) return { type: 'close' as const, user, body, ts, raw };
+                        return { type: 'note' as const, user, body, ts, raw };
+                    }
+                    const ownerMatch = raw.match(/^\[OWNERSHIP\] (.+)$/m);
+                    if (ownerMatch) return { type: 'ownership' as const, user: '', body: ownerMatch[1], raw };
                     return { type: 'note' as const, user: 'Sistema', body: raw, raw };
                 };
 
-                const timelineEntries = (evt.comments || []).map(parseTimelineEntry);
+                const timelineEntries = (displayEvent.comments || []).map(parseTimelineEntry);
 
                 const entryIcon = (type: string) => {
                     if (type === 'diagnostic') return { icon: 'build', color: 'border-brand-500 text-brand-400' };
@@ -676,39 +750,39 @@ const MonitoringConsole: React.FC = () => {
                             <div className="px-6 pt-5 pb-3 flex justify-between items-start gap-4">
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-3 flex-wrap">
-                                        <span className={`px-3 py-1 rounded text-xs font-black uppercase tracking-wider flex-shrink-0 ${evt.severity === 'CRITICAL' ? 'bg-red-500 text-white' : evt.severity === 'WARNING' ? 'bg-yellow-400 text-black' : 'bg-blue-500 text-white'}`}>
-                                            {evt.severity}
+                                        <span className={`px-3 py-1 rounded text-xs font-black uppercase tracking-wider flex-shrink-0 ${displayEvent.severity === 'CRITICAL' ? 'bg-red-500 text-white' : displayEvent.severity === 'WARNING' ? 'bg-yellow-400 text-black' : 'bg-blue-500 text-white'}`}>
+                                            {displayEvent.severity}
                                         </span>
-                                        <h3 className="text-xl font-black text-white uppercase tracking-tight truncate">{evt.message}</h3>
+                                        <h3 className="text-xl font-black text-white uppercase tracking-tight truncate">{displayEvent.message}</h3>
                                     </div>
                                      <div className="mt-2 text-neutral-400 text-xs flex flex-wrap gap-x-4 gap-y-1">
                                         <span>
                                             <strong className="text-neutral-300">CI ID:</strong>{' '}
-                                            {evt.ci_node_id
-                                                ? <span className="font-mono text-brand-400">{evt.ci_node_id}</span>
+                                            {(detailEvent?.ci_ref?.id || displayEvent.ci_node_id)
+                                                ? <span className="font-mono text-brand-400">{detailEvent?.ci_ref?.id || displayEvent.ci_node_id}</span>
                                                 : <span className="text-neutral-600 italic">—</span>}
                                         </span>
                                         <span>
                                             <strong className="text-neutral-300">Host:</strong>{' '}
-                                            {evt.ci_name
-                                                ? <span className="text-white">{evt.ci_name}</span>
+                                            {(detailEvent?.ci_ref?.label || displayEvent.ci_name)
+                                                ? <span className="text-white">{detailEvent?.ci_ref?.label || displayEvent.ci_name}</span>
                                                 : <span className="text-neutral-600 italic">—</span>}
-                                            {evt.ci_hostname && (
-                                                <span className="text-neutral-500 ml-1">({evt.ci_hostname})</span>
+                                            {(detailEvent?.ci_ref?.hostname || displayEvent.ci_hostname) && (
+                                                <span className="text-neutral-500 ml-1">({detailEvent?.ci_ref?.hostname || displayEvent.ci_hostname})</span>
                                             )}
                                         </span>
-                                        {evt.ci_location_name && (
+                                        {site && (
                                             <span>
                                                 <strong className="text-neutral-300">Ubicación:</strong>{' '}
-                                                <span className="text-white">{evt.ci_location_name}</span>
+                                                <span className="text-white">{site}</span>
                                             </span>
                                         )}
-                                        <span><strong className="text-neutral-300">Métrica:</strong> {evt.metric_name || '—'}</span>
-                                        <span><strong className="text-neutral-300">Protocolo:</strong> {evt.metric_protocol || 'N/A'}</span>
-                                        <span><strong className="text-neutral-300">Inicio:</strong> {new Date(evt.created_at).toLocaleString()}</span>
+                                        <span><strong className="text-neutral-300">Métrica:</strong> {displayEvent.metric_name || '—'}</span>
+                                        <span><strong className="text-neutral-300">Protocolo:</strong> {displayEvent.metric_protocol || 'N/A'}</span>
+                                        <span><strong className="text-neutral-300">Inicio:</strong> {new Date(displayEvent.created_at).toLocaleString()}</span>
                                     </div>
                                 </div>
-                                <button onClick={() => setCommentModalOpen(false)} className="text-neutral-500 hover:text-white transition-colors flex-shrink-0 mt-1">
+                                <button onClick={resetModalState} className="text-neutral-500 hover:text-white transition-colors flex-shrink-0 mt-1">
                                     <span className="material-symbols-outlined">close</span>
                                 </button>
                             </div>
@@ -717,27 +791,19 @@ const MonitoringConsole: React.FC = () => {
                             <div className="px-6 pb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                                 <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Servicio de negocio</div>
-                                    <div className="text-white font-semibold truncate">{(node?.metadata?.business_service as string) || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                    <div className="text-white font-semibold truncate">{businessServiceName || <span className="text-neutral-600 italic">No configurado</span>}</div>
                                 </div>
                                 <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Usuarios impactados</div>
-                                    <div className="text-white font-semibold">{(node?.metadata?.impacted_users as string) || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                    <div className="text-white font-semibold">{impactedUsers ?? <span className="text-neutral-600 italic">No configurado</span>}</div>
                                 </div>
                                  <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Sede</div>
-                                     <div className="text-white font-semibold">
-                                        {evt.ci_location_name
-                                            ? evt.ci_location_name
-                                            : node?.locationName
-                                                ? node.locationName
-                                                : (node?.metadata?.site as string)
-                                                    ? (node?.metadata?.site as string)
-                                                    : <span className="text-neutral-600 italic">No configurado</span>}
-                                    </div>
+                                     <div className="text-white font-semibold">{site || <span className="text-neutral-600 italic">No configurado</span>}</div>
                                 </div>
                                 <div className="bg-white/5 rounded-lg px-3 py-2 text-xs">
                                     <div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">Categoría CI</div>
-                                    <div className="text-white font-semibold">{node?.category || node?.type || <span className="text-neutral-600 italic">No configurado</span>}</div>
+                                    <div className="text-white font-semibold">{category || <span className="text-neutral-600 italic">No configurado</span>}</div>
                                 </div>
                                 <div className={`rounded-lg px-3 py-2 text-xs ${slaCritical ? 'bg-red-500/20 border border-red-500/40' : 'bg-white/5'}`}>
                                     <div className={`uppercase font-bold tracking-wider mb-0.5 ${slaCritical ? 'text-red-400' : 'text-neutral-500'}`}>SLA Restante</div>
@@ -751,6 +817,9 @@ const MonitoringConsole: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
+                            <div className="px-6 pb-3 text-[10px] uppercase tracking-widest text-neutral-500">
+                                Contexto de negocio: {businessContextStatus === 'loading' ? 'cargando' : businessContextStatus === 'degraded' ? 'degradado' : businessContextStatus === 'summary-only' ? 'resumen local' : businessContextStatus}
+                            </div>
 
                             {/* ── M2: Ownership Bar ── */}
                             <div className={`px-6 py-2 border-t border-white/5 flex flex-wrap items-center gap-4 text-xs ${!isAssigned ? 'bg-red-950/30' : 'bg-black/20'}`}>
@@ -762,31 +831,33 @@ const MonitoringConsole: React.FC = () => {
                                     ) : (
                                         <span className="flex items-center gap-2">
                                             <span className="text-red-400 font-bold animate-pulse">Sin asignar</span>
+                                            {canAckEvent && (
                                             <button
-                                                onClick={() => handleTakeCase(evt.id)}
+                                                onClick={() => handleTakeCase(displayEvent.id)}
                                                 className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold uppercase tracking-wide transition-colors"
                                             >Tomar caso</button>
+                                            )}
                                         </span>
                                     )}
                                 </div>
                                 <div className="w-px h-4 bg-white/10" />
                                 {/* Tier */}
                                 <div className="flex items-center gap-1.5">
-                                    <span className="text-neutral-500 uppercase font-bold">Tier:</span>
-                                    <span className="px-2 py-0.5 bg-brand-600/30 border border-brand-500/40 rounded text-brand-300 font-black">{CURRENT_TIER}</span>
+                                    <span className="text-neutral-500 uppercase font-bold">Tier del evento:</span>
+                                    <span className="px-2 py-0.5 bg-brand-600/30 border border-brand-500/40 rounded text-brand-300 font-black">{eventTier ?? 'No definido'}</span>
                                 </div>
                                 <div className="w-px h-4 bg-white/10" />
                                 {/* Estado */}
                                 <div className="flex items-center gap-1.5">
                                     <span className="text-neutral-500 uppercase font-bold">Estado:</span>
                                     <span className={`px-2 py-0.5 rounded font-black uppercase text-[10px] ${
-                                        evt.status === 'OPEN' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                                        evt.status === 'ACK'  ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                                        displayEvent.status === 'OPEN' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                                        displayEvent.status === 'ACK'  ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
                                         'bg-neutral-500/20 text-neutral-400 border border-neutral-500/30'
                                     }`}>{
-                                        evt.status === 'OPEN' ? 'Nuevo' :
-                                        evt.status === 'ACK'  ? 'En atención' :
-                                        evt.status === 'CLOSED' ? 'Cerrado' : evt.status
+                                        displayEvent.status === 'OPEN' ? 'Nuevo' :
+                                        displayEvent.status === 'ACK'  ? 'En atención' :
+                                        displayEvent.status === 'CLOSED' ? 'Cerrado' : displayEvent.status
                                     }</span>
                                 </div>
                                 <div className="w-px h-4 bg-white/10" />
@@ -806,7 +877,22 @@ const MonitoringConsole: React.FC = () => {
 
                         {/* ── Body: 3 columns ── */}
                         <div className="flex-1 flex overflow-hidden min-h-0">
-
+                            <>
+                            {(canViewEventDetail && eventDetailQuery.isLoading && !eventDetail) && (
+                                <div className="mx-5 mt-5 rounded-lg border border-brand-500/20 bg-brand-950/20 px-4 py-3 text-xs text-brand-100">
+                                    Cargando contexto extendido del evento...
+                                </div>
+                            )}
+                            {(canViewEventDetail && eventDetailQuery.isError && !eventDetail) && (
+                                <div className="mx-5 mt-5 rounded-lg border border-red-500/20 bg-red-950/20 px-4 py-3 text-xs text-red-200">
+                                    No se pudo cargar el detalle protegido. Seguís trabajando con el resumen del stream.
+                                </div>
+                            )}
+                            {detailFetchBlocked && (
+                                <div className="mx-5 mt-5 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-xs text-neutral-300">
+                                    Sin permiso `EVENT_VIEW`: se muestra el resumen local y solo las acciones autorizadas.
+                                </div>
+                            )}
                             {/* Left: M3 Timeline */}
                             <div className="w-[270px] lg:w-[310px] xl:w-[360px] flex-shrink-0 flex flex-col border-r border-white/10 bg-[#0f1117]">
                                 <div className="px-5 pt-5 pb-3 flex-shrink-0 border-b border-white/5">
@@ -822,9 +908,9 @@ const MonitoringConsole: React.FC = () => {
                                         <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-[#0f1117] border-2 border-red-500 flex items-center justify-center">
                                             <div className="w-1.5 h-1.5 bg-red-500 rounded-full" />
                                         </div>
-                                        <div className="text-[10px] text-neutral-600 font-mono mb-1">{new Date(evt.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · Sistema · Evento disparador</div>
+                                        <div className="text-[10px] text-neutral-600 font-mono mb-1">{new Date(displayEvent.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · Sistema · Evento disparador</div>
                                         <div className="bg-red-950/30 border border-red-500/20 p-2.5 rounded-lg text-xs text-red-200 leading-relaxed">
-                                            <span className="font-black text-red-400">DISPARADOR:</span> {evt.message}
+                                            <span className="font-black text-red-400">DISPARADOR:</span> {displayEvent.message}
                                         </div>
                                     </div>
 
@@ -837,7 +923,7 @@ const MonitoringConsole: React.FC = () => {
                                                     <span className={`material-symbols-outlined text-[8px] ${color.split(' ')[1]}`}>{icon}</span>
                                                 </div>
                                                 <div className={`text-[10px] font-mono mb-1 ${color.includes('emerald') ? 'text-emerald-600' : color.includes('neutral') ? 'text-neutral-600' : 'text-neutral-600'}`}>
-                                                    {entry.ts ? new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'} · {entry.user || CURRENT_USER} · {
+                                                    {entry.ts ? new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'} · {entry.user || 'Sistema'} · {
                                                         entry.type === 'diagnostic' ? 'Diagnóstico ejecutado' :
                                                         entry.type === 'ownership' ? 'Ownership asignado' :
                                                         entry.type === 'close' ? 'Evento cerrado' :
@@ -859,6 +945,7 @@ const MonitoringConsole: React.FC = () => {
                                 </div>
 
                                 {/* Add note */}
+                                {canAckEvent && (
                                 <div className="flex-shrink-0 border-t border-white/5 px-5 py-4">
                                     <h4 className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-2">Agregar nota</h4>
                                     <textarea
@@ -873,6 +960,7 @@ const MonitoringConsole: React.FC = () => {
                                         className="w-full py-2 bg-brand-700 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded text-xs font-bold transition-colors"
                                     >Guardar nota</button>
                                 </div>
+                                )}
                             </div>
 
                             {/* Center: M4 Dependency Impact (dominant) */}
@@ -886,10 +974,10 @@ const MonitoringConsole: React.FC = () => {
                                 </div>
                                 <div className="flex-1 min-h-0 p-4">
                                     <DependencyMiniMap
-                                        ciId={evt.ci_id}
+                                        ciId={displayEvent.ci_id}
                                         nodes={nodesWithEvents}
                                         links={links}
-                                        event={evt}
+                                        event={displayEvent}
                                     />
                                 </div>
                                 <div className="flex-shrink-0 px-5 pb-3 text-[10px] text-neutral-600 text-center italic">
@@ -902,14 +990,14 @@ const MonitoringConsole: React.FC = () => {
 
                                 {/* Related alarms */}
                                 <div className="px-5 pt-5 pb-3 border-b border-white/5">
-                                    <RelatedAlarmsPanel ciId={evt.ci_id} currentEventId={selectedEventId} />
+                                    <RelatedAlarmsPanel ciId={displayEvent.ci_id} currentEventId={selectedEventId} enabled={canViewEventDetail} />
                                 </div>
 
                                 {/* Quick actions */}
                                 <div className="px-5 py-4 border-b border-white/5">
                                     <h4 className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-3">Acciones rápidas</h4>
                                     <div className="flex flex-col gap-2">
-                                        {evt.status === 'OPEN' && (
+                                        {displayEvent.status === 'OPEN' && canAckEvent && (
                                             <button
                                                 onClick={() => handleAck(selectedEventId!)}
                                                 className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-colors"
@@ -920,7 +1008,7 @@ const MonitoringConsole: React.FC = () => {
                                         )}
 
                                         {/* M5: Close flow */}
-                                        {!closeFlowOpen ? (
+                                        {canCloseEvent && (!closeFlowOpen ? (
                                             <button
                                                 onClick={() => setCloseFlowOpen(true)}
                                                 className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-700 border border-white/10 rounded-lg text-sm font-bold text-neutral-300 flex items-center justify-center gap-2 transition-colors"
@@ -975,13 +1063,15 @@ const MonitoringConsole: React.FC = () => {
                                                         </div>
 
                                                         <button
-                                                            onClick={handleStructuredClose}
+                                                            onClick={() => {
+                                                                void handleStructuredClose().catch(() => undefined);
+                                                            }}
                                                             disabled={!canClose}
                                                             className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black uppercase transition-colors"
                                                         >Confirmar Cierre</button>
 
                                                         {/* Forced close — requires EVENT_FORCED_CLOSE permission */}
-                                                        {hasPermission('EVENT_FORCED_CLOSE') && (
+                                                        {canForceCloseEvent && (
                                                             <button
                                                                 onClick={() => setCloseForcedMode(true)}
                                                                 className="w-full py-1.5 text-[10px] text-neutral-600 hover:text-red-400 transition-colors uppercase font-bold"
@@ -1002,7 +1092,9 @@ const MonitoringConsole: React.FC = () => {
                                                         <div className="flex gap-2">
                                                             <button onClick={() => setCloseForcedMode(false)} className="flex-1 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs font-bold">Cancelar</button>
                                                             <button
-                                                                onClick={handleStructuredClose}
+                                                                onClick={() => {
+                                                                    void handleStructuredClose().catch(() => undefined);
+                                                                }}
                                                                 disabled={!canClose}
                                                                 className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white rounded-lg text-xs font-black transition-colors"
                                                             >Forzar Cierre</button>
@@ -1010,11 +1102,12 @@ const MonitoringConsole: React.FC = () => {
                                                     </>
                                                 )}
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
 
                                 {/* Diagnostics */}
+                                {canRunDiagnostics && (
                                 <div className="px-5 py-4">
                                     <h4 className="text-[10px] font-black text-brand-400 uppercase tracking-widest mb-3">Herramientas de Diagnóstico</h4>
                                     <div className="bg-black/40 rounded-xl border border-white/5 p-3">
@@ -1038,7 +1131,9 @@ const MonitoringConsole: React.FC = () => {
                                         <p className="text-[10px] text-neutral-600 mt-2 leading-relaxed">El resultado se registrará automáticamente en el timeline.</p>
                                     </div>
                                 </div>
+                                )}
                             </div>
+                            </>
                         </div>
                     </div>
                 </div>
@@ -1073,8 +1168,10 @@ const StatCard = ({ label, value, icon, color, bg, animate }: any) => (
  * Shows other active alarms for the same CI, excluding the currently selected one.
  * Useful for spotting correlated issues (e.g. CPU High + Latency High).
  */
-const RelatedAlarmsPanel = ({ ciId, currentEventId }: { ciId?: string, currentEventId?: string | null }) => {
-    const { data: related = [] } = useRelatedEventsQuery(ciId);
+const RelatedAlarmsPanel = ({ ciId, currentEventId, enabled }: { ciId?: string, currentEventId?: string | null, enabled: boolean }) => {
+    const { data: related = [] } = useRelatedEventsQuery(ciId, enabled);
+
+    if (!enabled) return null;
 
     // Filter out current event
     const displayed = related.filter(e => e.id !== currentEventId);

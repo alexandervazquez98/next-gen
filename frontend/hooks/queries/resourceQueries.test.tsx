@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueryWrapper, createTestQueryClient } from '../../test/queryTestUtils';
 import { useActiveEventsQuery } from './useActiveEventsQuery';
 import { useCategoriesQuery } from './useCategoriesQuery';
+import { useEventDetailQuery } from './useEventDetailQuery';
 import { useGraphTopologyQuery } from './useGraphTopologyQuery';
 import { useLinksQuery } from './useLinksQuery';
 import { useNodesQuery } from './useNodesQuery';
@@ -19,7 +20,15 @@ vi.mock('../../services/api', () => ({
   },
 }));
 
-function HookProbe({ resource }: { resource: 'status' | 'nodes' | 'links' | 'categories' | 'events' | 'topology' }) {
+function HookProbe({
+  resource,
+  eventId,
+  detailEnabled,
+}: {
+  resource: 'status' | 'nodes' | 'links' | 'categories' | 'events' | 'topology' | 'detail';
+  eventId?: string;
+  detailEnabled?: boolean;
+}) {
   const result = (() => {
     switch (resource) {
       case 'status':
@@ -34,6 +43,8 @@ function HookProbe({ resource }: { resource: 'status' | 'nodes' | 'links' | 'cat
         return useActiveEventsQuery();
       case 'topology':
         return useGraphTopologyQuery();
+      case 'detail':
+        return useEventDetailQuery(eventId, detailEnabled);
     }
   })();
 
@@ -159,5 +170,48 @@ describe('resource query hooks', () => {
     expect(mockApiGet).toHaveBeenCalledTimes(1);
     expect(screen.getByText('alpha-loading:false')).toBeInTheDocument();
     expect(screen.getByText('beta-loading:false')).toBeInTheDocument();
+  });
+
+  it('fetches event detail by id without background polling', async () => {
+    mockApiGet.mockResolvedValue({
+      event: { id: 'evt-1', ci_id: 'ci-1', metric_id: 'cpu-load', status: 'OPEN', severity: 'CRITICAL', message: 'boom', created_at: '2026-04-05T11:00:00Z', last_seen: '2026-04-05T11:00:00Z', ack: false, ci_ref: { id: 'ci-1' } },
+      business_context: { source: 'unavailable', sla_remaining_minutes: null },
+      itsm_context: { assignment_state: 'unassigned', opened_by: 'system' },
+    });
+
+    render(<HookProbe resource="detail" eventId="evt-1" />, { wrapper: createQueryWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockApiGet).toHaveBeenCalledWith('/events/evt-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(60000);
+      await Promise.resolve();
+    });
+
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fetch event detail until an id exists', async () => {
+    render(<HookProbe resource="detail" />, { wrapper: createQueryWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockApiGet).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch event detail when explicitly disabled', async () => {
+    render(<HookProbe resource="detail" eventId="evt-1" detailEnabled={false} />, { wrapper: createQueryWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });
