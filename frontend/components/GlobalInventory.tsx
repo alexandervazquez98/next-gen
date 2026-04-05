@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GraphNode } from '../types';
 import { getStatusClasses } from '../utils/status';
 
@@ -17,6 +17,11 @@ const GlobalInventory: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
     const [selectedItem, setSelectedItem] = useState<GraphNode | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const selectedItemRef = useRef<GraphNode | null>(null);
+
+    useEffect(() => {
+        selectedItemRef.current = selectedItem;
+    }, [selectedItem]);
 
     const fetchData = () => {
         const token = localStorage.getItem('token');
@@ -31,10 +36,15 @@ const GlobalInventory: React.FC = () => {
             .then(data => {
                 if (Array.isArray(data)) {
                     setInventory(data);
-                    if (selectedItem) {
+                    const currentSelectedItem = selectedItemRef.current;
+                    if (currentSelectedItem) {
                         // Real-time update of selected item
-                        const updated = data.find((i: GraphNode) => i.id === selectedItem.id);
-                        if (updated) setSelectedItem(updated);
+                        const updated = data.find((i: GraphNode) => i.id === currentSelectedItem.id);
+                        if (updated) {
+                            setSelectedItem(updated);
+                        } else {
+                            setSelectedItem(null);
+                        }
                     }
                 } else {
                     console.error("Expected array for inventory but got:", data);

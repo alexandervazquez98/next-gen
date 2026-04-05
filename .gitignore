@@ -136,3 +136,4 @@ coverage.xml
 
 # Artifacts de OpenCode
 .artifacts/
+.atl

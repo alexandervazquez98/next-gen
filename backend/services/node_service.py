@@ -45,8 +45,8 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
         for k, v in node.items():
             if k in ["id", "name", "status", "location", "ip", "layer"]:
                 continue
-            if hasattr(v, "iso_format"):
-                clean_metadata[k] = v.iso_format()
+            if hasattr(v, "isoformat"):
+                clean_metadata[k] = v.isoformat()
             else:
                 clean_metadata[k] = v
 
@@ -63,7 +63,7 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
                 }
                 if m.get("last_updated"):
                     try:
-                        m_data["last_updated"] = m["last_updated"].iso_format()
+                        m_data["last_updated"] = m["last_updated"].isoformat()
                     except:
                         pass
                 metrics.append(m_data)
