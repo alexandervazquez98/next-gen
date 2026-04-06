@@ -79,11 +79,9 @@ export interface EventSummary {
   last_seen: string;
   ack: boolean;
   ack_at?: string;
-  ack_by?: string;
   closed_at?: string;
   closed_by?: string;
   recovered_at?: string;
-  comments?: string[];
 }
 
 export interface CIRef {
@@ -134,6 +132,8 @@ export interface ItsmContext {
 
 export interface EventDetailEvent extends EventSummary {
   ci_ref: CIRef;
+  comments?: string[];
+  ack_by?: string | null;
 }
 
 export interface EventDetail {

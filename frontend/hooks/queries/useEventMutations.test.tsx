@@ -81,7 +81,7 @@ describe('useEventMutations', () => {
 
     expect(mockApiPost.mock.calls[0]).toEqual([
       '/events/evt-1/ack',
-      {},
+      { comment_message: expect.stringContaining('[AUDIT][OWNERSHIP]') },
     ]);
   });
 
@@ -143,7 +143,7 @@ describe('useEventMutations', () => {
       expect(mockApiPost).toHaveBeenCalledTimes(1);
     });
 
-    expect(mockApiPost).toHaveBeenCalledWith('/events/evt-1/ack', {});
+    expect(mockApiPost).toHaveBeenCalledWith('/events/evt-1/ack', { comment_message: expect.stringContaining('[AUDIT][OWNERSHIP]') });
     expect(mockApiPost).not.toHaveBeenCalledWith('/events/evt-1/comment', expect.anything());
     expect(client.invalidateQueries).not.toHaveBeenCalled();
   });

@@ -76,7 +76,6 @@ def _strip_known_audit_prefixes(message: Optional[str]) -> str:
             (
                 "[OWNERSHIP]",
                 "[CIERRE",
-                "[FORCED CLOSE]",
                 "[AUDIT]",
             )
         ):
@@ -210,6 +209,9 @@ def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[st
 def _validate_close_request(forced: bool, comment_message: Optional[str]) -> None:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
+        # Strip the "Motivo:" label the frontend adds before checking for content
+        if detail and detail.lower().startswith("motivo:"):
+            detail = detail.split(":", 1)[1].strip()
         if not detail:
             raise HTTPException(
                 status_code=400,
@@ -437,7 +439,14 @@ def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
             MATCH (e:Event)-[:TRIGGERED_BY]->(m:MetricDef)
             WHERE e.ci_id = $ci_id AND e.status IN ['OPEN', 'ACK']
             RETURN e, m
-            ORDER BY e.severity DESC, e.created_at DESC
+            ORDER BY
+              CASE e.severity
+                WHEN 'CRITICAL' THEN 1
+                WHEN 'WARNING' THEN 2
+                WHEN 'INFO' THEN 3
+                ELSE 4
+              END ASC,
+              e.created_at DESC
         """,
             ci_id=ci_id,
         )

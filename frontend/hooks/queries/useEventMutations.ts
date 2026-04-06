@@ -38,8 +38,8 @@ export const useEventMutations = () => {
       await refreshEventQueries();
       return result;
     },
-    takeEvent: async (id: string, _payload: TakePayload) => {
-      const result = await api.post(`/events/${id}/ack`, {});
+    takeEvent: async (id: string, payload: TakePayload) => {
+      const result = await api.post(`/events/${id}/ack`, { comment_message: `[AUDIT][OWNERSHIP] ${payload.user} (${payload.tier})` });
       await refreshEventQueries();
       return result;
     },
