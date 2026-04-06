@@ -94,10 +94,10 @@ Una entrega de esta capability NO esta completa si falta alguno de estos artefac
 - `README.md`
 - `docs/domain/business-model.md`
 - `docs/itsm/event-flow.md`
-- `modelo_entidad_relacion.md`
+- `docs/reference/modelo_entidad_relacion.md`
 
 ## Referencias cruzadas
 
 - `README.md`
 - `docs/domain/business-model.md`
-- `modelo_entidad_relacion.md`
+- `../reference/modelo_entidad_relacion.md`
