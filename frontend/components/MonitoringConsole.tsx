@@ -274,6 +274,7 @@ const MonitoringConsole: React.FC = () => {
     const [closeNote, setCloseNote] = useState('');
     const [closeForcedMode, setCloseForcedMode] = useState(false);
     const [closeForcedReason, setCloseForcedReason] = useState('');
+    const [closeError, setCloseError] = useState<string | null>(null);
 
     // M2: Ownership — driven by real auth context
     const { user, hasPermission } = useAuth();
@@ -297,6 +298,7 @@ const MonitoringConsole: React.FC = () => {
         setCloseNote('');
         setCloseForcedMode(false);
         setCloseForcedReason('');
+        setCloseError(null);
         setIsDiagnosing(false);
     };
 
@@ -308,6 +310,7 @@ const MonitoringConsole: React.FC = () => {
         setCloseNote('');
         setCloseForcedMode(false);
         setCloseForcedReason('');
+        setCloseError(null);
         setCommentModalOpen(true);
     };
 
@@ -330,7 +333,8 @@ const MonitoringConsole: React.FC = () => {
 
     // M5: Structured close
     const handleStructuredClose = async () => {
-        if (!selectedEventId) return;
+        setCloseError(null);
+        if (!selectedEventId) return Promise.resolve();
         const closeComment = closeForcedMode
             ? `Motivo: ${closeForcedReason}`
             : `Causa raíz: ${closeRootCause}\nNota: ${closeNote}`;
@@ -339,11 +343,17 @@ const MonitoringConsole: React.FC = () => {
         } else {
             if (!closeRootCause || closeNote.trim().length < 20) return;
         }
-        await eventMutations.closeEvent(selectedEventId, {
-            forced: closeForcedMode,
-            comment_message: closeComment,
-        });
-        resetModalState();
+        try {
+            await eventMutations.closeEvent(selectedEventId, {
+                forced: closeForcedMode,
+                comment_message: closeComment,
+            });
+            resetModalState();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Error desconocido';
+            setCloseError(msg);
+            console.error('Close failed:', err);
+        }
     };
 
     // --- Data Processing for Visualization ---
@@ -368,8 +378,10 @@ const MonitoringConsole: React.FC = () => {
     const kpiAck = ackEvents.length;
 
     // Helper for Cleanup Button Logic
+    // Note: summary feed doesn't include comments, so count is best-effort.
+    // Backend may skip events with comments during prune.
     const cleanableCount = events.filter(e =>
-        e.status === 'RECOVERED' && !e.ack && (!e.comments || e.comments.length === 0)
+        e.status === 'RECOVERED' && !e.ack
     ).length;
 
     // --- Event Correlation & Grouping Engine ---
@@ -500,12 +512,7 @@ const MonitoringConsole: React.FC = () => {
                                                                     </span>
                                                                 </div>
                                                             )}
-                                                            {evt.comments && evt.comments.length > 0 && (
-                                                                <div className="mt-1 text-xs text-neutral-500 flex items-center gap-1">
-                                                                    <span className="material-symbols-outlined text-[10px]">chat</span>
-                                                                    {evt.comments.length} updates
-                                                                </div>
-                                                            )}
+
                                                         </div>
                                                     </td>
                                                     <td className="p-3">
@@ -676,8 +683,8 @@ const MonitoringConsole: React.FC = () => {
                          : canViewEventDetail && eventDetailQuery.isLoading
                             ? 'loading'
                             : 'summary-only';
-                const isAssigned = itsmContext?.assignment_state === 'assigned' || (displayEvent.ack && displayEvent.ack_by);
-                const assignedTo = itsmContext?.assigned_to || displayEvent.ack_by || null;
+                const isAssigned = itsmContext?.assignment_state === 'assigned';
+                const assignedTo = itsmContext?.assigned_to || null;
                 const businessServiceName = isBusinessContextReady ? businessContext?.business_service?.name ?? null : null;
                 const impactedUsers = isBusinessContextReady ? businessContext?.impacted_users ?? null : null;
                 const site = isBusinessContextReady
@@ -695,11 +702,11 @@ const MonitoringConsole: React.FC = () => {
                  const parseTimelineEntry = (raw: string) => {
                      const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
                      if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
-                    const forcedAuditMatch = raw.match(/^\[AUDIT\]\[FORCED_CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    const forcedAuditMatch = raw.match(/^\[AUDIT\]\[FORCED_CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (forcedAuditMatch) return { type: 'force_close' as const, user: extractAuditActor(forcedAuditMatch[1]) || '', body: forcedAuditMatch[1], ts: forcedAuditMatch[2], raw };
-                    const closeAuditMatch = raw.match(/^\[AUDIT\]\[CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    const closeAuditMatch = raw.match(/^\[AUDIT\]\[CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (closeAuditMatch) return { type: 'close' as const, user: extractAuditActor(closeAuditMatch[1]) || '', body: closeAuditMatch[1], ts: closeAuditMatch[2], raw };
-                    const ownershipAuditMatch = raw.match(/^\[AUDIT\]\[OWNERSHIP\]\s+([\s\S]+?)(?:\s\((.+)\))?$/);
+                    const ownershipAuditMatch = raw.match(/^\[AUDIT\]\[OWNERSHIP\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (ownershipAuditMatch) return { type: 'ownership' as const, user: extractAuditActor(ownershipAuditMatch[1]) || '', body: ownershipAuditMatch[1], ts: ownershipAuditMatch[2], raw };
                     const forceMatch = raw.match(/^\[CIERRE FORZADO/);
                     if (forceMatch) return { type: 'force_close' as const, user: '', body: raw, raw };
@@ -726,7 +733,7 @@ const MonitoringConsole: React.FC = () => {
                     return { type: 'note' as const, user: 'Sistema', body: raw, raw };
                 };
 
-                const timelineEntries = (displayEvent.comments || []).map(parseTimelineEntry);
+                const timelineEntries = (detailEvent?.comments ?? []).map(parseTimelineEntry);
 
                 const entryIcon = (type: string) => {
                     if (type === 'diagnostic') return { icon: 'build', color: 'border-brand-500 text-brand-400' };
@@ -1062,9 +1069,14 @@ const MonitoringConsole: React.FC = () => {
                                                             </div>
                                                         </div>
 
+                                                        {closeError && (
+                                                            <div className="text-[10px] text-red-400 font-bold bg-red-950/30 border border-red-500/20 rounded px-2 py-1">
+                                                                Error: {closeError}
+                                                            </div>
+                                                        )}
                                                         <button
                                                             onClick={() => {
-                                                                void handleStructuredClose().catch(() => undefined);
+                                                                void handleStructuredClose();
                                                             }}
                                                             disabled={!canClose}
                                                             className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black uppercase transition-colors"
@@ -1093,7 +1105,7 @@ const MonitoringConsole: React.FC = () => {
                                                             <button onClick={() => setCloseForcedMode(false)} className="flex-1 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs font-bold">Cancelar</button>
                                                             <button
                                                                 onClick={() => {
-                                                                    void handleStructuredClose().catch(() => undefined);
+                                                                    void handleStructuredClose();
                                                                 }}
                                                                 disabled={!canClose}
                                                                 className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white rounded-lg text-xs font-black transition-colors"
