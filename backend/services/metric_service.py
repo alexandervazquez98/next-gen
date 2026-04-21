@@ -153,14 +153,14 @@ def reconcile_node_metrics(node: Dict[str, Any]):
     
     driver = get_db()
     with driver.session() as session:
-        # 1. Fetch CURRENTLY LINKED metrics
+        # 1. Fetch CURRENTLY LINKED metrics and their thresholds
         result = session.run("""
             MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef)
-            RETURN m.id as mid, m.applicable_to as apt
+            RETURN m.id as mid, m.applicable_to as apt, r.warning_threshold as warn, r.critical_threshold as crit
         """, nid=node_id)
-        
-        linked_metrics = {rec["mid"]: rec["apt"] for rec in result}
-        
+
+        linked_metrics = {rec["mid"]: {"apt": rec["apt"], "warn": rec["warn"], "crit": rec["crit"]} for rec in result}
+
         # 2. Determine Removals
         for mid in linked_metrics.keys():
             if mid not in applicable_ids:
@@ -172,7 +172,14 @@ def reconcile_node_metrics(node: Dict[str, Any]):
 
         # 3. Determine Additions/Updates
         for m in applicable:
-             if m["id"] not in linked_metrics:
-                 logger.info(f"Auto-assigning new metric {m['id']} to Node {node_id}")
-                 # Pass default thresholds from the definition to the individual link
-                 link_metric_to_node(node_id, m["id"], warning=m.get("warning"), critical=m.get("critical"))
+             mid = m["id"]
+             if mid not in linked_metrics:
+                  logger.info(f"Auto-assigning new metric {mid} to Node {node_id}")
+                  # Pass default thresholds from the definition to the individual link
+                  link_metric_to_node(node_id, mid, warning=m.get("warning"), critical=m.get("critical"))
+             else:
+                  # Fix: Update properties if they differ from defaults (ensures rule changes propagate)
+                  curr = linked_metrics[mid]
+                  if curr["warn"] != m.get("warning") or curr["crit"] != m.get("critical"):
+                      logger.info(f"Updating thresholds for existing metric {mid} on Node {node_id}")
+                      link_metric_to_node(node_id, mid, warning=m.get("warning"), critical=m.get("critical"))

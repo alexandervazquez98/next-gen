@@ -177,53 +177,66 @@ def run_snmp_cycle_sync(driver):
                 }
             )
 
+        # Optimization: Fetch all CI -> Metric link thresholds in bulk to avoid N+1 queries in the loop
+        thresholds_result = session.run("""
+            MATCH (n:CI)-[r:HAS_METRIC]->(m:MetricDef)
+            RETURN n.id as nid, m.id as mid, r.warning_threshold as warn, r.critical_threshold as crit
+        """)
+        threshold_map = {}
+        for rec in thresholds_result:
+            threshold_map[(rec["nid"], rec["mid"])] = (rec["warn"], rec["crit"])
+
     total_metrics = 0
     total_errors = 0
     for ci in cis:
-        executed, errors = process_ci_metrics(ci, metrics, driver)
+        executed, errors = process_ci_metrics(ci, metrics, driver, threshold_map)
         total_metrics += executed
         total_errors += errors
 
     return {"cis": len(cis), "total": total_metrics, "errors": total_errors}
 
 
-def process_ci_metrics(ci, metrics, driver):
+def process_ci_metrics(ci, metrics, driver, threshold_map=None):
     snmp_conf = _parse_snmp_config(ci.get("snmp"))
     ci_brand = ci.get("brand", "").lower() if ci.get("brand") else ""
     ci_model = ci.get("model", "").lower() if ci.get("model") else ""
     ci_layer = ci.get("layer", "").lower() if ci.get("layer") else ""
+    ci_name = ci.get("name", "").lower() if ci.get("name") else ""
+    ci_id = ci.get("id", "").lower() if ci.get("id") else ""
 
     target_metrics = []
     for metric in metrics:
         criteria = metric.get("applicable_to", {})
-        match = False
+        match = True  # Standardize on AND logic
+
+        # 1. Direct Name/ID match (if names list is provided)
         requested_names = [name.strip().lower() for name in criteria.get("names", [])]
-
-        if requested_names and (
-            ci.get("name", "").lower() in requested_names
-            or ci.get("id", "").lower() in requested_names
-        ):
-            match = True
-        else:
-            requested_brands = [brand.lower() for brand in criteria.get("brands", [])]
-            requested_models = [model.lower() for model in criteria.get("models", [])]
-            requested_layers = [layer.lower() for layer in criteria.get("layers", [])]
-
-            if requested_brands and ci_brand in requested_brands:
-                match = True
-            if requested_models and ci_model in requested_models:
-                match = True
-            if requested_layers and ci_layer in requested_layers:
-                match = True
-
-        excluded_names = [
-            name.strip().lower() for name in criteria.get("excluded_names", [])
-        ]
-        if match and (
-            ci.get("name", "").lower() in excluded_names
-            or ci.get("id", "").lower() in excluded_names
-        ):
+        if requested_names and not (ci_name in requested_names or ci_id in requested_names):
             match = False
+
+        # 2. Brand match
+        if match:
+            requested_brands = [brand.lower() for brand in criteria.get("brands", [])]
+            if requested_brands and ci_brand not in requested_brands:
+                match = False
+
+        # 3. Model match
+        if match:
+            requested_models = [model.lower() for model in criteria.get("models", [])]
+            if requested_models and ci_model not in requested_models:
+                match = False
+
+        # 4. Layer match
+        if match:
+            requested_layers = [layer.lower() for layer in criteria.get("layers", [])]
+            if requested_layers and ci_layer not in requested_layers:
+                match = False
+
+        # 5. Exclusions
+        if match:
+            excluded_names = [name.strip().lower() for name in criteria.get("excluded_names", [])]
+            if ci_name in excluded_names or ci_id in excluded_names:
+                match = False
 
         if match and (metric.get("oid") or metric.get("protocol") == "ICMP"):
             target_metrics.append(metric)
@@ -238,8 +251,13 @@ def process_ci_metrics(ci, metrics, driver):
             ):
                 continue
 
+            # Get individual thresholds from bulk map if available, otherwise fallback (though bulk is preferred)
+            warn_custom, crit_custom = None, None
+            if threshold_map is not None:
+                warn_custom, crit_custom = threshold_map.get((ci.get("id"), target_metric["id"]), (None, None))
+
             value, status, error_message = poll_metric(ci, target_metric, snmp_conf)
-            store_metric_result(ci, target_metric, value, status, error_message, driver)
+            store_metric_result(ci, target_metric, value, status, error_message, driver, warn_custom, crit_custom)
         except Exception as exc:
             errors += 1
             logger.error(
@@ -338,24 +356,7 @@ def evaluate_status(
     return "OK"
 
 
-def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
-    # 1. Fetch individual thresholds from relationship
-    warn_custom = None
-    crit_custom = None
-    with driver.session() as session:
-        rel_data = session.run(
-            """
-            MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
-            RETURN r.warning_threshold as warn, r.critical_threshold as crit
-        """,
-            nid=ci.get("id"),
-            mid=metric_def["id"],
-        ).single()
-
-        if rel_data:
-            warn_custom = rel_data.get("warn")
-            crit_custom = rel_data.get("crit")
-
+def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver, warn_custom=None, crit_custom=None):
     crit_level = metric_def.get("criticality", 1)
     base_severity = "INFO"
     if crit_level == 2:

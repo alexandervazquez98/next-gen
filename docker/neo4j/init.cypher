@@ -54,4 +54,4 @@ MERGE (u:User {id: 1, role: 'Admin', access_level: 'Full', status: 'Active'});
 MERGE (m:MetricDef {id: 'M-CPU', protocol: 'SNMP', warning: 80, critical: 90})
 WITH m
 MATCH (ci:CI {name: 'App-Server-01'})
-MERGE (ci)-[:MONITORED_BY]->(m);
+MERGE (ci)-[:HAS_METRIC]->(m);

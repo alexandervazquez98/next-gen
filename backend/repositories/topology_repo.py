@@ -4,6 +4,17 @@ from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
 
+import re
+
+def validate_rel_type(rel_type: str) -> str:
+    """
+    Validates that the relationship type is a safe alphanumeric string.
+    Neo4j relationship types cannot be parameterized.
+    """
+    if not re.match(r"^[A-Z][A-Z0-9_]*$", rel_type):
+        raise ValueError(f"Invalid relationship type: {rel_type}")
+    return rel_type
+
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
     
@@ -51,11 +62,6 @@ def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = Fa
 def upsert_node(node: Node) -> None:
     driver = get_db()
     
-    # Pre-process location point
-    loc_point = "null"
-    if node.location and 'lat' in node.location and 'long' in node.location:
-        loc_point = f"point({{latitude: {node.location['lat']}, longitude: {node.location['long']}}})"
-    
     # JSON Serialize SNMP (if dict)
     snmp_str = node.snmp
     if isinstance(node.snmp, dict):
@@ -68,8 +74,8 @@ def upsert_node(node: Node) -> None:
     serial = node.serialNumber or ""
     firmware = node.firmwareVersion or ""
 
-    query = f"""
-    MERGE (n:CI {{id: $id}})
+    query = """
+    MERGE (n:CI {id: $id})
     SET n.name = $label,
         n.layer = $type,
         n.status = $status,
@@ -84,8 +90,17 @@ def upsert_node(node: Node) -> None:
         n.pollingInterval = $polling,
         n.updated_at = datetime()
     """
-    if loc_point != "null":
-        query += f", n.location = {loc_point}"
+    
+    params = {
+        "id": node.id, "label": node.label, "type": node.type, "status": node.status, 
+        "ip": node.ip, "owner": owner, "loc_name": loc_name, "brand": brand, "model": model,
+        "serial": serial, "firmware": firmware, "snmp": snmp_str, "polling": node.pollingInterval
+    }
+
+    if node.location and 'lat' in node.location and 'long' in node.location:
+        query += ", n.location = point({latitude: $lat, longitude: $long})"
+        params["lat"] = float(node.location['lat'])
+        params["long"] = float(node.location['long'])
     
     query += """
     WITH n
@@ -225,7 +240,7 @@ def get_links() -> List[Dict[str, Any]]:
 
 def create_link(source: str, target: str, relationship: str) -> None:
     driver = get_db()
-    rel_type = relationship.upper().replace(" ", "_")
+    rel_type = validate_rel_type(relationship.upper().replace(" ", "_"))
     with driver.session() as session:
         session.run(f"""
             MATCH (a), (b) 
@@ -235,7 +250,7 @@ def create_link(source: str, target: str, relationship: str) -> None:
 
 def delete_link(source: str, target: str, relationship: str) -> None:
     driver = get_db()
-    rel_type = relationship.upper().replace(" ", "_")
+    rel_type = validate_rel_type(relationship.upper().replace(" ", "_"))
     with driver.session() as session:
         session.run(f"MATCH (a:CI {{id: $source}})-[r:{rel_type}]->(b:CI {{id: $target}}) DELETE r",
                     source=source, target=target)
@@ -255,15 +270,30 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
                 r.critical_threshold = $critical
         """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
 
-def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
+def get_filtered_graph_data(
+    layer: str = None, 
+    location: str = None, 
+    owner: str = None,
+    allowed_locations: Optional[List[str]] = None,
+    is_admin: bool = False
+) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
     """
     Fetches technical topology (:CI nodes) with optional metadata filters.
+    Enforces Data Scoping.
     """
     driver = get_db()
     
-    # Build dynamic WHERE clause
+    # Build dynamic WHERE clause for nodes
     where_clauses = []
     params = {}
+
+    # Scoping
+    if not is_admin:
+        if not allowed_locations:
+            return [], []
+        where_clauses.append("n.location_name IN $allowed_locations")
+        params["allowed_locations"] = allowed_locations
+
     if layer:
         where_clauses.append("n.layer = $layer")
         params["layer"] = layer
@@ -288,8 +318,23 @@ def get_filtered_graph_data(layer: str = None, location: str = None, owner: str 
             node_props["_labels"] = record["labels"]
             nodes.append(node_props)
 
+        # Build dynamic WHERE clause for links (Ensuring BOTH sides match criteria)
+        links_where = []
+        if not is_admin:
+            links_where.append("a.location_name IN $allowed_locations AND b.location_name IN $allowed_locations")
+        if layer:
+            links_where.append("a.layer = $layer AND b.layer = $layer")
+        if location:
+            links_where.append("a.location_name = $location AND b.location_name = $location")
+        if owner:
+            links_where.append("a.owner = $owner AND b.owner = $owner")
+        
+        links_where_str = ""
+        if links_where:
+            links_where_str = " WHERE " + " AND ".join(links_where)
+
         # Fetch relationships between filtered CIs
-        links_query = f"MATCH (a:CI)-[r]->(b:CI){where_str.replace('n.', 'a.')} RETURN a, r, b"
+        links_query = f"MATCH (a:CI)-[r]->(b:CI){links_where_str} RETURN a, r, b"
         links_result = session.run(links_query, **params)
         links = []
         for record in links_result:

@@ -2,6 +2,8 @@ from typing import List, Dict, Any, Optional
 from models.core import Link
 from repositories import topology_repo
 
+from models.user import User, UserRole
+
 def get_links() -> List[Dict[str, Any]]:
     """
     Fetch all active relationship links between CIs and Metrics.
@@ -22,12 +24,22 @@ def delete_link(link: Link) -> Dict[str, str]:
     topology_repo.delete_link(link.source, link.target, link.relationship)
     return {"message": "Link deleted"}
 
-def get_full_graph(layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
+def get_full_graph(current_user: User, layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Fetch the COMPLETE graph topology for visualization.
     Supports filtering by metadata. Default view is Technical Topology (:CI).
+    Enforces Data Scoping.
     """
-    raw_nodes, raw_links = topology_repo.get_filtered_graph_data(layer=layer, location=location, owner=owner)
+    is_admin = current_user.role == "ADMIN" or current_user.role == UserRole.ADMIN.value
+    allowed_locations = current_user.allowed_locations
+
+    raw_nodes, raw_links = topology_repo.get_filtered_graph_data(
+        layer=layer, 
+        location=location, 
+        owner=owner,
+        allowed_locations=allowed_locations,
+        is_admin=is_admin
+    )
 
     nodes = []
     for node_props in raw_nodes:

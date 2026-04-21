@@ -39,7 +39,7 @@ async def delete_node(node_id: str, current_user: User = Depends(get_current_act
     return node_service.delete_node(node_id, current_user)
 
 @router.get("/{node_id}/usage")
-async def get_node_usage(node_id: str):
+async def get_node_usage(node_id: str, current_user: User = Depends(get_current_active_user)):
     """
     Check the usage of a CI (number of relationships).
     """
@@ -89,7 +89,7 @@ async def get_node_template(current_user: User = Depends(get_current_active_user
     return node_service.get_node_template()
 
 @router.get("/{node_id}/metrics")
-async def get_node_metrics(node_id: str):
+async def get_node_metrics(node_id: str, current_user: User = Depends(get_current_active_user)):
     """
     Get all applicable metrics for a specific Node based on its properties.
     """

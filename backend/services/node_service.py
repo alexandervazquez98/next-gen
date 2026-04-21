@@ -267,6 +267,21 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             metadata,
             owner,
         )
+
+        # Reconcile Metrics (Add/Remove based on rules)
+        from services.metric_service import reconcile_node_metrics
+        try:
+            node_dict = {
+                "id": nid,
+                "name": label,
+                "layer": ntype,
+                "brand": brand,
+                "model": model,
+            }
+            reconcile_node_metrics(node_dict)
+        except Exception as e:
+            logger.error(f"Error reconciling metrics for bulk node {nid}: {e}")
+
         processed_count += 1
 
     if validation_errors:

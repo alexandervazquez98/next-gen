@@ -5,6 +5,7 @@ import { GraphLink, GraphNode } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import { useGraphTopologyQuery } from '../hooks/queries/useGraphTopologyQuery';
 import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
+import { useOwnersQuery } from '../hooks/queries/useOwnersQuery';
 
 interface GraphCMDBProps {
   onNodeClick: (node: GraphNode) => void;
@@ -68,10 +69,13 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
   });
   
   const { data: categories } = useCategoriesQuery();
-  const owners = ['NetOps', 'DevOps', 'DBA', 'Security'];
+  const { data: owners } = useOwnersQuery();
 
   const nodes = data?.nodes ?? [];
   const links = data?.links ?? [];
+
+  // Extract unique locations from nodes to populate filter
+  const locations = Array.from(new Set(nodes.map(n => n.location_name).filter(Boolean))).sort();
 
   useEffect(() => {
     if (!svgRef.current) {
@@ -294,9 +298,9 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
                 onChange={(e) => setFilterLocation(e.target.value)}
               >
                 <option value="">All Locations</option>
-                <option value="DataCenter_A">DataCenter A</option>
-                <option value="DataCenter_B">DataCenter B</option>
-                <option value="Cloud">Cloud</option>
+                {locations.map(loc => (
+                  <option key={loc} value={loc}>{loc}</option>
+                ))}
               </select>
             </label>
 
@@ -309,8 +313,8 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
                 onChange={(e) => setFilterOwner(e.target.value)}
               >
                 <option value="">All Owners</option>
-                {owners.map(o => (
-                  <option key={o} value={o}>{o}</option>
+                {owners?.map(o => (
+                  <option key={o.name} value={o.name}>{o.name}</option>
                 ))}
               </select>
             </label>
