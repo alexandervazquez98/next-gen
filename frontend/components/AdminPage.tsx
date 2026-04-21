@@ -93,6 +93,23 @@ const AdminPage: React.FC = () => {
 
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+    const handleDownloadTemplate = async () => {
+        try {
+            const blob = await api.get<Blob>('/nodes/template');
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ci_import_template.xlsx';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (e: any) {
+            console.error(e);
+            alert('Failed to download template: ' + e.message);
+        }
+    };
+
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -196,7 +213,7 @@ const AdminPage: React.FC = () => {
                                     </button>
                                     <div className="h-6 w-px bg-white/10 mx-2" />
                                     <button
-                                        onClick={() => window.open('/api/nodes/template', '_blank')}
+                                        onClick={handleDownloadTemplate}
                                         className="btn-secondary text-xs"
                                     >
                                         <span className="material-symbols-outlined text-sm">download</span>

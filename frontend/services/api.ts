@@ -64,6 +64,14 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
         return response.json();
     }
 
+    // Handle binary data (Excel, etc.)
+    if (contentType && (
+        contentType.indexOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") !== -1 ||
+        contentType.indexOf("application/octet-stream") !== -1
+    )) {
+        return response.blob() as unknown as T;
+    }
+
     return response.text() as unknown as T;
 }
 
