@@ -82,7 +82,7 @@ class TestEventServiceSmoke:
                         "closed_by": "operator-2",
                         "comments": ["internal audit"],
                     },
-                    "ci": {"id": "ci-001", "label": "Router-01", "ip": "10.0.0.1"},
+                    "ci": {"id": "ci-001", "name": "Router-01", "ip": "10.0.0.1"},
                     "m": {"id": "cpu", "name": "CPU", "protocol": "SNMP"},
                 }
             ],
@@ -113,9 +113,6 @@ class TestEventServiceSmoke:
         """close_event should set status to CLOSED."""
         close_event = _load_event_service_module().close_event
         mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
-        mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-001"}]
         )
 
@@ -125,8 +122,8 @@ class TestEventServiceSmoke:
             comment_message="Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo principal averiado",
         )
 
-        assert len(mock_neo4j_session.queries) >= 2
-        query = mock_neo4j_session.queries[1]["query"].upper()
+        assert len(mock_neo4j_session.queries) == 1
+        query = mock_neo4j_session.queries[0]["query"].upper()
         assert "CLOSED" in query
 
     def test_add_event_comment_appends_comment(self, mock_neo4j_session):
@@ -186,10 +183,11 @@ class TestEventServiceSmoke:
                 },
                 "ci": {
                     "id": "ci-001",
-                    "label": "Router-01",
+                    "name": "Router-01",
                     "ip": "10.0.0.1",
-                    "locationName": "Madrid HQ",
+                    "location_name": "Sede Central",
                 },
+
                 "m": {"id": "cpu-load", "protocol": "SNMP"},
                 "bs": {
                     "id": "svc-live",
@@ -244,11 +242,12 @@ class TestEventServiceSmoke:
                     "ack_by": "operator-1",
                 },
                 "ci": {
-                    "id": "ci-002",
-                    "label": "Router-02",
-                    "ip": "10.0.0.2",
-                    "locationName": "Cordoba",
+                    "id": "ci-001",
+                    "name": "Router-01",
+                    "ip": "10.0.0.1",
+                    "location_name": "Sede Central",
                 },
+
                 "m": {"id": "ping", "protocol": "ICMP"},
                 "bs": {
                     "id": "svc-live",
@@ -300,11 +299,12 @@ class TestEventServiceSmoke:
                     "business_service_name": "Inventory",
                 },
                 "ci": {
-                    "id": "ci-003",
-                    "label": "App-01",
-                    "ip": "10.0.0.3",
-                    "locationName": None,
+                    "id": "ci-001",
+                    "name": "Router-01",
+                    "ip": "10.0.0.1",
+                    "location_name": "Sede Central",
                 },
+
                 "m": {"id": "latency", "protocol": "HTTP"},
                 "bs": {
                     "id": "svc-live",
@@ -347,7 +347,7 @@ class TestEventServiceSmoke:
                     "last_seen": "not-a-datetime",
                     "ack": False,
                 },
-                "ci": {"id": "ci-004", "label": "Legacy-CI", "ip": None},
+                "ci": {"id": "ci-004", "name": "Legacy-CI", "ip": None},
                 "m": {"id": "availability", "protocol": "ICMP"},
                 "bs": None,
                 "sc": None,
@@ -378,7 +378,7 @@ class TestEventServiceSmoke:
                     "ack": False,
                     "external_ticket_status": "Open",
                 },
-                "ci": {"id": "ci-005", "label": "Router-05", "ip": "10.0.0.5"},
+                "ci": {"id": "ci-005", "name": "Router-05", "ip": "10.0.0.5"},
                 "m": {"id": "availability", "protocol": "ICMP"},
                 "bs": None,
                 "sc": None,
@@ -484,9 +484,6 @@ class TestEventServiceSmoke:
     def test_close_event_writes_closure_comment_atomically(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
         mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
-        mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-001"}]
         )
 
@@ -497,7 +494,7 @@ class TestEventServiceSmoke:
             comment_message="[CIERRE] Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo principal",
         )
 
-        params = mock_neo4j_session.queries[1]["params"]
+        params = mock_neo4j_session.queries[0]["params"]
         assert params["audit_message"] == (
             "[AUDIT][CLOSE] Evento cerrado por testuser\n"
             "Causa raíz: Falla de hardware\n"
@@ -509,9 +506,6 @@ class TestEventServiceSmoke:
     ):
         close_event = _load_event_service_module().close_event
         mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-002"}]
-        )
-        mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-002"}]
         )
 
@@ -522,7 +516,7 @@ class TestEventServiceSmoke:
             comment_message="[CIERRE FORZADO - T2] Motivo: Ventana de mantenimiento",
         )
 
-        params = mock_neo4j_session.queries[1]["params"]
+        params = mock_neo4j_session.queries[0]["params"]
         assert params["audit_message"] == (
             "[AUDIT][FORCED_CLOSE] Cierre forzado por testuser\n"
             "Motivo: Ventana de mantenimiento"
@@ -545,7 +539,7 @@ class TestEventServiceSmoke:
                         "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
                         "ack": False,
                     },
-                    "ci": {"id": "ci-010", "label": "Router-10", "ip": "10.0.0.10"},
+                    "ci": {"id": "ci-010", "name": "Router-10", "ip": "10.0.0.10"},
                     "m": {"id": "latency", "protocol": "SNMP"},
                     "bs": {"id": "svc-010", "name": "WAN"},
                     "sc": {"id": "sla-010", "category": "NETWORK", "sla_minutes": 60},

@@ -19,7 +19,7 @@ def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = Fa
         if not allowed_locations:
              return []
         
-        query += " WHERE n.locationName IN $allowed_locations "
+        query += " WHERE n.location_name IN $allowed_locations "
         params["allowed_locations"] = allowed_locations
 
     query += """
