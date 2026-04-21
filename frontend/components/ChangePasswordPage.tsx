@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
 
 const ChangePasswordPage: React.FC = () => {
     const { token, logout, user } = useAuth();
@@ -22,38 +23,19 @@ const ChangePasswordPage: React.FC = () => {
         }
 
         try {
-            const res = await fetch('/api/auth/change-password', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    old_password: oldPassword,
-                    new_password: newPassword
-                })
+            await api.post('/auth/change-password', {
+                old_password: oldPassword,
+                new_password: newPassword
             });
 
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.detail || 'Failed to change password');
-            }
-
             setSuccess('Password changed successfully. Redirecting...');
-
-            // Update local user state if possible, or just force re-login?
-            // AuthContext doesn't expose a setUser that updates generic fields easily without re-fetch.
-            // But usually we can just navigate home and let the context refresh or just proceed.
-            // If we enforced a redirect, we need to clear that flag in the context.
-            // Simplest is to reload page or re-fetch user.
 
             setTimeout(() => {
                 window.location.href = '/'; // Force reload to refresh user context
             }, 1000);
 
         } catch (err: any) {
-            setError(err.message);
+            setError(err.message || 'Failed to change password');
         }
     };
 

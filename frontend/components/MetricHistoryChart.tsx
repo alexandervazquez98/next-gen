@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { api } from '../services/api';
 
 interface MetricHistoryChartProps {
     nodeId: string;
@@ -23,50 +24,41 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({ nodeId, metricI
         fetchData();
     }, [nodeId, metricId, period, customRange]);
 
-    const fetchData = () => {
+    const fetchData = async () => {
         setLoading(true);
-        const token = localStorage.getItem('token');
 
-        let url = `/api/metrics/${nodeId}/${metricId}/history?limit=1000`;
+        let endpoint = `/metrics/${nodeId}/${metricId}/history?limit=1000`;
         if (customRange) {
-            url += `&start_time=${customRange.start}&end_time=${customRange.end}`;
+            endpoint += `&start_time=${customRange.start}&end_time=${customRange.end}`;
         } else {
-            url += `&hours=${period}`;
+            endpoint += `&hours=${period}`;
         }
 
-        console.log(`[MetricHistoryChart] Fetching: ${url}`);
+        try {
+            const jsonData = await api.get<any[]>(endpoint);
+            
+            // Ensure data is sorted by time (ascending)
+            if (!Array.isArray(jsonData)) {
+                console.warn("[MetricHistoryChart] Received non-array data:", jsonData);
+                setData([]);
+                return;
+            }
 
-        fetch(url, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                return res.json();
-            })
-            .then(jsonData => {
-                // Ensure data is sorted by time (ascending)
-                if (!Array.isArray(jsonData)) {
-                    console.warn("[MetricHistoryChart] Received non-array data:", jsonData);
-                    setLoading(false);
-                    return;
-                }
+            const sorted = jsonData.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
+            // Format time for display & ensure value is number
+            const formatted = sorted.map((d: any) => ({
+                ...d,
+                value: typeof d.value === 'string' ? parseFloat(d.value) : d.value,
+                displayTime: new Date(d.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
+            }));
 
-                const sorted = jsonData.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
-                // Format time for display & ensure value is number
-                const formatted = sorted.map((d: any) => ({
-                    ...d,
-                    value: typeof d.value === 'string' ? parseFloat(d.value) : d.value,
-                    displayTime: new Date(d.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
-                }));
-
-                console.log(`[MetricHistoryChart] Loaded ${formatted.length} points`);
-                setData(formatted);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Failed to fetch metric history", err);
-                setLoading(false);
-            });
+            setData(formatted);
+        } catch (err) {
+            console.error("Failed to fetch metric history", err);
+            setData([]);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const renderContent = () => {

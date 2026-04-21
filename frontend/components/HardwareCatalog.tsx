@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MetricDef } from '../types';
+import { api } from '../services/api';
 
 interface HardwareModel {
     brand: string;
@@ -23,15 +23,15 @@ const HardwareCatalog: React.FC = () => {
     const fetchData = async () => {
         try {
             const [resModels, resCats, resOwners] = await Promise.all([
-                fetch('/api/hardware'),
-                fetch('/api/categories'),
-                fetch('/api/owners')
+                api.get<HardwareModel[]>('/hardware'),
+                api.get<{ name: string }[]>('/categories'),
+                api.get<{ name: string }[]>('/owners')
             ]);
-            setModels(await resModels.json());
-            setCategories(await resCats.json());
-            setOwners(await resOwners.json());
+            setModels(Array.isArray(resModels) ? resModels : []);
+            setCategories(Array.isArray(resCats) ? resCats : []);
+            setOwners(Array.isArray(resOwners) ? resOwners : []);
         } catch (e) {
-            console.error(e);
+            console.error("Failed to fetch hardware catalog data", e);
         }
     };
 
@@ -39,11 +39,7 @@ const HardwareCatalog: React.FC = () => {
         if (!newModel.brand || !newModel.model) return alert("Brand and Model required");
 
         try {
-            await fetch('/api/hardware', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newModel)
-            });
+            await api.post('/hardware', newModel);
             setNewModel({});
             fetchData();
         } catch (e) {
@@ -53,8 +49,7 @@ const HardwareCatalog: React.FC = () => {
 
     const handleDelete = async (m: HardwareModel) => {
         try {
-            const res = await fetch(`/api/hardware/${m.brand}/${m.model}/usage`);
-            const usage = await res.json();
+            const usage = await api.get<{ count: number }>(`/hardware/${m.brand}/${m.model}/usage`);
             const count = usage.count || 0;
 
             const msg = `Delete Hardware Model '${m.brand} ${m.model}'?\n\n` +
@@ -64,10 +59,10 @@ const HardwareCatalog: React.FC = () => {
 
             if (!confirm(msg)) return;
 
-            await fetch(`/api/hardware/${m.brand}/${m.model}`, { method: 'DELETE' });
+            await api.delete(`/hardware/${m.brand}/${m.model}`);
             fetchData();
         } catch (e) {
-            alert("Error checking usage");
+            alert("Error checking usage or deleting model");
         }
     };
 

@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { GraphNode, NodeType, SNMPConfig, MonitoringThresholds } from '../types';
+import { api } from '../services/api';
 
 interface CIEditorProps {
   node?: GraphNode | null;
@@ -27,15 +28,23 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
   const [hardwareModels, setHardwareModels] = useState<{ brand: string; model: string }[]>([]);
 
   React.useEffect(() => {
-    Promise.all([
-      fetch('/api/categories').then(res => res.json()),
-      fetch('/api/owners').then(res => res.json()),
-      fetch('/api/hardware').then(res => res.json())
-    ]).then(([cats, owns, hws]) => {
-      setCategories(cats);
-      setOwners(owns);
-      setHardwareModels(hws);
-    }).catch(console.error);
+    const fetchData = async () => {
+      try {
+        const [cats, owns, hws] = await Promise.all([
+          api.get<{ name: string }[]>('/categories'),
+          api.get<{ name: string }[]>('/owners'),
+          api.get<{ brand: string; model: string }[]>('/hardware')
+        ]);
+        
+        setCategories(Array.isArray(cats) ? cats : []);
+        setOwners(Array.isArray(owns) ? owns : []);
+        setHardwareModels(Array.isArray(hws) ? hws : []);
+      } catch (e) {
+        console.error("Failed to load catalog for CIEditor", e);
+      }
+    };
+    
+    fetchData();
   }, []);
 
   const defaultState: Partial<GraphNode> = {

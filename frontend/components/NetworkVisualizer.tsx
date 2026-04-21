@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { GraphNode, GraphLink } from '../types';
+import { api } from '../services/api';
 // import SpriteText from 'three-spritetext'; // Optional for text labels if needed
 
 
@@ -13,20 +14,20 @@ const NetworkVisualizer: React.FC = () => {
 
     const isZoomed = useRef(false);
 
-    const fetchData = () => {
-        fetch('/api/graph/full')
-            .then(res => res.json())
-            .then(data => {
-                setNodes(prevNodes => {
-                    if (JSON.stringify(prevNodes) === JSON.stringify(data.nodes)) return prevNodes;
-                    return data.nodes;
-                });
-                setLinks(prevLinks => {
-                    if (JSON.stringify(prevLinks) === JSON.stringify(data.links)) return prevLinks;
-                    return data.links;
-                });
-            })
-            .catch(err => console.error("Failed to load graph data:", err));
+    const fetchData = async () => {
+        try {
+            const data = await api.get<{ nodes: any[], links: any[] }>('/graph/full');
+            setNodes(prevNodes => {
+                if (JSON.stringify(prevNodes) === JSON.stringify(data.nodes)) return prevNodes;
+                return data.nodes;
+            });
+            setLinks(prevLinks => {
+                if (JSON.stringify(prevLinks) === JSON.stringify(data.links)) return prevLinks;
+                return data.links;
+            });
+        } catch (err) {
+            console.error("Failed to load graph data:", err);
+        }
     };
 
     useEffect(() => {

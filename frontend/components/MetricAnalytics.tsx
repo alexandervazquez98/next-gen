@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GraphNode, MetricDef } from '../types';
 import MetricHistoryChart from './MetricHistoryChart';
+import { api } from '../services/api';
 
 const MetricAnalytics: React.FC = () => {
     const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -12,23 +13,22 @@ const MetricAnalytics: React.FC = () => {
 
     // Fetch Nodes on Mount
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        fetch('/api/nodes', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-            .then(res => res.json())
-            .then(data => {
+        const fetchData = async () => {
+            try {
+                const data = await api.get<GraphNode[]>('/nodes');
                 if (Array.isArray(data)) {
                     setNodes(data);
                     // Default select first one if available
                     if (data.length > 0) setSelectedNodeId(data[0].id);
                 }
+            } catch (err) {
+                console.error("Failed to fetch nodes for Analytics", err);
+            } finally {
                 setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                setLoading(false);
-            });
+            }
+        };
+
+        fetchData();
     }, []);
 
     const selectedNode = nodes.find(n => n.id === selectedNodeId);
