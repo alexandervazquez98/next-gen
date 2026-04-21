@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any, Optional
 from models.core import MetricDef, Node
 from pydantic import BaseModel
@@ -96,6 +96,8 @@ async def validate_oid_endpoint(
 ):
     """Validate an OID against a target agent via SNMP. Requires authentication."""
     result = validate_snmp_oid(req.ip, req.community, req.oid, req.port)
+    if not result.get("success"):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=result)
     return result
 
 
