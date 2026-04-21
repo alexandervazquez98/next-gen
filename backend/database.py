@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 
 # load_dotenv()  <-- Eliminado para que Docker mande
 
-URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
-USER = os.getenv("NEO4J_USER")
-PASSWORD = os.getenv("NEO4J_PASSWORD")
+URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687").strip("'\"")
+USER = os.getenv("NEO4J_USER", "neo4j").strip("'\"")
+PASSWORD = os.getenv("NEO4J_PASSWORD", "").strip("'\"")
 
 if not USER or not PASSWORD:
     print(f"CRITICAL: Neo4j credentials missing in environment! USER={USER}")
