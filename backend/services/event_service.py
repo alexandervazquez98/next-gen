@@ -508,13 +508,24 @@ def close_event(
     # 2. Build audit message
     audit_message = _build_close_audit_message(user, forced, comment_message)
 
-    # 3. Perform atomic update
+    # 3. Perform atomic update with existence check
     driver = get_db()
     with driver.session() as session:
+        # Check current status first to provide a better error message
+        current = session.run(
+            "MATCH (e:Event {id: $eid}) RETURN e.status as status", 
+            eid=event_id
+        ).single()
+        
+        if not current:
+            _raise_event_not_found(event_id)
+        
+        if current["status"] == "CLOSED":
+            raise HTTPException(status_code=400, detail=f"Event {event_id} is already CLOSED")
+
         result = session.run(
             """
             MATCH (e:Event {id: $eid})
-            WHERE e.status <> 'CLOSED'
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             WITH e
             SET e.comments = coalesce(e.comments, []) + ($audit_message + ' (' + toString(datetime()) + ')')
@@ -524,9 +535,6 @@ def close_event(
             user=user,
             audit_message=audit_message,
         ).single()
-
-        if not result:
-            _raise_event_not_found(event_id)
 
     return {"message": "Event Closed"}
 

@@ -112,6 +112,11 @@ class TestEventServiceSmoke:
     def test_close_event_sets_closed_status(self, mock_neo4j_session):
         """close_event should set status to CLOSED."""
         close_event = _load_event_service_module().close_event
+        # 1. State check query
+        mock_neo4j_session.set_response(
+            "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
+        )
+        # 2. Update query
         mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-001"}]
         )
@@ -122,8 +127,9 @@ class TestEventServiceSmoke:
             comment_message="Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo principal averiado",
         )
 
-        assert len(mock_neo4j_session.queries) == 1
-        query = mock_neo4j_session.queries[0]["query"].upper()
+        # Should now have 2 queries
+        assert len(mock_neo4j_session.queries) == 2
+        query = mock_neo4j_session.queries[1]["query"].upper()
         assert "CLOSED" in query
 
     def test_add_event_comment_appends_comment(self, mock_neo4j_session):
@@ -483,6 +489,11 @@ class TestEventServiceSmoke:
 
     def test_close_event_writes_closure_comment_atomically(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
+        # 1. State check
+        mock_neo4j_session.set_response(
+            "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
+        )
+        # 2. Update
         mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-001"}]
         )
@@ -494,7 +505,7 @@ class TestEventServiceSmoke:
             comment_message="[CIERRE] Causa raíz: Falla de hardware\nNota: Se reemplazó el módulo principal",
         )
 
-        params = mock_neo4j_session.queries[0]["params"]
+        params = mock_neo4j_session.queries[1]["params"]
         assert params["audit_message"] == (
             "[AUDIT][CLOSE] Evento cerrado por testuser\n"
             "Causa raíz: Falla de hardware\n"
@@ -505,6 +516,11 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         close_event = _load_event_service_module().close_event
+        # 1. State check
+        mock_neo4j_session.set_response(
+            "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
+        )
+        # 2. Update
         mock_neo4j_session.set_response(
             "set e.status = 'closed'", [{"event_id": "evt-002"}]
         )
@@ -516,7 +532,7 @@ class TestEventServiceSmoke:
             comment_message="[CIERRE FORZADO - T2] Motivo: Ventana de mantenimiento",
         )
 
-        params = mock_neo4j_session.queries[0]["params"]
+        params = mock_neo4j_session.queries[1]["params"]
         assert params["audit_message"] == (
             "[AUDIT][FORCED_CLOSE] Cierre forzado por testuser\n"
             "Motivo: Ventana de mantenimiento"

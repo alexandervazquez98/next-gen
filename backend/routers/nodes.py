@@ -52,7 +52,7 @@ async def upload_nodes(
 ):
     """
     Bulk upload Configuration Items (CIs) from an Excel file.
-    Enforces CI_EDIT permission.
+    Enforces CI_EDIT permission and a 5MB file size limit.
     """
     from services.auth_service import check_permission
     from models.user import UserPermission
@@ -60,10 +60,18 @@ async def upload_nodes(
     if not check_permission(UserPermission.CI_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
 
+    # DoS Protection: Limit file size to 5MB
+    MAX_FILE_SIZE = 5 * 1024 * 1024
+    size = 0
+    contents = await file.read()
+    size = len(contents)
+    
+    if size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size allowed is 5MB.")
+
     if not file.filename.endswith('.xlsx'):
         raise HTTPException(status_code=400, detail="Invalid file format. Please upload an Excel file (.xlsx)")
     
-    contents = await file.read()
     return await node_service.bulk_upload_nodes(contents, file.filename)
 
 @router.get("/template")
