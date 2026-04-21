@@ -2,7 +2,7 @@ from neo4j import GraphDatabase
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()  <-- Eliminado para que Docker mande
 
 URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 USER = os.getenv("NEO4J_USER")
@@ -10,10 +10,12 @@ PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 if not USER or not PASSWORD:
     print(f"CRITICAL: Neo4j credentials missing in environment! USER={USER}")
+else:
+    # Mostramos solo el primer y último caracter de la pass para debuggear sin quemarla
+    masked_pass = f"{PASSWORD[0]}...{PASSWORD[-1]}" if len(PASSWORD) > 2 else "***"
+    print(f"DEBUG: Attempting Neo4j connection to {URI} with user '{USER}' and pass {masked_pass} (len: {len(PASSWORD)})")
 
 AUTH = (USER, PASSWORD)
-
-print(f"DEBUG: Attempting Neo4j connection to {URI} with user {USER}")
 driver = GraphDatabase.driver(URI, auth=AUTH)
 
 def get_db():
