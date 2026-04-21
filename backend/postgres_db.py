@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Postgres Connection
-POSTGRES_USER = os.getenv("POSTGRES_USER", "nexgen_admin")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "nexgen_password")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "nexgen_auth")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "nexgen_admin").strip("'\"")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "nexgen_password").strip("'\"")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "nexgen_auth").strip("'\"")
 # Host is 'postgres' when running inside container, 'localhost' if running locally
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres") 
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres").strip("'\"") 
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432").strip("'\"")
 
 SQLALCHEMY_DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
