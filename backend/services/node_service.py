@@ -239,10 +239,17 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             except:
                 pass
 
+        # Polling Interval from Excel
+        polling_val = row.get("PollingInterval")
+        try:
+            polling_interval = int(polling_val) if not pd.isna(polling_val) else 60
+        except (ValueError, TypeError):
+            polling_interval = 60
+
         metadata = {
             "ip": ip,
             "owner": owner,
-            "locationName": loc_name,
+            "location_name": loc_name,
             "criticality": str(row.get("Criticality", "Low")),
         }
 
@@ -258,7 +265,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             firmware,
             lat,
             long,
-            60,
+            polling_interval,
             snmp_str,
             metadata,
             owner,
