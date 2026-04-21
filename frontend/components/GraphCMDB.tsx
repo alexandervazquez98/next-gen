@@ -1,9 +1,10 @@
-import { type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import { GraphLink, GraphNode } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import { useGraphTopologyQuery } from '../hooks/queries/useGraphTopologyQuery';
+import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 
 interface GraphCMDBProps {
   onNodeClick: (node: GraphNode) => void;
@@ -55,8 +56,20 @@ const AnimatedLinksLayer = ({ svgRef, links }: { svgRef: RefObject<SVGSVGElement
 };
 
 const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
+  const [filterLayer, setFilterLayer] = useState<string>('');
+  const [filterLocation, setFilterLocation] = useState<string>('');
+  const [filterOwner, setFilterOwner] = useState<string>('');
+
   const svgRef = useRef<SVGSVGElement>(null);
-  const { data } = useGraphTopologyQuery();
+  const { data, isLoading } = useGraphTopologyQuery({ 
+    layer: filterLayer, 
+    location: filterLocation, 
+    owner: filterOwner 
+  });
+  
+  const { data: categories } = useCategoriesQuery();
+  const owners = ['NetOps', 'DevOps', 'DBA', 'Security'];
+
   const nodes = data?.nodes ?? [];
   const links = data?.links ?? [];
 
@@ -250,16 +263,104 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
   }, [links, nodes, onNodeClick]);
 
   return (
-    <div className='w-full h-full relative overflow-hidden bg-surface-950 grid-bg'>
-      <svg ref={svgRef} className='w-full h-full' />
-      <AnimatedLinksLayer svgRef={svgRef} links={links} />
-      <div className='absolute bottom-4 left-4 flex flex-col gap-2 p-3 glass rounded-lg text-xs pointer-events-none select-none'>
-        <div className='flex items-center gap-2'><div className='w-3 h-3 bg-brand-500 rounded-full'></div> Healthy CI</div>
-        <div className='flex items-center gap-2'><div className='w-3 h-3 bg-orange-500 rounded-full'></div> Performance Warning</div>
-        <div className='flex items-center gap-2'><div className='w-3 h-3 bg-red-500 rounded-full'></div> Critical Impact</div>
-        <div className='h-px bg-white/10 my-1'></div>
-        <div className='flex items-center gap-2'><div className='w-8 h-0.5 bg-emerald-500'></div> Connection OK</div>
-        <div className='flex items-center gap-2'><div className='w-8 h-0.5 bg-red-500'></div> Critical Path</div>
+    <div className='w-full h-full relative overflow-hidden bg-surface-950 grid-bg flex'>
+      {/* Filter Sidebar */}
+      <div className="w-64 bg-neutral-900/80 backdrop-blur border-r border-white/5 p-6 flex flex-col space-y-6 z-20 overflow-y-auto custom-scrollbar">
+        <div>
+          <h3 className="text-xs font-black text-neutral-500 uppercase tracking-widest mb-4">Filters</h3>
+          
+          <div className="space-y-4">
+            <label className="block">
+              <span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">Technology</span>
+              <select 
+                aria-label="Filter by Technology"
+                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+                value={filterLayer}
+                onChange={(e) => setFilterLayer(e.target.value)}
+              >
+                <option value="">All Layers</option>
+                {categories?.map(c => (
+                  <option key={c.name} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">Location</span>
+              <select 
+                aria-label="Filter by Location"
+                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+                value={filterLocation}
+                onChange={(e) => setFilterLocation(e.target.value)}
+              >
+                <option value="">All Locations</option>
+                <option value="DataCenter_A">DataCenter A</option>
+                <option value="DataCenter_B">DataCenter B</option>
+                <option value="Cloud">Cloud</option>
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">Owner</span>
+              <select 
+                aria-label="Filter by Owner"
+                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+                value={filterOwner}
+                onChange={(e) => setFilterOwner(e.target.value)}
+              >
+                <option value="">All Owners</option>
+                {owners.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            </label>
+
+            <button 
+              onClick={() => {
+                setFilterLayer('');
+                setFilterLocation('');
+                setFilterOwner('');
+              }}
+              className="w-full py-2 text-[10px] font-black text-neutral-500 hover:text-white transition-colors uppercase tracking-widest"
+            >
+              Reset Filters
+            </button>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-white/5">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-2 h-2 rounded-full bg-brand-500 shadow-[0_0_8px_rgba(52,91,242,0.5)]"></div>
+            <span className="text-[10px] font-bold text-neutral-300 uppercase">Visible Nodes: {nodes.length}</span>
+          </div>
+          <p className="text-[10px] text-neutral-500 leading-relaxed">
+            Technical topology showing CI dependencies. Filters scope the data from the server.
+          </p>
+        </div>
+      </div>
+
+      {/* Graph Canvas */}
+      <div className="flex-1 relative">
+        <svg ref={svgRef} className='w-full h-full' />
+        <AnimatedLinksLayer svgRef={svgRef} links={links} />
+        
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm z-10">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-12 h-12 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin"></div>
+              <span className="text-xs font-black text-brand-500 uppercase tracking-widest">Querying Graph...</span>
+            </div>
+          </div>
+        )}
+
+        <div className='absolute bottom-4 left-4 flex flex-col gap-2 p-3 glass rounded-lg text-xs pointer-events-none select-none'>
+          <div className='flex items-center gap-2'><div className='w-3 h-3 bg-brand-500 rounded-full'></div> Healthy CI</div>
+          <div className='flex items-center gap-2'><div className='w-3 h-3 bg-orange-500 rounded-full'></div> Performance Warning</div>
+          <div className='flex items-center gap-2'><div className='w-3 h-3 bg-red-500 rounded-full'></div> Critical Impact</div>
+          <div className='h-px bg-white/10 my-1'></div>
+          <div className='flex items-center gap-2'><div className='w-8 h-0.5 bg-emerald-500'></div> Connection OK</div>
+          <div className='flex items-center gap-2'><div className='w-8 h-0.5 bg-red-500'></div> Critical Path</div>
+        </div>
       </div>
     </div>
   );

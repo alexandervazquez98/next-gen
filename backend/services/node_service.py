@@ -113,11 +113,7 @@ def create_update_node(node: Node, current_user: User) -> Dict[str, str]:
 
     topology_repo.upsert_node(node)
 
-    # Create Default PING Metric
-    if node.ip:
-        topology_repo.create_default_ping_metric(node.id, node.label)
-
-    # Reconcile Metrics (Add/Remove based on new properties)
+    # Reconcile Metrics (Add/Remove based on rules)
     from services.metric_service import reconcile_node_metrics
 
     try:

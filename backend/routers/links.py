@@ -31,8 +31,9 @@ async def delete_link(link: Link):
     return link_service.delete_link(link)
 
 @router.get("/graph/full")
-async def get_full_graph():
+async def get_full_graph(layer: str = None, location: str = None, owner: str = None):
     """
-    Fetch the COMPLETE graph topology for visualization.
+    Fetch the COMPLETE graph topology.
+    Supports filtering by metadata (layer, location, owner).
     """
-    return link_service.get_full_graph()
+    return link_service.get_full_graph(layer=layer, location=location, owner=owner)

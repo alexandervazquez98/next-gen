@@ -300,7 +300,62 @@ def poll_metric(ci, metric_def, snmp_conf):
     return None, "ERROR", "Unknown Protocol or OID"
 
 
+def evaluate_status(
+    value: float,
+    warn_global: float | None,
+    crit_global: float | None,
+    warn_custom: float | None = None,
+    crit_custom: float | None = None,
+    operator: str = ">=",
+) -> str:
+    """
+    Determines status (OK, WARNING, CRITICAL) based on thresholds.
+    Prioritizes custom (individual) thresholds over global ones.
+    """
+
+    def check_op(left, right, oper):
+        if right is None:
+            return False
+        if oper == ">=":
+            return left >= right
+        if oper == "<=":
+            return left <= right
+        if oper == "==":
+            return left == right
+        if oper == "!=":
+            return left != right
+        return left >= right
+
+    # Determine which thresholds to use
+    warning = warn_custom if warn_custom is not None else warn_global
+    critical = crit_custom if crit_custom is not None else crit_global
+
+    if critical is not None and check_op(value, float(critical), operator):
+        return "CRITICAL"
+    if warning is not None and check_op(value, float(warning), operator):
+        return "WARNING"
+
+    return "OK"
+
+
 def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
+    # 1. Fetch individual thresholds from relationship
+    warn_custom = None
+    crit_custom = None
+    with driver.session() as session:
+        rel_data = session.run(
+            """
+            MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
+            RETURN r.warning_threshold as warn, r.critical_threshold as crit
+        """,
+            nid=ci.get("id"),
+            mid=metric_def["id"],
+        ).single()
+
+        if rel_data:
+            warn_custom = rel_data.get("warn")
+            crit_custom = rel_data.get("crit")
+
     crit_level = metric_def.get("criticality", 1)
     base_severity = "INFO"
     if crit_level == 2:
@@ -328,33 +383,23 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             )
 
             if not is_availability_metric:
-                operator = metric_def.get("operator", ">=")
+                status = evaluate_status(
+                    value=num_val,
+                    warn_global=metric_def.get("warning"),
+                    crit_global=metric_def.get("critical"),
+                    warn_custom=warn_custom,
+                    crit_custom=crit_custom,
+                    operator=metric_def.get("operator", ">="),
+                )
 
-                def check_op(left, right, oper):
-                    if oper == ">=":
-                        return left >= right
-                    if oper == "<=":
-                        return left <= right
-                    if oper == "==":
-                        return left == right
-                    if oper == "!=":
-                        return left != right
-                    return left >= right
-
-                if metric_def.get("critical") is not None and check_op(
-                    num_val, float(metric_def["critical"]), operator
-                ):
-                    status = "CRITICAL"
+                if status == "CRITICAL":
                     severity = "CRITICAL"
                     is_breach = True
-                    message = f"Critical Threshold Breached: {val} {operator} {metric_def['critical']}"
-                elif metric_def.get("warning") is not None and check_op(
-                    num_val, float(metric_def["warning"]), operator
-                ):
-                    status = "WARNING"
+                    message = f"Critical Threshold Breached: {val} (Custom: {crit_custom or 'N/A'})"
+                elif status == "WARNING":
                     severity = "WARNING"
                     is_breach = True
-                    message = f"Warning Threshold Breached: {val} {operator} {metric_def['warning']}"
+                    message = f"Warning Threshold Breached: {val} (Custom: {warn_custom or 'N/A'})"
 
             if is_availability_metric and float(val) == 0:
                 status = "CRITICAL"

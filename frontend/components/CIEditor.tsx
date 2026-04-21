@@ -21,6 +21,7 @@ interface CIEditorProps {
  * - Location Data
  * - SNMP Configuration
  * - Ownership assignment
+ * - Individual Metric Threshold Overrides
  */
 const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, className }) => {
   const [categories, setCategories] = useState<{ name: string }[]>([]);
@@ -60,13 +61,11 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
 
   const [formData, setFormData] = useState<Partial<GraphNode>>(node || defaultState);
 
-  // Update formData if node prop changes (e.g. valid to null or diff node)
+  // Update formData if node prop changes
   React.useEffect(() => {
     if (node) {
       setFormData(node);
     } else {
-      // Reset to default state if node is null (Switching to Create Mode)
-      // We must ensure we generate a NEW ID, not keep the old one
       setFormData({
         ...defaultState,
         id: `CI-${Math.random().toString(36).substr(2, 5)}`
@@ -74,14 +73,20 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
     }
   }, [node]);
 
+  const handleMetricThresholdChange = (metricName: string, field: 'warning' | 'critical', value: number) => {
+    const updatedMetrics = (formData.metrics || []).map(m => 
+      m.name === metricName ? { ...m, [field]: value } : m
+    );
+    setFormData({ ...formData, metrics: updatedMetrics });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await onSave(formData as GraphNode);
-    // Reset form if creating new (no node prop)
     if (!node) {
       setFormData({
         ...defaultState,
-        id: `CI-${Math.random().toString(36).substr(2, 5)}` // New ID
+        id: `CI-${Math.random().toString(36).substr(2, 5)}`
       });
     }
   };
@@ -98,13 +103,13 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
       </div>
 
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-        {/* Basic Info */}
+        {/* Identification Section */}
         <section className="space-y-4">
           <h3 className="text-[10px] font-black text-brand-400 uppercase tracking-[0.2em]">Identification</h3>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">System ID (Auto)</span>
+                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">System ID</span>
                 <input
                   className="w-full bg-neutral-900/50 border border-white/5 rounded-lg px-4 py-2.5 text-xs font-mono text-neutral-400 cursor-not-allowed"
                   value={formData.id}
@@ -123,73 +128,23 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
               </label>
             </div>
 
-            {/* Hardware Selection from Catalog */}
             <div className="grid grid-cols-2 gap-3">
               <label>
                 <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Brand</span>
-                {hardwareModels.length > 0 ? (
-                  <select
-                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                    value={formData.brand || ''}
-                    onChange={e => setFormData({ ...formData, brand: e.target.value, model: '' })}
-                  >
-                    <option value="">Select Brand...</option>
-                    {Array.from(new Set(hardwareModels.map(h => h.brand))).sort().map(b => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                    value={formData.brand || ''}
-                    onChange={e => setFormData({ ...formData, brand: e.target.value })}
-                    placeholder="e.g. Cisco"
-                  />
-                )}
-              </label>
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Model</span>
-                {hardwareModels.length > 0 && formData.brand ? (
-                  <select
-                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                    value={formData.model || ''}
-                    onChange={e => setFormData({ ...formData, model: e.target.value })}
-                  >
-                    <option value="">Select Model...</option>
-                    {hardwareModels
-                      .filter(h => h.brand === formData.brand)
-                      .map(h => (
-                        <option key={h.model} value={h.model}>{h.model}</option>
-                      ))}
-                  </select>
-                ) : (
-                  <input
-                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                    value={formData.model || ''}
-                    onChange={e => setFormData({ ...formData, model: e.target.value })}
-                    placeholder="e.g. Catalyst 9300"
-                  />
-                )}
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Serial Number</span>
                 <input
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none font-mono"
-                  value={formData.serialNumber || ''}
-                  onChange={e => setFormData({ ...formData, serialNumber: e.target.value })}
-                  placeholder="e.g. SN12345678"
+                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
+                  value={formData.brand || ''}
+                  onChange={e => setFormData({ ...formData, brand: e.target.value })}
+                  placeholder="e.g. Cisco"
                 />
               </label>
               <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Firmware Version</span>
+                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Model</span>
                 <input
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none font-mono"
-                  value={formData.firmwareVersion || ''}
-                  onChange={e => setFormData({ ...formData, firmwareVersion: e.target.value })}
-                  placeholder="e.g. 17.3.1"
+                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
+                  value={formData.model || ''}
+                  onChange={e => setFormData({ ...formData, model: e.target.value })}
+                  placeholder="e.g. Catalyst 9300"
                 />
               </label>
             </div>
@@ -205,79 +160,58 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
                 />
               </label>
               <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Owner Group</span>
-                <select
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                  value={formData.owner || ''}
-                  onChange={e => setFormData({ ...formData, owner: e.target.value })}
-                >
-                  <option value="">Select Group...</option>
-                  {owners.map(o => <option key={o.name} value={o.name}>{o.name}</option>)}
-                </select>
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label>
                 <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Network Layer</span>
                 <select
                   className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
                   value={formData.type}
                   onChange={e => setFormData({ ...formData, type: e.target.value as NodeType })}
                 >
-                  <option value="INFRASTRUCTURE">INFRASTRUCTURE (Default)</option>
+                  <option value="INFRASTRUCTURE">INFRASTRUCTURE</option>
                   {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                 </select>
               </label>
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Op Status</span>
-                <select
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                  value={formData.status}
-                  onChange={e => setFormData({ ...formData, status: e.target.value as any })}
-                >
-                  <option value="ACTIVE">Active</option>
-                  <option value="EXCEPTION">Exception</option>
-                  <option value="MAINTENANCE">Maintenance</option>
-                </select>
-              </label>
             </div>
-
-            <label className="block">
-              <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Location Name</span>
-              <input
-                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                value={formData.location_name || ''}
-                onChange={e => setFormData({ ...formData, location_name: e.target.value })}
-                placeholder="e.g. Data Center North"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Latitude</span>
-                <input
-                  type="number" step="any"
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                  value={formData.location?.lat || ''}
-                  onChange={e => setFormData({ ...formData, location: { ...formData.location, lat: parseFloat(e.target.value) } as any })}
-                  placeholder="0.00"
-                />
-              </label>
-              <label>
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Longitude</span>
-                <input
-                  type="number" step="any"
-                  className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                  value={formData.location?.long || ''}
-                  onChange={e => setFormData({ ...formData, location: { ...(formData.location as any), long: parseFloat(e.target.value) } })}
-                  placeholder="0.00"
-                />
-              </label>
-            </div>
-
           </div>
         </section>
+
+        {/* --- METRIC THRESHOLDS SECTION --- */}
+        {(formData.metrics && formData.metrics.length > 0) && (
+          <section className="space-y-4 pt-6 border-t border-white/5">
+            <h3 className="text-[10px] font-black text-brand-400 uppercase tracking-[0.2em]">Metric Threshold Overrides</h3>
+            <div className="space-y-4">
+              {formData.metrics.map(metric => (
+                <div key={metric.name} className="p-4 bg-black/20 rounded-2xl border border-white/5 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black text-white uppercase">{metric.name}</span>
+                    <span className="text-[10px] font-bold text-neutral-500 px-2 py-0.5 bg-white/5 rounded-full uppercase">{metric.protocol}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <label>
+                      <span className="text-[10px] text-neutral-500 font-bold mb-1 block uppercase">Warning</span>
+                      <input
+                        aria-label={`${metric.name} Warning`}
+                        type="number"
+                        className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                        value={metric.warning}
+                        onChange={e => handleMetricThresholdChange(metric.name, 'warning', parseFloat(e.target.value))}
+                      />
+                    </label>
+                    <label>
+                      <span className="text-[10px] text-neutral-500 font-bold mb-1 block uppercase">Critical</span>
+                      <input
+                        aria-label={`${metric.name} Critical`}
+                        type="number"
+                        className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                        value={metric.critical}
+                        onChange={e => handleMetricThresholdChange(metric.name, 'critical', parseFloat(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* SNMP Config */}
         <section className="space-y-4 bg-black/20 p-4 rounded-2xl border border-white/5">
@@ -292,8 +226,8 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
                 value={formData.snmp?.version}
                 onChange={e => setFormData({ ...formData, snmp: { ...formData.snmp!, version: e.target.value as any } })}
               >
-                <option value="v2c">v2c (Community)</option>
-                <option value="v3">v3 (Auth/Priv)</option>
+                <option value="v2c">v2c</option>
+                <option value="v3">v3</option>
               </select>
             </label>
             <label className="col-span-1">
@@ -303,51 +237,6 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
                 className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
                 value={formData.snmp?.port}
                 onChange={e => setFormData({ ...formData, snmp: { ...formData.snmp!, port: parseInt(e.target.value) } })}
-              />
-            </label>
-            {formData.snmp?.version === 'v2c' ? (
-              <>
-                <label className="col-span-1">
-                  <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Read Community</span>
-                  <input
-                    type="text"
-                    className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
-                    value={formData.snmp?.readCommunity || ''}
-                    onChange={e => setFormData({ ...formData, snmp: { ...formData.snmp!, readCommunity: e.target.value } })}
-                    placeholder="public"
-                  />
-                </label>
-                <label className="col-span-1">
-                  <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Write Community</span>
-                  <input
-                    type="text"
-                    className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
-                    value={formData.snmp?.writeCommunity || ''}
-                    onChange={e => setFormData({ ...formData, snmp: { ...formData.snmp!, writeCommunity: e.target.value } })}
-                    placeholder="private"
-                  />
-                </label>
-              </>
-            ) : (
-              <label className="col-span-2">
-                <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Security Name (AuthKey)</span>
-                <input
-                  type="password"
-                  className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
-                  value={formData.snmp?.authKey || ''}
-                  onChange={e => setFormData({ ...formData, snmp: { ...formData.snmp!, authKey: e.target.value } })}
-                />
-              </label>
-            )}
-            <label className="col-span-2">
-              <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Polling Interval (seconds)</span>
-              <input
-                type="number"
-                min={10}
-                className="w-full bg-neutral-900 border border-white/5 rounded-lg px-3 py-2 text-xs"
-                value={formData.pollingInterval ?? 60}
-                onChange={e => setFormData({ ...formData, pollingInterval: parseInt(e.target.value) || 60 })}
-                placeholder="60"
               />
             </label>
           </div>

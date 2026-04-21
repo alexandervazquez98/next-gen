@@ -68,72 +68,6 @@ def delete_metric(metric_id: str) -> Dict[str, str]:
         session.run("MATCH (m:MetricDef {id: $id}) DETACH DELETE m", id=metric_id)
     return {"message": "Metric deleted"}
 
-def get_metric_usage(metric_id: str) -> Dict[str, Any]:
-    """
-    Analyze how many CIs currently match this metric's criteria.
-    """
-    driver = get_db()
-    with driver.session() as session:
-        result = session.run("MATCH (m:MetricDef {id: $id}) RETURN m.applicable_to as apt", id=metric_id)
-        record = result.single()
-        if not record: return {"count": 0, "criteria": "None"}
-        
-        criteria = {}
-        try: criteria = json.loads(record["apt"] or "{}")
-        except: pass
-            
-        models = criteria.get("models", [])
-        brands = criteria.get("brands", [])
-        layers = criteria.get("layers", [])
-        names = criteria.get("names", [])
-        excluded_names = criteria.get("excluded_names", [])
-        
-        # 1. Base Query: CIs that already have this metric assigned/collected
-        query = """
-            MATCH (n:CI)-[:HAS_METRIC]->(m:MetricDef {id: $id})
-            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand
-        """
-        
-        # 2. Add CIs matching criteria (if any)
-        if models or brands or layers or names:
-            query += """
-            UNION
-            MATCH (n:CI)
-            WHERE (n.model IN $models OR n.brand IN $brands OR n.layer IN $layers OR n.name IN $names OR n.id IN $names)
-            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand
-            """
-            
-        result = session.run(query, id=metric_id, models=models, brands=brands, layers=layers, names=names)
-        cis = [dict(record) for record in result]
-        
-        # Deduplicate and Apply Exclusions
-        unique_cis = {}
-        for ci in cis:
-             if ci['name'] not in excluded_names and ci['id'] not in excluded_names:
-                 unique_cis[ci['id']] = ci
-        
-        cis_list = list(unique_cis.values())
-        return {"count": len(cis_list), "cis": cis_list, "criteria": criteria}
-
-def promote_metric_node(ci_id: str, metric_name: str, display_name: Optional[str] = None) -> Dict[str, str]:
-    """
-    Promote a specific metric property of a CI to a first-class Graph Node.
-    """
-    driver = get_db()
-    metric_id = str(uuid.uuid4())
-    display = display_name or metric_name
-    
-    with driver.session() as session:
-        session.run("""
-            MATCH (ci:CI {id: $ci_id})
-            MERGE (m:Metric {name: $name, display_name: $display, source_ci: $ci_id})
-            ON CREATE SET m.id = $id, m.created_at = datetime()
-            MERGE (ci)-[:HAS_METRIC]->(m)
-            RETURN m
-        """, ci_id=ci_id, name=metric_name, display=display, id=metric_id)
-        
-    return {"message": "Metric promoted to Node", "id": metric_id, "label": display}
-
 def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
     """
     Get all eligible metrics for a specific Node based on its properties (Brand, Model, Layer).
@@ -157,6 +91,7 @@ def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
         res_metrics = session.run("MATCH (m:MetricDef) RETURN m")
         applicable_metrics = []
         
+        # 3. Filter Metrics based on criteria (AND logic)
         for rec in res_metrics:
             m = rec["m"]
             criteria_json = m.get("applicable_to")
@@ -165,37 +100,39 @@ def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
                 
             try:
                 criteria = json.loads(criteria_json)
+                match = True
                 
-                # Check specifics (Direct Name Match)
+                # Check direct Name/ID match
                 req_names = [n.strip().lower() for n in criteria.get("names", [])]
-                if req_names and (node_name in req_names or node_ci_id in req_names):
+                if req_names and not (node_name in req_names or node_ci_id in req_names):
+                    match = False
+
+                # Check Category (Brand)
+                req_brands = [b.strip().lower() for b in criteria.get("brands", [])]
+                if req_brands and brand not in req_brands:
+                    match = False
+                    
+                # Check Model
+                req_models = [m.strip().lower() for m in criteria.get("models", [])]
+                if req_models and model not in req_models:
+                    match = False
+                    
+                # Check Network Layer
+                req_layers = [l.strip().lower() for l in criteria.get("layers", [])]
+                if req_layers and layer not in req_layers:
+                    match = False
+
+                if match:
                     applicable_metrics.append({
                         "id": m.get("id"),
                         "name": m.get("id"),
                         "description": m.get("description"),
-                        "unit": m.get("unit")
-                    })
-                    continue
-
-                # Check Categories (Brand/Model/Layer)
-                req_brands = [b.strip().lower() for b in criteria.get("brands", [])]
-                req_models = [m.strip().lower() for m in criteria.get("models", [])]
-                req_layers = [l.strip().lower() for l in criteria.get("layers", [])]
-                
-                match = False
-                if req_brands and brand in req_brands: match = True
-                if req_models and model in req_models: match = True
-                if req_layers and layer in req_layers: match = True
-                
-                if match:
-                    applicable_metrics.append({
-                        "id": m.get("id"),
-                        "name": m.get("id"), 
-                        "description": m.get("description"),
-                        "unit": m.get("unit")
+                        "unit": m.get("unit"),
+                        "warning": m.get("warning"),
+                        "critical": m.get("critical")
                     })
             except Exception as e:
-                logger.error(f"Error parsing metric criteria: {e}")
+                logger.error(f"Error parsing metric criteria for {m.get('id')}: {e}")
                 pass
                 
         return applicable_metrics
@@ -203,21 +140,18 @@ def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
 def reconcile_node_metrics(node: Dict[str, Any]):
     """
     Re-evaluates metric applicability for a Node after an update.
-    1. Removes :HAS_METRIC relationships for metrics that NO LONGER apply (and aren't explicit).
+    1. Removes :HAS_METRIC relationships for metrics that NO LONGER apply.
     2. Adds :HAS_METRIC relationships for metrics that NOW apply.
     """
-    driver = get_db()
+    from repositories.topology_repo import link_metric_to_node
+    
     node_id = node.get("id")
     if not node_id: return
-    
-    # Get currently applicable metrics based on NEW properties
-    # node dict is already updated at this point hopefully (passed from node_service)
-    # We must fetch the FRESH node from DB just to be sure if 'node' is partial?
-    # Actually, let's trust the logic in get_applicable_metrics which fetches from DB.
     
     applicable = get_applicable_metrics(node_id)
     applicable_ids = [m["id"] for m in applicable]
     
+    driver = get_db()
     with driver.session() as session:
         # 1. Fetch CURRENTLY LINKED metrics
         result = session.run("""
@@ -228,34 +162,17 @@ def reconcile_node_metrics(node: Dict[str, Any]):
         linked_metrics = {rec["mid"]: rec["apt"] for rec in result}
         
         # 2. Determine Removals
-        # Remove if: Linked AND (Not in Applicable) AND (Not explicitly named in criteria)
-        for mid, apt_json in linked_metrics.items():
+        for mid in linked_metrics.keys():
             if mid not in applicable_ids:
-                # Check if explicitly named (Safety check)
-                is_explicit = False
-                try:
-                    apt = json.loads(apt_json or "{}")
-                    names = apt.get("names", [])
-                    if node.get("name") in names or node_id in names:
-                        is_explicit = True
-                except: pass
-                
-                if not is_explicit:
-                    # DELETE RELATIONSHIP
-                    logger.info(f"Removing obsolete metric {mid} from Node {node_id}")
-                    session.run("""
-                        MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
-                        DELETE r
-                    """, nid=node_id, mid=mid)
+                logger.info(f"Removing obsolete metric {mid} from Node {node_id}")
+                session.run("""
+                    MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
+                    DELETE r
+                """, nid=node_id, mid=mid)
 
-        # 3. Determine Additions (Optional but good for UX)
-        # The polling worker would pick them up anyway, but creating the rel confirms intent.
+        # 3. Determine Additions/Updates
         for m in applicable:
              if m["id"] not in linked_metrics:
                  logger.info(f"Auto-assigning new metric {m['id']} to Node {node_id}")
-                 session.run("""
-                    MATCH (n:CI {id: $nid})
-                    MATCH (m:MetricDef {id: $mid})
-                    MERGE (n)-[:HAS_METRIC]->(m)
-                    SET n.updated_at = datetime()
-                 """, nid=node_id, mid=m["id"])
+                 # Pass default thresholds from the definition to the individual link
+                 link_metric_to_node(node_id, m["id"], warning=m.get("warning"), critical=m.get("critical"))

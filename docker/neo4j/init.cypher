@@ -9,6 +9,8 @@ CREATE CONSTRAINT user_username_unique IF NOT EXISTS FOR (u:User) REQUIRE u.user
 CREATE INDEX ci_name_indx IF NOT EXISTS FOR (n:CI) ON (n.name);
 CREATE INDEX ci_ip_indx IF NOT EXISTS FOR (n:CI) ON (n.ip);
 CREATE INDEX ci_location_indx IF NOT EXISTS FOR (n:CI) ON (n.location_name);
+CREATE INDEX ci_layer_indx IF NOT EXISTS FOR (n:CI) ON (n.layer);
+CREATE INDEX ci_owner_indx IF NOT EXISTS FOR (n:CI) ON (n.owner);
 CREATE INDEX event_status_indx IF NOT EXISTS FOR (e:Event) ON (e.status);
 CREATE INDEX event_severity_indx IF NOT EXISTS FOR (e:Event) ON (e.severity);
 CREATE INDEX event_created_indx IF NOT EXISTS FOR (e:Event) ON (e.created_at);

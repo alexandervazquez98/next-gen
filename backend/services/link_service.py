@@ -22,25 +22,24 @@ def delete_link(link: Link) -> Dict[str, str]:
     topology_repo.delete_link(link.source, link.target, link.relationship)
     return {"message": "Link deleted"}
 
-def get_full_graph() -> Dict[str, List[Dict[str, Any]]]:
+def get_full_graph(layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Fetch the COMPLETE graph topology for visualization.
+    Supports filtering by metadata. Default view is Technical Topology (:CI).
     """
-    raw_nodes, raw_links = topology_repo.get_full_graph_data()
-    
+    raw_nodes, raw_links = topology_repo.get_filtered_graph_data(layer=layer, location=location, owner=owner)
+
     nodes = []
     for node_props in raw_nodes:
         labels = node_props.get("_labels", [])
-        
+
         # Determine primary type/label
-        primary_type = "Unknown"
-        if "CI" in labels: primary_type = "CI"
-        elif "Category" in labels: primary_type = "Category"
+        primary_type = "CI" # Default for filtered view
+        if "Category" in labels: primary_type = "Category"
         elif "OwnerGroup" in labels: primary_type = "Owner"
         elif "MetricDef" in labels: primary_type = "Metric"
         elif "HardwareModel" in labels: primary_type = "Hardware"
         elif "User" in labels: primary_type = "User"
-        
         # Determine Label/Name
         label_text = node_props.get("name") or node_props.get("id") or node_props.get("label") or "N/A"
         if not label_text or label_text == "N/A":

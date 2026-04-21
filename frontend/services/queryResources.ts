@@ -49,5 +49,25 @@ export const fetchEventDetail = (eventId: string, { signal }: { signal?: AbortSi
 export const fetchRelatedEvents = (ciId: string, { signal }: { signal?: AbortSignal } = {}) =>
   api.get<EventSummary[]>(`/events/related/${ciId}`, { signal });
 
-export const fetchGraphTopology = ({ signal }: { signal?: AbortSignal } = {}) =>
-  api.get<GraphTopologyResponse>('/graph/full', { signal });
+export const fetchGraphTopology = ({ 
+  layer, 
+  location, 
+  owner, 
+  signal 
+}: { 
+  layer?: string; 
+  location?: string; 
+  owner?: string; 
+  signal?: AbortSignal 
+} = {}) => {
+  let url = '/graph/full';
+  const params = new URLSearchParams();
+  if (layer) params.append('layer', layer);
+  if (location) params.append('location', location);
+  if (owner) params.append('owner', owner);
+  
+  const queryString = params.toString();
+  if (queryString) url += `?${queryString}`;
+  
+  return api.get<GraphTopologyResponse>(url, { signal });
+};

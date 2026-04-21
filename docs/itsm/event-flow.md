@@ -4,6 +4,23 @@
 
 Este documento explica como NEX-GEN lleva un evento tecnico hacia un contexto operativo listo para incident management y futuras integraciones ITSM.
 
+## Fuente del evento: Metricas y Umbrales
+
+### Asignacion automatica (Reglas)
+
+El sistema utiliza un **Motor de Reconciliacion** que vincula CIs con Definiciones de Metricas basado en reglas:
+1. Las metricas tienen criterios de aplicacion (`applicable_to`) como Marca, Modelo o Capa de Red.
+2. Al crear o actualizar un CI, el motor evalua estas reglas y crea vinculos `:HAS_METRIC` en el grafo.
+3. Esto permite el despliegue masivo (ej. 700 equipos) con configuracion centralizada.
+
+### Prioridad de Umbrales
+
+Para determinar un breach (alerta), el sistema sigue este orden de prioridad:
+1. **Umbral Individual:** Propiedades `warning_threshold` y `critical_threshold` en el link `:HAS_METRIC` del CI especifico.
+2. **Umbral Global:** Valores por defecto definidos en la `MetricDef`.
+
+Esto permite que un servidor critico tenga alertas mas sensibles que una estacion de trabajo usando la misma definicion de metrica.
+
 ## Flujo end-to-end
 
 ```text

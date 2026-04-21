@@ -237,36 +237,83 @@ def delete_link(source: str, target: str, relationship: str) -> None:
     driver = get_db()
     rel_type = relationship.upper().replace(" ", "_")
     with driver.session() as session:
-        session.run(f"MATCH (a:CI {{id: $source}})-[r:{rel_type}]->(b:CI {{id: $target}}) DELETE r", 
+        session.run(f"MATCH (a:CI {{id: $source}})-[r:{rel_type}]->(b:CI {{id: $target}}) DELETE r",
                     source=source, target=target)
+
+def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, critical: float = None):
+    """
+    Creates or updates a :HAS_METRIC relationship between a CI and a MetricDef.
+    Stores individual thresholds on the relationship edge.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        session.run("""
+            MATCH (n:CI {id: $nid})
+            MATCH (m:MetricDef {id: $mid})
+            MERGE (n)-[r:HAS_METRIC]->(m)
+            SET r.warning_threshold = $warning,
+                r.critical_threshold = $critical
+        """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
+
+def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
+    """
+    Fetches technical topology (:CI nodes) with optional metadata filters.
+    """
+    driver = get_db()
+    
+    # Build dynamic WHERE clause
+    where_clauses = []
+    params = {}
+    if layer:
+        where_clauses.append("n.layer = $layer")
+        params["layer"] = layer
+    if location:
+        where_clauses.append("n.location_name = $location")
+        params["location"] = location
+    if owner:
+        where_clauses.append("n.owner = $owner")
+        params["owner"] = owner
+    
+    where_str = ""
+    if where_clauses:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+
+    with driver.session() as session:
+        # Fetch nodes
+        nodes_query = f"MATCH (n:CI){where_str} RETURN n, labels(n) as labels"
+        nodes_result = session.run(nodes_query, **params)
+        nodes = []
+        for record in nodes_result:
+            node_props = dict(record["n"])
+            node_props["_labels"] = record["labels"]
+            nodes.append(node_props)
+
+        # Fetch relationships between filtered CIs
+        links_query = f"MATCH (a:CI)-[r]->(b:CI){where_str.replace('n.', 'a.')} RETURN a, r, b"
+        links_result = session.run(links_query, **params)
+        links = []
+        for record in links_result:
+            links.append({
+                "source_node": dict(record["a"]),
+                "target_node": dict(record["b"]),
+                "type": record["r"].type
+            })
+                
+        return nodes, links
 
 def get_full_graph_data() -> (List[Dict[str, Any]], List[Dict[str, Any]]):
     driver = get_db()
     with driver.session() as session:
-        # Fetch all nodes with their labels
         nodes_result = session.run("MATCH (n) RETURN n, labels(n) as labels")
         nodes = []
         for record in nodes_result:
-            node = record["n"]
-            labels = record["labels"]
-            
-            # TODO: Move Logic for type determination/label text to Service or simplify here?
-            # Keeping it raw here is better, let Service format it? 
-            # Or keep it here to encapsulate neo4j specifics (like labels object).
-            # I will return raw nodes and relationships, let service process.
-            
-            # Actually, extracting properties to a dict is safer here
-            node_props = dict(node)
-            node_props["_labels"] = labels
-            # Fallback ID handled in service? No, let's ensure ID here.
+            node_props = dict(record["n"])
+            node_props["_labels"] = record["labels"]
             nodes.append(node_props)
 
-        # Fetch all relationships
         links_result = session.run("MATCH (a)-[r]->(b) RETURN a, r, b")
         links = []
         for record in links_result:
-            # We need IDs to link them.
-            # Using element ID might be safer if custom ID is missing, but sticking to logic
             links.append({
                 "source_node": dict(record["a"]),
                 "target_node": dict(record["b"]),
