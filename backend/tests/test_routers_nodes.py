@@ -678,10 +678,10 @@ class TestGetNodeTemplate:
         assert response.status_code == 401
 
     def test_get_template_authenticated_success(self):
-        """Template endpoint should be accessible with authentication."""
+        """Template endpoint should be accessible with authentication and CI_EDIT."""
         from services.auth_service import get_current_active_user
         app.dependency_overrides[get_current_active_user] = lambda: User(
-            id="user-01", username="user01", role="OPERATOR"
+            id="user-01", username="user01", role="OPERATOR", permissions=["CI_EDIT"]
         )
         with patch("routers.nodes.node_service") as mock_service:
             # Return a mock StreamingResponse-compatible object

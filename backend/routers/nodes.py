@@ -70,8 +70,14 @@ async def upload_nodes(
 async def get_node_template(current_user: User = Depends(get_current_active_user)):
     """
     Generates a pre-filled Excel template for bulk import.
-    Requires authentication.
+    Requires CI_EDIT permission.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
     return node_service.get_node_template()
 
 @router.get("/{node_id}/metrics")

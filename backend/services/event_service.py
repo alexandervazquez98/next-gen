@@ -514,6 +514,7 @@ def close_event(
         result = session.run(
             """
             MATCH (e:Event {id: $eid})
+            WHERE e.status <> 'CLOSED'
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             WITH e
             SET e.comments = coalesce(e.comments, []) + ($audit_message + ' (' + toString(datetime()) + ')')

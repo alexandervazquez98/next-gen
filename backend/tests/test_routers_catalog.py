@@ -74,6 +74,7 @@ class TestCategoriesRouter:
     """Tests for category catalog endpoints."""
 
     def test_get_categories_returns_empty(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_categories.return_value = []
 
@@ -83,6 +84,7 @@ class TestCategoriesRouter:
         assert response.json() == []
 
     def test_get_categories_returns_data(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_categories.return_value = [
                 {"name": "Router"},
@@ -96,15 +98,11 @@ class TestCategoriesRouter:
         assert len(data) == 2
         assert data[0]["name"] == "Router"
 
-    def test_get_categories_no_auth_required(self):
-        with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.get_categories.return_value = []
-
-            response = client.get("/api/categories")
-
-        assert response.status_code == 200
-        assert response.status_code != 401
-        assert response.status_code != 403
+    def test_get_categories_requires_authentication(self):
+        # Clear any global overrides to simulate no-token/invalid-token
+        app.dependency_overrides.clear()
+        response = client.get("/api/categories")
+        assert response.status_code == 401
 
     @pytest.mark.parametrize(
         ("method", "url", "json"),
@@ -115,6 +113,8 @@ class TestCategoriesRouter:
         ],
     )
     def test_category_mutations_require_authentication(self, method, url, json):
+        # Clear any global overrides to simulate no-token/invalid-token
+        app.dependency_overrides.clear()
         response = _request(method, url, json=json)
 
         assert response.status_code == 401
@@ -235,6 +235,7 @@ class TestHardwareRouter:
     """Tests for hardware catalog endpoints."""
 
     def test_get_hardware_catalog_returns_empty(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_hardware_catalog.return_value = []
 
@@ -244,6 +245,7 @@ class TestHardwareRouter:
         assert response.json() == []
 
     def test_get_hardware_catalog_returns_data(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_hardware_catalog.return_value = [
                 {
@@ -293,6 +295,8 @@ class TestHardwareRouter:
         ],
     )
     def test_hardware_mutations_require_authentication(self, method, url, json, params):
+        # Clear any global overrides to simulate no-token/invalid-token
+        app.dependency_overrides.clear()
         response = _request(method, url, json=json, params=params)
 
         assert response.status_code == 401
@@ -546,6 +550,7 @@ class TestOwnersRouter:
     """Tests for owner group catalog endpoints."""
 
     def test_get_owners_returns_empty(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_owners.return_value = []
 
@@ -555,6 +560,7 @@ class TestOwnersRouter:
         assert response.json() == []
 
     def test_get_owners_returns_data(self):
+        _override_current_user(_make_pydantic_user())
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.get_owners.return_value = [
                 {
@@ -597,6 +603,8 @@ class TestOwnersRouter:
         ],
     )
     def test_owner_mutations_require_authentication(self, method, url, json):
+        # Clear any global overrides to simulate no-token/invalid-token
+        app.dependency_overrides.clear()
         response = _request(method, url, json=json)
 
         assert response.status_code == 401
