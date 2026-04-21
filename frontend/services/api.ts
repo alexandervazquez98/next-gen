@@ -35,10 +35,18 @@ const getHeaders = (isJson = true) => {
 async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
     const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
 
-    const headers = {
-        ...getHeaders(config.headers ? false : true), // Default to JSON unless overridden
-        ...config.headers,
-    };
+    // Separate logic for Content-Type and Authorization
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = { ...config.headers };
+
+    if (token && !headers['Authorization' as keyof HeadersInit]) {
+        headers['Authorization' as keyof HeadersInit] = `Bearer ${token}`;
+    }
+
+    // Default to JSON if no body or if body is not FormData
+    if (!(config.body instanceof FormData) && !headers['Content-Type' as keyof HeadersInit]) {
+        headers['Content-Type' as keyof HeadersInit] = 'application/json';
+    }
 
     const response = await fetch(url, {
         ...config,

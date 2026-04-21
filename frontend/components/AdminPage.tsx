@@ -119,19 +119,15 @@ const AdminPage: React.FC = () => {
 
         setLoading(true);
         try {
-            // We pass headers: {} to prevent the default Content-Type: application/json
-            // This allows the browser to set the correct multipart/form-data boundary
             const data: any = await api.request('/nodes/upload', {
                 method: 'POST',
-                body: formData,
-                headers: {} 
+                body: formData
             });
 
             alert('Upload successful! ' + (data.message || ''));
             fetchData();
         } catch (e: any) {
             console.error(e);
-            // Better error reporting for the UI
             const errorMsg = e.message && typeof e.message === 'object' 
                 ? JSON.stringify(e.message) 
                 : e.message || 'Unknown error';
