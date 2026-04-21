@@ -48,7 +48,7 @@ services:
       dockerfile: Dockerfile
     container_name: nexgen_backend
     ports:
-      - "8000:8000"
+      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -80,7 +80,7 @@ services:
       dockerfile: Dockerfile
     container_name: nexgen_frontend
     ports:
-      - "3000:3000"
+      - "${FRONTEND_EXTERNAL_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy
