@@ -136,7 +136,8 @@ coverage.xml
 openspec/
 frontend/coverage/
 
-# Artifacts de OpenCode
+# Docker local overrides
+docker-compose.override.yml
 .artifacts/
 .atl
 .engram/
