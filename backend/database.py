@@ -4,9 +4,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-AUTH = (os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", "password"))
+URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
+USER = os.getenv("NEO4J_USER")
+PASSWORD = os.getenv("NEO4J_PASSWORD")
 
+if not USER or not PASSWORD:
+    print(f"CRITICAL: Neo4j credentials missing in environment! USER={USER}")
+
+AUTH = (USER, PASSWORD)
+
+print(f"DEBUG: Attempting Neo4j connection to {URI} with user {USER}")
 driver = GraphDatabase.driver(URI, auth=AUTH)
 
 def get_db():
