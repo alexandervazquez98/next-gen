@@ -38,7 +38,7 @@ const CIDetailModal: React.FC<CIDetailModalProps> = ({ node, onClose }) => {
                             <span className="text-xs font-mono text-neutral-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/5">ID: {node.id}</span>
                             {(node.category || node.type) && <span className="text-xs font-bold text-brand-400 bg-brand-500/10 px-3 py-1.5 rounded-lg border border-brand-500/20">{node.category || node.type}</span>}
                             <span className="text-xs font-mono text-accent-cyan bg-accent-cyan/10 px-3 py-1.5 rounded-lg border border-accent-cyan/20">{node.ip || 'NO IP'}</span>
-                            {node.metadata?.locationName && <span className="text-xs font-bold text-purple-400 bg-purple-500/10 px-3 py-1.5 rounded-lg border border-purple-500/20">{node.metadata.locationName}</span>}
+                            {node.location_name && <span className="text-xs font-bold text-purple-400 bg-purple-500/10 px-3 py-1.5 rounded-lg border border-purple-500/20">{node.location_name}</span>}
                         </div>
                     </div>
                     {/* Background Pattern */}

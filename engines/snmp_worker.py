@@ -3,6 +3,8 @@ import os
 import schedule
 import random
 import sys
+import subprocess
+from datetime import datetime
 
 # Add root and backend to python path to verify imports work
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,11 +14,27 @@ from neo4j import GraphDatabase
 from backend.repositories.metric_repo import insert_metric_value
 from backend.postgres_db import SessionLocal
 
+# SNMP Support
+try:
+    from pysnmp.hlapi import (
+        CommunityData,
+        ContextData,
+        ObjectIdentity,
+        ObjectType,
+        SnmpEngine,
+        UdpTransportTarget,
+        getCmd,
+    )
+    SNMP_AVAILABLE = True
+except ImportError:
+    SNMP_AVAILABLE = False
+
 # Connection
 URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-AUTH = (os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", "password"))
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
-driver = GraphDatabase.driver(URI, auth=AUTH)
+driver = GraphDatabase.driver(URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 def verify_connection():
     max_retries = 60
@@ -30,53 +48,128 @@ def verify_connection():
             time.sleep(2)
     raise Exception("Could not connect to Neo4j after multiple retries")
 
+def fetch_icmp_ping(ip):
+    """Perform a real ICMP ping."""
+    try:
+        ping_flag = "-n" if os.name == "nt" else "-c"
+        # Run ping with 1 packet, 1s timeout
+        result = subprocess.run(
+            ["ping", ping_flag, "1", "-w", "1000", ip],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.returncode == 0:
+            return 1.0
+        return 0.0
+    except Exception:
+        return 0.0
+
+def fetch_snmp_value(ip, community, oid, port=161):
+    """Perform a real SNMP GET."""
+    if not SNMP_AVAILABLE:
+        return None
+
+    try:
+        error_indication, error_status, error_index, var_binds = next(
+            getCmd(
+                SnmpEngine(),
+                CommunityData(community),
+                UdpTransportTarget((ip, port), timeout=2.0, retries=1),
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+        )
+
+        if error_indication or error_status:
+            return None
+
+        value = var_binds[0][1]
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    except Exception:
+        return None
+
+from backend.repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+
+# ... (resto de funciones fetch_icmp_ping, fetch_snmp_value, etc.)
+
 def poll_snmp():
-    print("Starting SNMP Polling Cycle...")
+    start_time = time.time()
+    print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
     db = SessionLocal()
+    metrics_to_save = []
+    metrics_count = 0
+    failed_count = 0
     try:
         with driver.session() as session:
-            # Get CIs and their specific assigned metrics
+            # Enhanced query: Get CI credentials and Metric metadata
             result = session.run("""
-                MATCH (n:CI)-[:HAS_METRIC]->(m:MetricDef)
-                RETURN n.id as node_id, collect(m.id) as metric_ids
+                MATCH (n:CI)-[r:HAS_METRIC]->(m:MetricDef)
+                WITH n, r, m, 
+                     coalesce(m.polling_interval, 60) as interval,
+                     coalesce(r.last_polled, datetime({year:1970})) as last_p
+                WHERE duration.between(last_p, datetime()).seconds >= interval
+                RETURN n.id as node_id, n.ip as ip, 
+                       coalesce(n.snmp_community, 'public') as community,
+                       coalesce(n.snmp_port, 161) as port,
+                       m.id as metric_id, m.protocol as protocol, m.oid as oid,
+                       interval
             """)
             
-            records = list(result)
-            print(f"Discovered {len(records)} target nodes with assigned metrics.")
-
-            for record in records:
+            # Use iterator to process one by one
+            for record in result:
+                metrics_count += 1
                 node_id = record["node_id"]
-                metric_ids = record["metric_ids"]
+                mid = record["metric_id"]
+                protocol = record["protocol"]
+                ip = record["ip"]
                 
-                print(f"Polling {node_id} for metrics: {metric_ids}")
+                if not ip:
+                    print(f"Skipping {node_id}: No IP address.")
+                    continue
+
+                val = None
+                if protocol == "ICMP" or "ping" in mid.lower():
+                    val = fetch_icmp_ping(ip)
+                elif protocol == "SNMP" and record["oid"]:
+                    val = fetch_snmp_value(ip, record["community"], record["oid"], int(record["port"]))
                 
-                # Simulate values based on metric type
-                for mid in metric_ids:
-                    # Simulation Logic
-                    val = 0.0
-                    if mid == 'cpu_usage':
-                        val = float(random.randint(10, 95))
-                    elif mid == 'status_code':
-                        val = 1.0 # Always UP for sim
-                    elif 'ping' in mid.lower():
-                        val = float(random.randint(20, 100)) # ms latency
-                    else:
-                        val = float(random.randint(0, 100))
+                if val is not None:
+                    # Add to batch
+                    metrics_to_save.append({
+                        "node_id": node_id,
+                        "metric_id": mid,
+                        "value": val,
+                        "time": datetime.utcnow()
+                    })
                     
-                    # Update History
-                    insert_metric_value(db, node_id, mid, val)
+                    if mid == 'status_code' or 'ping' in mid.lower():
+                        status = 'OK' if val > 0 else 'CRITICAL'
+                        session.run("MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()", 
+                                   id=node_id, status=status)
                     
-                    # Optional: Update specific node property for real-time view on graph properties
-                    # (This is a simplified approach, ideally we rely just on history or dedicated prop)
-                    if mid == 'cpu_usage':
-                        status = 'CRITICAL' if val > 90 else 'OK'
-                        session.run("""
-                            MATCH (n:CI {id: $id}) 
-                            SET n.cpu_load = $cpu, n.status = $status, n.last_seen = datetime()
-                        """, id=node_id, cpu=val, status=status)
+                    # Success: Update last_polled to respect the interval
+                    session.run("""
+                        MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
+                        SET r.last_polled = datetime()
+                    """, nid=node_id, mid=mid)
+                else:
+                    failed_count += 1
+
+            # Perform Bulk Insert at the end of the cycle
+            if metrics_to_save:
+                bulk_insert_metrics(db, metrics_to_save)
+                print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
+
+        duration = time.time() - start_time
+        if metrics_count > 0:
+            print(f"[{datetime.now().isoformat()}] Cycle Complete: {metrics_count} metrics processed ({failed_count} failed) in {duration:.2f}s.")
 
     except Exception as e:
-        print(f"Error during polling cycle: {e}")
+        print(f"Error during dynamic polling cycle: {e}")
     finally:
         db.close()
 
@@ -86,13 +179,15 @@ def job():
     except Exception as e:
         print(f"Error in polling job: {e}")
 
-# Run every 10 seconds
+# Run once every 10 seconds
 schedule.every(10).seconds.do(job)
 
 if __name__ == "__main__":
-    print("SNMP Engine Starting (TimescaleDB Enabled)...")
+    print("NEX-GEN Real-World SNMP Engine Starting...")
+    if not SNMP_AVAILABLE:
+        print("WARNING: PySNMP not found. SNMP polling will be unavailable.")
     verify_connection()
-    print("SNMP Engine Running")
+    print("Engine Running. Waiting for scheduled tasks...")
     while True:
         schedule.run_pending()
         time.sleep(1)

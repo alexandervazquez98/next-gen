@@ -20,7 +20,7 @@ class CategoryUpdate(BaseModel):
 
 
 @router.get("/categories", response_model=List[Dict[str, str]])
-async def get_categories():
+async def get_categories(current_user: User = Depends(get_current_active_user)):
     """Fetch all available CI Categories."""
     return catalog_service.get_categories()
 
@@ -82,7 +82,7 @@ class HardwareModelUpdate(BaseModel):
 
 
 @router.get("/hardware", response_model=List[Dict[str, Any]])
-async def get_hardware_catalog():
+async def get_hardware_catalog(current_user: User = Depends(get_current_active_user)):
     """Fetch the Hardware Catalog."""
     return catalog_service.get_hardware_catalog()
 
@@ -183,7 +183,7 @@ class OwnerGroupUpdate(BaseModel):
 
 
 @router.get("/owners", response_model=List[Dict[str, Any]])
-async def get_owners():
+async def get_owners(current_user: User = Depends(get_current_active_user)):
     """Fetch all Owner Groups and their Users."""
     return catalog_service.get_owners()
 

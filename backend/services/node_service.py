@@ -82,7 +82,8 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
             "pollingInterval": node.get("pollingInterval") or 60,
             "snmp": node.get("snmp"),
             "location": loc,
-            "metadata": {**clean_metadata, "locationName": node.get("location_name")},
+            "location_name": node.get("location_name"),
+            "metadata": {**clean_metadata},
             "metrics": metrics,
         }
         # Parse SNMP stored as string if necessary
@@ -239,10 +240,17 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             except:
                 pass
 
+        # Polling Interval from Excel
+        polling_val = row.get("PollingInterval")
+        try:
+            polling_interval = int(polling_val) if not pd.isna(polling_val) else 60
+        except (ValueError, TypeError):
+            polling_interval = 60
+
         metadata = {
             "ip": ip,
             "owner": owner,
-            "locationName": loc_name,
+            "location_name": loc_name,
             "criticality": str(row.get("Criticality", "Low")),
         }
 
@@ -258,7 +266,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             firmware,
             lat,
             long,
-            60,
+            polling_interval,
             snmp_str,
             metadata,
             owner,

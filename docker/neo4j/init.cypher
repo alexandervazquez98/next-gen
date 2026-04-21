@@ -1,11 +1,17 @@
 // --- Constraints & Indexes ---
 CREATE CONSTRAINT ci_id_unique IF NOT EXISTS FOR (n:CI) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT metric_def_id_unique IF NOT EXISTS FOR (m:MetricDef) REQUIRE m.id IS UNIQUE;
+CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (e:Event) REQUIRE e.id IS UNIQUE;
 CREATE CONSTRAINT category_name_unique IF NOT EXISTS FOR (c:Category) REQUIRE c.name IS UNIQUE;
 CREATE CONSTRAINT user_id_unique IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE;
+CREATE CONSTRAINT user_username_unique IF NOT EXISTS FOR (u:User) REQUIRE u.username IS UNIQUE;
 
 CREATE INDEX ci_name_indx IF NOT EXISTS FOR (n:CI) ON (n.name);
 CREATE INDEX ci_ip_indx IF NOT EXISTS FOR (n:CI) ON (n.ip);
-CREATE INDEX event_ts_indx IF NOT EXISTS FOR (e:Event) ON (e.timestamp);
+CREATE INDEX ci_location_indx IF NOT EXISTS FOR (n:CI) ON (n.location_name);
+CREATE INDEX event_status_indx IF NOT EXISTS FOR (e:Event) ON (e.status);
+CREATE INDEX event_severity_indx IF NOT EXISTS FOR (e:Event) ON (e.severity);
+CREATE INDEX event_created_indx IF NOT EXISTS FOR (e:Event) ON (e.created_at);
 
 // --- Sample Data Seeding (Matches SQL Scope) ---
 

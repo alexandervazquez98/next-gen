@@ -17,7 +17,7 @@ class Node(BaseModel):
     metadata: Optional[dict] = {}
     # Flattened Fields (Optional)
     owner: Optional[str] = None
-    locationName: Optional[str] = None
+    location_name: Optional[str] = None
     pollingInterval: Optional[int] = 60
     snmp: Optional[Union[dict, str]] = None  # Can be dict or JSON string
     brand: Optional[str] = None
@@ -56,6 +56,7 @@ class MetricDef(BaseModel):
     operator: Optional[str] = ">="
     criticality: Optional[int] = 1  # 1: Info, 2: Warning, 3: Exception
     applicable_to: Optional[Dict[str, List[str]]] = None
+    polling_interval: Optional[int] = 60
 
 
 class HardwareModel(BaseModel):

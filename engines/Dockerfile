@@ -2,6 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies for networking and postgres
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iputils-ping \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install backend dependencies (includes sqlalchemy, psycopg2)
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

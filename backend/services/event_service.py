@@ -146,9 +146,9 @@ def _build_event_summary(
 ) -> Dict[str, Any]:
     summary = {key: _serialize_value(value) for key, value in event_data.items()}
     summary["ci_node_id"] = ci_data.get("id")
-    summary["ci_name"] = ci_data.get("label")
+    summary["ci_name"] = ci_data.get("name")
     summary["ci_hostname"] = ci_data.get("ip")
-    summary["ci_location_name"] = ci_data.get("locationName")
+    summary["ci_location_name"] = ci_data.get("location_name")
     summary["metric_name"] = metric_data.get("name") or metric_data.get("id")
     summary["metric_protocol"] = metric_data.get("protocol")
     return summary
@@ -268,7 +268,7 @@ def _build_business_context(
     impacted_users, impacted_users_source = _pick_value(
         event_data.get("impacted_users"), business_service.get("impacted_users_count")
     )
-    site, site_source = _pick_value(event_data.get("site"), ci_data.get("locationName"))
+    site, site_source = _pick_value(event_data.get("site"), ci_data.get("location_name"))
     service_catalog_id, sc_id_source = _pick_value(
         event_data.get("service_catalog_id"), service_catalog.get("id")
     )
@@ -364,9 +364,9 @@ def build_event_detail_response(
             **summary,
             "ci_ref": {
                 "id": ci_data.get("id") or summary.get("ci_id"),
-                "label": ci_data.get("label"),
+                "label": ci_data.get("name"),
                 "hostname": ci_data.get("ip"),
-                "location_name": ci_data.get("locationName"),
+                "location_name": ci_data.get("location_name"),
             },
         },
         "business_context": business_context,
@@ -502,35 +502,40 @@ def close_event(
     forced: bool = False,
     comment_message: Optional[str] = None,
 ) -> Dict[str, str]:
-    driver = get_db()
-    audit_message = _build_close_audit_message(user, forced, comment_message)
-    with driver.session() as session:
-        with session.begin_transaction() as tx:
-            existing = tx.run(
-                """
-                MATCH (e:Event {id: $eid})
-                RETURN e.id AS event_id
-                """,
-                eid=event_id,
-            ).single()
-            if not existing:
-                _raise_event_not_found(event_id)
+    # 1. Validate request content first (no DB hit)
+    _validate_close_request(forced, comment_message)
 
-            _validate_close_request(forced, comment_message)
-            result = tx.run(
-                """
-                MATCH (e:Event {id: $eid})
-                SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
-                WITH e
-                SET e.comments = coalesce(e.comments, []) + ($audit_message + ' (' + toString(datetime()) + ')')
-                RETURN e.id AS event_id
-                """,
-                eid=event_id,
-                user=user,
-                audit_message=audit_message,
-            ).single()
-            if not result:
-                _raise_event_not_found(event_id)
+    # 2. Build audit message
+    audit_message = _build_close_audit_message(user, forced, comment_message)
+
+    # 3. Perform atomic update with existence check
+    driver = get_db()
+    with driver.session() as session:
+        # Check current status first to provide a better error message
+        current = session.run(
+            "MATCH (e:Event {id: $eid}) RETURN e.status as status", 
+            eid=event_id
+        ).single()
+        
+        if not current:
+            _raise_event_not_found(event_id)
+        
+        if current["status"] == "CLOSED":
+            raise HTTPException(status_code=400, detail=f"Event {event_id} is already CLOSED")
+
+        result = session.run(
+            """
+            MATCH (e:Event {id: $eid})
+            SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+            WITH e
+            SET e.comments = coalesce(e.comments, []) + ($audit_message + ' (' + toString(datetime()) + ')')
+            RETURN e.id AS event_id
+            """,
+            eid=event_id,
+            user=user,
+            audit_message=audit_message,
+        ).single()
+
     return {"message": "Event Closed"}
 
 

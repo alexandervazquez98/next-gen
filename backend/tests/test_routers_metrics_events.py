@@ -677,9 +677,9 @@ class TestEventsList:
                                 "ci": _FakeNeo4jNode(
                                     {
                                         "id": "ci-001",
-                                        "label": "Router-01",
+                                        "name": "Router-01",
                                         "ip": "10.0.0.1",
-                                        "locationName": "Madrid HQ",
+                                        "location_name": "Madrid HQ",
                                     }
                                 ),
                                 "m": _FakeNeo4jNode(

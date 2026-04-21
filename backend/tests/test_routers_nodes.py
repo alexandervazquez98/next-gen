@@ -595,9 +595,30 @@ class TestGetNodeMetrics:
 class TestUploadNodes:
     """Tests for POST /api/nodes/upload endpoint."""
 
+    def test_upload_unauthenticated(self):
+        """Request without auth should return 401."""
+        response = client.post("/api/nodes/upload")
+        assert response.status_code == 401
+
+    def test_upload_no_ci_edit_permission(self):
+        """User without CI_EDIT should return 403."""
+        from services.auth_service import get_current_active_user
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            id="op-01", username="op01", role="OPERATOR", permissions=[]
+        )
+        response = client.post(
+            "/api/nodes/upload",
+            files={"file": ("data.xlsx", b"fake", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        )
+        assert response.status_code == 403
+        app.dependency_overrides.clear()
+
     def test_upload_invalid_file_format(self):
-        """Non-.xlsx file should return 400."""
-        from fastapi import UploadFile
+        """Non-.xlsx file should return 400 (with auth)."""
+        from services.auth_service import get_current_active_user
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            id="admin-01", username="admin", role="ADMIN", permissions=["CI_EDIT"]
+        )
 
         # TestClient sends files via the `files` parameter
         response = client.post(
@@ -607,9 +628,15 @@ class TestUploadNodes:
 
         assert response.status_code == 400
         assert "Invalid file format" in response.json()["detail"]
+        app.dependency_overrides.clear()
 
     def test_upload_xlsx_accepted(self):
-        """An .xlsx file should be accepted (service mocked)."""
+        """An .xlsx file should be accepted (service mocked, with auth)."""
+        from services.auth_service import get_current_active_user
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            id="admin-01", username="admin", role="ADMIN", permissions=["CI_EDIT"]
+        )
+
         # Create a minimal fake xlsx-like bytes (service will be mocked)
         fake_xlsx = b"PK\x03\x04fake-xlsx-content"
 
@@ -634,18 +661,28 @@ class TestUploadNodes:
 
             # Should NOT be 400 — file format is valid
             assert response.status_code == 200
+        app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/nodes/template — public endpoint
+# Tests: GET /api/nodes/template — protected endpoint
 # ---------------------------------------------------------------------------
 
 
 class TestGetNodeTemplate:
     """Tests for GET /api/nodes/template endpoint."""
 
-    def test_get_template_no_auth_required(self):
-        """Template endpoint should be accessible without authentication."""
+    def test_get_template_unauthenticated(self):
+        """Template endpoint should now return 401 without auth."""
+        response = client.get("/api/nodes/template")
+        assert response.status_code == 401
+
+    def test_get_template_authenticated_success(self):
+        """Template endpoint should be accessible with authentication and CI_EDIT."""
+        from services.auth_service import get_current_active_user
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            id="user-01", username="user01", role="OPERATOR", permissions=["CI_EDIT"]
+        )
         with patch("routers.nodes.node_service") as mock_service:
             # Return a mock StreamingResponse-compatible object
             mock_stream = MagicMock()
@@ -654,5 +691,5 @@ class TestGetNodeTemplate:
 
             response = client.get("/api/nodes/template")
 
-            # Should NOT be 401
-            assert response.status_code != 401
+            assert response.status_code == 200
+        app.dependency_overrides.clear()
