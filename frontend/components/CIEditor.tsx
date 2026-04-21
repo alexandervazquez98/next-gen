@@ -238,8 +238,8 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
               <span className="text-xs text-neutral-500 font-bold mb-1 block uppercase">Location Name</span>
               <input
                 className="w-full bg-neutral-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm focus:border-brand-500 outline-none"
-                value={formData.metadata?.locationName || ''}
-                onChange={e => setFormData({ ...formData, metadata: { ...formData.metadata, locationName: e.target.value } })}
+                value={formData.location_name || ''}
+                onChange={e => setFormData({ ...formData, location_name: e.target.value })}
                 placeholder="e.g. Data Center North"
               />
             </label>

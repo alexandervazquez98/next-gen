@@ -58,7 +58,7 @@ function buildEventDetail(event: any, node: any, overrides: any = {}) {
                 id: event.ci_id,
                 label: event.ci_name,
                 hostname: node?.ip ?? null,
-                location_name: event.ci_location_name ?? node?.locationName ?? metadata.site ?? null,
+                location_name: event.ci_location_name ?? node?.location_name ?? metadata.site ?? null,
             },
         },
         business_context: {

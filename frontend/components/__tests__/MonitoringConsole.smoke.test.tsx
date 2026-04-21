@@ -125,7 +125,7 @@ describe('MonitoringConsole smoke tests', () => {
                         category: 'NETWORK',
                         ip: '10.0.0.1',
                         location: { lat: 40.4, long: -3.7 },
-                        locationName: 'Madrid HQ',
+                        location_name: 'Madrid HQ',
                     },
                 ]);
             }

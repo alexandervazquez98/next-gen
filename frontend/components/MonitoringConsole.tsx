@@ -688,8 +688,8 @@ const MonitoringConsole: React.FC = () => {
                 const businessServiceName = isBusinessContextReady ? businessContext?.business_service?.name ?? null : null;
                 const impactedUsers = isBusinessContextReady ? businessContext?.impacted_users ?? null : null;
                 const site = isBusinessContextReady
-                    ? businessContext?.site ?? detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.locationName ?? null
-                    : detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.locationName ?? null;
+                    ? businessContext?.site ?? detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.location_name ?? null
+                    : detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.location_name ?? null;
                 const category = businessContext?.service_catalog?.category ?? node?.category ?? node?.type ?? null;
                 const ageMs = Date.now() - new Date(displayEvent.created_at).getTime();
                 const ageMinutes = Math.floor(ageMs / 60000);
