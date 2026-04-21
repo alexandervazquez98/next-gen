@@ -31,52 +31,64 @@ def verify_connection():
     raise Exception("Could not connect to Neo4j after multiple retries")
 
 def poll_snmp():
-    print("Starting SNMP Polling Cycle...")
+    print("Starting Dynamic SNMP Polling Cycle...")
     db = SessionLocal()
     try:
         with driver.session() as session:
-            # Get CIs and their specific assigned metrics
+            # Get CIs and their specific assigned metrics with their intervals
+            # Logic: Only pick those where (now - last_polled) >= polling_interval
             result = session.run("""
-                MATCH (n:CI)-[:HAS_METRIC]->(m:MetricDef)
-                RETURN n.id as node_id, collect(m.id) as metric_ids
+                MATCH (n:CI)-[r:HAS_METRIC]->(m:MetricDef)
+                WITH n, r, m, 
+                     coalesce(m.polling_interval, 60) as interval,
+                     coalesce(r.last_polled, datetime({year:1970})) as last_p
+                WHERE duration.between(last_p, datetime()).seconds >= interval
+                RETURN n.id as node_id, m.id as metric_id, interval
             """)
             
             records = list(result)
-            print(f"Discovered {len(records)} target nodes with assigned metrics.")
+            if not records:
+                print("No metrics due for polling in this cycle.")
+                return
+
+            print(f"Polling {len(records)} due metrics.")
 
             for record in records:
                 node_id = record["node_id"]
-                metric_ids = record["metric_ids"]
+                mid = record["metric_id"]
                 
-                print(f"Polling {node_id} for metrics: {metric_ids}")
+                print(f"Polling {node_id} for {mid} (Interval: {record['interval']}s)")
                 
-                # Simulate values based on metric type
-                for mid in metric_ids:
-                    # Simulation Logic
-                    val = 0.0
-                    if mid == 'cpu_usage':
-                        val = float(random.randint(10, 95))
-                    elif mid == 'status_code':
-                        val = 1.0 # Always UP for sim
-                    elif 'ping' in mid.lower():
-                        val = float(random.randint(20, 100)) # ms latency
-                    else:
-                        val = float(random.randint(0, 100))
-                    
-                    # Update History
-                    insert_metric_value(db, node_id, mid, val)
-                    
-                    # Optional: Update specific node property for real-time view on graph properties
-                    # (This is a simplified approach, ideally we rely just on history or dedicated prop)
-                    if mid == 'cpu_usage':
-                        status = 'CRITICAL' if val > 90 else 'OK'
-                        session.run("""
-                            MATCH (n:CI {id: $id}) 
-                            SET n.cpu_load = $cpu, n.status = $status, n.last_seen = datetime()
-                        """, id=node_id, cpu=val, status=status)
+                # Simulation Logic
+                val = 0.0
+                if mid == 'cpu_usage':
+                    val = float(random.randint(10, 95))
+                elif mid == 'status_code':
+                    val = 1.0 # Always UP for sim
+                elif 'ping' in mid.lower():
+                    val = float(random.randint(20, 100)) # ms latency
+                else:
+                    val = float(random.randint(0, 100))
+                
+                # Update History in TimescaleDB
+                insert_metric_value(db, node_id, mid, val)
+                
+                # Update last_polled on the relationship in Neo4j
+                session.run("""
+                    MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
+                    SET r.last_polled = datetime()
+                """, nid=node_id, mid=mid)
+                
+                # Update real-time props if needed
+                if mid == 'cpu_usage':
+                    status = 'CRITICAL' if val > 90 else 'OK'
+                    session.run("""
+                        MATCH (n:CI {id: $id}) 
+                        SET n.cpu_load = $cpu, n.status = $status, n.last_seen = datetime()
+                    """, id=node_id, cpu=val, status=status)
 
     except Exception as e:
-        print(f"Error during polling cycle: {e}")
+        print(f"Error during dynamic polling cycle: {e}")
     finally:
         db.close()
 

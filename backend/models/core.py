@@ -56,6 +56,7 @@ class MetricDef(BaseModel):
     operator: Optional[str] = ">="
     criticality: Optional[int] = 1  # 1: Info, 2: Warning, 3: Exception
     applicable_to: Optional[Dict[str, List[str]]] = None
+    polling_interval: Optional[int] = 60
 
 
 class HardwareModel(BaseModel):

@@ -46,10 +46,20 @@ async def get_node_usage(node_id: str):
     return node_service.get_node_usage(node_id)
 
 @router.post("/upload")
-async def upload_nodes(file: UploadFile = File(...)):
+async def upload_nodes(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user)
+):
     """
     Bulk upload Configuration Items (CIs) from an Excel file.
+    Enforces CI_EDIT permission.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
     if not file.filename.endswith('.xlsx'):
         raise HTTPException(status_code=400, detail="Invalid file format. Please upload an Excel file (.xlsx)")
     
@@ -57,9 +67,10 @@ async def upload_nodes(file: UploadFile = File(...)):
     return await node_service.bulk_upload_nodes(contents, file.filename)
 
 @router.get("/template")
-async def get_node_template():
+async def get_node_template(current_user: User = Depends(get_current_active_user)):
     """
     Generates a pre-filled Excel template for bulk import.
+    Requires authentication.
     """
     return node_service.get_node_template()
 
