@@ -16,13 +16,18 @@ async def get_links(current_user: User = Depends(get_current_active_user)):
     """
     Fetch all active relationship links between CIs and Metrics.
     """
-    return link_service.get_links()
+    return link_service.get_links(current_user)
 
 @router.post("/links")
 async def create_link(link: Link, current_user: User = Depends(get_current_active_user)):
     """
     Create a new relationship (edge) between two nodes.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
     return link_service.create_link(link)
 
 @router.delete("/links")
@@ -30,6 +35,11 @@ async def delete_link(link: Link, current_user: User = Depends(get_current_activ
     """
     Delete a relationship between two nodes.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_DELETE, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_DELETE required")
     return link_service.delete_link(link)
 
 @router.get("/graph/full")

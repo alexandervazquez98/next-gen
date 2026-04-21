@@ -72,7 +72,7 @@ async def upload_nodes(
     if not file.filename.endswith('.xlsx'):
         raise HTTPException(status_code=400, detail="Invalid file format. Please upload an Excel file (.xlsx)")
     
-    return await node_service.bulk_upload_nodes(contents, file.filename)
+    return await node_service.bulk_upload_nodes(contents, file.filename, current_user)
 
 @router.get("/template")
 async def get_node_template(current_user: User = Depends(get_current_active_user)):

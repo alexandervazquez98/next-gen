@@ -68,14 +68,17 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
     owner: filterOwner 
   });
   
+  // UX Trap Fix: Fetch full topology once to extract ALL locations for the filter
+  const { data: fullData } = useGraphTopologyQuery({});
+
   const { data: categories } = useCategoriesQuery();
   const { data: owners } = useOwnersQuery();
 
   const nodes = data?.nodes ?? [];
   const links = data?.links ?? [];
 
-  // Extract unique locations from nodes to populate filter
-  const locations = Array.from(new Set(nodes.map(n => n.location_name).filter(Boolean))).sort();
+  // Extract unique locations from FULL nodes to populate filter, so it doesn't collapse
+  const locations = Array.from(new Set((fullData?.nodes ?? []).map(n => n.location_name).filter(Boolean))).sort();
 
   useEffect(() => {
     if (!svgRef.current) {

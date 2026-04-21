@@ -42,10 +42,10 @@ MATCH (app:CI {name: 'App-Server-01'}), (db:CI {name: 'DB-Cluster-01'})
 MERGE (app)-[:DEPENDS_ON {criticality: 'High'}]->(db);
 
 MATCH (app:CI {name: 'App-Server-01'}), (sw:CI {name: 'Core-Switch-01'})
-MERGE (app)-[:CONNECTED_VIA]->(sw);
+MERGE (app)-[:CONNECTS_TO]->(sw);
 
 MATCH (db:CI {name: 'DB-Cluster-01'}), (sw:CI {name: 'Core-Switch-01'})
-MERGE (db)-[:CONNECTED_VIA]->(sw);
+MERGE (db)-[:CONNECTS_TO]->(sw);
 
 // 5. Users
 MERGE (u:User {id: 1, role: 'Admin', access_level: 'Full', status: 'Active'});

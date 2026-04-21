@@ -356,7 +356,7 @@ def evaluate_status(
     return "OK"
 
 
-def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver, warn_custom=None, crit_custom=None):
+def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver, warn_custom=None, crit_custom=None, session=None):
     crit_level = metric_def.get("criticality", 1)
     base_severity = "INFO"
     if crit_level == 2:
@@ -371,7 +371,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver, warn_
 
     if poll_status != "OK":
         status = "CRITICAL"
-        severity = base_severity
+        severity = "CRITICAL" # Forced to CRITICAL
         is_breach = True
         message = f"Metric Collection Failed: {err_msg or 'Timeout'}"
         val = "N/A"
@@ -404,13 +404,27 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver, warn_
 
             if is_availability_metric and float(val) == 0:
                 status = "CRITICAL"
-                severity = base_severity
+                severity = "CRITICAL" # Forced to CRITICAL
                 is_breach = True
                 message = f"Service/Host Down: {metric_def.get('name')}"
+            
+            # Suspect Issue: Severity Logic Flaw Fix
+            # Ensure severity matches status if status is CRITICAL or WARNING
+            if status == "CRITICAL":
+                severity = "CRITICAL"
+            elif status == "WARNING" and severity != "CRITICAL":
+                severity = "WARNING"
+
         except ValueError:
             pass
 
-    with driver.session() as session:
+    if session:
+        _store_metric_result_impl(session, ci, metric_def, val, status, message, is_breach, severity)
+    else:
+        with driver.session() as session:
+            _store_metric_result_impl(session, ci, metric_def, val, status, message, is_breach, severity)
+
+def _store_metric_result_impl(session, ci, metric_def, val, status, message, is_breach, severity):
         session.run(
             """
             MATCH (n:CI {id: $nid})

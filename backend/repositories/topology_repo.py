@@ -4,17 +4,6 @@ from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
 
-import re
-
-def validate_rel_type(rel_type: str) -> str:
-    """
-    Validates that the relationship type is a safe alphanumeric string.
-    Neo4j relationship types cannot be parameterized.
-    """
-    if not re.match(r"^[A-Z][A-Z0-9_]*$", rel_type):
-        raise ValueError(f"Invalid relationship type: {rel_type}")
-    return rel_type
-
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
     
@@ -74,8 +63,8 @@ def upsert_node(node: Node) -> None:
     serial = node.serialNumber or ""
     firmware = node.firmwareVersion or ""
 
-    query = """
-    MERGE (n:CI {id: $id})
+    query = f"""
+    MERGE (n:CI {{id: $id}})
     SET n.name = $label,
         n.layer = $type,
         n.status = $status,
@@ -91,17 +80,10 @@ def upsert_node(node: Node) -> None:
         n.updated_at = datetime()
     """
     
-    params = {
-        "id": node.id, "label": node.label, "type": node.type, "status": node.status, 
-        "ip": node.ip, "owner": owner, "loc_name": loc_name, "brand": brand, "model": model,
-        "serial": serial, "firmware": firmware, "snmp": snmp_str, "polling": node.pollingInterval
-    }
-
+    # Parameterized coordinates to avoid injection
     if node.location and 'lat' in node.location and 'long' in node.location:
-        query += ", n.location = point({latitude: $lat, longitude: $long})"
-        params["lat"] = float(node.location['lat'])
-        params["long"] = float(node.location['long'])
-    
+        query += ", n.location = point({latitude: $lat, longitude: $lng})"
+
     query += """
     WITH n
     MERGE (c:Category {name: $type})
@@ -126,23 +108,10 @@ def upsert_node(node: Node) -> None:
         session.run(query, 
             id=node.id, label=node.label, type=node.type, status=node.status, 
             ip=node.ip, owner=owner, loc_name=loc_name, brand=brand, model=model,
-            serial=serial, firmware=firmware, snmp=snmp_str, polling=node.pollingInterval
+            serial=serial, firmware=firmware, snmp=snmp_str, polling=node.pollingInterval,
+            lat=node.location.get('lat') if node.location else 0,
+            lng=node.location.get('long') if node.location else 0
         )
-
-def create_default_ping_metric(node_id: str, label: str):
-    driver = get_db()
-    ping_criteria = json.dumps({"names": [label]})
-    ping_id = f"PING-{label}"
-    with driver.session() as session:
-        session.run("""
-            MERGE (m:MetricDef {id: $mid})
-            SET m.protocol = 'ICMP',
-            m.description = 'Monitoreo via ping ICMP',
-            m.applicable_to = $criteria,
-            m.warning = 0,
-            m.critical = 0,
-            m.oid = 'ICMP' 
-        """, mid=ping_id, criteria=ping_criteria)
 
 def delete_node(node_id: str) -> None:
     driver = get_db()
@@ -184,44 +153,47 @@ def bulk_insert_node(
                 n.serialNumber = $serial,
                 n.firmwareVersion = $firmware,
                 n.location = point({latitude: $lat, longitude: $long}),
+                n.location_name = $loc_name,
                 n.pollingInterval = $polling,
                 n.snmp = $snmp
             SET n += $metadata
             
             WITH n
             MERGE (c:Category {name: $type})
-            MERGE (n)-[:CATEGORIZED_AS]->(c)
+            MERGE (n)-[:CATEGORIZED_AS]->(cat)
             
             WITH n
             WHERE $owner <> ''
-            MATCH (o:OwnerGroup {name: $owner})
+            MERGE (o:OwnerGroup {name: $owner})
             MERGE (n)-[:OWNED_BY]->(o)
         """, 
         id=nid, label=label, type=ntype, status=status, ip=ip, 
         brand=brand, model=model, serial=serial, firmware=firmware,
-        lat=lat, long=long, polling=polling, snmp=snmp_str,
+        lat=lat, long=long, loc_name=metadata.get('location_name'),
+        polling=polling, snmp=snmp_str,
         metadata=metadata, owner=owner)
-
-def get_template_data() -> (List[str], List[str]):
-    driver = get_db()
-    with driver.session() as session:
-        res_o = session.run("MATCH (o:OwnerGroup) RETURN o.name as name ORDER BY o.name")
-        owners_list = [record["name"] for record in res_o]
-        res_c = session.run("MATCH (c:Category) RETURN c.name as name ORDER BY c.name")
-        layers_list = [record["name"] for record in res_c]
-    return owners_list, layers_list
 
 # --- Link Operations ---
 
-def get_links() -> List[Dict[str, Any]]:
+def get_links(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
     with driver.session() as session:
         query = """
             MATCH (a)-[r]->(b)
-            WHERE (a:CI OR a:Metric) AND (b:CI OR b:Metric) 
+            WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef) 
               AND NOT type(r) = 'CATEGORIZED_AS'
               AND NOT type(r) = 'OWNED_BY'
+              AND NOT type(r) = 'IS_MODEL'
               AND a.id IS NOT NULL AND b.id IS NOT NULL
+        """
+        
+        params = {}
+        if not is_admin:
+            if not allowed_locations: return []
+            query += " AND (a.location_name IN $allowed_locations OR b.location_name IN $allowed_locations) "
+            params["allowed_locations"] = allowed_locations
+
+        query += """
             RETURN 
                 a.id as source, 
                 COALESCE(a.display_name, a.name, a.label, a.id) as source_label,
@@ -229,7 +201,7 @@ def get_links() -> List[Dict[str, Any]]:
                 COALESCE(b.display_name, b.name, b.label, b.id) as target_label,
                 type(r) as rel
         """
-        result = session.run(query)
+        result = session.run(query, **params)
         return [{
             "source": record["source"],
             "source_label": record["source_label"],
@@ -240,7 +212,7 @@ def get_links() -> List[Dict[str, Any]]:
 
 def create_link(source: str, target: str, relationship: str) -> None:
     driver = get_db()
-    rel_type = validate_rel_type(relationship.upper().replace(" ", "_"))
+    rel_type = relationship.upper().replace(" ", "_")
     with driver.session() as session:
         session.run(f"""
             MATCH (a), (b) 
@@ -250,16 +222,12 @@ def create_link(source: str, target: str, relationship: str) -> None:
 
 def delete_link(source: str, target: str, relationship: str) -> None:
     driver = get_db()
-    rel_type = validate_rel_type(relationship.upper().replace(" ", "_"))
+    rel_type = relationship.upper().replace(" ", "_")
     with driver.session() as session:
-        session.run(f"MATCH (a:CI {{id: $source}})-[r:{rel_type}]->(b:CI {{id: $target}}) DELETE r",
+        session.run(f"MATCH (a {{id: $source}})-[r:{rel_type}]->(b {{id: $target}}) DELETE r",
                     source=source, target=target)
 
 def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, critical: float = None):
-    """
-    Creates or updates a :HAS_METRIC relationship between a CI and a MetricDef.
-    Stores individual thresholds on the relationship edge.
-    """
     driver = get_db()
     with driver.session() as session:
         session.run("""
@@ -270,30 +238,11 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
                 r.critical_threshold = $critical
         """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
 
-def get_filtered_graph_data(
-    layer: str = None, 
-    location: str = None, 
-    owner: str = None,
-    allowed_locations: Optional[List[str]] = None,
-    is_admin: bool = False
-) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
-    """
-    Fetches technical topology (:CI nodes) with optional metadata filters.
-    Enforces Data Scoping.
-    """
+def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
     driver = get_db()
     
-    # Build dynamic WHERE clause for nodes
     where_clauses = []
     params = {}
-
-    # Scoping
-    if not is_admin:
-        if not allowed_locations:
-            return [], []
-        where_clauses.append("n.location_name IN $allowed_locations")
-        params["allowed_locations"] = allowed_locations
-
     if layer:
         where_clauses.append("n.layer = $layer")
         params["layer"] = layer
@@ -304,6 +253,11 @@ def get_filtered_graph_data(
         where_clauses.append("n.owner = $owner")
         params["owner"] = owner
     
+    if not is_admin:
+        if not allowed_locations: return [], []
+        where_clauses.append("n.location_name IN $allowed_locations")
+        params["allowed_locations"] = allowed_locations
+
     where_str = ""
     if where_clauses:
         where_str = " WHERE " + " AND ".join(where_clauses)
@@ -312,57 +266,15 @@ def get_filtered_graph_data(
         # Fetch nodes
         nodes_query = f"MATCH (n:CI){where_str} RETURN n, labels(n) as labels"
         nodes_result = session.run(nodes_query, **params)
-        nodes = []
-        for record in nodes_result:
-            node_props = dict(record["n"])
-            node_props["_labels"] = record["labels"]
-            nodes.append(node_props)
+        nodes = [dict(record["n"], _labels=record["labels"]) for record in nodes_result]
 
-        # Build dynamic WHERE clause for links (Ensuring BOTH sides match criteria)
-        links_where = []
-        if not is_admin:
-            links_where.append("a.location_name IN $allowed_locations AND b.location_name IN $allowed_locations")
-        if layer:
-            links_where.append("a.layer = $layer AND b.layer = $layer")
-        if location:
-            links_where.append("a.location_name = $location AND b.location_name = $location")
-        if owner:
-            links_where.append("a.owner = $owner AND b.owner = $owner")
-        
-        links_where_str = ""
-        if links_where:
-            links_where_str = " WHERE " + " AND ".join(links_where)
-
-        # Fetch relationships between filtered CIs
-        links_query = f"MATCH (a:CI)-[r]->(b:CI){links_where_str} RETURN a, r, b"
+        # Fetch relationships (ensure both ends match filters and scoping)
+        links_query = f"MATCH (a:CI)-[r]->(b:CI){where_str.replace('n.', 'a.')} AND {where_str.replace('n.', 'b.')} RETURN a, r, b"
         links_result = session.run(links_query, **params)
-        links = []
-        for record in links_result:
-            links.append({
-                "source_node": dict(record["a"]),
-                "target_node": dict(record["b"]),
-                "type": record["r"].type
-            })
-                
-        return nodes, links
-
-def get_full_graph_data() -> (List[Dict[str, Any]], List[Dict[str, Any]]):
-    driver = get_db()
-    with driver.session() as session:
-        nodes_result = session.run("MATCH (n) RETURN n, labels(n) as labels")
-        nodes = []
-        for record in nodes_result:
-            node_props = dict(record["n"])
-            node_props["_labels"] = record["labels"]
-            nodes.append(node_props)
-
-        links_result = session.run("MATCH (a)-[r]->(b) RETURN a, r, b")
-        links = []
-        for record in links_result:
-            links.append({
-                "source_node": dict(record["a"]),
-                "target_node": dict(record["b"]),
-                "type": record["r"].type
-            })
+        links = [{
+            "source_node": dict(record["a"]),
+            "target_node": dict(record["b"]),
+            "type": record["r"].type
+        } for record in links_result]
                 
         return nodes, links

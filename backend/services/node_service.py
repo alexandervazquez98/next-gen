@@ -148,7 +148,7 @@ def get_node_usage(node_id: str) -> Dict[str, int]:
     return {"count": count}
 
 
-async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse:
+async def bulk_upload_nodes(file_contents: bytes, filename: str, current_user: User) -> JSONResponse:
     try:
         # For compatibility with pandas read_excel, we wrap bytes in BytesIO
         df = pd.read_excel(io.BytesIO(file_contents), sheet_name=0)
@@ -158,9 +158,16 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
         )
 
     valid_owners, valid_layers = topology_repo.get_valid_owners_and_layers()
+    
+    # Optimization: Fetch metrics catalog once for the whole bulk operation
+    from services.metric_service import get_metrics
+    metrics_catalog = get_metrics()
 
     validation_errors = []
     processed_count = 0
+    
+    is_admin = current_user.role == "ADMIN" or current_user.role == UserRole.ADMIN.value
+    allowed_locations = current_user.allowed_locations or []
 
     for index, row in df.iterrows():
         row_idx = index + 2
@@ -222,7 +229,12 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
         snmp_str = json.dumps(snmp)
 
         ip = str(row.get("IP", ""))
-        loc_name = str(row.get("Location", ""))
+        loc_name = str(row.get("Location", "")).strip()
+
+        # Scoping Check
+        if not is_admin and loc_name not in allowed_locations:
+             validation_errors.append(f"Row {row_idx} (ID: {nid}): Location '{loc_name}' is not in your allowed locations.")
+             continue
 
         lat, long = 0.0, 0.0
         if "Latitude" in row and not pd.isna(row["Latitude"]):
@@ -278,7 +290,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
                 "brand": brand,
                 "model": model,
             }
-            reconcile_node_metrics(node_dict)
+            reconcile_node_metrics(node_dict, metrics_catalog=metrics_catalog)
         except Exception as e:
             logger.error(f"Error reconciling metrics for bulk node {nid}: {e}")
 
