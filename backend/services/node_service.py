@@ -82,7 +82,8 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
             "pollingInterval": node.get("pollingInterval") or 60,
             "snmp": node.get("snmp"),
             "location": loc,
-            "metadata": {**clean_metadata, "locationName": node.get("location_name")},
+            "location_name": node.get("location_name"),
+            "metadata": {**clean_metadata},
             "metrics": metrics,
         }
         # Parse SNMP stored as string if necessary

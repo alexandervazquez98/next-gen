@@ -17,7 +17,7 @@ class Node(BaseModel):
     metadata: Optional[dict] = {}
     # Flattened Fields (Optional)
     owner: Optional[str] = None
-    locationName: Optional[str] = None
+    location_name: Optional[str] = None
     pollingInterval: Optional[int] = 60
     snmp: Optional[Union[dict, str]] = None  # Can be dict or JSON string
     brand: Optional[str] = None

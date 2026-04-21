@@ -62,7 +62,7 @@ def upsert_node(node: Node) -> None:
         snmp_str = json.dumps(node.snmp)
     
     owner = node.owner
-    loc_name = node.locationName
+    loc_name = node.location_name
     brand = node.brand
     model = node.model
     serial = node.serialNumber or ""

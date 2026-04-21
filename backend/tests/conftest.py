@@ -360,7 +360,7 @@ def sample_ci_node() -> dict:
         "name": "Router-01",
         "layer": "router",
         "owner": "NetOps",
-        "locationName": "Data Center A",
+        "location_name": "Data Center A",
         "pollingInterval": 60,
         "snmp": {"version": "v2c", "readCommunity": "public"},
         "metrics": [],

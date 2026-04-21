@@ -268,7 +268,7 @@ def _build_business_context(
     impacted_users, impacted_users_source = _pick_value(
         event_data.get("impacted_users"), business_service.get("impacted_users_count")
     )
-    site, site_source = _pick_value(event_data.get("site"), ci_data.get("locationName"))
+    site, site_source = _pick_value(event_data.get("site"), ci_data.get("location_name"))
     service_catalog_id, sc_id_source = _pick_value(
         event_data.get("service_catalog_id"), service_catalog.get("id")
     )

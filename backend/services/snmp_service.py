@@ -68,7 +68,7 @@ def resolve_event_snapshot(session, ci_id: str) -> Dict[str, Any]:
         MATCH (ci:CI {id: $ci_id})
         OPTIONAL MATCH (ci)-[:BELONGS_TO]->(bs:BusinessService)
         OPTIONAL MATCH (bs)-[:USES_SLA]->(sc:ServiceCatalog)
-        RETURN ci.locationName AS site,
+        RETURN ci.location_name AS site,
                bs.id AS business_service_id,
                bs.name AS business_service_name,
                bs.tier AS business_service_tier,
