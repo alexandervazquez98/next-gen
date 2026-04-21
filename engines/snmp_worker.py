@@ -92,10 +92,15 @@ def fetch_snmp_value(ip, community, oid, port=161):
     except Exception:
         return None
 
+from backend.repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+
+# ... (resto de funciones fetch_icmp_ping, fetch_snmp_value, etc.)
+
 def poll_snmp():
     start_time = time.time()
     print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
     db = SessionLocal()
+    metrics_to_save = []
     metrics_count = 0
     failed_count = 0
     try:
@@ -114,7 +119,7 @@ def poll_snmp():
                        interval
             """)
             
-            # Use iterator to process one by one, avoiding OOM for large CI sets
+            # Use iterator to process one by one
             for record in result:
                 metrics_count += 1
                 node_id = record["node_id"]
@@ -133,7 +138,13 @@ def poll_snmp():
                     val = fetch_snmp_value(ip, record["community"], record["oid"], int(record["port"]))
                 
                 if val is not None:
-                    insert_metric_value(db, node_id, mid, val)
+                    # Add to batch
+                    metrics_to_save.append({
+                        "node_id": node_id,
+                        "metric_id": mid,
+                        "value": val,
+                        "time": datetime.utcnow()
+                    })
                     
                     if mid == 'status_code' or 'ping' in mid.lower():
                         status = 'OK' if val > 0 else 'CRITICAL'
@@ -147,8 +158,11 @@ def poll_snmp():
                     """, nid=node_id, mid=mid)
                 else:
                     failed_count += 1
-                    # Fail: We DON'T update last_polled here, so it stays eligible for polling 
-                    # in the next 10s engine loop (retry logic).
+
+            # Perform Bulk Insert at the end of the cycle
+            if metrics_to_save:
+                bulk_insert_metrics(db, metrics_to_save)
+                print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
 
         duration = time.time() - start_time
         if metrics_count > 0:
