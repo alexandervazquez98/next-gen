@@ -176,7 +176,7 @@ const MainLayout: React.FC = () => {
               <Route path="admin" element={<AdminPage />} />
               <Route path="users" element={<UserManager />} />
               <Route path="cmdb" element={<GraphCMDB onNodeClick={(n) => { setSelectedNode(n); setShowDetailModal(true); }} />} />
-              <Route path="network" element={<NetworkVisualizer />} />
+              {/* <Route path="network" element={<NetworkVisualizer />} /> */}
               <Route path="analytics" element={<MetricAnalytics />} />
               <Route path="inventory" element={<GlobalInventory />} />
             </Routes>
