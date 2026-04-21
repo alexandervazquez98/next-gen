@@ -124,7 +124,14 @@ const AdminPage: React.FC = () => {
                 body: formData
             });
 
-            alert('Upload successful! ' + (data.message || ''));
+            console.log('[Bulk Upload] Response:', data);
+
+            let fullMessage = data.message || 'Upload completed';
+            if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+                fullMessage += `\n\nErrors found:\n- ${data.errors.join('\n- ')}`;
+            }
+
+            alert(fullMessage);
             fetchData();
         } catch (e: any) {
             console.error(e);
