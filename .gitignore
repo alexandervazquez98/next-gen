@@ -133,7 +133,10 @@ coverage.xml
 *.cover
 .eslintcache
 .stylelintcache
+openspec/
+frontend/coverage/
 
 # Artifacts de OpenCode
 .artifacts/
 .atl
+.engram/
