@@ -14,7 +14,7 @@ services:
       - ./docker/neo4j/entrypoint.sh:/entrypoint.sh
     entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "nexgen_password", "RETURN 1"]
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER}", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
       interval: 10s
       timeout: 10s
       retries: 10
