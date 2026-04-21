@@ -93,8 +93,11 @@ def fetch_snmp_value(ip, community, oid, port=161):
         return None
 
 def poll_snmp():
+    start_time = time.time()
     print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
     db = SessionLocal()
+    metrics_count = 0
+    failed_count = 0
     try:
         with driver.session() as session:
             # Enhanced query: Get CI credentials and Metric metadata
@@ -113,6 +116,7 @@ def poll_snmp():
             
             # Use iterator to process one by one, avoiding OOM for large CI sets
             for record in result:
+                metrics_count += 1
                 node_id = record["node_id"]
                 mid = record["metric_id"]
                 protocol = record["protocol"]
@@ -129,7 +133,6 @@ def poll_snmp():
                     val = fetch_snmp_value(ip, record["community"], record["oid"], int(record["port"]))
                 
                 if val is not None:
-                    print(f"Result for {node_id} ({mid}): {val}")
                     insert_metric_value(db, node_id, mid, val)
                     
                     if mid == 'status_code' or 'ping' in mid.lower():
@@ -143,9 +146,13 @@ def poll_snmp():
                         SET r.last_polled = datetime()
                     """, nid=node_id, mid=mid)
                 else:
-                    print(f"Poll failed for {node_id} ({mid}). Will retry next cycle.")
+                    failed_count += 1
                     # Fail: We DON'T update last_polled here, so it stays eligible for polling 
                     # in the next 10s engine loop (retry logic).
+
+        duration = time.time() - start_time
+        if metrics_count > 0:
+            print(f"[{datetime.now().isoformat()}] Cycle Complete: {metrics_count} metrics processed ({failed_count} failed) in {duration:.2f}s.")
 
     except Exception as e:
         print(f"Error during dynamic polling cycle: {e}")
