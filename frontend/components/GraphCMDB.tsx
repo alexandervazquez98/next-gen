@@ -142,6 +142,8 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 
     const cachedNodesExist = nodes.some(n => nodeStateRef.current.has(n.id));
 
+    console.log(`[GraphCMDB] 🚀 Componente montado. Nodos: ${nodes.length}, Agrupado: ${groupByLocation}`);
+
     const validNodes = nodes.map((node) => {
       const n = Object.create(node);
       const cached = nodeStateRef.current.get(node.id);
@@ -151,13 +153,13 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
         n.y = cached.y;
         n.vx = cached.vx;
         n.vy = cached.vy;
-        console.debug(`[GraphCMDB] Restaurando Nodo ${node.id} desde CACHE: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
+        console.log(`[GraphCMDB] 📍 Restaurando Nodo ${node.id} desde CACHE: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
       } else if (node.location?.lat && node.location?.long) {
           n.x = (node.location.long + 180) * (width / 360);
           n.y = (90 - node.location.lat) * (height / 180);
-          console.debug(`[GraphCMDB] Inicializando Nodo ${node.id} desde LAT/LONG: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
+          console.log(`[GraphCMDB] 🗺️ Inicializando Nodo ${node.id} desde LAT/LONG: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
       } else {
-          console.debug(`[GraphCMDB] Nodo ${node.id} sin ubicación ni cache.`);
+          console.log(`[GraphCMDB] ⚪ Nodo ${node.id} sin ubicación ni cache.`);
       }
       return n;
     });
