@@ -143,12 +143,17 @@ def count_potential_links(source_filter, target_filter, allowed_locations=None, 
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     
-    # Ensure uniqueness of results
-    src_ids = set([n["id"] for n in src_nodes])
-    tgt_ids = set([n["id"] for n in tgt_nodes])
+    src_ids = list(set([n["id"] for n in src_nodes]))
+    tgt_ids = list(set([n["id"] for n in tgt_nodes]))
+    
+    print(f"DEBUG [topology_repo]: Source Filter found {len(src_nodes)} nodes. Unique IDs: {len(src_ids)} ({src_ids})")
+    print(f"DEBUG [topology_repo]: Target Filter found {len(tgt_nodes)} nodes. Unique IDs: {len(tgt_ids)} ({tgt_ids})")
+    
+    total = len(src_ids) * len(tgt_ids)
+    print(f"DEBUG [topology_repo]: Final Simulation Count: {total}")
     
     return {
-        "total": len(src_ids) * len(tgt_ids),
+        "total": total,
         "source_samples": [n["name"] for n in src_nodes[:5]],
         "target_samples": [n["name"] for n in tgt_nodes[:5]]
     }
