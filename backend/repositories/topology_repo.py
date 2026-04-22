@@ -383,7 +383,13 @@ def get_filtered_graph_data(layer: str = None, location: str = None, owner: str 
         nodes = [dict(record["n"], _labels=record["labels"]) for record in nodes_result]
 
         # Fetch relationships
-        links_query = f"MATCH (a:CI)-[r]->(b:CI){where_str.replace('n.', 'a.')} AND {where_str.replace('n.', 'b.')} RETURN a, r, b"
+        links_where_str = ""
+        if where_clauses:
+            a_clauses = [c.replace("n.", "a.") for c in where_clauses]
+            b_clauses = [c.replace("n.", "b.") for c in where_clauses]
+            links_where_str = " WHERE " + " AND ".join(a_clauses + b_clauses)
+            
+        links_query = f"MATCH (a:CI)-[r]->(b:CI){links_where_str} RETURN a, r, b"
         links_result = session.run(links_query, **params)
         links = [{
             "source_node": dict(record["a"]),
