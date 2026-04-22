@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import ForceGraph3D from 'react-force-graph-3d';
+import ForceGraph2D from 'react-force-graph-2d';
 import { GraphNode, GraphLink } from '../types';
 import { api } from '../services/api';
 // import SpriteText from 'three-spritetext'; // Optional for text labels if needed
@@ -114,15 +114,43 @@ const NetworkVisualizer: React.FC = () => {
                 </div>
             </div>
 
-            <ForceGraph3D
+            <ForceGraph2D
                 ref={fgRef}
                 graphData={graphData}
                 nodeLabel="label"
                 nodeColor={getNodeColor}
-                nodeVal={getNodeVal}
-                nodeRelSize={1.5} // Slightly larger relative size
-                nodeOpacity={1.0}
-                nodeResolution={32} // Higher quality spheres
+                nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2Array, globalScale: number) => {
+                    const label = node.label;
+                    const fontSize = 12 / globalScale;
+                    ctx.font = `${fontSize}px Sans-Serif`;
+                    const textWidth = ctx.measureText(label).width;
+                    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); // some padding
+
+                    const size = Math.sqrt(getNodeVal(node)) * 2;
+
+                    // Draw Node Circle
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, size, 0, 2 * Math.PI, false);
+                    ctx.fillStyle = getNodeColor(node);
+                    ctx.fill();
+
+                    // Glow Effect
+                    ctx.shadowColor = getNodeColor(node);
+                    ctx.shadowBlur = 10;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+
+                    // Draw Text
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(label, node.x, node.y + size + 5);
+                }}
+                nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2Array) => {
+                    const size = Math.sqrt(getNodeVal(node)) * 2;
+                    ctx.fillStyle = color;
+                    ctx.beginPath(); ctx.arc(node.x, node.y, size + 2, 0, 2 * Math.PI, false); ctx.fill();
+                }}
 
                 // Force Engine Configuration
                 d3VelocityDecay={0.3}
@@ -138,14 +166,9 @@ const NetworkVisualizer: React.FC = () => {
                 // Links
                 linkDirectionalParticles={4}
                 linkDirectionalParticleSpeed={d => 0.005}
-                linkDirectionalParticleWidth={3}
-                linkColor={() => 'rgba(255,255,255,0.3)'} // Brighter links
-                linkWidth={1.5}
-
-
-                // Environment
-                backgroundColor="#050510" // Deep Navy/Black (Better contrast than pure black)
-                showNavInfo={false}
+                linkDirectionalParticleWidth={2}
+                linkColor={() => 'rgba(255,255,255,0.2)'}
+                linkWidth={1}
             />
 
             <div className="absolute bottom-8 right-8 z-50 text-right pointer-events-none">

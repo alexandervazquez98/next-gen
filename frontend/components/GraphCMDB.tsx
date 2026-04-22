@@ -158,11 +158,11 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       simulation.force('x', d3.forceX().x((d: any) => {
         if (d.location?.long) return (d.location.long + 180) * (width / 360);
         return locationCenters[d.location_name]?.x || width / 2;
-      }).strength(0.5));
+      }).strength(0.08));
       simulation.force('y', d3.forceY().y((d: any) => {
         if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
         return locationCenters[d.location_name]?.y || height / 2;
-      }).strength(0.5));
+      }).strength(0.08));
     }
 
     const linkSelection = container.append('g')
