@@ -251,10 +251,6 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       .attr('stroke-width', (node) => node.status === 'CRITICAL' ? 4 : 2);
 
     nodeSelection.append('text')
-      .attr('dy', '.35em').attr('text-anchor', 'middle').attr('fill', 'white').attr('font-size', '10px').attr('font-weight', 'bold')
-      .text((node) => node.label.substring(0, 3).toUpperCase());
-
-    nodeSelection.append('text')
       .attr('dy', '3.5em').attr('text-anchor', 'middle').attr('fill', '#a3a3a3').attr('font-size', '11px')
       .text((node) => node.label);
 
