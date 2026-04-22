@@ -266,6 +266,10 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
     if filter_obj.get("name"):
         where_clauses.append(f"{alias}.name = ${alias}_name")
         params[f"{alias}_name"] = filter_obj["name"]
+    # Handle explicit IDs for granular selection
+    if filter_obj.get("ids"):
+        where_clauses.append(f"{alias}.id IN ${alias}_ids")
+        params[f"{alias}_ids"] = filter_obj["ids"]
     # Handle MetricDef ID specifically
     if label == "MetricDef" and filter_obj.get("id"):
         where_clauses.append(f"{alias}.id = ${alias}_id")

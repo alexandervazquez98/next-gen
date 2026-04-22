@@ -21,7 +21,20 @@ app = FastAPI(
     title="NEX-GEN API",
     version="1.4.0",
     description="API for CMDB, Monitoring, and AIOps Platform",
+    redirect_slashes=False,
 )
+
+"""
+ROUTING ARCHITECTURE CONVENTIONS:
+1. Centralized Prefix: All routers are included with the '/api' prefix here in main.py.
+2. No Trailing Slashes: Routes are defined WITHOUT trailing slashes to maintain consistency.
+3. Pragmatic REST for Bulk Ops: 
+   - Single resource mutations use standard verbs (GET, POST, PUT, DELETE).
+   - Bulk/Mass operations use POST for compatibility with corporate proxies and firewalls 
+     that often intercept or misinterpret PUT/DELETE on batch endpoints.
+4. Static vs Dynamic Priority: Static routes (like /bulk-update) MUST be registered 
+   before dynamic routes (like /{id}) in their respective routers to prevent collisions.
+"""
 
 # Include Routers with global /api prefix
 app.include_router(auth.router, prefix="/api")
