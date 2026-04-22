@@ -152,12 +152,6 @@ const AdminInventory: React.FC = () => {
                                     ))}
                                 </tbody>
                             </table>
-                            {/* Visual Sentinel */}
-                            <div className="w-full text-center py-6">
-                                <div className="inline-block px-3 py-1 bg-red-500/20 text-red-500 text-[10px] font-black rounded-full border border-red-500/30">
-                                    END_OF_INVENTORY
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
