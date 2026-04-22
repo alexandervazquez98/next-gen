@@ -259,6 +259,9 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
     
     has_specific_filter = False
 
+    # Debug print to server console
+    print(f"DEBUG [topology_repo]: Building query for alias '{alias}' with filter: {filter_obj}")
+
     if filter_obj.get("layer"):
         where_clauses.append(f"{alias}.layer = ${alias}_layer")
         params[f"{alias}_layer"] = filter_obj["layer"]
@@ -272,7 +275,7 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
         params[f"{alias}_name"] = filter_obj["name"]
         has_specific_filter = True
     # Handle explicit IDs for granular selection
-    if filter_obj.get("ids"):
+    if filter_obj.get("ids") and len(filter_obj["ids"]) > 0:
         where_clauses.append(f"{alias}.id IN ${alias}_ids")
         params[f"{alias}_ids"] = filter_obj["ids"]
         has_specific_filter = True
@@ -293,13 +296,16 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
         
     # Safety: If no specific filter was provided, force 0 results to avoid Cartesian explosion
     if not has_specific_filter and not filter_obj.get("allow_all"):
+        print(f"DEBUG [topology_repo]: No specific filter for '{alias}', adding safety '1=0'")
         where_clauses.append("1 = 0")
         
     where_str = ""
     if where_clauses:
         where_str = " WHERE " + " AND ".join(where_clauses)
         
-    return f"MATCH {''.join(clauses)}{where_str}", params
+    query = f"MATCH {''.join(clauses)}{where_str}"
+    print(f"DEBUG [topology_repo]: Final query part for '{alias}': {query}")
+    return query, params
 
 def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: List[str] = None, is_admin: bool = False) -> Dict[str, Any]:
     """Simulates the mass link operation with optimized sampling."""
