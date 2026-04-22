@@ -140,4 +140,3 @@ frontend/coverage/
 docker-compose.override.yml
 .artifacts/
 .atl
-.engram/
