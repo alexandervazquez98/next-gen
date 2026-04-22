@@ -65,6 +65,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
+  const nodeStateRef = useRef<Map<string, {x: number, y: number, vx: number, vy: number}>>(new Map());
 
   const { data, isLoading } = useGraphTopologyQuery({ 
     layer: filterLayer, 
@@ -139,9 +140,18 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       return nodes.some((node) => node.id === sourceId) && nodes.some((node) => node.id === targetId);
     }).map((link) => Object.create(link));
 
+    const cachedNodesExist = nodes.some(n => nodeStateRef.current.has(n.id));
+
     const validNodes = nodes.map((node) => {
       const n = Object.create(node);
-      if (node.location?.lat && node.location?.long) {
+      const cached = nodeStateRef.current.get(node.id);
+      
+      if (cached) {
+        n.x = cached.x;
+        n.y = cached.y;
+        n.vx = cached.vx;
+        n.vy = cached.vy;
+      } else if (node.location?.lat && node.location?.long) {
           n.x = (node.location.long + 180) * (width / 360);
           n.y = (90 - node.location.lat) * (height / 180);
       }
@@ -149,20 +159,31 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
     });
 
     const simulation = d3.forceSimulation<GraphNode>(validNodes)
-      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(120))
-      .force('charge', d3.forceManyBody().strength(-800))
+      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(150))
+      .force('charge', d3.forceManyBody().strength((d: any) => d.type === 'CI' ? -1000 : -2000))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(60));
+      .force('collision', d3.forceCollide().radius((d: any) => d.type === 'CI' ? 50 : 100))
+      .alpha(cachedNodesExist ? 0.2 : 1.0);
 
     if (groupByLocation) {
       simulation.force('x', d3.forceX().x((d: any) => {
         if (d.location?.long) return (d.location.long + 180) * (width / 360);
         return locationCenters[d.location_name]?.x || width / 2;
-      }).strength(0.08));
+      }).strength(0.05));
       simulation.force('y', d3.forceY().y((d: any) => {
         if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
         return locationCenters[d.location_name]?.y || height / 2;
-      }).strength(0.08));
+      }).strength(0.05));
+    } else {
+        // STRONG ANCHOR for Lat/Long when NOT grouped
+        simulation.force('x', d3.forceX().x((d: any) => {
+            if (d.location?.long) return (d.location.long + 180) * (width / 360);
+            return width / 2;
+        }).strength((d: any) => d.location?.long ? 0.3 : 0.05));
+        simulation.force('y', d3.forceY().y((d: any) => {
+            if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
+            return height / 2;
+        }).strength((d: any) => d.location?.lat ? 0.3 : 0.05));
     }
 
     const linkSelection = container.append('g')
@@ -235,6 +256,11 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
         .attr('x1', (link: any) => link.source.x).attr('y1', (link: any) => link.source.y)
         .attr('x2', (link: any) => link.target.x).attr('y2', (link: any) => link.target.y);
       nodeSelection.attr('transform', (node: any) => `translate(${node.x},${node.y})`);
+
+      // SAVE STATE: Persistent Cartesian Plane
+      validNodes.forEach((n: any) => {
+        nodeStateRef.current.set(n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy });
+      });
     });
 
     function dragstarted(event: any) {
