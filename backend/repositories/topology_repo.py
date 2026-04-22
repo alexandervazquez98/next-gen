@@ -230,7 +230,24 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
     if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
     w_str = (" WHERE " + " AND ".join(where)) if where else ""
     with driver.session() as session:
-        nodes = [dict(r["n"], _labels=r["labels"]) for r in session.run(f"MATCH (n:CI){w_str} RETURN n, labels(n) as labels", **params)]
+        # Fetch nodes with explicit location extraction
+        node_query = f"""
+            MATCH (n:CI)
+            {w_str}
+            RETURN n, 
+                   n.location.latitude as lat, 
+                   n.location.longitude as lng, 
+                   labels(n) as labels
+        """
+        nodes = []
+        for r in session.run(node_query, **params):
+            node_data = dict(r["n"])
+            node_data["_labels"] = r["labels"]
+            # Reconstruct location object for frontend
+            if r["lat"] is not None and r["lng"] is not None:
+                node_data["location"] = {"lat": r["lat"], "long": r["lng"]}
+            nodes.append(node_data)
+
         l_where = (" WHERE " + " AND ".join([c.replace("n.", "a.") for c in where] + [c.replace("n.", "b.") for c in where])) if where else ""
         links = [{"source_node": dict(r["a"]), "target_node": dict(r["b"]), "type": r["r"].type} for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params)]
         return nodes, links
