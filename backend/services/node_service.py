@@ -412,3 +412,45 @@ def execute_mass_node_creator(current_user: User, payload: Dict[str, Any]) -> Di
         "created_count": processed_count,
         "errors": errors[:5]
     }
+
+def execute_mass_node_update(current_user: User, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Updates multiple nodes with shared metadata.
+    """
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    node_ids = payload.get("ids", [])
+    updates = payload.get("updates", {})
+    
+    if not node_ids:
+        return {"success": False, "message": "No nodes selected"}
+
+    processed_count = 0
+    for nid in node_ids:
+        try:
+            # Fetch existing node first to avoid data loss
+            existing = topology_repo.get_node_by_id(nid)
+            if not existing:
+                continue
+            
+            # Apply only allowed fields for bulk update
+            for field in ["location_name", "owner", "status", "pollingInterval"]:
+                if field in updates and updates[field]:
+                    existing[field] = updates[field]
+            
+            # Also metadata merge
+            if "metadata" in updates:
+                existing["metadata"] = {**existing.get("metadata", {}), **updates["metadata"]}
+
+            node_obj = Node(**existing)
+            topology_repo.upsert_node(node_obj)
+            processed_count += 1
+        except Exception as e:
+            logger.error(f"Failed to update {nid}: {e}")
+
+    return {
+        "success": True,
+        "message": f"Successfully updated {processed_count} CIs.",
+        "updated_count": processed_count
+    }

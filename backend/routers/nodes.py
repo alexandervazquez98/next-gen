@@ -102,3 +102,11 @@ async def execute_mass_nodes(payload: Dict[str, Any], current_user: User = Depen
     Requires CI_EDIT permission.
     """
     return node_service.execute_mass_node_creator(current_user, payload)
+
+@router.put("/mass")
+async def execute_mass_update_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
+    """
+    Updates mass nodes with shared metadata.
+    Requires CI_EDIT permission.
+    """
+    return node_service.execute_mass_node_update(current_user, payload)

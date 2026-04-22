@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../services/api';
 import { GraphNode } from '../types';
 import CIEditor from './CIEditor';
@@ -11,6 +11,15 @@ const AdminInventory: React.FC = () => {
     const [isMassDeploying, setIsMassDeploying] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Search and Filter State
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterLayer, setFilterLayer] = useState('');
+    const [filterStatus, setFilterStatus] = useState('');
+    
+    // Multi-select State
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isBulkEditing, setIsBulkEditing] = useState(false);
 
     const fetchData = async () => {
         setLoading(true);
@@ -27,6 +36,66 @@ const AdminInventory: React.FC = () => {
     useEffect(() => {
         fetchData();
     }, [refreshKey]);
+
+    // Derived Data: Filtered List
+    const filteredData = useMemo(() => {
+        return data.filter(item => {
+            const matchesSearch = !searchTerm || 
+                item.label?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                item.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                item.ip?.includes(searchTerm);
+            
+            const matchesLayer = !filterLayer || item.type === filterLayer;
+            const matchesStatus = !filterStatus || item.status === filterStatus;
+
+            return matchesSearch && matchesLayer && matchesStatus;
+        });
+    }, [data, searchTerm, filterLayer, filterStatus]);
+
+    // Unique values for filters
+    const layers = useMemo(() => Array.from(new Set(data.map(item => item.type))), [data]);
+    const statuses = useMemo(() => Array.from(new Set(data.map(item => item.status))), [data]);
+
+    // Bulk Logic Validation
+    const selectedItems = useMemo(() => 
+        data.filter(item => selectedIds.has(item.id)), 
+    [data, selectedIds]);
+
+    const isSelectionUniform = useMemo(() => {
+        if (selectedItems.length <= 1) return true;
+        const first = selectedItems[0];
+        return selectedItems.every(item => item.brand === first.brand && item.model === first.model);
+    }, [selectedItems]);
+
+    const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.checked) {
+            setSelectedIds(new Set(filteredData.map(item => item.id)));
+        } else {
+            setSelectedIds(new Set());
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedIds(next);
+    };
+
+    const handleBulkUpdate = async (updates: any) => {
+        try {
+            await api.put('/nodes/mass', {
+                ids: Array.from(selectedIds),
+                updates
+            });
+            alert('Bulk update successful');
+            setIsBulkEditing(false);
+            setSelectedIds(new Set());
+            setRefreshKey(prev => prev + 1);
+        } catch (e: any) {
+            alert('Bulk update failed: ' + e.message);
+        }
+    };
 
     const handleSaveNode = async (node: GraphNode) => {
         try {
@@ -69,14 +138,62 @@ const AdminInventory: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col p-4 overflow-hidden border border-white/5 bg-neutral-950/20">
-            {/* Header section - Reduced padding/margins */}
+            {/* Header section */}
             <header className="flex justify-between items-center mb-4 shrink-0 relative border-b border-white/5 pb-3">
-                <div>
-                    <h2 className="text-2xl font-black text-white tracking-tighter uppercase italic leading-none">Inventory</h2>
-                    <p className="text-[10px] text-neutral-500 font-medium tracking-tight mt-1">Managing configuration state.</p>
+                <div className="flex items-center gap-6">
+                    <div>
+                        <h2 className="text-2xl font-black text-white tracking-tighter uppercase italic leading-none">Inventory</h2>
+                        <p className="text-[10px] text-neutral-500 font-medium tracking-tight mt-1">Managing {filteredData.length} assets.</p>
+                    </div>
+
+                    {/* Search Bar */}
+                    <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded-xl px-3 py-1.5 focus-within:border-brand-500/50 transition-all">
+                        <span className="material-symbols-outlined text-sm text-neutral-500">search</span>
+                        <input 
+                            className="bg-transparent text-xs text-white outline-none w-48 font-bold placeholder:text-neutral-700"
+                            placeholder="Search by Label, IP, ID..."
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+
+                    {/* Quick Filters */}
+                    <div className="flex items-center gap-2">
+                        <select 
+                            className="bg-neutral-900 border border-white/5 rounded-lg px-2 py-1 text-[10px] font-bold text-neutral-400 outline-none"
+                            value={filterLayer}
+                            onChange={e => setFilterLayer(e.target.value)}
+                        >
+                            <option value="">All Layers</option>
+                            {layers.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                        <select 
+                            className="bg-neutral-900 border border-white/5 rounded-lg px-2 py-1 text-[10px] font-bold text-neutral-400 outline-none"
+                            value={filterStatus}
+                            onChange={e => setFilterStatus(e.target.value)}
+                        >
+                            <option value="">All Status</option>
+                            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-2">
+                    {selectedIds.size > 0 && (
+                        <div className="flex items-center gap-2 mr-4 px-3 py-1.5 bg-brand-500/10 border border-brand-500/20 rounded-xl animate-in fade-in slide-in-from-top-2">
+                            <span className="text-[10px] font-black text-brand-400 uppercase tracking-widest">{selectedIds.size} Selected</span>
+                            <button 
+                                disabled={!isSelectionUniform}
+                                onClick={() => setIsBulkEditing(true)}
+                                className="px-3 py-1 bg-brand-500 text-black text-[9px] font-black rounded-lg hover:bg-brand-400 disabled:opacity-30 transition-all uppercase"
+                                title={!isSelectionUniform ? "Mixed brand/models cannot be edited in bulk" : "Edit Selection"}
+                            >
+                                Bulk Edit
+                            </button>
+                            {!isSelectionUniform && <span className="text-[9px] text-red-400 font-bold italic">Mix Detected</span>}
+                        </div>
+                    )}
+
                     <div className="flex items-center gap-1 bg-neutral-900 border border-white/5 rounded-xl p-1 shadow-2xl scale-90 origin-right">
                         <button onClick={() => api.get<Blob>('/nodes/template').then(b => {
                             const url = window.URL.createObjectURL(b);
@@ -88,13 +205,13 @@ const AdminInventory: React.FC = () => {
                         </div>
                     </div>
                     <button 
-                        onClick={() => { setSelectedNode(null); setIsMassDeploying(true); }}
+                        onClick={() => { setSelectedNode(null); setIsMassDeploying(true); setIsBulkEditing(false); }}
                         className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-brand-400 border border-brand-500/20 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest"
                     >
-                        Mass
+                        Mass Deploy
                     </button>
                     <button 
-                        onClick={() => { setIsMassDeploying(false); setSelectedNode({} as GraphNode); }}
+                        onClick={() => { setIsMassDeploying(false); setIsBulkEditing(false); setSelectedNode({} as GraphNode); }}
                         className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-[10px] font-black transition-all shadow-xl uppercase tracking-widest"
                     >
                         New
@@ -102,29 +219,44 @@ const AdminInventory: React.FC = () => {
                 </div>
             </header>
 
-            {/* Main Content Area - Responsive Flex Container */}
+            {/* Main Content Area */}
             <div className="flex-1 flex gap-4 min-h-0 overflow-hidden relative">
-                {/* Table Container */}
                 <div className="flex-1 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm relative">
                     <div className="p-3 border-b border-white/5 bg-black/20 flex justify-between items-center shrink-0">
-                        <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">Active Assets ({data.length})</span>
+                        <div className="flex items-center gap-4">
+                            <input 
+                                type="checkbox" 
+                                className="w-3.5 h-3.5 rounded border-white/10 bg-neutral-950 checked:bg-brand-500 transition-all cursor-pointer"
+                                checked={filteredData.length > 0 && selectedIds.size === filteredData.length}
+                                onChange={handleSelectAll}
+                            />
+                            <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">Active Assets</span>
+                        </div>
                     </div>
 
-                    {/* This is the key wrapper: relative + flex-1 + overflow-hidden */}
                     <div className="flex-1 relative overflow-hidden">
                         <div className="absolute inset-0 overflow-y-auto custom-scrollbar p-1">
                             <table className="w-full border-collapse">
                                 <thead className="sticky top-0 bg-neutral-900 z-10">
                                     <tr className="text-left border-b border-white/5">
+                                        <th className="w-10 p-3 bg-neutral-900"></th>
                                         <th className="p-3 text-[9px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">CI Identity</th>
                                         <th className="p-3 text-[9px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">Network</th>
-                                        <th className="p-3 text-[9px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">Layer</th>
+                                        <th className="p-3 text-[9px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">Layer / Hardware</th>
                                         <th className="p-3 text-[9px] font-black text-neutral-500 uppercase tracking-widest text-right bg-neutral-900">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="text-xs divide-y divide-white/5">
-                                    {data.map((item: any) => (
-                                        <tr key={item.id} className={`group hover:bg-white/[0.02] transition-colors ${selectedNode?.id === item.id ? 'bg-white/[0.03]' : ''}`}>
+                                    {filteredData.map((item: any) => (
+                                        <tr key={item.id} className={`group hover:bg-white/[0.02] transition-colors ${selectedIds.has(item.id) ? 'bg-brand-500/5' : ''}`}>
+                                            <td className="p-3 text-center">
+                                                <input 
+                                                    type="checkbox"
+                                                    className="w-3.5 h-3.5 rounded border-white/10 bg-neutral-950 checked:bg-brand-500 transition-all cursor-pointer"
+                                                    checked={selectedIds.has(item.id)}
+                                                    onChange={() => toggleSelect(item.id)}
+                                                />
+                                            </td>
                                             <td className="p-3">
                                                 <div className="flex flex-col">
                                                     <span className="font-black text-white tracking-tight">{item.label}</span>
@@ -140,11 +272,11 @@ const AdminInventory: React.FC = () => {
                                             <td className="p-3">
                                                 <div className="flex items-center gap-2">
                                                     <span className="px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded-md text-[9px] font-bold uppercase border border-white/5">{item.type}</span>
-                                                    <span className="text-[10px] text-neutral-500 truncate max-w-[100px]">{item.model}</span>
+                                                    <span className="text-[10px] text-neutral-500 truncate max-w-[150px]">{item.brand} {item.model}</span>
                                                 </div>
                                             </td>
                                             <td className="p-3 text-right">
-                                                <button onClick={() => { setIsMassDeploying(false); setSelectedNode(item); }} className="p-1.5 hover:bg-brand-500/10 hover:text-brand-400 text-neutral-600 rounded-lg transition-all">
+                                                <button onClick={() => { setIsMassDeploying(false); setIsBulkEditing(false); setSelectedNode(item); }} className="p-1.5 hover:bg-brand-500/10 hover:text-brand-400 text-neutral-600 rounded-lg transition-all">
                                                     <span className="material-symbols-outlined text-sm">edit_note</span>
                                                 </button>
                                             </td>
@@ -156,11 +288,65 @@ const AdminInventory: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Right Side Panels (Editor / Mass Deployer) */}
-                {(selectedNode || isMassDeploying) && (
-                    <div className="w-[420px] shrink-0 animate-in slide-in-from-right duration-300 relative border-l border-white/5">
+                {/* Right Side Panels */}
+                {(selectedNode || isMassDeploying || isBulkEditing) && (
+                    <div className="w-[450px] shrink-0 animate-in slide-in-from-right duration-300 relative border-l border-white/5">
                         {isMassDeploying ? (
                             <MassAssetCreator onClose={() => setIsMassDeploying(false)} onRefresh={() => setRefreshKey(k => k+1)} />
+                        ) : isBulkEditing ? (
+                            <div className="h-full bg-neutral-900 p-6 space-y-6 overflow-y-auto custom-scrollbar">
+                                <header className="flex justify-between items-center border-b border-white/5 pb-4">
+                                    <div>
+                                        <h3 className="text-xl font-black text-white uppercase italic">Bulk Metadata Edit</h3>
+                                        <p className="text-[10px] text-neutral-500 font-bold uppercase">Updating {selectedIds.size} Assets ({selectedItems[0].brand} {selectedItems[0].model})</p>
+                                    </div>
+                                    <button onClick={() => setIsBulkEditing(false)} className="p-2 hover:bg-white/5 rounded-full text-neutral-500 transition-all"><span className="material-symbols-outlined">close</span></button>
+                                </header>
+                                
+                                <div className="space-y-4">
+                                    <label className="block">
+                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">New Location</span>
+                                        <input 
+                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                                            placeholder="Assign new location name..."
+                                            id="bulk-location"
+                                        />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">New Owner Group</span>
+                                        <input 
+                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                                            placeholder="Assign new owner..."
+                                            id="bulk-owner"
+                                        />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Polling Interval (s)</span>
+                                        <input 
+                                            type="number"
+                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                                            defaultValue={60}
+                                            id="bulk-polling"
+                                        />
+                                    </label>
+                                </div>
+
+                                <button 
+                                    onClick={() => {
+                                        const loc = (document.getElementById('bulk-location') as HTMLInputElement).value;
+                                        const owner = (document.getElementById('bulk-owner') as HTMLInputElement).value;
+                                        const poll = (document.getElementById('bulk-polling') as HTMLInputElement).value;
+                                        handleBulkUpdate({
+                                            location_name: loc || undefined,
+                                            owner: owner || undefined,
+                                            pollingInterval: poll ? parseInt(poll) : undefined
+                                        });
+                                    }}
+                                    className="w-full py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-xl transition-all"
+                                >
+                                    Apply Changes to {selectedIds.size} CIs
+                                </button>
+                            </div>
                         ) : (
                             <CIEditor 
                                 node={selectedNode?.id ? selectedNode : null} 
