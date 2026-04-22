@@ -363,6 +363,7 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     }}
     UNWIND sources as a
     UNWIND targets as b
+    WITH a, b
     WHERE a.id <> b.id
     MERGE (a)-[r:{rel_type}]->(b)
     RETURN count(r) as total
