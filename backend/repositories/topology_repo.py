@@ -114,7 +114,7 @@ def delete_link(source, target, relationship):
     with driver.session() as session:
         session.run(f"MATCH (a {{id: $s}})-[r:{rel}]->(b {{id: $t}}) DELETE r", s=source, t=target)
 
-def _build_where_v2(alias, filter_obj, is_admin, allowed_locations):
+def _build_where_v3(alias, filter_obj, is_admin, allowed_locations):
     where, params = [], {}
     if filter_obj.get("ids"):
         where.append(f"{alias}.id IN ${alias}_ids")
@@ -132,9 +132,11 @@ def _build_where_v2(alias, filter_obj, is_admin, allowed_locations):
 
 def count_potential_links(source_filter, target_filter, allowed_locations=None, is_admin=False):
     driver = get_db()
-    w_a, p_a = _build_where_v2("a", source_filter, is_admin, allowed_locations)
-    w_b, p_b = _build_where_v2("b", target_filter, is_admin, allowed_locations)
-    query = f"MATCH (a:{source_filter.get('label','CI')}), (b:{target_filter.get('label','CI')}) WHERE {w_a} AND {w_b} RETURN count(*) as total, collect(a.name)[0..5] as s, collect(b.name)[0..5] as t"
+    w_a, p_a = _build_where_v3("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where_v3("b", target_filter, is_admin, allowed_locations)
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+    query = f"MATCH (a:{label_a}), (b:{label_b}) WHERE {w_a} AND {w_b} RETURN count(*) as total, collect(a.name)[0..5] as s, collect(b.name)[0..5] as t"
     with driver.session() as session:
         r = session.run(query, **{**p_a, **p_b}).single()
         return {"total": r["total"], "source_samples": r["s"], "target_samples": r["t"]}
@@ -142,9 +144,11 @@ def count_potential_links(source_filter, target_filter, allowed_locations=None, 
 def execute_mass_links(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
     driver = get_db()
     rel = relationship.upper().replace(" ", "_")
-    w_a, p_a = _build_where_v2("a", source_filter, is_admin, allowed_locations)
-    w_b, p_b = _build_where_v2("b", target_filter, is_admin, allowed_locations)
-    query = f"MATCH (a:{source_filter.get('label','CI')}), (b:{target_filter.get('label','CI')}) WHERE {w_a} AND {w_b} AND a.id <> b.id MERGE (a)-[r:{rel}]->(b) RETURN count(r) as total"
+    w_a, p_a = _build_where_v3("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where_v3("b", target_filter, is_admin, allowed_locations)
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+    query = f"MATCH (a:{label_a}), (b:{label_b}) WHERE {w_a} AND {w_b} AND a.id <> b.id MERGE (a)-[r:{rel}]->(b) RETURN count(r) as total"
     with driver.session() as session:
         res = session.run(query, **{**p_a, **p_b})
         rec = res.single()
@@ -154,8 +158,8 @@ def execute_mass_links(source_filter, target_filter, relationship, allowed_locat
 def execute_mass_delete(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
     driver = get_db()
     rel = relationship.upper().replace(" ", "_")
-    w_a, p_a = _build_where_v2("a", source_filter, is_admin, allowed_locations)
-    w_b, p_b = _build_where_v2("b", target_filter, is_admin, allowed_locations)
+    w_a, p_a = _build_where_v3("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where_v3("b", target_filter, is_admin, allowed_locations)
     query = f"MATCH (a:{source_filter.get('label','CI')}), (b:{target_filter.get('label','CI')}) WHERE {w_a} AND {w_b} MATCH (a)-[r:{rel}]->(b) DELETE r RETURN count(r) as total"
     with driver.session() as session:
         r = session.run(query, **{**p_a, **p_b}).single()
@@ -164,8 +168,8 @@ def execute_mass_delete(source_filter, target_filter, relationship, allowed_loca
 def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_locations=None, is_admin=False):
     driver = get_db()
     o_rel, n_rel = old_rel.upper().replace(" ","_"), new_rel.upper().replace(" ","_")
-    w_a, p_a = _build_where_v2("a", source_filter, is_admin, allowed_locations)
-    w_b, p_b = _build_where_v2("b", target_filter, is_admin, allowed_locations)
+    w_a, p_a = _build_where_v3("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where_v3("b", target_filter, is_admin, allowed_locations)
     query = f"MATCH (a:{source_filter.get('label','CI')}), (b:{target_filter.get('label','CI')}) WHERE {w_a} AND {w_b} MATCH (a)-[o:{o_rel}]->(b) DELETE o MERGE (a)-[n:{n_rel}]->(b) RETURN count(n) as total"
     with driver.session() as session:
         r = session.run(query, **{**p_a, **p_b}).single()
