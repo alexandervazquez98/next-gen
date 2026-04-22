@@ -316,15 +316,18 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     
     params = {**src_params, **tgt_params}
     
+    # Use a safer assembly pattern with WITH
     query = f"""
     {src_match}
-    WITH collect(a.name) as src_nodes
+    WITH collect(a) as sources
     {tgt_match}
-    WITH src_nodes, collect(b.name) as tgt_nodes
+    WITH sources, collect(b) as targets
+    UNWIND sources as a
+    UNWIND targets as b
     RETURN 
-        size(src_nodes) * size(tgt_nodes) as total,
-        src_nodes[0..5] as src_sample,
-        tgt_nodes[0..5] as tgt_sample
+        count(*) as total,
+        collect(a.name)[0..5] as src_sample,
+        collect(b.name)[0..5] as tgt_sample
     """
     
     with driver.session() as session:
@@ -351,11 +354,14 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     
     params = {**src_params, **tgt_params}
 
-    # Simpler Cartesian MERGE is safer for Neo4j's optimizer in most cases
+    # Safer assembly using UNWIND to avoid MATCH chain issues
     query = f"""
     {src_match}
-    WITH a
+    WITH collect(a) as sources
     {tgt_match}
+    WITH sources, collect(b) as targets
+    UNWIND sources as a
+    UNWIND targets as b
     WHERE a.id <> b.id
     MERGE (a)-[r:{rel_type}]->(b)
     RETURN count(r) as total
@@ -363,7 +369,7 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     
     with driver.session() as session:
         result = session.run(query, **params)
-        summary = result.consume() # Neo4j stats
+        summary = result.consume() 
         record = result.single()
         
         total = record["total"] if record else 0
