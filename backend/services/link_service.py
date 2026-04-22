@@ -53,6 +53,8 @@ def get_full_graph(current_user: User, layer: str = None, location: str = None, 
             "label": node_props.get("name") or node_props.get("label") or node_props.get("id"),
             "type": primary_type,
             "status": node_props.get("status", "ACTIVE"),
+            "location": node_props.get("location"),
+            "location_name": node_props.get("location_name"),
             "properties": {k: v for k, v in node_props.items() if not k.startswith("_")}
         })
 
