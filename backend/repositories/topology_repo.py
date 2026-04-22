@@ -133,7 +133,7 @@ def _get_nodes_by_filter(filter_obj, is_admin, allowed_locations):
     
     q = f"MATCH (n:{label})"
     if where: q += " WHERE " + " AND ".join(where)
-    q += " RETURN n" # Return nodes directly
+    q += " RETURN n" 
     
     with driver.session() as session:
         res = session.run(q, **params)
@@ -142,8 +142,13 @@ def _get_nodes_by_filter(filter_obj, is_admin, allowed_locations):
 def count_potential_links(source_filter, target_filter, allowed_locations=None, is_admin=False):
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
+    
+    # Ensure uniqueness of results
+    src_ids = set([n["id"] for n in src_nodes])
+    tgt_ids = set([n["id"] for n in tgt_nodes])
+    
     return {
-        "total": len(src_nodes) * len(tgt_nodes),
+        "total": len(src_ids) * len(tgt_ids),
         "source_samples": [n["name"] for n in src_nodes[:5]],
         "target_samples": [n["name"] for n in tgt_nodes[:5]]
     }
@@ -153,26 +158,34 @@ def execute_mass_links(source_filter, target_filter, relationship, allowed_locat
     rel = relationship.upper().replace(" ", "_")
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
-    src_ids = [n["id"] for n in src_nodes]
-    tgt_ids = [n["id"] for n in tgt_nodes]
+    
+    src_ids = list(set([n["id"] for n in src_nodes]))
+    tgt_ids = list(set([n["id"] for n in tgt_nodes]))
+    
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
 
-    # QUERY SIN WHERE DINAMICO - UNA SOLA LINEA
-    query = f"MATCH (a:CI), (b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids AND a.id <> b.id MERGE (a)-[r:{rel}]->(b) RETURN count(r) as total"
+    query = f"MATCH (a:{label_a}), (b:{label_b}) WHERE a.id IN $src_ids AND b.id IN $tgt_ids AND a.id <> b.id MERGE (a)-[r:{rel}]->(b) RETURN count(r) as total"
     
     with driver.session() as session:
         res = session.run(query, src_ids=src_ids, tgt_ids=tgt_ids)
         rec = res.single()
         stats = res.consume()
-        return {"total": rec["total"], "created": stats.counters.relationships_created, "verified": rec["total"] - stats.counters.relationships_created}
+        total = rec["total"] if rec else 0
+        return {"total": total, "created": stats.counters.relationships_created, "verified": total - stats.counters.relationships_created}
 
 def execute_mass_delete(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
     driver = get_db()
     rel = relationship.upper().replace(" ", "_")
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
-    src_ids = [n["id"] for n in src_nodes]
-    tgt_ids = [n["id"] for n in tgt_nodes]
-    query = f"MATCH (a:CI)-[r:{rel}]->(b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE r RETURN count(*) as total"
+    src_ids = list(set([n["id"] for n in src_nodes]))
+    tgt_ids = list(set([n["id"] for n in tgt_nodes]))
+    
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+
+    query = f"MATCH (a:{label_a})-[r:{rel}]->(b:{label_b}) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE r RETURN count(*) as total"
     with driver.session() as session:
         r = session.run(query, src_ids=src_ids, tgt_ids=tgt_ids).single()
         return {"deleted": r["total"] if r else 0}
@@ -182,9 +195,13 @@ def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_
     o_rel, n_rel = old_rel.upper().replace(" ","_"), new_rel.upper().replace(" ","_")
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
-    src_ids = [n["id"] for n in src_nodes]
-    tgt_ids = [n["id"] for n in tgt_nodes]
-    query = f"MATCH (a:CI)-[o:{o_rel}]->(b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE o MERGE (a)-[n:{n_rel}]->(b) RETURN count(n) as total"
+    src_ids = list(set([n["id"] for n in src_nodes]))
+    tgt_ids = list(set([n["id"] for n in tgt_nodes]))
+    
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+
+    query = f"MATCH (a:{label_a})-[o:{o_rel}]->(b:{label_b}) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE o MERGE (a)-[n:{n_rel}]->(b) RETURN count(n) as total"
     with driver.session() as session:
         r = session.run(query, src_ids=src_ids, tgt_ids=tgt_ids).single()
         return {"updated": r["total"] if r else 0}
