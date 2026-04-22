@@ -230,19 +230,42 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
     if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
     w_str = (" WHERE " + " AND ".join(where)) if where else ""
     with driver.session() as session:
-        # Fetch nodes with explicit location extraction
+        # Fetch nodes with explicit location extraction and metrics
         node_query = f"""
             MATCH (n:CI)
             {w_str}
+            OPTIONAL MATCH (n)-[r:HAS_METRIC]->(m:MetricDef)
             RETURN n, 
                    n.location.latitude as lat, 
                    n.location.longitude as lng, 
-                   labels(n) as labels
+                   labels(n) as labels,
+                   collect({{
+                       name: m.id, 
+                       protocol: m.protocol, 
+                       status: r.status, 
+                       value: r.last_value, 
+                       last_updated: r.last_updated
+                   }}) as metrics
         """
         nodes = []
         for r in session.run(node_query, **params):
             node_data = dict(r["n"])
             node_data["_labels"] = r["labels"]
+            
+            # Serialize node properties (for metadata)
+            for k, v in node_data.items():
+                if hasattr(v, "isoformat"):
+                    node_data[k] = v.isoformat()
+
+            # Filter out null metrics (from collect in Neo4j) and serialize
+            metrics = []
+            for m in r["metrics"]:
+                if m.get("name") is not None:
+                    if hasattr(m.get("last_updated"), "isoformat"):
+                        m["last_updated"] = m["last_updated"].isoformat()
+                    metrics.append(m)
+            node_data["metrics"] = metrics
+            
             # Reconstruct location object for frontend
             if r["lat"] is not None and r["lng"] is not None:
                 node_data["location"] = {"lat": r["lat"], "long": r["lng"]}

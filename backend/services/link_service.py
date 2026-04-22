@@ -47,15 +47,22 @@ def get_full_graph(current_user: User, layer: str = None, location: str = None, 
         elif "MetricDef" in labels: primary_type = "Metric"
         elif "HardwareModel" in labels: primary_type = "Hardware"
         elif "User" in labels: primary_type = "User"
+        
+        # If it's a CI, prefer the 'layer' property for the type display
+        display_type = primary_type
+        if primary_type == "CI" and node_props.get("layer"):
+            display_type = node_props.get("layer")
 
         nodes.append({
             "id": node_props.get("id"),
             "label": node_props.get("name") or node_props.get("label") or node_props.get("id"),
-            "type": primary_type,
+            "type": display_type,
             "status": node_props.get("status", "ACTIVE"),
             "location": node_props.get("location"),
             "location_name": node_props.get("location_name"),
-            "properties": {k: v for k, v in node_props.items() if not k.startswith("_")}
+            "ip": node_props.get("ip"),
+            "metrics": node_props.get("metrics", []),
+            "metadata": {k: v for k, v in node_props.items() if not k.startswith("_")}
         })
 
     links = []
