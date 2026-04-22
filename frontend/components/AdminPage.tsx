@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
 import MetricsManager from './MetricsManager';
-import CIEditor from './CIEditor';
-import RelationshipManager from './RelationshipManager';
 import CatalogManager from './CatalogManager';
+import RelationshipManager from './RelationshipManager';
+import CIEditor from './CIEditor';
+import MassLinkEditor from './MassLinkEditor';
 import { GraphNode } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -13,81 +14,62 @@ import { api } from '../services/api';
  * 
  * Central administration interface for managing:
  * - Metrics (Definitions)
- * - Catalog (Hardware, Categories, Owners)
- * - Relationships (Links)
+ * - CI Catalog (Hardware models, categories, owners)
+ * - Links (Relationships)
  * - CI Inventory (Advanced view)
+ * - Mass Relationships (Rule-based linking)
  */
 const AdminPage: React.FC = () => {
-    const { hasPermission } = useAuth();
-    type AdminTab = 'METRICS' | 'CATALOG' | 'LINKS' | 'INVENTORY';
+    type AdminTab = 'METRICS' | 'CATALOG' | 'LINKS' | 'INVENTORY' | 'MASS_LINKS';
     const [activeTab, setActiveTab] = useState<AdminTab>('METRICS');
-
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
-
-    // Form States
-    const [newItem, setNewItem] = useState<any>({});
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
 
-    useEffect(() => {
-        fetchData();
-    }, [activeTab]);
+    const { hasPermission } = useAuth();
 
     const fetchData = async () => {
         setLoading(true);
-        try {
-            const endpoint = activeTab === 'METRICS' ? '/metrics'
-                : activeTab === 'INVENTORY' ? '/nodes'
-                    : null;
+        
+        const endpoint = activeTab === 'METRICS' ? '/metrics' 
+            : activeTab === 'INVENTORY' ? '/nodes'
+            : null;
 
-            if (endpoint) {
+        if (endpoint) {
+            try {
                 const json = await api.get<any[]>(endpoint);
                 setData(Array.isArray(json) ? json : []);
+            } catch (e) {
+                console.error("Failed to fetch admin data", e);
+                setData([]);
             }
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
         }
-    }
+        setLoading(false);
+    };
 
-    const handleCreate = async () => {
-        let endpoint = '';
-        let body = {};
+    useEffect(() => {
+        fetchData();
+    }, [activeTab, refreshKey]);
 
-        if (activeTab === 'METRICS') {
-            endpoint = '/metrics';
-            body = {
-                id: newItem.id,
-                protocol: newItem.protocol || 'SNMP',
-                warning: parseFloat(newItem.warning),
-                critical: parseFloat(newItem.critical)
-            };
-        } else if (activeTab === 'LINKS') {
-            endpoint = '/links';
-            body = { source: newItem.source, target: newItem.target, relationship: newItem.relationship };
-        } else {
-            return;
-        }
-
+    const handleSaveNode = async (node: GraphNode) => {
         try {
-            await api.post(endpoint, body);
-            setNewItem({});
-            fetchData();
-        } catch (e) {
-            console.error(e);
+            await api.post('/nodes', node);
+            setSelectedNode(null);
+            setRefreshKey(prev => prev + 1);
+        } catch (e: any) {
+            alert('Failed to save CI: ' + e.message);
         }
-    }
+    };
 
-    const handleDelete = async (id: string) => {
-        if (!confirm("Are you sure?")) return;
-
+    const handleDeleteNode = async (id: string) => {
+        if (!confirm('Are you sure you want to delete this CI? This will remove all associated metrics and links.')) return;
         try {
-            await api.delete(`/${activeTab.toLowerCase()}/${id}`);
-            fetchData();
-        } catch (e) {
-            console.error(e);
+            await api.delete(`/nodes/${id}`);
+            setSelectedNode(null);
+            setRefreshKey(prev => prev + 1);
+        } catch (e: any) {
+            alert('Failed to delete CI: ' + e.message);
         }
     };
 
@@ -146,158 +128,181 @@ const AdminPage: React.FC = () => {
     };
 
     return (
-        <div className="p-8 h-full overflow-y-auto custom-scrollbar space-y-8">
-            <h2 className="text-3xl font-black text-white tracking-tighter uppercase">Administration</h2>
+        <div className="flex flex-col h-screen bg-surface-950 overflow-hidden">
+            {/* Admin Navigation Bar */}
+            <div className="bg-neutral-900/50 backdrop-blur-xl border-b border-white/5 px-8 py-4 flex justify-between items-center">
+                <div className="flex items-center gap-6">
+                    <div>
+                        <h1 className="text-xl font-black text-white tracking-tighter uppercase">Nexus Command</h1>
+                        <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">System Administration</p>
+                    </div>
 
-            {/* Tabs */}
-            <div className="flex gap-4 border-b border-white/5 pb-4">
-                {['METRICS', 'CATALOG', 'LINKS', 'INVENTORY'].map(tab => {
-                    return (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab as any)}
-                            className={`text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-lg transition-all ${activeTab === tab ? 'bg-brand-600 text-white' : 'text-neutral-500 hover:text-white hover:bg-white/5'
+                    <nav className="flex gap-1 ml-8">
+                        {[
+                            { id: 'METRICS', label: 'Metrics Def', icon: 'analytics' },
+                            { id: 'CATALOG', label: 'Catalog', icon: 'inventory_2' },
+                            { id: 'LINKS', label: 'Links', icon: 'link' },
+                            { id: 'MASS_LINKS', label: 'Mass Links', icon: 'dynamic_feed' },
+                            { id: 'INVENTORY', label: 'Inventory', icon: 'list_alt' }
+                        ].map((tab) => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id as AdminTab)}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                                    activeTab === tab.id 
+                                    ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20 shadow-lg shadow-brand-500/5' 
+                                    : 'text-neutral-500 hover:text-neutral-300 hover:bg-white/5 border border-transparent'
                                 }`}
-                        >
-                            {tab}
-                        </button>
-                    )
-                })}
+                            >
+                                <span className="material-symbols-outlined text-sm">{tab.icon}</span>
+                                {tab.label}
+                            </button>
+                        ))}
+                    </nav>
+                </div>
+
+                <div className="flex items-center gap-4">
+                    {loading && (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-brand-500/10 rounded-full border border-brand-500/20 animate-pulse">
+                            <div className="w-1.5 h-1.5 bg-brand-400 rounded-full"></div>
+                            <span className="text-[10px] font-black text-brand-400 uppercase tracking-widest">Syncing Hub...</span>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Content Area */}
-            <div className="h-[calc(100vh-250px)]">
-                {activeTab === 'CATALOG' && <CatalogManager />}
+            <div className="flex-1 overflow-hidden relative">
+                {/* Metrics Management */}
+                {activeTab === 'METRICS' ? (
+                    <MetricsManager />
+                ) : null}
 
-                {activeTab === 'METRICS' && <MetricsManager />}
+                {/* Catalog Management */}
+                {activeTab === 'CATALOG' ? (
+                    <CatalogManager />
+                ) : null}
 
-                {activeTab === 'LINKS' && <RelationshipManager onRefresh={fetchData} />}
+                {/* Links Management */}
+                {activeTab === 'LINKS' ? (
+                    <RelationshipManager />
+                ) : null}
 
+                {/* Mass Relationships Editor */}
+                {activeTab === 'MASS_LINKS' ? (
+                    <MassLinkEditor />
+                ) : null}
+
+                {/* Inventory Table */}
                 {activeTab === 'INVENTORY' ? (
-                    <div className="flex gap-6 h-full">
-                        {/* Editor Panel */}
-                        <div className="w-[400px] flex-shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 overflow-hidden flex flex-col">
-                            <CIEditor
-                                key={selectedNode?.id || `new-${refreshKey}`}
-                                node={selectedNode}
-                                onSave={async (node) => {
-                                    try {
-                                        await api.post('/nodes', node);
+                    <div className="h-full flex flex-col p-8 space-y-6 overflow-hidden">
+                        <div className="flex justify-between items-end">
+                            <div>
+                                <h2 className="text-3xl font-black text-white tracking-tighter uppercase italic">Inventory</h2>
+                                <p className="text-neutral-500 text-sm font-medium tracking-tight">Managing technical assets and configuration state.</p>
+                            </div>
 
-                                        fetchData();
-                                        setSelectedNode(null);
-                                        setRefreshKey(prev => prev + 1);
-                                    } catch (e: any) {
-                                        console.error(e);
-                                        alert('Error updating CI: ' + e.message);
-                                    }
-                                }}
-                                onDelete={async (id) => {
-                                    if (confirm('Delete this CI?')) {
-                                        await api.delete(`/nodes/${id}`);
-                                        fetchData();
-                                        setSelectedNode(null);
-                                    }
-                                }}
-                                onClose={() => setSelectedNode(null)}
-                                className="h-full"
-                            />
-                        </div>
-
-                        {/* List Panel */}
-                        <div className="flex-1 glass rounded-2xl border border-white/5 p-6 flex flex-col overflow-hidden">
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-xl font-bold text-white tracking-tight">INVENTORY</h3>
-                                <div className="flex gap-3">
-                                    <button
-                                        onClick={() => setSelectedNode(null)}
-                                        className="btn-secondary text-xs"
-                                    >
-                                        <span className="material-symbols-outlined text-sm">add</span>
-                                        NEW CI
-                                    </button>
-                                    <button onClick={() => fetchData()} className="btn-icon">
-                                        <span className="material-symbols-outlined">refresh</span>
-                                    </button>
-                                    <div className="h-6 w-px bg-white/10 mx-2" />
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2 bg-neutral-900 border border-white/5 rounded-2xl p-1 shadow-2xl">
                                     <button
                                         onClick={handleDownloadTemplate}
                                         className="btn-secondary text-xs"
                                     >
-                                        <span className="material-symbols-outlined text-sm">download</span>
                                         TEMPLATE
                                     </button>
                                     <div className="relative">
+                                        <button className="btn-brand text-xs">
+                                            BULK UPLOAD
+                                        </button>
                                         <input
+                                            ref={fileInputRef}
                                             type="file"
                                             accept=".xlsx"
                                             className="absolute inset-0 opacity-0 cursor-pointer"
                                             onChange={handleFileUpload}
                                         />
-                                        <button className="btn-primary text-xs">
-                                            <span className="material-symbols-outlined text-sm">upload_file</span>
-                                            IMPORT
-                                        </button>
                                     </div>
+                                </div>
+                                <button 
+                                    onClick={() => setSelectedNode({} as GraphNode)}
+                                    className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-2xl text-xs font-black transition-all shadow-xl shadow-brand-900/20 uppercase tracking-widest"
+                                >
+                                    New CI
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 flex gap-8 overflow-hidden">
+                            <div className="flex-1 bg-neutral-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm">
+                                <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center">
+                                    <span className="text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em]">Active Assets</span>
+                                    <div className="flex gap-4">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                            <span className="text-[10px] font-bold text-neutral-400 uppercase">Production: {data.length}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                    <table className="w-full border-collapse">
+                                        <thead>
+                                            <tr className="text-left border-b border-white/5 sticky top-0 bg-neutral-900 z-10">
+                                                <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">CI Identity</th>
+                                                <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">Network Info</th>
+                                                <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">Layer / Model</th>
+                                                <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-sm divide-y divide-white/5">
+                                            {data.map((item: any) => (
+                                                <tr key={item.id} className="group hover:bg-white/[0.02] transition-colors">
+                                                    <td className="p-4">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-black text-white tracking-tight">{item.label}</span>
+                                                            <span className="text-[10px] text-neutral-500 font-mono uppercase">{item.id}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs text-neutral-300 font-bold">{item.ip || 'No IP'}</span>
+                                                            <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-tighter">Status: {item.status}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="px-2 py-0.5 bg-neutral-800 text-neutral-400 rounded-md text-[10px] font-bold uppercase border border-white/5">
+                                                                {item.type}
+                                                            </span>
+                                                            <span className="text-xs text-neutral-500">{item.brand} {item.model}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 text-right">
+                                                        <button 
+                                                            onClick={() => setSelectedNode(item)}
+                                                            className="p-2 hover:bg-brand-500/10 hover:text-brand-400 text-neutral-600 rounded-xl transition-all"
+                                                        >
+                                                            <span className="material-symbols-outlined text-sm">edit_note</span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto custom-scrollbar">
-                                <table className="w-full text-left border-collapse">
-                                    <thead className="sticky top-0 bg-neutral-900/90 backdrop-blur z-10">
-                                        <tr className="text-xs text-neutral-500 border-b border-white/10">
-                                            <th className="p-3 uppercase tracking-wider font-bold">Name / ID</th>
-                                            <th className="p-3 uppercase tracking-wider font-bold">Category</th>
-                                            <th className="p-3 uppercase tracking-wider font-bold">IP Address</th>
-                                            <th className="p-3 uppercase tracking-wider font-bold">Status</th>
-                                            <th className="p-3 text-right uppercase tracking-wider font-bold">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="text-sm divide-y divide-white/5">
-                                        {data.map((item: any) => (
-                                            <tr
-                                                key={item.id}
-                                                className={`hover:bg-brand-500/5 transition-colors cursor-pointer ${selectedNode?.id === item.id ? 'bg-brand-500/10' : ''}`}
-                                                onClick={() => setSelectedNode(item)}
-                                            >
-                                                <td className="p-3">
-                                                    <div className="font-bold text-white">{item.label}</div>
-                                                    <div className="text-[10px] text-neutral-500 font-mono">{item.id}</div>
-                                                </td>
-                                                <td className="p-3 text-neutral-300">
-                                                    <span className="px-2 py-1 rounded bg-white/5 text-xs border border-white/5">
-                                                        {item.type || 'Uncategorized'}
-                                                    </span>
-                                                </td>
-                                                <td className="p-3 font-mono text-neutral-400 text-xs">
-                                                    {item.ip || '-'}
-                                                </td>
-                                                <td className="p-3">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${item.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' :
-                                                        item.status === 'MAINTENANCE' ? 'bg-yellow-500/20 text-yellow-400' :
-                                                            'bg-neutral-500/20 text-neutral-400'
-                                                        }`}>
-                                                        {item.status}
-                                                    </span>
-                                                </td>
-                                                <td className="p-3 text-right">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            if (confirm('Delete CI?')) {
-                                                                api.delete(`/nodes/${item.id}`).then(() => fetchData());
-                                                            }
-                                                        }}
-                                                        className="text-neutral-500 hover:text-red-500 p-2 transition-colors"
-                                                    >
-                                                        <span className="material-symbols-outlined text-sm">delete</span>
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                            {selectedNode && (
+                                <div className="w-[450px] animate-in slide-in-from-right duration-500">
+                                    <CIEditor
+                                        node={selectedNode.id ? selectedNode : null}
+                                        onSave={handleSaveNode}
+                                        onDelete={handleDeleteNode}
+                                        onClose={() => setSelectedNode(null)}
+                                        className="h-full rounded-3xl border border-white/5 shadow-2xl overflow-hidden"
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
                 ) : null}
@@ -307,4 +312,3 @@ const AdminPage: React.FC = () => {
 };
 
 export default AdminPage;
-

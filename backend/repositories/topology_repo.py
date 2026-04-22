@@ -173,6 +173,15 @@ def bulk_insert_node(
         polling=polling, snmp=snmp_str,
         metadata=metadata, owner=owner)
 
+def get_template_data() -> (List[str], List[str]):
+    driver = get_db()
+    with driver.session() as session:
+        res_o = session.run("MATCH (o:OwnerGroup) RETURN o.name as name ORDER BY o.name")
+        owners_list = [record["name"] for record in res_o]
+        res_c = session.run("MATCH (c:Category) RETURN c.name as name ORDER BY c.name")
+        layers_list = [record["name"] for record in res_c]
+    return owners_list, layers_list
+
 # --- Link Operations ---
 
 def get_links(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
@@ -238,6 +247,63 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
                 r.critical_threshold = $critical
         """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
 
+def _build_mass_where(source_filter: dict, target_filter: dict):
+    """Internal helper to build WHERE clauses for mass operations."""
+    where_clauses = []
+    params = {}
+    
+    # Source Set
+    if source_filter.get("layer"):
+        where_clauses.append("a.layer = $src_layer")
+        params["src_layer"] = source_filter["layer"]
+    if source_filter.get("location"):
+        where_clauses.append("a.location_name = $src_location")
+        params["src_location"] = source_filter["location"]
+    if source_filter.get("name"):
+        where_clauses.append("a.name = $src_name")
+        params["src_name"] = source_filter["name"]
+        
+    # Target Set
+    if target_filter.get("layer"):
+        where_clauses.append("b.layer = $target_layer")
+        params["target_layer"] = target_filter["layer"]
+    if target_filter.get("location"):
+        where_clauses.append("b.location_name = $target_location")
+        params["target_location"] = target_filter["location"]
+    if target_filter.get("name"):
+        where_clauses.append("b.name = $target_name")
+        params["target_name"] = target_filter["name"]
+        
+    where_str = ""
+    if where_clauses:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+    return where_str, params
+
+def count_potential_links(source_filter: dict, target_filter: dict) -> int:
+    """Simulates the mass link operation by returning the potential link count."""
+    driver = get_db()
+    where_str, params = _build_mass_where(source_filter, target_filter)
+    query = f"MATCH (a:CI), (b:CI){where_str} RETURN count(*) as total"
+    
+    with driver.session() as session:
+        result = session.run(query, **params)
+        return result.single()["total"]
+
+def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str):
+    """Executes a Cartesian MERGE between two sets of nodes."""
+    driver = get_db()
+    where_str, params = _build_mass_where(source_filter, target_filter)
+    
+    rel_type = relationship.upper().replace(" ", "_")
+    if not all(c.isalnum() or c == '_' for c in rel_type):
+        raise ValueError("Invalid relationship type")
+
+    query = f"MATCH (a:CI), (b:CI){where_str} MERGE (a)-[r:{rel_type}]->(b) RETURN count(r) as total"
+    
+    with driver.session() as session:
+        result = session.run(query, **params)
+        return result.single()["total"]
+
 def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
     driver = get_db()
     
@@ -268,7 +334,7 @@ def get_filtered_graph_data(layer: str = None, location: str = None, owner: str 
         nodes_result = session.run(nodes_query, **params)
         nodes = [dict(record["n"], _labels=record["labels"]) for record in nodes_result]
 
-        # Fetch relationships (ensure both ends match filters and scoping)
+        # Fetch relationships
         links_query = f"MATCH (a:CI)-[r]->(b:CI){where_str.replace('n.', 'a.')} AND {where_str.replace('n.', 'b.')} RETURN a, r, b"
         links_result = session.run(links_query, **params)
         links = [{

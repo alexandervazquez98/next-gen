@@ -69,3 +69,38 @@ def get_full_graph(current_user: User, layer: str = None, location: str = None, 
             })
             
     return {"nodes": nodes, "links": links}
+
+def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: dict) -> Dict[str, Any]:
+    """
+    Simulates a bulk link operation and returns the potential impact.
+    Enforces data scoping.
+    """
+    if current_user.role != "ADMIN":
+        if source_filter.get("location") and source_filter["location"] not in current_user.allowed_locations:
+             raise ValueError(f"Unauthorized location in source filter: {source_filter['location']}")
+        if target_filter.get("location") and target_filter["location"] not in current_user.allowed_locations:
+             raise ValueError(f"Unauthorized location in target filter: {target_filter['location']}")
+
+    count = topology_repo.count_potential_links(source_filter, target_filter)
+    
+    return {
+        "potential_links": count,
+        "is_safe": count <= 500,
+        "message": "Ready to execute" if count <= 500 else "Too many potential links (> 500). Please refine filters."
+    }
+
+def execute_bulk_links(current_user: User, source_filter: dict, target_filter: dict, relationship: str) -> Dict[str, Any]:
+    """
+    Executes a mass relationship creation after validation.
+    """
+    sim = simulate_bulk_links(current_user, source_filter, target_filter)
+    if not sim["is_safe"]:
+        return {"success": False, "message": sim["message"]}
+    
+    total = topology_repo.execute_mass_links(source_filter, target_filter, relationship)
+    
+    return {
+        "success": True, 
+        "message": f"Successfully created/verified {total} links.",
+        "created_count": total
+    }
