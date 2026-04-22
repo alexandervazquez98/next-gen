@@ -6,6 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 interface FilterState {
     label: 'CI' | 'MetricDef';
     layer: string;
+    brand: string;
+    model: string;
     searchTerm: string;
     id: string;
     ids: string[]; // Explicit selection
@@ -18,9 +20,10 @@ interface FilterPanelProps {
     categories?: any[];
     metrics?: any[];
     availableNodes?: any[];
+    hardwareModels?: { brand: string, model: string }[];
 }
 
-const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, categories, metrics, availableNodes }) => {
+const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, categories, metrics, availableNodes, hardwareModels }) => {
     const toggleId = (id: string) => {
         const nextIds = filter.ids.includes(id) 
             ? filter.ids.filter(i => i !== id) 
@@ -34,8 +37,11 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
         }
     };
 
+    const uniqueBrands = Array.from(new Set(hardwareModels?.map(h => h.brand))).sort();
+    const availableModels = hardwareModels?.filter(h => !filter.brand || h.brand === filter.brand).map(h => h.model).sort();
+
     return (
-        <div className="flex-1 p-6 bg-neutral-900/50 border border-white/5 rounded-2xl space-y-4 flex flex-col min-h-[400px]">
+        <div className="flex-1 p-6 bg-neutral-900/50 border border-white/5 rounded-2xl space-y-4 flex flex-col min-h-[450px]">
             <div className="flex justify-between items-center mb-2">
                 <h3 className="text-xs font-black text-brand-400 uppercase tracking-widest">{title}</h3>
                 <div className="flex bg-black/40 p-1 rounded-lg border border-white/5">
@@ -66,6 +72,28 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
                             >
                                 <option value="">All Layers</option>
                                 {categories?.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                            </select>
+                        </label>
+                        <label className="block">
+                            <span className="text-[9px] font-black text-neutral-600 uppercase mb-1 block">Brand</span>
+                            <select 
+                                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                                value={filter.brand}
+                                onChange={(e) => setFilter({ ...filter, brand: e.target.value, model: '' })}
+                            >
+                                <option value="">All Brands</option>
+                                {uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                        </label>
+                        <label className="block">
+                            <span className="text-[9px] font-black text-neutral-600 uppercase mb-1 block">Model</span>
+                            <select 
+                                className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                                value={filter.model}
+                                onChange={(e) => setFilter({ ...filter, model: e.target.value })}
+                            >
+                                <option value="">All Models</option>
+                                {availableModels?.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
                         </label>
                         <label className="block">
@@ -131,7 +159,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
 };
 
 const MassLinkEditor: React.FC = () => {
-    const initialFilter: FilterState = { label: 'CI', layer: '', searchTerm: '', id: '', ids: [] };
+    const initialFilter: FilterState = { label: 'CI', layer: '', brand: '', model: '', searchTerm: '', id: '', ids: [] };
     
     const [sourceFilter, setSourceFilter] = useState<FilterState>({ ...initialFilter });
     const [targetFilter, setTargetFilter] = useState<FilterState>({ ...initialFilter });
@@ -143,23 +171,26 @@ const MassLinkEditor: React.FC = () => {
     const { data: categories } = useCategoriesQuery();
     const { data: metrics } = useQuery({ queryKey: ['metrics'], queryFn: () => api.get<any[]>('/metrics') });
     const { data: allNodes } = useQuery({ queryKey: ['nodes'], queryFn: () => api.get<any[]>('/nodes') });
+    const { data: hardwareModels } = useQuery({ queryKey: ['hardware'], queryFn: () => api.get<any[]>('/hardware') });
 
     const filterNodes = (filter: FilterState) => {
         if (!allNodes) return [];
         return allNodes.filter(n => {
             const matchesLayer = !filter.layer || n.type === filter.layer;
+            const matchesBrand = !filter.brand || n.brand === filter.brand;
+            const matchesModel = !filter.model || n.model === filter.model;
             const s = filter.searchTerm.toLowerCase();
             const matchesSearch = !filter.searchTerm || 
                 n.label?.toLowerCase().includes(s) || 
                 n.id?.toLowerCase().includes(s) || 
                 n.ip?.includes(s) ||
                 n.location_name?.toLowerCase().includes(s);
-            return matchesLayer && matchesSearch;
+            return matchesLayer && matchesBrand && matchesModel && matchesSearch;
         });
     };
 
-    const sourceAvailable = useMemo(() => filterNodes(sourceFilter), [allNodes, sourceFilter.layer, sourceFilter.searchTerm]);
-    const targetAvailable = useMemo(() => filterNodes(targetFilter), [allNodes, targetFilter.layer, targetFilter.searchTerm]);
+    const sourceAvailable = useMemo(() => filterNodes(sourceFilter), [allNodes, sourceFilter.layer, sourceFilter.brand, sourceFilter.model, sourceFilter.searchTerm]);
+    const targetAvailable = useMemo(() => filterNodes(targetFilter), [allNodes, targetFilter.layer, targetFilter.brand, targetFilter.model, targetFilter.searchTerm]);
 
     const handleReset = () => {
         setSourceFilter({ ...initialFilter });
@@ -266,6 +297,7 @@ const MassLinkEditor: React.FC = () => {
                     categories={categories}
                     metrics={metrics}
                     availableNodes={sourceAvailable}
+                    hardwareModels={hardwareModels}
                 />
                 
                 <div className="flex flex-col justify-center items-center px-2 shrink-0">
@@ -281,6 +313,7 @@ const MassLinkEditor: React.FC = () => {
                     categories={categories}
                     metrics={metrics}
                     availableNodes={targetAvailable}
+                    hardwareModels={hardwareModels}
                 />
             </div>
 
