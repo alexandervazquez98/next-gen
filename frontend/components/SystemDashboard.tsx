@@ -159,29 +159,79 @@ const SystemDashboard: React.FC = () => {
 
                 <div className="flex-1 bg-black/40 rounded-xl p-4 font-mono text-xs overflow-y-auto custom-scrollbar border border-white/5">
                     <div className="space-y-2">
+                        {/* System Reboot / Startup Event */}
+                        {status.startup_time && (
+                            <div className="flex gap-4 border-b border-white/5 pb-2 mb-2">
+                                <span className="text-neutral-500">{new Date(status.startup_time).toLocaleTimeString()}</span>
+                                <span className="text-blue-400 font-bold">SYSTEM_REBOOT</span>
+                                <span>Platform Engine Started (v3.2)</span>
+                            </div>
+                        )}
+
                         <div className="flex gap-4 opacity-50">
                             <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
                             <span className="text-blue-400">INFO</span>
                             <span>System Dashboard Initialized.</span>
                         </div>
-                        {status.collector.last_run && (
+
+                        {/* SNMP Collector Status */}
+                        {status.collector.last_run ? (
                             <div className="flex gap-4">
                                 <span className="text-neutral-500">{new Date(status.collector.last_run).toLocaleTimeString()}</span>
                                 <span className="text-emerald-400">SUCCESS</span>
                                 <span>SNMP Collector Cycle Completed.</span>
                             </div>
+                        ) : status.collector.status === 'ERROR' && (
+                            <div className="flex gap-4">
+                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
+                                <span className="text-red-500 font-bold">CRITICAL</span>
+                                <span>SNMP Collector Loop Error.</span>
+                            </div>
                         )}
+
+                        {/* Neo4j Status */}
                         {status.neo4j === 'CONNECTED' ? (
                             <div className="flex gap-4">
                                 <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
                                 <span className="text-emerald-400">SUCCESS</span>
-                                <span>Database Connection Verified (Bolt Protocol).</span>
+                                <span>Neo4j Graph Database Connected.</span>
                             </div>
                         ) : (
                             <div className="flex gap-4">
                                 <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-red-500">ERROR</span>
-                                <span>Database Connection Failed.</span>
+                                <span className="text-red-500 font-bold">CRITICAL</span>
+                                <span>Neo4j Graph Database Connection Failed.</span>
+                            </div>
+                        )}
+
+                        {/* PostgreSQL / TimescaleDB Status */}
+                        {(status as any).postgres === 'CONNECTED' ? (
+                            <div className="flex gap-4">
+                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
+                                <span className="text-emerald-400">SUCCESS</span>
+                                <span>PostgreSQL/TimescaleDB Connected.</span>
+                            </div>
+                        ) : (
+                            <div className="flex gap-4">
+                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
+                                <span className="text-red-500 font-bold">CRITICAL</span>
+                                <span>PostgreSQL/TimescaleDB Connection Failed.</span>
+                            </div>
+                        )}
+
+                        {/* Resource Alerts */}
+                        {status.cpu > 80 && (
+                            <div className="flex gap-4">
+                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
+                                <span className="text-orange-500 font-bold">WARNING</span>
+                                <span>High CPU Usage Detected ({status.cpu}%).</span>
+                            </div>
+                        )}
+                        {status.ram > 85 && (
+                            <div className="flex gap-4">
+                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
+                                <span className="text-orange-500 font-bold">WARNING</span>
+                                <span>High Memory Usage Detected ({status.ram}%).</span>
                             </div>
                         )}
                     </div>
