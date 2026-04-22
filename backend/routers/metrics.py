@@ -12,7 +12,7 @@ from postgres_db import get_pg_db
 from repositories import metric_repo
 
 router = APIRouter(
-    prefix="/api/metrics",
+    prefix="/metrics",
     tags=["Metrics"],
     responses={404: {"description": "Not found"}},
 )

@@ -6,7 +6,7 @@ from models.user import Role, RoleCreate, RoleUpdate, User, UserPermission
 from database import get_db
 
 router = APIRouter(
-    prefix="/api/roles",
+    prefix="/roles",
     tags=["Roles"],
     responses={404: {"description": "Not found"}},
 )

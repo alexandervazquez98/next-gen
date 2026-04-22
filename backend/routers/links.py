@@ -7,7 +7,6 @@ import services.link_service as link_service
 from pydantic import BaseModel
 
 router = APIRouter(
-    prefix="/api",
     tags=["Topology"],
     responses={404: {"description": "Not found"}},
 )
