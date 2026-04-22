@@ -311,14 +311,10 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     params = {**src_params, **tgt_params}
     
     query = f"""
-    CALL {{
-        {src_match}
-        RETURN collect(a) as sources
-    }}
-    CALL {{
-        {tgt_match}
-        RETURN collect(b) as targets
-    }}
+    {src_match}
+    WITH collect(a) as sources
+    {tgt_match}
+    WITH sources, collect(b) as targets
     UNWIND sources as a
     UNWIND targets as b
     RETURN 
@@ -353,16 +349,9 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     params = {**src_params, **tgt_params}
 
     query = f"""
-    CALL {{
-        {src_match}
-        RETURN collect(a) as sources
-    }}
-    CALL {{
-        {tgt_match}
-        RETURN collect(b) as targets
-    }}
-    UNWIND sources as a
-    UNWIND targets as b
+    {src_match}
+    WITH a
+    {tgt_match}
     WITH a, b
     WHERE a.id <> b.id
     MERGE (a)-[r:{rel_type}]->(b)
@@ -395,16 +384,9 @@ def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: 
     params = {**src_params, **tgt_params}
     
     query = f"""
-    CALL {{
-        {src_match}
-        RETURN collect(a) as sources
-    }}
-    CALL {{
-        {tgt_match}
-        RETURN collect(b) as targets
-    }}
-    UNWIND sources as a
-    UNWIND targets as b
+    {src_match}
+    WITH a
+    {tgt_match}
     MATCH (a)-[r:{rel_type}]->(b)
     DELETE r
     RETURN count(r) as total
@@ -434,16 +416,9 @@ def execute_mass_update(source_filter: dict, target_filter: dict, old_relationsh
     params = {**src_params, **tgt_params}
     
     query = f"""
-    CALL {{
-        {src_match}
-        RETURN collect(a) as sources
-    }}
-    CALL {{
-        {tgt_match}
-        RETURN collect(b) as targets
-    }}
-    UNWIND sources as a
-    UNWIND targets as b
+    {src_match}
+    WITH a
+    {tgt_match}
     MATCH (a)-[old:{old_rel}]->(b)
     DELETE old
     MERGE (a)-[new:{new_rel}]->(b)
