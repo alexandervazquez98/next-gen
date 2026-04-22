@@ -62,7 +62,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
                             <select 
                                 className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
                                 value={filter.layer}
-                                onChange={(e) => setFilter({ ...filter, layer: e.target.value, ids: [] })}
+                                onChange={(e) => setFilter({ ...filter, layer: e.target.value })}
                             >
                                 <option value="">All Layers</option>
                                 {categories?.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
@@ -74,7 +74,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
                                 <input 
                                     className="w-full bg-neutral-950 border border-white/5 rounded-lg pl-8 pr-3 py-2 text-xs text-white outline-none focus:border-brand-500 font-bold placeholder:text-neutral-700"
                                     value={filter.searchTerm}
-                                    onChange={(e) => setFilter({ ...filter, searchTerm: e.target.value, ids: [] })}
+                                    onChange={(e) => setFilter({ ...filter, searchTerm: e.target.value })}
                                     placeholder="IP, Name, Loc..."
                                 />
                                 <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-sm text-neutral-600">search</span>

@@ -257,27 +257,43 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
     where_clauses = []
     params = {}
     
+    has_specific_filter = False
+
     if filter_obj.get("layer"):
         where_clauses.append(f"{alias}.layer = ${alias}_layer")
         params[f"{alias}_layer"] = filter_obj["layer"]
+        has_specific_filter = True
     if filter_obj.get("location"):
         where_clauses.append(f"{alias}.location_name = ${alias}_location")
         params[f"{alias}_location"] = filter_obj["location"]
+        has_specific_filter = True
     if filter_obj.get("name"):
         where_clauses.append(f"{alias}.name = ${alias}_name")
         params[f"{alias}_name"] = filter_obj["name"]
+        has_specific_filter = True
     # Handle explicit IDs for granular selection
     if filter_obj.get("ids"):
         where_clauses.append(f"{alias}.id IN ${alias}_ids")
         params[f"{alias}_ids"] = filter_obj["ids"]
+        has_specific_filter = True
+    # Handle search term (partial match on name, ip, or location)
+    if filter_obj.get("searchTerm"):
+        where_clauses.append(f"({alias}.name =~ ${alias}_search OR {alias}.ip =~ ${alias}_search OR {alias}.location_name =~ ${alias}_search OR {alias}.id =~ ${alias}_search)")
+        params[f"{alias}_search"] = f"(?i).*{filter_obj['searchTerm']}.*"
+        has_specific_filter = True
     # Handle MetricDef ID specifically
     if label == "MetricDef" and filter_obj.get("id"):
         where_clauses.append(f"{alias}.id = ${alias}_id")
         params[f"{alias}_id"] = filter_obj["id"]
+        has_specific_filter = True
         
     if not is_admin and allowed_locations is not None and label == "CI":
         where_clauses.append(f"{alias}.location_name IN ${alias}_allowed")
         params[f"{alias}_allowed"] = allowed_locations
+        
+    # Safety: If no specific filter was provided, force 0 results to avoid Cartesian explosion
+    if not has_specific_filter and not filter_obj.get("allow_all"):
+        where_clauses.append("1 = 0")
         
     where_str = ""
     if where_clauses:
