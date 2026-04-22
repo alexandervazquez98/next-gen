@@ -5,7 +5,11 @@ import asyncio
 import os
 import shutil
 import platform
+from datetime import datetime
 from database import get_db, verify_connection
+
+# Global start time to track system reboots/restarts
+STARTUP_TIME = datetime.now().isoformat()
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
@@ -170,6 +174,16 @@ def get_system_status():
     except:
         neo4j_status = "DISCONNECTED"
 
+    postgres_status = "UNKNOWN"
+    try:
+        from postgres_db import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        postgres_status = "CONNECTED"
+    except:
+        postgres_status = "DISCONNECTED"
+
     collector = get_collector_status()
 
     return {
@@ -177,5 +191,7 @@ def get_system_status():
         "ram": round(ram_percent, 1),
         "disk": round(disk_percent, 1),
         "neo4j": neo4j_status,
+        "postgres": postgres_status,
         "collector": collector,
+        "startup_time": STARTUP_TIME
     }
