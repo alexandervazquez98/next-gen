@@ -151,41 +151,40 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
         n.y = cached.y;
         n.vx = cached.vx;
         n.vy = cached.vy;
-        // Keep fixed if it was manually moved or cached
-        n.fx = cached.x;
-        n.fy = cached.y;
+        // Solo anclar si ya tenía anclaje previo (fue movido por usuario)
+        if (cached.fx !== undefined) {
+            n.fx = cached.fx;
+            n.fy = cached.fy;
+        }
       } else if (node.location?.lat && node.location?.long) {
-          n.x = (node.location.long + 180) * (width / 360);
-          n.y = (90 - node.location.lat) * (height / 180);
+          // COMPRESSED PROJECTION (Centered around the middle with 50% less spread)
+          const centerX = width / 2;
+          const centerY = height / 2;
+          n.x = centerX + ((node.location.long + 117) * (width / 5)); // Tijuana focus
+          n.y = centerY + ((32.5 - node.location.lat) * (height / 5));
       }
       return n;
     });
 
     const simulation = d3.forceSimulation<GraphNode>(validNodes)
-      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(120)) // -20% distance
-      .force('charge', d3.forceManyBody().strength((d: any) => d.type === 'CI' ? -800 : -1600)) // -20% repulsion
+      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(40)) // VERY tight links
+      .force('charge', d3.forceManyBody().strength((d: any) => d.type === 'CI' ? -200 : -500)) // Low repulsion to keep them together
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius((d: any) => d.type === 'CI' ? 40 : 80)) // -20% collision radius
-      .alpha(cachedNodesExist ? 0.1 : 1.0); // Even softer alpha for existing nodes
+      .force('collision', d3.forceCollide().radius((d: any) => d.type === 'CI' ? 30 : 60))
+      .alpha(cachedNodesExist ? 0.05 : 1.0);
 
     if (groupByLocation) {
       simulation.force('x', d3.forceX().x((d: any) => {
-        if (d.location?.long) return (d.location.long + 180) * (width / 360);
+        if (d.location?.long) return width/2 + ((d.location.long + 117) * (width / 10));
         return locationCenters[d.location_name]?.x || width / 2;
-      }).strength(0.04));
+      }).strength(0.1));
       simulation.force('y', d3.forceY().y((d: any) => {
-        if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
+        if (d.location?.lat) return height/2 + ((32.5 - d.location.lat) * (height / 10));
         return locationCenters[d.location_name]?.y || height / 2;
-      }).strength(0.04));
+      }).strength(0.1));
     } else {
-        simulation.force('x', d3.forceX().x((d: any) => {
-            if (d.location?.long) return (d.location.long + 180) * (width / 360);
-            return width / 2;
-        }).strength((d: any) => d.location?.long ? 0.25 : 0.04));
-        simulation.force('y', d3.forceY().y((d: any) => {
-            if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
-            return height / 2;
-        }).strength((d: any) => d.location?.lat ? 0.25 : 0.04));
+        simulation.force('x', d3.forceX(width / 2).strength(0.05));
+        simulation.force('y', d3.forceY(height / 2).strength(0.05));
     }
 
     const linkSelection = container.append('g')
