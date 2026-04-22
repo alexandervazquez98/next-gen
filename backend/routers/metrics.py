@@ -57,12 +57,13 @@ async def create_metric(
 @router.delete("/{metric_id}")
 async def delete_metric(
     metric_id: str,
+    force: bool = False,
     current_user: User = Depends(get_current_active_user),
 ):
     """Delete a Metric Definition. Requires authentication and CI_EDIT permission."""
     if not check_permission(UserPermission.CI_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to delete metrics")
-    return metric_service.delete_metric(metric_id)
+    return metric_service.delete_metric(metric_id, force=force)
 
 
 @router.get("/{metric_id}/usage")

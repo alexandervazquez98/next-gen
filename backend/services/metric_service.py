@@ -61,12 +61,54 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
              polling_interval=metric.polling_interval or 60)
     return {"message": "Metric defined"}
 
-def delete_metric(metric_id: str) -> Dict[str, str]:
-    """Delete a Metric Definition."""
+def delete_metric(metric_id: str, force: bool = False) -> Dict[str, Any]:
+    """
+    Delete a Metric Definition. 
+    If force=True, removes all assignments and related events.
+    """
+    driver = get_db()
+    usage = get_metric_usage(metric_id)
+    
+    if usage["node_count"] > 0 and not force:
+        # Prevent accidental deletion of metrics in use
+        return {
+            "error": "IN_USE", 
+            "message": f"Metric is currently assigned to {usage['node_count']} nodes. Use force=True to delete anyway.",
+            "usage": usage
+        }
+
+    with driver.session() as session:
+        if force:
+            # 1. Remove HAS_METRIC relationships across the whole graph
+            session.run("MATCH (:CI)-[r:HAS_METRIC]->(m:MetricDef {id: $id}) DELETE r", id=metric_id)
+            # 2. Delete events associated with this metric (optional but recommended for cleanup)
+            session.run("MATCH (e:Event)-[:TRIGGERED_BY]->(m:MetricDef {id: $id}) DETACH DELETE e", id=metric_id)
+        
+        # 3. Finally delete the metric definition itself
+        session.run("MATCH (m:MetricDef {id: $id}) DETACH DELETE m", id=metric_id)
+        
+    return {"message": "Metric deleted", "force_applied": force, "impact": usage}
+
+def get_metric_usage(metric_id: str) -> Dict[str, Any]:
+    """
+    Calculate the impact of a metric: how many nodes use it and how many active events it has.
+    """
     driver = get_db()
     with driver.session() as session:
-        session.run("MATCH (m:MetricDef {id: $id}) DETACH DELETE m", id=metric_id)
-    return {"message": "Metric deleted"}
+        result = session.run("""
+            MATCH (m:MetricDef {id: $id})
+            OPTIONAL MATCH (n:CI)-[:HAS_METRIC]->(m)
+            OPTIONAL MATCH (e:Event)-[:TRIGGERED_BY]->(m)
+            RETURN count(DISTINCT n) as node_count, count(DISTINCT e) as event_count
+        """, id=metric_id).single()
+        
+        if not result:
+            return {"node_count": 0, "event_count": 0}
+            
+        return {
+            "node_count": result["node_count"],
+            "event_count": result["event_count"]
+        }
 
 def get_applicable_metrics(node_id: str, metrics_catalog: Optional[List[Dict[str, Any]]] = None, session=None) -> List[Dict[str, Any]]:
     """
@@ -121,6 +163,19 @@ def _get_applicable_metrics_impl(node_id: str, metrics_catalog: Optional[List[Di
             
         try:
             criteria = json.loads(criteria_json) if isinstance(criteria_json, str) else criteria_json
+            
+            # CANDADO DE SEGURIDAD: Si todos los campos de filtro están vacíos, la métrica NO aplica a nadie.
+            # Esto evita la asignación masiva accidental al crear una métrica sin reglas.
+            has_filters = any([
+                criteria.get("names") and len(criteria["names"]) > 0,
+                criteria.get("brands") and len(criteria["brands"]) > 0,
+                criteria.get("models") and len(criteria["models"]) > 0,
+                criteria.get("layers") and len(criteria["layers"]) > 0
+            ])
+            
+            if not has_filters:
+                continue
+
             match = True
             
             # Check direct Name/ID match
@@ -212,3 +267,22 @@ def _reconcile_impl(node_id: str, applicable: List[Dict], applicable_ids: List[s
                 if curr["warn"] != m.get("warning") or curr["crit"] != m.get("critical"):
                     logger.info(f"Updating thresholds for existing metric {mid} on Node {node_id}")
                     link_metric_to_node(node_id, mid, warning=m.get("warning"), critical=m.get("critical"))
+
+def promote_metric_node(ci_id: str, metric_name: str, display_name: str = None):
+    """
+    Promotes a metric of a CI to a first-class Graph Node.
+    Useful for visualizing complex metric relationships.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        # Check if already promoted or exists
+        mid = f"M-{ci_id}-{metric_name}"
+        label = display_name or f"{metric_name} of {ci_id}"
+        
+        session.run("""
+            MATCH (n:CI {id: $cid})
+            MERGE (m:MetricDef {id: $mid})
+            SET m.name = $label, m.is_promoted = true
+            MERGE (n)-[:HAS_EXTERNAL_METRIC]->(m)
+        """, cid=ci_id, mid=mid, label=label)
+    return {"message": "Metric promoted to node", "id": mid}

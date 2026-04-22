@@ -570,25 +570,45 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                             </button>
                             {selectedMetric && (
                                 <button onClick={async () => {
-                                    // 1. Check Usage
+                                    setLoading(true);
                                     try {
+                                        // 1. Get detailed usage impact
                                         const usage = await api.get<any>(`/metrics/${selectedMetric.id}/usage`);
-                                        const count = usage.count || 0;
-                                        const msg = `Are you sure you want to delete metric '${selectedMetric.id}'?\n\n` +
-                                            `This metric is currently applicable to ${count} devices.\n` +
-                                            `Deleting it will stop monitoring this data point for all affected devices.\n\n` +
-                                            `This action cannot be undone.`;
+                                        const nodeCount = usage.node_count || 0;
+                                        const eventCount = usage.event_count || 0;
 
-                                        if (confirm(msg)) {
-                                            await api.delete(`/metrics/${selectedMetric.id}`);
-                                            setIsEditing(false);
-                                            fetchMetrics();
+                                        let msg = `Are you sure you want to delete '${selectedMetric.id}'?`;
+                                        
+                                        if (nodeCount > 0 || eventCount > 0) {
+                                            msg = `⚠️ CRITICAL IMPACT DETECTED\n\n` +
+                                                  `This metric is currently active on ${nodeCount} devices.\n` +
+                                                  `${eventCount} events are triggered by this metric.\n\n` +
+                                                  `Deleting it will REMOVE monitoring and history for all these devices.\n\n` +
+                                                  `Type 'DELETE' to confirm force removal:`;
+                                            
+                                            const confirmText = prompt(msg);
+                                            if (confirmText === 'DELETE') {
+                                                await api.delete(`/metrics/${selectedMetric.id}?force=true`);
+                                                alert('Metric and all associations removed successfully.');
+                                                setIsEditing(false);
+                                                fetchMetrics();
+                                            }
+                                        } else {
+                                            if (confirm(msg)) {
+                                                await api.delete(`/metrics/${selectedMetric.id}`);
+                                                setIsEditing(false);
+                                                fetchMetrics();
+                                            }
                                         }
-                                    } catch (e) {
-                                        alert('Error checking metric usage');
+                                    } catch (e: any) {
+                                        console.error(e);
+                                        alert('Error during deletion: ' + (e.response?.data?.detail || e.message));
+                                    } finally {
+                                        setLoading(false);
                                     }
-                                }} className="px-6 bg-red-600/20 hover:bg-red-600/40 text-red-500 font-bold py-3 rounded-xl transition-colors">
-                                    DELETE
+                                }} className="px-6 bg-red-600/20 hover:bg-red-600/40 text-red-500 font-bold py-3 rounded-xl transition-colors disabled:opacity-50"
+                                   disabled={loading}>
+                                    {loading ? '...' : 'DELETE'}
                                 </button>
                             )}
                             <button onClick={() => setIsEditing(false)} className="px-6 bg-white/10 hover:bg-white/20 text-white font-bold py-3 rounded-xl transition-colors">
