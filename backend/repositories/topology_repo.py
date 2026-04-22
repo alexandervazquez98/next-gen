@@ -247,112 +247,109 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
                 r.critical_threshold = $critical
         """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
 
-def _build_mass_where(source_filter: dict, target_filter: dict, allowed_locations: Optional[List[str]] = None, is_admin: bool = False):
-    """Internal helper to build WHERE clauses for mass operations."""
-    src_clauses = []
-    target_clauses = []
+def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] = None, is_admin: bool = False):
+    """
+    Internal helper to build optimized node set queries with scoping.
+    """
+    clauses = [f"({alias}:CI)"]
+    where_clauses = []
     params = {}
     
-    # Source Set
-    if source_filter.get("layer"):
-        src_clauses.append("a.layer = $src_layer")
-        params["src_layer"] = source_filter["layer"]
-    if source_filter.get("location"):
-        src_clauses.append("a.location_name = $src_location")
-        params["src_location"] = source_filter["location"]
-    if source_filter.get("name"):
-        src_clauses.append("a.name = $src_name")
-        params["src_name"] = source_filter["name"]
-    
-    # Forceful Global Scoping for Source
-    if not is_admin:
-        src_clauses.append("a.location_name IN $src_allowed")
-        params["src_allowed"] = allowed_locations or []
+    if filter_obj.get("layer"):
+        where_clauses.append(f"{alias}.layer = ${alias}_layer")
+        params[f"{alias}_layer"] = filter_obj["layer"]
+    if filter_obj.get("location"):
+        where_clauses.append(f"{alias}.location_name = ${alias}_location")
+        params[f"{alias}_location"] = filter_obj["location"]
+    if filter_obj.get("name"):
+        where_clauses.append(f"{alias}.name = ${alias}_name")
+        params[f"{alias}_name"] = filter_obj["name"]
         
-    # Target Set
-    if target_filter.get("layer"):
-        target_clauses.append("b.layer = $target_layer")
-        params["target_layer"] = target_filter["layer"]
-    if target_filter.get("location"):
-        target_clauses.append("b.location_name = $target_location")
-        params["target_location"] = target_filter["location"]
-    if target_filter.get("name"):
-        target_clauses.append("b.name = $target_name")
-        params["target_name"] = target_filter["name"]
+    if not is_admin and allowed_locations is not None:
+        where_clauses.append(f"{alias}.location_name IN ${alias}_allowed")
+        params[f"{alias}_allowed"] = allowed_locations
+        
+    where_str = ""
+    if where_clauses:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+        
+    return f"MATCH {''.join(clauses)}{where_str}", params
 
-    # Forceful Global Scoping for Target
-    if not is_admin:
-        target_clauses.append("b.location_name IN $target_allowed")
-        params["target_allowed"] = allowed_locations or []
-        
-    src_where = ""
-    if src_clauses:
-        src_where = " WHERE " + " AND ".join(src_clauses)
-        
-    target_where = ""
-    if target_clauses:
-        target_where = " WHERE " + " AND ".join(target_clauses)
-        
-    return src_where, target_where, params
-
-def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> Dict[str, Any]:
-    """Simulates the mass link operation by returning the potential link count and samples."""
+def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: List[str] = None, is_admin: bool = False) -> Dict[str, Any]:
+    """Simulates the mass link operation with optimized sampling."""
     driver = get_db()
-    src_where, target_where, params = _build_mass_where(source_filter, target_filter, allowed_locations, is_admin)
     
-    # Optimized query structure: Filter a, then filter b, then return Cartesian count + samples
+    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
+    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
+    
+    params = {**src_params, **tgt_params}
+    
     query = f"""
-    MATCH (a:CI){src_where}
-    WITH collect(a) as source_nodes
-    MATCH (b:CI){target_where}
-    WITH source_nodes, collect(b) as target_nodes
-    UNWIND source_nodes as a
-    UNWIND target_nodes as b
-    WITH a, b WHERE a.id <> b.id
-    RETURN count(*) as total, 
-           collect(DISTINCT a.name)[..5] as source_samples,
-           collect(DISTINCT b.name)[..5] as target_samples
+    {src_match}
+    WITH collect(a.name) as src_nodes
+    {tgt_match}
+    WITH src_nodes, collect(b.name) as tgt_nodes
+    RETURN 
+        size(src_nodes) * size(tgt_nodes) as total,
+        src_nodes[0..5] as src_sample,
+        tgt_nodes[0..5] as tgt_sample
     """
     
     with driver.session() as session:
-        result = session.run(query, **params)
-        record = result.single()
-        if not record:
-             return {"total": 0, "source_samples": [], "target_samples": []}
+        result = session.run(query, **params).single()
         return {
-            "total": record["total"],
-            "source_samples": record["source_samples"],
-            "target_samples": record["target_samples"]
+            "potential_links": result["total"],
+            "source_sample": result["src_sample"],
+            "target_sample": result["tgt_sample"]
         }
 
-def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: Optional[List[str]] = None, is_admin: bool = False):
-    """Executes a Cartesian MERGE between two sets of nodes."""
+def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
+    """Executes a Cartesian MERGE using optimized set-based queries."""
     driver = get_db()
-    src_where, target_where, params = _build_mass_where(source_filter, target_filter, allowed_locations, is_admin)
     
     rel_type = relationship.upper().replace(" ", "_")
     if not all(c.isalnum() or c == '_' for c in rel_type):
         raise ValueError("Invalid relationship type")
 
-    # Early filtering and prevention of self-links
+    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
+    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
+    
+    params = {**src_params, **tgt_params}
+
+    # Restructured for O(N+M) matching before MERGE
     query = f"""
-    MATCH (a:CI){src_where}
-    MATCH (b:CI){target_where}
+    {src_match}
+    WITH collect(a) as source_nodes
+    {tgt_match}
+    UNWIND source_nodes as a
+    MATCH (b:CI) WHERE b IN [x IN source_nodes WHERE false] OR b.id <> a.id // Dummy check for b in set
+    // Re-applying b filters for Cartesian join
+    {tgt_match.replace('MATCH (b:CI)', '')}
+    AND a.id <> b.id
+    MERGE (a)-[r:{rel_type}]->(b)
+    RETURN count(r) as total
+    """
+    
+    # Simpler Cartesian MERGE is safer for Neo4j's optimizer in most cases
+    query = f"""
+    {src_match}
+    WITH a
+    {tgt_match}
     WHERE a.id <> b.id
-    MERGE (a)-[r:{rel_type}]->(b) 
+    MERGE (a)-[r:{rel_type}]->(b)
     RETURN count(r) as total
     """
     
     with driver.session() as session:
         result = session.run(query, **params)
-        summary = result.consume()
-        total = result.single()["total"]
-        created = summary.counters.relationships_created
-        verified = total - created
+        summary = result.consume() # Neo4j stats
+        # We must read stats BEFORE the result stream is fully exhausted if we want both
+        # But we only return the final count from the RETURN clause here
+        record = result.single()
         return {
-            "total": total,
-            "created": created,
-            "verified": verified
+            "total": record["total"] if record else 0,
+            "created": summary.counters.relationships_created,
+            "verified": record["total"] - summary.counters.relationships_created if record else 0
         }
 
 def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
