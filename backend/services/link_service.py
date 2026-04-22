@@ -75,16 +75,26 @@ def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: 
     Simulates a bulk link operation and returns the potential impact.
     Enforces data scoping.
     """
-    if current_user.role != "ADMIN":
+    is_admin = current_user.role == "ADMIN"
+    
+    if not is_admin:
         if source_filter.get("location") and source_filter["location"] not in current_user.allowed_locations:
              raise ValueError(f"Unauthorized location in source filter: {source_filter['location']}")
         if target_filter.get("location") and target_filter["location"] not in current_user.allowed_locations:
              raise ValueError(f"Unauthorized location in target filter: {target_filter['location']}")
 
-    count = topology_repo.count_potential_links(source_filter, target_filter)
+    data = topology_repo.count_potential_links(
+        source_filter, target_filter, 
+        allowed_locations=current_user.allowed_locations, 
+        is_admin=is_admin
+    )
+    
+    count = data["total"]
     
     return {
         "potential_links": count,
+        "source_samples": data["source_samples"],
+        "target_samples": data["target_samples"],
         "is_safe": count <= 500,
         "message": "Ready to execute" if count <= 500 else "Too many potential links (> 500). Please refine filters."
     }
@@ -97,10 +107,17 @@ def execute_bulk_links(current_user: User, source_filter: dict, target_filter: d
     if not sim["is_safe"]:
         return {"success": False, "message": sim["message"]}
     
-    total = topology_repo.execute_mass_links(source_filter, target_filter, relationship)
+    is_admin = current_user.role == "ADMIN"
+    report = topology_repo.execute_mass_links(
+        source_filter, target_filter, relationship,
+        allowed_locations=current_user.allowed_locations,
+        is_admin=is_admin
+    )
     
     return {
         "success": True, 
-        "message": f"Successfully created/verified {total} links.",
-        "created_count": total
+        "message": f"Operation complete: {report['created']} new links created, {report['verified']} links verified.",
+        "created_count": report['created'],
+        "verified_count": report['verified'],
+        "total": report['total']
     }

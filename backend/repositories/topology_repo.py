@@ -247,62 +247,113 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
                 r.critical_threshold = $critical
         """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
 
-def _build_mass_where(source_filter: dict, target_filter: dict):
+def _build_mass_where(source_filter: dict, target_filter: dict, allowed_locations: Optional[List[str]] = None, is_admin: bool = False):
     """Internal helper to build WHERE clauses for mass operations."""
-    where_clauses = []
+    src_clauses = []
+    target_clauses = []
     params = {}
     
     # Source Set
     if source_filter.get("layer"):
-        where_clauses.append("a.layer = $src_layer")
+        src_clauses.append("a.layer = $src_layer")
         params["src_layer"] = source_filter["layer"]
     if source_filter.get("location"):
-        where_clauses.append("a.location_name = $src_location")
+        src_clauses.append("a.location_name = $src_location")
         params["src_location"] = source_filter["location"]
     if source_filter.get("name"):
-        where_clauses.append("a.name = $src_name")
+        src_clauses.append("a.name = $src_name")
         params["src_name"] = source_filter["name"]
+    
+    # Forceful Global Scoping for Source
+    if not is_admin:
+        src_clauses.append("a.location_name IN $src_allowed")
+        params["src_allowed"] = allowed_locations or []
         
     # Target Set
     if target_filter.get("layer"):
-        where_clauses.append("b.layer = $target_layer")
+        target_clauses.append("b.layer = $target_layer")
         params["target_layer"] = target_filter["layer"]
     if target_filter.get("location"):
-        where_clauses.append("b.location_name = $target_location")
+        target_clauses.append("b.location_name = $target_location")
         params["target_location"] = target_filter["location"]
     if target_filter.get("name"):
-        where_clauses.append("b.name = $target_name")
+        target_clauses.append("b.name = $target_name")
         params["target_name"] = target_filter["name"]
-        
-    where_str = ""
-    if where_clauses:
-        where_str = " WHERE " + " AND ".join(where_clauses)
-    return where_str, params
 
-def count_potential_links(source_filter: dict, target_filter: dict) -> int:
-    """Simulates the mass link operation by returning the potential link count."""
+    # Forceful Global Scoping for Target
+    if not is_admin:
+        target_clauses.append("b.location_name IN $target_allowed")
+        params["target_allowed"] = allowed_locations or []
+        
+    src_where = ""
+    if src_clauses:
+        src_where = " WHERE " + " AND ".join(src_clauses)
+        
+    target_where = ""
+    if target_clauses:
+        target_where = " WHERE " + " AND ".join(target_clauses)
+        
+    return src_where, target_where, params
+
+def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> Dict[str, Any]:
+    """Simulates the mass link operation by returning the potential link count and samples."""
     driver = get_db()
-    where_str, params = _build_mass_where(source_filter, target_filter)
-    query = f"MATCH (a:CI), (b:CI){where_str} RETURN count(*) as total"
+    src_where, target_where, params = _build_mass_where(source_filter, target_filter, allowed_locations, is_admin)
+    
+    # Optimized query structure: Filter a, then filter b, then return Cartesian count + samples
+    query = f"""
+    MATCH (a:CI){src_where}
+    WITH collect(a) as source_nodes
+    MATCH (b:CI){target_where}
+    WITH source_nodes, collect(b) as target_nodes
+    UNWIND source_nodes as a
+    UNWIND target_nodes as b
+    WITH a, b WHERE a.id <> b.id
+    RETURN count(*) as total, 
+           collect(DISTINCT a.name)[..5] as source_samples,
+           collect(DISTINCT b.name)[..5] as target_samples
+    """
     
     with driver.session() as session:
         result = session.run(query, **params)
-        return result.single()["total"]
+        record = result.single()
+        if not record:
+             return {"total": 0, "source_samples": [], "target_samples": []}
+        return {
+            "total": record["total"],
+            "source_samples": record["source_samples"],
+            "target_samples": record["target_samples"]
+        }
 
-def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str):
+def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: Optional[List[str]] = None, is_admin: bool = False):
     """Executes a Cartesian MERGE between two sets of nodes."""
     driver = get_db()
-    where_str, params = _build_mass_where(source_filter, target_filter)
+    src_where, target_where, params = _build_mass_where(source_filter, target_filter, allowed_locations, is_admin)
     
     rel_type = relationship.upper().replace(" ", "_")
     if not all(c.isalnum() or c == '_' for c in rel_type):
         raise ValueError("Invalid relationship type")
 
-    query = f"MATCH (a:CI), (b:CI){where_str} MERGE (a)-[r:{rel_type}]->(b) RETURN count(r) as total"
+    # Early filtering and prevention of self-links
+    query = f"""
+    MATCH (a:CI){src_where}
+    MATCH (b:CI){target_where}
+    WHERE a.id <> b.id
+    MERGE (a)-[r:{rel_type}]->(b) 
+    RETURN count(r) as total
+    """
     
     with driver.session() as session:
         result = session.run(query, **params)
-        return result.single()["total"]
+        summary = result.consume()
+        total = result.single()["total"]
+        created = summary.counters.relationships_created
+        verified = total - created
+        return {
+            "total": total,
+            "created": created,
+            "verified": verified
+        }
 
 def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
     driver = get_db()

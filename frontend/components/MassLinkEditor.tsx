@@ -173,11 +173,33 @@ const MassLinkEditor: React.FC = () => {
                             <div>
                                 <p className="text-sm font-bold text-white">Simulation Summary</p>
                                 <p className="text-xs text-neutral-400 mt-1">{simulation.message}</p>
-                                <div className="mt-4 flex gap-8">
+                                <div className="mt-4 flex flex-wrap gap-8">
                                     <div className="text-center p-3 bg-black/20 rounded-xl border border-white/5 min-w-[120px]">
                                         <p className="text-[10px] text-neutral-500 uppercase font-black">Potential Links</p>
                                         <p className="text-xl font-black text-brand-400">{simulation.potential_links}</p>
                                     </div>
+                                    
+                                    {simulation.source_samples?.length > 0 && (
+                                        <div className="p-3 bg-black/20 rounded-xl border border-white/5 max-w-[200px]">
+                                            <p className="text-[10px] text-neutral-500 uppercase font-black mb-1">Source Samples</p>
+                                            <div className="flex flex-wrap gap-1">
+                                                {simulation.source_samples.map((s: string) => (
+                                                    <span key={s} className="text-[9px] px-1.5 py-0.5 bg-white/5 rounded text-neutral-300">{s}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {simulation.target_samples?.length > 0 && (
+                                        <div className="p-3 bg-black/20 rounded-xl border border-white/5 max-w-[200px]">
+                                            <p className="text-[10px] text-neutral-500 uppercase font-black mb-1">Target Samples</p>
+                                            <div className="flex flex-wrap gap-1">
+                                                {simulation.target_samples.map((s: string) => (
+                                                    <span key={s} className="text-[9px] px-1.5 py-0.5 bg-white/5 rounded text-neutral-300">{s}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
