@@ -1,6 +1,4 @@
-
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 import { useOwnersQuery } from '../hooks/queries/useOwnersQuery';
@@ -10,6 +8,50 @@ interface FilterState {
     location: string;
     name: string;
 }
+
+interface FilterPanelProps {
+    title: string;
+    filter: FilterState;
+    setFilter: (f: FilterState) => void;
+    categories?: any[];
+}
+
+const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, categories }) => (
+    <div className="flex-1 p-6 bg-neutral-900/50 border border-white/5 rounded-2xl space-y-4">
+        <h3 className="text-xs font-black text-brand-400 uppercase tracking-widest">{title}</h3>
+        <div className="space-y-3">
+            <label className="block">
+                <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Technology / Layer</span>
+                <select 
+                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                    value={filter.layer}
+                    onChange={(e) => setFilter({ ...filter, layer: e.target.value })}
+                >
+                    <option value="">All Layers</option>
+                    {categories?.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                </select>
+            </label>
+            <label className="block">
+                <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Exact Name (Optional)</span>
+                <input 
+                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                    value={filter.name}
+                    onChange={(e) => setFilter({ ...filter, name: e.target.value })}
+                    placeholder="e.g. CORE-SW-01"
+                />
+            </label>
+            <label className="block">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">Location</span>
+                <input 
+                    className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
+                    value={filter.location}
+                    onChange={(e) => setFilter({ ...filter, location: e.target.value })}
+                    placeholder="Search by location..."
+                />
+            </label>
+        </div>
+    </div>
+);
 
 const MassLinkEditor: React.FC = () => {
     const [sourceFilter, setSourceFilter] = useState<FilterState>({ layer: '', location: '', name: '' });
@@ -57,47 +99,6 @@ const MassLinkEditor: React.FC = () => {
         }
     };
 
-    const FilterPanel = ({ title, filter, setFilter }: { title: string, filter: FilterState, setFilter: (f: FilterState) => void }) => (
-        <div className="flex-1 p-6 bg-neutral-900/50 border border-white/5 rounded-2xl space-y-4">
-            <h3 className="text-xs font-black text-brand-400 uppercase tracking-widest">{title}</h3>
-            <div className="space-y-3">
-                <label className="block">
-                    <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Technology / Layer</span>
-                    <select 
-                        className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white"
-                        value={filter.layer}
-                        onChange={(e) => setFilter({ ...filter, layer: e.target.value })}
-                    >
-                        <option value="">All Layers</option>
-                        {categories?.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                    </select>
-                </label>
-                <label className="block">
-                    <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Exact Name (Optional)</span>
-                    <input 
-                        className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white"
-                        value={filter.name}
-                        onChange={(e) => setFilter({ ...filter, name: e.target.value })}
-                        placeholder="e.g. CORE-SW-01"
-                    />
-                </label>
-                <label className="block">
-                    <span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">Location</span>
-                    <select 
-                        className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white"
-                        value={filter.location}
-                        onChange={(e) => setFilter({ ...filter, location: e.target.value })}
-                    >
-                        <option value="">All Locations</option>
-                        <option value="DataCenter_A">DataCenter A</option>
-                        <option value="DataCenter_B">DataCenter B</option>
-                        <option value="Cloud">Cloud</option>
-                    </select>
-                </label>
-            </div>
-        </div>
-    );
-
     return (
         <div className="p-8 space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end">
@@ -108,7 +109,12 @@ const MassLinkEditor: React.FC = () => {
             </div>
 
             <div className="flex gap-6">
-                <FilterPanel title="Source Set (Nodes that depend...)" filter={sourceFilter} setFilter={setSourceFilter} />
+                <FilterPanel 
+                    title="Source Set (Nodes that depend...)" 
+                    filter={sourceFilter} 
+                    setFilter={setSourceFilter} 
+                    categories={categories}
+                />
                 
                 <div className="flex flex-col justify-center items-center px-4">
                     <div className="w-px h-12 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
@@ -116,7 +122,12 @@ const MassLinkEditor: React.FC = () => {
                     <div className="w-px h-12 bg-gradient-to-t from-transparent via-white/10 to-transparent"></div>
                 </div>
 
-                <FilterPanel title="Target Set (...on these nodes)" filter={targetFilter} setFilter={setTargetFilter} />
+                <FilterPanel 
+                    title="Target Set (...on these nodes)" 
+                    filter={targetFilter} 
+                    setFilter={setTargetFilter} 
+                    categories={categories}
+                />
             </div>
 
             <div className="bg-neutral-900/80 backdrop-blur p-8 rounded-3xl border border-brand-500/20 shadow-2xl space-y-6">
