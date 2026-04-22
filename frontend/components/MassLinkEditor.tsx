@@ -90,8 +90,10 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
 );
 
 const MassLinkEditor: React.FC = () => {
-    const [sourceFilter, setSourceFilter] = useState<FilterState>({ label: 'CI', layer: '', location: '', name: '', id: '' });
-    const [targetFilter, setTargetFilter] = useState<FilterState>({ label: 'CI', layer: '', location: '', name: '', id: '' });
+    const initialFilter: FilterState = { label: 'CI', layer: '', location: '', name: '', id: '' };
+    
+    const [sourceFilter, setSourceFilter] = useState<FilterState>({ ...initialFilter });
+    const [targetFilter, setTargetFilter] = useState<FilterState>({ ...initialFilter });
     const [relationship, setRelationship] = useState('DEPENDS_ON');
     const [newRelationship, setNewRelationship] = useState('DEPENDS_ON');
     const [simulation, setSimulation] = useState<any>(null);
@@ -102,6 +104,14 @@ const MassLinkEditor: React.FC = () => {
         queryKey: ['metrics'],
         queryFn: () => api.get<any[]>('/metrics')
     });
+
+    const handleReset = () => {
+        setSourceFilter({ ...initialFilter });
+        setTargetFilter({ ...initialFilter });
+        setRelationship('DEPENDS_ON');
+        setNewRelationship('DEPENDS_ON');
+        setSimulation(null);
+    };
 
     // Auto-switch relationship to HAS_METRIC if target is a metric
     React.useEffect(() => {
@@ -208,6 +218,13 @@ const MassLinkEditor: React.FC = () => {
                     <h2 className="text-3xl font-black text-white tracking-tighter uppercase">Mass Topology Orchestrator</h2>
                     <p className="text-neutral-500 text-sm">Bind CIs to each other or link entire sets of nodes to Metric Definitions.</p>
                 </div>
+                <button 
+                    onClick={handleReset}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/5"
+                >
+                    <span className="material-symbols-outlined text-sm">restart_alt</span>
+                    Reset Orchestrator
+                </button>
             </div>
 
             <div className="flex gap-6">
