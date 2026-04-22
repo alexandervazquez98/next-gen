@@ -146,14 +146,21 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       const n = Object.create(node);
       const cached = nodeStateRef.current.get(node.id);
       
+      console.log(`[GraphCMDB] 🔍 Procesando Nodo: ${node.id}`);
+      console.log(`   -> Raw from Backend:`, { location: node.location, location_name: node.location_name });
+
       if (cached) {
         n.x = cached.x;
         n.y = cached.y;
         n.vx = cached.vx;
         n.vy = cached.vy;
+        console.log(`   ✅ Restaurado desde CACHE: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
       } else if (node.location?.lat && node.location?.long) {
           n.x = (node.location.long + 180) * (width / 360);
           n.y = (90 - node.location.lat) * (height / 180);
+          console.log(`   🌍 Inicializado desde LAT/LONG: lat=${node.location.lat}, long=${node.location.long} => x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
+      } else {
+          console.log(`   ⚠️ Sin ubicación ni cache. Caerá en el centro.`);
       }
       return n;
     });
