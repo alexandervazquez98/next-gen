@@ -284,14 +284,16 @@ const MassLinkEditor: React.FC = () => {
                         {simulation && (
                             <button 
                                 onClick={handleExecute}
-                                disabled={loading || !simulation.is_safe}
+                                disabled={loading || !simulation.is_safe || simulation.potential_links === 0}
                                 className={`px-8 py-3 rounded-2xl text-xs font-black transition-all uppercase tracking-widest shadow-lg ${
-                                    simulation.is_safe 
+                                    simulation.is_safe && simulation.potential_links > 0
                                     ? 'bg-brand-600 hover:bg-brand-500 text-white shadow-brand-900/20' 
                                     : 'bg-red-500/20 text-red-500 cursor-not-allowed border border-red-500/20'
                                 }`}
                             >
-                                {simulation.is_safe ? `Execute ${simulation.potential_links} Links` : 'Unsafe Operation'}
+                                {simulation.potential_links > 0 
+                                    ? (simulation.is_safe ? `Execute ${simulation.potential_links} Links` : 'Unsafe Operation')
+                                    : 'No Links Found'}
                             </button>
                         )}
 

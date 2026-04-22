@@ -302,11 +302,14 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     """
     
     with driver.session() as session:
-        result = session.run(query, **params).single()
+        res = session.run(query, **params).single()
+        if not res:
+            return {"total": 0, "source_samples": [], "target_samples": []}
+            
         return {
-            "total": result["total"],
-            "source_samples": result["src_sample"],
-            "target_samples": result["tgt_sample"]
+            "total": res["total"],
+            "source_samples": res["src_sample"],
+            "target_samples": res["tgt_sample"]
         }
 
 def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
@@ -322,20 +325,6 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     
     params = {**src_params, **tgt_params}
 
-    # Restructured for O(N+M) matching before MERGE
-    query = f"""
-    {src_match}
-    WITH collect(a) as source_nodes
-    {tgt_match}
-    UNWIND source_nodes as a
-    MATCH (b:CI) WHERE b IN [x IN source_nodes WHERE false] OR b.id <> a.id // Dummy check for b in set
-    // Re-applying b filters for Cartesian join
-    {tgt_match.replace('MATCH (b:CI)', '')}
-    AND a.id <> b.id
-    MERGE (a)-[r:{rel_type}]->(b)
-    RETURN count(r) as total
-    """
-    
     # Simpler Cartesian MERGE is safer for Neo4j's optimizer in most cases
     query = f"""
     {src_match}
@@ -349,13 +338,13 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     with driver.session() as session:
         result = session.run(query, **params)
         summary = result.consume() # Neo4j stats
-        # We must read stats BEFORE the result stream is fully exhausted if we want both
-        # But we only return the final count from the RETURN clause here
         record = result.single()
+        
+        total = record["total"] if record else 0
         return {
-            "total": record["total"] if record else 0,
+            "total": total,
             "created": summary.counters.relationships_created,
-            "verified": record["total"] - summary.counters.relationships_created if record else 0
+            "verified": total - summary.counters.relationships_created
         }
 
 def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
