@@ -6,112 +6,45 @@ from models.core import Node, Link
 
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
-    
-    # Base Query
-    query = """
-        MATCH (n:CI)
-    """
-    
+    query = "MATCH (n:CI)"
     params = {}
-    
-    # Apply Scoping
     if not is_admin:
-        if not allowed_locations:
-             return []
-        
+        if not allowed_locations: return []
         query += " WHERE n.location_name IN $allowed_locations "
         params["allowed_locations"] = allowed_locations
-
     query += """
         OPTIONAL MATCH (n)-[:CATEGORIZED_AS]->(c:Category)
         OPTIONAL MATCH (n)-[r:HAS_METRIC]->(m:MetricDef)
         RETURN n, c.name as category, collect({
-            name: m.id, 
-            protocol: m.protocol,
-            status: r.status,
-            value: r.last_value,
-            last_updated: r.last_updated
+            name: m.id, protocol: m.protocol, status: r.status, value: r.last_value, last_updated: r.last_updated
         }) as metrics
     """
-
     with driver.session() as session:
         result = session.run(query, **params)
-        nodes = []
-        for record in result:
-            node = record["n"]
-            category = record["category"]
-            metrics_data = record["metrics"]
-            nodes.append({
-                "node": node,
-                "category": category,
-                "metrics": metrics_data
-            })
-        return nodes
+        return [{"node": r["n"], "category": r["category"], "metrics": r["metrics"]} for r in result]
 
 def upsert_node(node: Node) -> None:
     driver = get_db()
-    
-    # JSON Serialize SNMP (if dict)
-    snmp_str = node.snmp
-    if isinstance(node.snmp, dict):
-        snmp_str = json.dumps(node.snmp)
-    
-    owner = node.owner
-    loc_name = node.location_name
-    brand = node.brand
-    model = node.model
-    serial = node.serialNumber or ""
-    firmware = node.firmwareVersion or ""
-
-    query = f"""
-    MERGE (n:CI {{id: $id}})
-    SET n.name = $label,
-        n.layer = $type,
-        n.status = $status,
-        n.ip = $ip,
-        n.owner = $owner,
-        n.location_name = $loc_name,
-        n.brand = $brand,
-        n.model = $model,
-        n.serialNumber = $serial,
-        n.firmwareVersion = $firmware,
-        n.snmp = $snmp, 
-        n.pollingInterval = $polling,
-        n.updated_at = datetime()
+    snmp_str = json.dumps(node.snmp) if isinstance(node.snmp, dict) else node.snmp
+    query = """
+    MERGE (n:CI {id: $id})
+    SET n.name = $label, n.layer = $type, n.status = $status, n.ip = $ip, n.owner = $owner,
+        n.location_name = $loc_name, n.brand = $brand, n.model = $model, n.serialNumber = $serial,
+        n.firmwareVersion = $firmware, n.snmp = $snmp, n.pollingInterval = $polling, n.updated_at = datetime()
     """
-    
-    # Parameterized coordinates to avoid injection
     if node.location and 'lat' in node.location and 'long' in node.location:
         query += ", n.location = point({latitude: $lat, longitude: $lng})"
-
-    query += """
-    WITH n
-    MERGE (c:Category {name: $type})
-    MERGE (n)-[:CATEGORIZED_AS]->(c)
-    """
-    
-    if owner:
-        query += """
-        WITH n
-        MERGE (o:OwnerGroup {name: $owner})
-        MERGE (n)-[:OWNED_BY]->(o)
-        """
-
-    if brand and model:
-        query += """
-        WITH n
-        MERGE (h:HardwareModel {brand: $brand, model: $model})
-        MERGE (n)-[:IS_MODEL]->(h)
-        """
-
+    query += "\nWITH n MERGE (c:Category {name: $type}) MERGE (n)-[:CATEGORIZED_AS]->(c)"
+    if node.owner:
+        query += "\nWITH n MERGE (o:OwnerGroup {name: $owner}) MERGE (n)-[:OWNED_BY]->(o)"
+    if node.brand and node.model:
+        query += "\nWITH n MERGE (h:HardwareModel {brand: $brand, model: $model}) MERGE (n)-[:IS_MODEL]->(h)"
     with driver.session() as session:
-        session.run(query, 
-            id=node.id, label=node.label, type=node.type, status=node.status, 
-            ip=node.ip, owner=owner, loc_name=loc_name, brand=brand, model=model,
-            serial=serial, firmware=firmware, snmp=snmp_str, polling=node.pollingInterval,
-            lat=node.location.get('lat') if node.location else 0,
-            lng=node.location.get('long') if node.location else 0
-        )
+        session.run(query, id=node.id, label=node.label, type=node.type, status=node.status, ip=node.ip, 
+                    owner=node.owner, loc_name=node.location_name, brand=node.brand, model=node.model,
+                    serial=node.serialNumber or "", firmware=node.firmwareVersion or "", snmp=snmp_str, 
+                    polling=node.pollingInterval, lat=node.location.get('lat') if node.location else 0,
+                    lng=node.location.get('long') if node.location else 0)
 
 def delete_node(node_id: str) -> None:
     driver = get_db()
@@ -121,364 +54,151 @@ def delete_node(node_id: str) -> None:
 def get_node_usage(node_id: str) -> int:
     driver = get_db()
     with driver.session() as session:
-        result = session.run("MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id)
-        count = result.single()["count"]
-        return count
+        return session.run("MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id).single()["count"]
 
 def get_valid_owners_and_layers() -> (Set[str], Set[str]):
     driver = get_db()
     with driver.session() as session:
         res_o = session.run("MATCH (o:OwnerGroup) RETURN o.name as name")
-        valid_owners = {r["name"] for r in res_o}
         res_c = session.run("MATCH (c:Category) RETURN c.name as name")
-        valid_layers = {r["name"] for r in res_c}
-    return valid_owners, valid_layers
+        return {r["name"] for r in res_o}, {r["name"] for r in res_c}
 
-def bulk_insert_node(
-    nid: str, label: str, ntype: str, status: str, ip: str, 
-    brand: str, model: str, serial: str, firmware: str,
-    lat: float, long: float, polling: int, snmp_str: str,
-    metadata: dict, owner: str
-):
+def bulk_insert_node(nid, label, ntype, status, ip, brand, model, serial, firmware, lat, long, polling, snmp_str, metadata, owner):
     driver = get_db()
     with driver.session() as session:
         session.run("""
             MERGE (n:CI {id: $id})
-            SET n.name = $label,
-                n.layer = $type,
-                n.status = $status,
-                n.ip = $ip,
-                n.brand = $brand,
-                n.model = $model,
-                n.serialNumber = $serial,
-                n.firmwareVersion = $firmware,
-                n.location = point({latitude: $lat, longitude: $long}),
-                n.location_name = $loc_name,
-                n.pollingInterval = $polling,
-                n.snmp = $snmp
+            SET n.name = $label, n.layer = $type, n.status = $status, n.ip = $ip, n.brand = $brand, n.model = $model,
+                n.serialNumber = $serial, n.firmwareVersion = $firmware, n.location = point({latitude: $lat, longitude: $long}),
+                n.location_name = $loc_name, n.pollingInterval = $polling, n.snmp = $snmp
             SET n += $metadata
-            
-            WITH n
-            MERGE (c:Category {name: $type})
-            MERGE (n)-[:CATEGORIZED_AS]->(cat)
-            
-            WITH n
-            WHERE $owner <> ''
-            MERGE (o:OwnerGroup {name: $owner})
-            MERGE (n)-[:OWNED_BY]->(o)
-        """, 
-        id=nid, label=label, type=ntype, status=status, ip=ip, 
-        brand=brand, model=model, serial=serial, firmware=firmware,
-        lat=lat, long=long, loc_name=metadata.get('location_name'),
-        polling=polling, snmp=snmp_str,
-        metadata=metadata, owner=owner)
+            WITH n MERGE (c:Category {name: $type}) MERGE (n)-[:CATEGORIZED_AS]->(c)
+            WITH n WHERE $owner <> '' MERGE (o:OwnerGroup {name: $owner}) MERGE (n)-[:OWNED_BY]->(o)
+        """, id=nid, label=label, type=ntype, status=status, ip=ip, brand=brand, model=model, serial=serial, firmware=firmware,
+        lat=lat, long=long, loc_name=metadata.get('location_name'), polling=polling, snmp=snmp_str, metadata=metadata, owner=owner)
 
-def get_template_data() -> (List[str], List[str]):
+def get_template_data():
     driver = get_db()
     with driver.session() as session:
         res_o = session.run("MATCH (o:OwnerGroup) RETURN o.name as name ORDER BY o.name")
-        owners_list = [record["name"] for record in res_o]
         res_c = session.run("MATCH (c:Category) RETURN c.name as name ORDER BY c.name")
-        layers_list = [record["name"] for record in res_c]
-    return owners_list, layers_list
+        return [r["name"] for r in res_o], [r["name"] for r in res_c]
 
-# --- Link Operations ---
-
-def get_links(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
+def get_links(allowed_locations=None, is_admin=False):
     driver = get_db()
-    with driver.session() as session:
-        query = """
-            MATCH (a)-[r]->(b)
-            WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef) 
-              AND NOT type(r) = 'CATEGORIZED_AS'
-              AND NOT type(r) = 'OWNED_BY'
-              AND NOT type(r) = 'IS_MODEL'
-              AND a.id IS NOT NULL AND b.id IS NOT NULL
-        """
-        
-        params = {}
-        if not is_admin:
-            if not allowed_locations: return []
-            query += " AND (a.location_name IN $allowed_locations OR b.location_name IN $allowed_locations) "
-            params["allowed_locations"] = allowed_locations
-
-        query += """
-            RETURN 
-                a.id as source, 
-                COALESCE(a.display_name, a.name, a.label, a.id) as source_label,
-                b.id as target, 
-                COALESCE(b.display_name, b.name, b.label, b.id) as target_label,
-                type(r) as rel
-        """
-        result = session.run(query, **params)
-        return [{
-            "source": record["source"],
-            "source_label": record["source_label"],
-            "target": record["target"],
-            "target_label": record["target_label"],
-            "relationship": record["rel"]
-        } for record in result if record["source"] and record["target"]]
-
-def create_link(source: str, target: str, relationship: str) -> None:
-    driver = get_db()
-    rel_type = relationship.upper().replace(" ", "_")
-    with driver.session() as session:
-        session.run(f"""
-            MATCH (a), (b) 
-            WHERE a.id = $source AND b.id = $target
-            MERGE (a)-[r:{rel_type}]->(b)
-        """, source=source, target=target)
-
-def delete_link(source: str, target: str, relationship: str) -> None:
-    driver = get_db()
-    rel_type = relationship.upper().replace(" ", "_")
-    with driver.session() as session:
-        session.run(f"MATCH (a {{id: $source}})-[r:{rel_type}]->(b {{id: $target}}) DELETE r",
-                    source=source, target=target)
-
-def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, critical: float = None):
-    driver = get_db()
-    with driver.session() as session:
-        session.run("""
-            MATCH (n:CI {id: $nid})
-            MATCH (m:MetricDef {id: $mid})
-            MERGE (n)-[r:HAS_METRIC]->(m)
-            SET r.warning_threshold = $warning,
-                r.critical_threshold = $critical
-        """, nid=node_id, mid=metric_id, warning=warning, critical=critical)
-
-def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] = None, is_admin: bool = False):
+    query = """
+        MATCH (a)-[r]->(b)
+        WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef) 
+          AND NOT type(r) IN ['CATEGORIZED_AS', 'OWNED_BY', 'IS_MODEL']
+          AND a.id IS NOT NULL AND b.id IS NOT NULL
     """
-    Internal helper to build optimized node set queries with scoping.
-    Now supports dynamic labels (CI, MetricDef, etc.)
-    """
-    label = filter_obj.get("label", "CI")
-    clauses = [f"({alias}:{label})"]
-    where_clauses = []
     params = {}
-    
-    has_specific_filter = False
-
-    if filter_obj.get("layer"):
-        where_clauses.append(f"{alias}.layer = ${alias}_layer")
-        params[f"{alias}_layer"] = filter_obj["layer"]
-        has_specific_filter = True
-    if filter_obj.get("location"):
-        where_clauses.append(f"{alias}.location_name = ${alias}_location")
-        params[f"{alias}_location"] = filter_obj["location"]
-        has_specific_filter = True
-    if filter_obj.get("name"):
-        where_clauses.append(f"{alias}.name = ${alias}_name")
-        params[f"{alias}_name"] = filter_obj["name"]
-        has_specific_filter = True
-    # Handle explicit IDs for granular selection
-    if filter_obj.get("ids") and len(filter_obj["ids"]) > 0:
-        where_clauses.append(f"{alias}.id IN ${alias}_ids")
-        params[f"{alias}_ids"] = filter_obj["ids"]
-        has_specific_filter = True
-    # Handle search term (partial match on name, ip, or location)
-    if filter_obj.get("searchTerm"):
-        where_clauses.append(f"({alias}.name =~ ${alias}_search OR {alias}.ip =~ ${alias}_search OR {alias}.location_name =~ ${alias}_search OR {alias}.id =~ ${alias}_search)")
-        params[f"{alias}_search"] = f"(?i).*{filter_obj['searchTerm']}.*"
-        has_specific_filter = True
-    # Handle MetricDef ID specifically
-    if label == "MetricDef" and filter_obj.get("id"):
-        where_clauses.append(f"{alias}.id = ${alias}_id")
-        params[f"{alias}_id"] = filter_obj["id"]
-        has_specific_filter = True
-        
-    if not is_admin and allowed_locations is not None and label == "CI":
-        where_clauses.append(f"{alias}.location_name IN ${alias}_allowed")
-        params[f"{alias}_allowed"] = allowed_locations
-        
-    # Safety: If no specific filter was provided, force 0 results to avoid Cartesian explosion
-    if not has_specific_filter and not filter_obj.get("allow_all"):
-        where_clauses.append("1 = 0")
-        
-    where_str = ""
-    if where_clauses:
-        where_str = " WHERE " + " AND ".join(where_clauses)
-        
-    return f"MATCH {''.join(clauses)}{where_str}", params
-
-def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: List[str] = None, is_admin: bool = False) -> Dict[str, Any]:
-    """Simulates the mass link operation with optimized sampling."""
-    driver = get_db()
-    
-    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
-    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
-    
-    params = {**src_params, **tgt_params}
-    
-    query = f"""
-    {src_match}
-    WITH collect(a) as sources
-    {tgt_match}
-    WITH sources, collect(b) as targets
-    UNWIND sources as a
-    UNWIND targets as b
-    RETURN 
-        count(*) as total,
-        collect(a.name)[0..5] as src_sample,
-        collect(b.name)[0..5] as tgt_sample
-    """
-    
-    with driver.session() as session:
-        result = session.run(query, **params)
-        record = result.single()
-        if not record:
-            return {"total": 0, "source_samples": [], "target_samples": []}
-            
-        return {
-            "total": record["total"],
-            "source_samples": record["src_sample"],
-            "target_samples": record["tgt_sample"]
-        }
-
-def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
-    """Executes a Cartesian MERGE using optimized set-based queries."""
-    driver = get_db()
-    
-    rel_type = relationship.upper().replace(" ", "_")
-    if not all(c.isalnum() or c == '_' for c in rel_type):
-        raise ValueError("Invalid relationship type")
-
-    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
-    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
-    
-    params = {**src_params, **tgt_params}
-
-    query = f"""
-    {src_match}
-    WITH a
-    {tgt_match}
-    WITH a, b
-    WHERE a.id <> b.id
-    MERGE (a)-[r:{rel_type}]->(b)
-    RETURN count(r) as total
-    """
-    
-    def _execute(tx):
-        result = tx.run(query, **params)
-        records = list(result)
-        summary = result.consume()
-        return records, summary
-
-    with driver.session() as session:
-        records, summary = session.execute_write(_execute)
-        total = records[0]["total"] if records else 0
-        return {
-            "total": total,
-            "created": summary.counters.relationships_created,
-            "verified": total - summary.counters.relationships_created
-        }
-
-def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
-    """Deletes relationships in bulk between sets of nodes."""
-    driver = get_db()
-    
-    rel_type = relationship.upper().replace(" ", "_")
-    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
-    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
-    
-    params = {**src_params, **tgt_params}
-    
-    query = f"""
-    {src_match}
-    WITH a
-    {tgt_match}
-    MATCH (a)-[r:{rel_type}]->(b)
-    DELETE r
-    RETURN count(r) as total
-    """
-    
-    def _execute(tx):
-        result = tx.run(query, **params)
-        records = list(result)
-        return records
-
-    with driver.session() as session:
-        records = session.execute_write(_execute)
-        return {
-            "deleted": records[0]["total"] if records else 0
-        }
-
-def execute_mass_update(source_filter: dict, target_filter: dict, old_relationship: str, new_relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
-    """Updates relationship types in bulk between sets of nodes."""
-    driver = get_db()
-    
-    old_rel = old_relationship.upper().replace(" ", "_")
-    new_rel = new_relationship.upper().replace(" ", "_")
-    
-    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
-    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
-    
-    params = {**src_params, **tgt_params}
-    
-    query = f"""
-    {src_match}
-    WITH a
-    {tgt_match}
-    MATCH (a)-[old:{old_rel}]->(b)
-    DELETE old
-    MERGE (a)-[new:{new_rel}]->(b)
-    RETURN count(new) as total
-    """
-    
-    def _execute(tx):
-        result = tx.run(query, **params)
-        records = list(result)
-        return records
-
-    with driver.session() as session:
-        records = session.execute_write(_execute)
-        return {
-            "updated": records[0]["total"] if records else 0
-        }
-
-def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
-    driver = get_db()
-    
-    where_clauses = []
-    params = {}
-    if layer:
-        where_clauses.append("n.layer = $layer")
-        params["layer"] = layer
-    if location:
-        where_clauses.append("n.location_name = $location")
-        params["location"] = location
-    if owner:
-        where_clauses.append("n.owner = $owner")
-        params["owner"] = owner
-    
     if not is_admin:
-        if not allowed_locations: return [], []
-        where_clauses.append("n.location_name IN $allowed_locations")
+        if not allowed_locations: return []
+        query += " AND (a.location_name IN $allowed_locations OR b.location_name IN $allowed_locations) "
         params["allowed_locations"] = allowed_locations
-
-    where_str = ""
-    if where_clauses:
-        where_str = " WHERE " + " AND ".join(where_clauses)
-
+    query += " RETURN a.id as s, COALESCE(a.name, a.id) as sl, b.id as t, COALESCE(b.name, b.id) as tl, type(r) as rel"
     with driver.session() as session:
-        # Fetch nodes
-        nodes_query = f"MATCH (n:CI){where_str} RETURN n, labels(n) as labels"
-        nodes_result = session.run(nodes_query, **params)
-        nodes = [dict(record["n"], _labels=record["labels"]) for record in nodes_result]
+        return [{"source": r["s"], "source_label": r["sl"], "target": r["t"], "target_label": r["tl"], "relationship": r["rel"]} for r in session.run(query, **params)]
 
-        # Fetch relationships
-        links_where_str = ""
-        if where_clauses:
-            a_clauses = [c.replace("n.", "a.") for c in where_clauses]
-            b_clauses = [c.replace("n.", "b.") for c in where_clauses]
-            links_where_str = " WHERE " + " AND ".join(a_clauses + b_clauses)
-            
-        links_query = f"MATCH (a:CI)-[r]->(b:CI){links_where_str} RETURN a, r, b"
-        links_result = session.run(links_query, **params)
-        links = [{
-            "source_node": dict(record["a"]),
-            "target_node": dict(record["b"]),
-            "type": record["r"].type
-        } for record in links_result]
-                
+def create_link(source, target, relationship):
+    driver = get_db()
+    rel = relationship.upper().replace(" ", "_")
+    with driver.session() as session:
+        session.run(f"MATCH (a), (b) WHERE a.id = $s AND b.id = $t MERGE (a)-[r:{rel}]->(b)", s=source, t=target)
+
+def delete_link(source, target, relationship):
+    driver = get_db()
+    rel = relationship.upper().replace(" ", "_")
+    with driver.session() as session:
+        session.run(f"MATCH (a {{id: $s}})-[r:{rel}]->(b {{id: $t}}) DELETE r", s=source, t=target)
+
+def _build_where(alias, filter_obj, is_admin, allowed_locations):
+    where = []
+    params = {}
+    if filter_obj.get("ids"):
+        where.append(f"{alias}.id IN ${alias}_ids")
+        params[f"{alias}_ids"] = filter_obj["ids"]
+    elif filter_obj.get("layer"):
+        where.append(f"{alias}.layer = ${alias}_layer")
+        params[f"{alias}_layer"] = filter_obj["layer"]
+    elif filter_obj.get("searchTerm"):
+        where.append(f"({alias}.name =~ ${alias}_search OR {alias}.ip =~ ${alias}_search OR {alias}.location_name =~ ${alias}_search)")
+        params[f"{alias}_search"] = f"(?i).*{filter_obj['searchTerm']}.*"
+    
+    if not is_admin and allowed_locations and filter_obj.get("label", "CI") == "CI":
+        where.append(f"{alias}.location_name IN ${alias}_allowed")
+        params[f"{alias}_allowed"] = allowed_locations
+    
+    return " AND ".join(where) if where else "1=1", params
+
+def count_potential_links(source_filter, target_filter, allowed_locations=None, is_admin=False):
+    driver = get_db()
+    w_a, p_a = _build_where("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where("b", target_filter, is_admin, allowed_locations)
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+    
+    query = f"MATCH (a:{label_a}) WHERE {w_a} WITH a MATCH (b:{label_b}) WHERE {w_b} RETURN count(*) as total, collect(a.name)[0..5] as s, collect(b.name)[0..5] as t"
+    with driver.session() as session:
+        r = session.run(query, **{**p_a, **p_b}).single()
+        return {"total": r["total"], "source_samples": r["s"], "target_samples": r["t"]}
+
+def execute_mass_links(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
+    driver = get_db()
+    rel = relationship.upper().replace(" ", "_")
+    w_a, p_a = _build_where("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where("b", target_filter, is_admin, allowed_locations)
+    label_a = source_filter.get("label", "CI")
+    label_b = target_filter.get("label", "CI")
+
+    query = f"""
+    MATCH (a:{label_a}) WHERE {w_a}
+    WITH a
+    MATCH (b:{label_b}) WHERE {w_b}
+    WITH a, b WHERE a.id <> b.id
+    MERGE (a)-[r:{rel}]->(b)
+    RETURN count(r) as total
+    """
+    with driver.session() as session:
+        try:
+            res = session.run(query, **{**p_a, **p_b})
+            rec = res.single()
+            stats = res.consume()
+            return {"total": rec["total"], "created": stats.counters.relationships_created, "verified": rec["total"] - stats.counters.relationships_created}
+        except Exception as e:
+            raise ValueError(f"Neo4j Error: {str(e)}")
+
+def execute_mass_delete(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
+    driver = get_db()
+    rel = relationship.upper().replace(" ", "_")
+    w_a, p_a = _build_where("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where("b", target_filter, is_admin, allowed_locations)
+    query = f"MATCH (a:{source_filter.get('label','CI')}) WHERE {w_a} WITH a MATCH (b:{target_filter.get('label','CI')}) WHERE {w_b} MATCH (a)-[r:{rel}]->(b) DELETE r RETURN count(r) as total"
+    with driver.session() as session:
+        r = session.run(query, **{**p_a, **p_b}).single()
+        return {"deleted": r["total"]}
+
+def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_locations=None, is_admin=False):
+    driver = get_db()
+    o_rel, n_rel = old_rel.upper().replace(" ","_"), new_rel.upper().replace(" ","_")
+    w_a, p_a = _build_where("a", source_filter, is_admin, allowed_locations)
+    w_b, p_b = _build_where("b", target_filter, is_admin, allowed_locations)
+    query = f"MATCH (a:{source_filter.get('label','CI')}) WHERE {w_a} WITH a MATCH (b:{target_filter.get('label','CI')}) WHERE {w_b} MATCH (a)-[o:{o_rel}]->(b) DELETE o MERGE (a)-[n:{n_rel}]->(b) RETURN count(n) as total"
+    with driver.session() as session:
+        r = session.run(query, **{**p_a, **p_b}).single()
+        return {"updated": r["total"]}
+
+def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locations=None, is_admin=False):
+    driver = get_db()
+    where, params = [], {}
+    if layer: where.append("n.layer = $layer"); params["layer"] = layer
+    if location: where.append("n.location_name = $location"); params["location"] = location
+    if owner: where.append("n.owner = $owner"); params["owner"] = owner
+    if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
+    w_str = (" WHERE " + " AND ".join(where)) if where else ""
+    with driver.session() as session:
+        nodes = [dict(r["n"], _labels=r["labels"]) for r in session.run(f"MATCH (n:CI){w_str} RETURN n, labels(n) as labels", **params)]
+        l_where = (" WHERE " + " AND ".join([c.replace("n.", "a.") for c in where] + [c.replace("n.", "b.") for c in where])) if where else ""
+        links = [{"source_node": dict(r["a"]), "target_node": dict(r["b"]), "type": r["r"].type} for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params)]
         return nodes, links
