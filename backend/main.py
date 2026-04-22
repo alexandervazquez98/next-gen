@@ -23,15 +23,15 @@ app = FastAPI(
     description="API for CMDB, Monitoring, and AIOps Platform",
 )
 
-# Include Routers
-app.include_router(auth.router)  # /api/auth (defined in router)
-app.include_router(users.router)  # /api/users
-app.include_router(roles.router)  # /api/roles
-app.include_router(nodes.router)  # /api/nodes
-app.include_router(metrics.router)  # /api/metrics
-app.include_router(catalog.router)  # /api/categories, /api/hardware, /api/owners
-app.include_router(links.router)  # /api/links
-app.include_router(events.router)  # /api/events
+# Include Routers with global /api prefix
+app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(roles.router, prefix="/api")
+app.include_router(nodes.router, prefix="/api")
+app.include_router(metrics.router, prefix="/api")
+app.include_router(catalog.router, prefix="/api")
+app.include_router(links.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
