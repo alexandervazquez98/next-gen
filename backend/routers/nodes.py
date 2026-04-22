@@ -28,12 +28,13 @@ async def execute_mass_nodes(payload: Dict[str, Any], current_user: User = Depen
     """
     return node_service.execute_mass_node_creator(current_user, payload)
 
-@router.put("/bulk-update")
+@router.post("/bulk-update")
 async def execute_mass_update_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
     """
     Updates mass nodes with shared metadata.
     """
     return node_service.execute_mass_node_update(current_user, payload)
+
 
 @router.post("")
 async def create_node(node: Node, current_user: User = Depends(get_current_active_user)):

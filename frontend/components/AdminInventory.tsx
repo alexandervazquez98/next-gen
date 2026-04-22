@@ -98,7 +98,7 @@ const AdminInventory: React.FC = () => {
     const handleBulkUpdate = async (updates: any) => {
         setLoading(true);
         try {
-            await api.put('/nodes/bulk-update', {
+            await api.post('/nodes/bulk-update', {
                 ids: Array.from(selectedIds),
                 updates
             });
@@ -112,6 +112,7 @@ const AdminInventory: React.FC = () => {
             setLoading(false);
         }
     };
+
 
     const handleSaveNode = async (node: GraphNode) => {
         try {
