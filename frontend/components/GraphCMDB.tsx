@@ -151,9 +151,13 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
         n.y = cached.y;
         n.vx = cached.vx;
         n.vy = cached.vy;
+        console.debug(`[GraphCMDB] Restaurando Nodo ${node.id} desde CACHE: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
       } else if (node.location?.lat && node.location?.long) {
           n.x = (node.location.long + 180) * (width / 360);
           n.y = (90 - node.location.lat) * (height / 180);
+          console.debug(`[GraphCMDB] Inicializando Nodo ${node.id} desde LAT/LONG: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
+      } else {
+          console.debug(`[GraphCMDB] Nodo ${node.id} sin ubicación ni cache.`);
       }
       return n;
     });
@@ -248,6 +252,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       .attr('dy', '3.5em').attr('text-anchor', 'middle').attr('fill', '#a3a3a3').attr('font-size', '11px')
       .text((node) => node.label);
 
+    let tickCount = 0;
     simulation.on('tick', () => {
       linkSelection
         .attr('x1', (link: any) => link.source.x).attr('y1', (link: any) => link.source.y)
@@ -261,6 +266,13 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       validNodes.forEach((n: any) => {
         nodeStateRef.current.set(n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy });
       });
+
+      // DEBUG TICK
+      tickCount++;
+      if (tickCount % 100 === 0 && validNodes.length > 0) {
+          const s = validNodes[0];
+          console.debug(`[GraphCMDB] Tick 100: ${s.id} está en x=${s.x?.toFixed(2)}, y=${s.y?.toFixed(2)}`);
+      }
     });
 
     function dragstarted(event: any) {
