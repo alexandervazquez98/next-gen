@@ -5,6 +5,7 @@ import CatalogManager from './CatalogManager';
 import RelationshipManager from './RelationshipManager';
 import CIEditor from './CIEditor';
 import MassLinkEditor from './MassLinkEditor';
+import MassAssetCreator from './MassAssetCreator';
 import { GraphNode } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -25,6 +26,7 @@ const AdminPage: React.FC = () => {
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+    const [isMassDeploying, setIsMassDeploying] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
 
     const { hasPermission } = useAuth();
@@ -195,8 +197,8 @@ const AdminPage: React.FC = () => {
 
                 {/* Inventory Table */}
                 {activeTab === 'INVENTORY' ? (
-                    <div className="h-full flex flex-col p-8 space-y-6 overflow-hidden">
-                        <div className="flex justify-between items-end">
+                    <div className="h-full flex flex-col p-4 md:p-8 space-y-4 overflow-hidden">
+                        <div className="flex justify-between items-end shrink-0">
                             <div>
                                 <h2 className="text-3xl font-black text-white tracking-tighter uppercase italic">Inventory</h2>
                                 <p className="text-neutral-500 text-sm font-medium tracking-tight">Managing technical assets and configuration state.</p>
@@ -224,7 +226,19 @@ const AdminPage: React.FC = () => {
                                     </div>
                                 </div>
                                 <button 
-                                    onClick={() => setSelectedNode({} as GraphNode)}
+                                    onClick={() => {
+                                        setSelectedNode(null);
+                                        setIsMassDeploying(true);
+                                    }}
+                                    className="px-6 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-brand-400 border border-brand-500/20 rounded-2xl text-xs font-black transition-all shadow-xl uppercase tracking-widest"
+                                >
+                                    Mass Deploy
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        setIsMassDeploying(false);
+                                        setSelectedNode({} as GraphNode);
+                                    }}
                                     className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-2xl text-xs font-black transition-all shadow-xl shadow-brand-900/20 uppercase tracking-widest"
                                 >
                                     New CI
@@ -232,9 +246,9 @@ const AdminPage: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="flex-1 flex gap-8 overflow-hidden">
+                        <div className="flex-1 flex gap-6 overflow-hidden min-h-0">
                             <div className="flex-1 bg-neutral-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm">
-                                <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center">
+                                <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center shrink-0">
                                     <span className="text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em]">Active Assets</span>
                                     <div className="flex gap-4">
                                         <div className="flex items-center gap-2">
@@ -244,7 +258,7 @@ const AdminPage: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
                                     <table className="w-full border-collapse">
                                         <thead>
                                             <tr className="text-left border-b border-white/5 sticky top-0 bg-neutral-900 z-10">
@@ -291,6 +305,15 @@ const AdminPage: React.FC = () => {
                                     </table>
                                 </div>
                             </div>
+
+                            {isMassDeploying && (
+                                <div className="w-[500px]">
+                                    <MassAssetCreator 
+                                        onClose={() => setIsMassDeploying(false)}
+                                        onRefresh={() => setRefreshKey(prev => prev + 1)}
+                                    />
+                                </div>
+                            )}
 
                             {selectedNode && (
                                 <div className="w-[450px] animate-in slide-in-from-right duration-500">

@@ -94,3 +94,11 @@ async def get_node_metrics(node_id: str, current_user: User = Depends(get_curren
     Get all applicable metrics for a specific Node based on its properties.
     """
     return metric_service.get_applicable_metrics(node_id)
+
+@router.post("/mass")
+async def execute_mass_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
+    """
+    Executes a mass node creation using a template.
+    Requires CI_EDIT permission.
+    """
+    return node_service.execute_mass_node_creator(current_user, payload)

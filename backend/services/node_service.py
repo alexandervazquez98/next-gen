@@ -351,3 +351,64 @@ def get_node_template() -> StreamingResponse:
         },
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+def execute_mass_node_creator(current_user: User, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Executes a mass node creation using a template and a list of entities.
+    """
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    nodes_to_create = payload.get("entities", [])
+    template = payload.get("template", {})
+    
+    if not nodes_to_create:
+        return {"success": False, "message": "No entities provided"}
+
+    processed_count = 0
+    errors = []
+    
+    # Pre-fetch metrics for reconciliation efficiency
+    from services.metric_service import get_metrics, reconcile_node_metrics
+    metrics_catalog = get_metrics()
+
+    for item in nodes_to_create:
+        try:
+            nid = item.get("id") or f"CI-{str(uuid.uuid4())[:8].upper()}"
+            label = item.get("name") or nid
+            ip = item.get("ip") or ""
+            
+            # Create Node object from template + specific data
+            node_obj = Node(
+                id=nid,
+                label=label,
+                type=template.get("type", "Unknown"),
+                status="ACTIVE",
+                ip=ip,
+                owner=template.get("owner", ""),
+                brand=template.get("brand", ""),
+                model=template.get("model", ""),
+                location_name=template.get("location_name", ""),
+                pollingInterval=int(template.get("pollingInterval", 60)),
+                snmp=template.get("snmp", {"version": "v2c", "readCommunity": "public"}),
+                metadata=template.get("metadata", {})
+            )
+            
+            topology_repo.upsert_node(node_obj)
+            
+            # Reconcile metrics immediately
+            try:
+                reconcile_node_metrics(node_obj.dict(), metrics_catalog=metrics_catalog)
+            except Exception as me:
+                logger.error(f"Metric reconciliation failed for {nid}: {me}")
+                
+            processed_count += 1
+        except Exception as e:
+            errors.append(f"Failed to create {item.get('name', 'Unknown')}: {str(e)}")
+
+    return {
+        "success": True,
+        "message": f"Successfully created {processed_count} CIs.",
+        "created_count": processed_count,
+        "errors": errors[:5]
+    }
