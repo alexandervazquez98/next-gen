@@ -23,11 +23,11 @@ const MassAssetCreator: React.FC<MassAssetCreatorProps> = ({ onClose, onRefresh 
     const { data: categories } = useCategoriesQuery();
     const { data: hardware } = useQuery({
         queryKey: ['hardware-catalog'],
-        queryFn: () => api.get<any[]>('/catalog/hardware')
+        queryFn: () => api.get<any[]>('/hardware')
     });
     const { data: owners } = useQuery({
         queryKey: ['owners'],
-        queryFn: () => api.get<any[]>('/catalog/owners')
+        queryFn: () => api.get<any[]>('/owners')
     });
 
     const handleExecute = async () => {
