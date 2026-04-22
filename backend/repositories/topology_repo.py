@@ -118,15 +118,30 @@ def _get_nodes_by_filter(filter_obj, is_admin, allowed_locations):
     driver = get_db()
     label = filter_obj.get("label", "CI")
     where, params = [], {}
+    
+    # Priority 1: Explicit ID list
     if filter_obj.get("ids"):
         where.append(f"n.id IN $ids")
         params["ids"] = filter_obj["ids"]
-    elif filter_obj.get("layer"):
-        where.append(f"n.layer = $layer")
-        params["layer"] = filter_obj["layer"]
-    elif filter_obj.get("searchTerm"):
-        where.append(f"(n.name =~ $search OR n.ip =~ $search OR n.location_name =~ $search)")
-        params["search"] = f"(?i).*{filter_obj['searchTerm']}.*"
+    # Priority 2: Singular ID (from dropdowns)
+    elif filter_obj.get("id"):
+        where.append(f"n.id = $id")
+        params["id"] = filter_obj["id"]
+    # Priority 3: Metadata Filters (Layer, Brand, Model)
+    else:
+        if filter_obj.get("layer"):
+            where.append(f"n.layer = $layer")
+            params["layer"] = filter_obj["layer"]
+        if filter_obj.get("brand"):
+            where.append(f"n.brand = $brand")
+            params["brand"] = filter_obj["brand"]
+        if filter_obj.get("model"):
+            where.append(f"n.model = $model")
+            params["model"] = filter_obj["model"]
+        if filter_obj.get("searchTerm"):
+            where.append(f"(n.name =~ $search OR n.ip =~ $search OR n.location_name =~ $search)")
+            params["search"] = f"(?i).*{filter_obj['searchTerm']}.*"
+            
     if not is_admin and allowed_locations and label == "CI":
         where.append(f"n.location_name IN $allowed")
         params["allowed"] = allowed_locations
@@ -146,12 +161,7 @@ def count_potential_links(source_filter, target_filter, allowed_locations=None, 
     src_ids = list(set([n["id"] for n in src_nodes]))
     tgt_ids = list(set([n["id"] for n in tgt_nodes]))
     
-    print(f"DEBUG [topology_repo]: Source Filter found {len(src_nodes)} nodes. Unique IDs: {len(src_ids)} ({src_ids})")
-    print(f"DEBUG [topology_repo]: Target Filter found {len(tgt_nodes)} nodes. Unique IDs: {len(tgt_ids)} ({tgt_ids})")
-    
     total = len(src_ids) * len(tgt_ids)
-    print(f"DEBUG [topology_repo]: Final Simulation Count: {total}")
-    
     return {
         "total": total,
         "source_samples": [n["name"] for n in src_nodes[:5]],

@@ -176,6 +176,11 @@ const MassLinkEditor: React.FC = () => {
     const filterNodes = (filter: FilterState) => {
         if (!allNodes) return [];
         return allNodes.filter(n => {
+            // Label filtering (CRITICAL FIX)
+            const isMetric = n._labels?.includes('MetricDef');
+            if (filter.label === 'MetricDef' && !isMetric) return false;
+            if (filter.label === 'CI' && isMetric) return false;
+
             const matchesLayer = !filter.layer || n.type === filter.layer;
             const matchesBrand = !filter.brand || n.brand === filter.brand;
             const matchesModel = !filter.model || n.model === filter.model;
