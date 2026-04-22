@@ -121,3 +121,37 @@ def execute_bulk_links(current_user: User, source_filter: dict, target_filter: d
         "verified_count": report['verified'],
         "total": report['total']
     }
+
+def execute_bulk_delete(current_user: User, source_filter: dict, target_filter: dict, relationship: str) -> Dict[str, Any]:
+    """
+    Executes a mass relationship deletion based on filters.
+    """
+    is_admin = current_user.role == "ADMIN"
+    report = topology_repo.execute_mass_delete(
+        source_filter, target_filter, relationship,
+        allowed_locations=current_user.allowed_locations,
+        is_admin=is_admin
+    )
+    
+    return {
+        "success": True, 
+        "message": f"Operation complete: {report['deleted']} links deleted.",
+        "deleted_count": report['deleted']
+    }
+
+def execute_bulk_update(current_user: User, source_filter: dict, target_filter: dict, old_relationship: str, new_relationship: str) -> Dict[str, Any]:
+    """
+    Executes a mass relationship update (type change) based on filters.
+    """
+    is_admin = current_user.role == "ADMIN"
+    report = topology_repo.execute_mass_update(
+        source_filter, target_filter, old_relationship, new_relationship,
+        allowed_locations=current_user.allowed_locations,
+        is_admin=is_admin
+    )
+    
+    return {
+        "success": True, 
+        "message": f"Operation complete: {report['updated']} links updated to {new_relationship}.",
+        "updated_count": report['updated']
+    }

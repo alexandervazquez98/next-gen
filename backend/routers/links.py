@@ -17,6 +17,12 @@ class MassLinkPayload(BaseModel):
     target_filter: Dict[str, Any]
     relationship: str
 
+class MassUpdatePayload(BaseModel):
+    source_filter: Dict[str, Any]
+    target_filter: Dict[str, Any]
+    old_relationship: str
+    new_relationship: str
+
 @router.get("/links", response_model=List[Dict[str, Any]])
 async def get_links(current_user: User = Depends(get_current_active_user)):
     """
@@ -76,6 +82,34 @@ async def execute_mass_links(payload: MassLinkPayload, current_user: User = Depe
         raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
     
     return link_service.execute_bulk_links(current_user, payload.source_filter, payload.target_filter, payload.relationship)
+
+@router.delete("/links/mass")
+async def delete_mass_links(payload: MassLinkPayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Deletes mass relationships based on filters.
+    Requires CI_EDIT permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+    
+    return link_service.execute_bulk_delete(current_user, payload.source_filter, payload.target_filter, payload.relationship)
+
+@router.put("/links/mass")
+async def update_mass_links(payload: MassUpdatePayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Updates mass relationships (type change) based on filters.
+    Requires CI_EDIT permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+    
+    return link_service.execute_bulk_update(current_user, payload.source_filter, payload.target_filter, payload.old_relationship, payload.new_relationship)
 
 @router.get("/graph/full")
 async def get_full_graph(
