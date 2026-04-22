@@ -259,9 +259,6 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
     
     has_specific_filter = False
 
-    # Debug print to server console
-    print(f"DEBUG [topology_repo]: Building query for alias '{alias}' with filter: {filter_obj}")
-
     if filter_obj.get("layer"):
         where_clauses.append(f"{alias}.layer = ${alias}_layer")
         params[f"{alias}_layer"] = filter_obj["layer"]
@@ -296,16 +293,13 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
         
     # Safety: If no specific filter was provided, force 0 results to avoid Cartesian explosion
     if not has_specific_filter and not filter_obj.get("allow_all"):
-        print(f"DEBUG [topology_repo]: No specific filter for '{alias}', adding safety '1=0'")
         where_clauses.append("1 = 0")
         
     where_str = ""
     if where_clauses:
         where_str = " WHERE " + " AND ".join(where_clauses)
         
-    query = f"MATCH {''.join(clauses)}{where_str}"
-    print(f"DEBUG [topology_repo]: Final query part for '{alias}': {query}")
-    return query, params
+    return f"MATCH {''.join(clauses)}{where_str}", params
 
 def count_potential_links(source_filter: dict, target_filter: dict, allowed_locations: List[str] = None, is_admin: bool = False) -> Dict[str, Any]:
     """Simulates the mass link operation with optimized sampling."""
@@ -316,7 +310,6 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     
     params = {**src_params, **tgt_params}
     
-    # Use a safer assembly pattern with WITH
     query = f"""
     {src_match}
     WITH collect(a) as sources
@@ -331,14 +324,15 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     """
     
     with driver.session() as session:
-        res = session.run(query, **params).single()
-        if not res:
+        result = session.run(query, **params)
+        record = result.single()
+        if not record:
             return {"total": 0, "source_samples": [], "target_samples": []}
             
         return {
-            "total": res["total"],
-            "source_samples": res["src_sample"],
-            "target_samples": res["tgt_sample"]
+            "total": record["total"],
+            "source_samples": record["src_sample"],
+            "target_samples": record["tgt_sample"]
         }
 
 def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
@@ -366,12 +360,15 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     RETURN count(r) as total
     """
     
+    def _execute(tx):
+        result = tx.run(query, **params)
+        records = list(result)
+        summary = result.consume()
+        return records, summary
+
     with driver.session() as session:
-        result = session.run(query, **params)
-        record = result.single() # Read record FIRST
-        summary = result.consume() # Then consume for stats
-        
-        total = record["total"] if record else 0
+        records, summary = session.execute_write(_execute)
+        total = records[0]["total"] if records else 0
         return {
             "total": total,
             "created": summary.counters.relationships_created,
@@ -400,11 +397,15 @@ def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: 
     RETURN count(r) as total
     """
     
+    def _execute(tx):
+        result = tx.run(query, **params)
+        records = list(result)
+        return records
+
     with driver.session() as session:
-        result = session.run(query, **params)
-        record = result.single()
+        records = session.execute_write(_execute)
         return {
-            "deleted": record["total"] if record else 0
+            "deleted": records[0]["total"] if records else 0
         }
 
 def execute_mass_update(source_filter: dict, target_filter: dict, old_relationship: str, new_relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
@@ -432,11 +433,15 @@ def execute_mass_update(source_filter: dict, target_filter: dict, old_relationsh
     RETURN count(new) as total
     """
     
+    def _execute(tx):
+        result = tx.run(query, **params)
+        records = list(result)
+        return records
+
     with driver.session() as session:
-        result = session.run(query, **params)
-        record = result.single()
+        records = session.execute_write(_execute)
         return {
-            "updated": record["total"] if record else 0
+            "updated": records[0]["total"] if records else 0
         }
 
 def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
