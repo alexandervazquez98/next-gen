@@ -250,8 +250,10 @@ def link_metric_to_node(node_id: str, metric_id: str, warning: float = None, cri
 def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] = None, is_admin: bool = False):
     """
     Internal helper to build optimized node set queries with scoping.
+    Now supports dynamic labels (CI, MetricDef, etc.)
     """
-    clauses = [f"({alias}:CI)"]
+    label = filter_obj.get("label", "CI")
+    clauses = [f"({alias}:{label})"]
     where_clauses = []
     params = {}
     
@@ -264,8 +266,12 @@ def _build_set_query(filter_obj: dict, alias: str, allowed_locations: List[str] 
     if filter_obj.get("name"):
         where_clauses.append(f"{alias}.name = ${alias}_name")
         params[f"{alias}_name"] = filter_obj["name"]
+    # Handle MetricDef ID specifically
+    if label == "MetricDef" and filter_obj.get("id"):
+        where_clauses.append(f"{alias}.id = ${alias}_id")
+        params[f"{alias}_id"] = filter_obj["id"]
         
-    if not is_admin and allowed_locations is not None:
+    if not is_admin and allowed_locations is not None and label == "CI":
         where_clauses.append(f"{alias}.location_name IN ${alias}_allowed")
         params[f"{alias}_allowed"] = allowed_locations
         
@@ -350,6 +356,62 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
             "total": record["total"] if record else 0,
             "created": summary.counters.relationships_created,
             "verified": record["total"] - summary.counters.relationships_created if record else 0
+        }
+
+def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
+    """Deletes relationships in bulk between sets of nodes."""
+    driver = get_db()
+    
+    rel_type = relationship.upper().replace(" ", "_")
+    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
+    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
+    
+    params = {**src_params, **tgt_params}
+    
+    query = f"""
+    {src_match}
+    WITH a
+    {tgt_match}
+    MATCH (a)-[r:{rel_type}]->(b)
+    DELETE r
+    RETURN count(r) as total
+    """
+    
+    with driver.session() as session:
+        result = session.run(query, **params)
+        record = result.single()
+        return {
+            "deleted": record["total"] if record else 0
+        }
+
+def execute_mass_update(source_filter: dict, target_filter: dict, old_relationship: str, new_relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
+    """Updates relationship types in bulk between sets of nodes."""
+    driver = get_db()
+    
+    old_rel = old_relationship.upper().replace(" ", "_")
+    new_rel = new_relationship.upper().replace(" ", "_")
+    
+    src_match, src_params = _build_set_query(source_filter, "a", allowed_locations, is_admin)
+    tgt_match, tgt_params = _build_set_query(target_filter, "b", allowed_locations, is_admin)
+    
+    params = {**src_params, **tgt_params}
+    
+    # In Neo4j we must delete the old and create the new
+    query = f"""
+    {src_match}
+    WITH a
+    {tgt_match}
+    MATCH (a)-[old:{old_rel}]->(b)
+    DELETE old
+    MERGE (a)-[new:{new_rel}]->(b)
+    RETURN count(new) as total
+    """
+    
+    with driver.session() as session:
+        result = session.run(query, **params)
+        record = result.single()
+        return {
+            "updated": record["total"] if record else 0
         }
 
 def get_filtered_graph_data(layer: str = None, location: str = None, owner: str = None, allowed_locations: List[str] = None, is_admin: bool = False) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
