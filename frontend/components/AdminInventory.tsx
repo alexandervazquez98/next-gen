@@ -98,7 +98,7 @@ const AdminInventory: React.FC = () => {
     const handleBulkUpdate = async (updates: any) => {
         setLoading(true);
         try {
-            await api.put('/nodes/mass', {
+            await api.put('/nodes/bulk-update', {
                 ids: Array.from(selectedIds),
                 updates
             });

@@ -45,7 +45,7 @@ const MassAssetCreator: React.FC<MassAssetCreatorProps> = ({ onClose, onRefresh 
 
         setLoading(true);
         try {
-            const result: any = await api.post('/nodes/mass', {
+            const result: any = await api.post('/nodes/bulk-create', {
                 entities,
                 template
             });
