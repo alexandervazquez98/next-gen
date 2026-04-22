@@ -146,51 +146,46 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
       const n = Object.create(node);
       const cached = nodeStateRef.current.get(node.id);
       
-      console.log(`[GraphCMDB] 🔍 Procesando Nodo: ${node.id}`);
-      console.log(`   -> Raw from Backend:`, { location: node.location, location_name: node.location_name });
-
       if (cached) {
         n.x = cached.x;
         n.y = cached.y;
         n.vx = cached.vx;
         n.vy = cached.vy;
-        console.log(`   ✅ Restaurado desde CACHE: x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
+        // Keep fixed if it was manually moved or cached
+        n.fx = cached.x;
+        n.fy = cached.y;
       } else if (node.location?.lat && node.location?.long) {
           n.x = (node.location.long + 180) * (width / 360);
           n.y = (90 - node.location.lat) * (height / 180);
-          console.log(`   🌍 Inicializado desde LAT/LONG: lat=${node.location.lat}, long=${node.location.long} => x=${n.x?.toFixed(2)}, y=${n.y?.toFixed(2)}`);
-      } else {
-          console.log(`   ⚠️ Sin ubicación ni cache. Caerá en el centro.`);
       }
       return n;
     });
 
     const simulation = d3.forceSimulation<GraphNode>(validNodes)
-      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(150))
-      .force('charge', d3.forceManyBody().strength((d: any) => d.type === 'CI' ? -1000 : -2000))
+      .force('link', d3.forceLink<GraphNode, GraphLink>(validLinks).id((node) => node.id).distance(120)) // -20% distance
+      .force('charge', d3.forceManyBody().strength((d: any) => d.type === 'CI' ? -800 : -1600)) // -20% repulsion
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius((d: any) => d.type === 'CI' ? 50 : 100))
-      .alpha(cachedNodesExist ? 0.2 : 1.0);
+      .force('collision', d3.forceCollide().radius((d: any) => d.type === 'CI' ? 40 : 80)) // -20% collision radius
+      .alpha(cachedNodesExist ? 0.1 : 1.0); // Even softer alpha for existing nodes
 
     if (groupByLocation) {
       simulation.force('x', d3.forceX().x((d: any) => {
         if (d.location?.long) return (d.location.long + 180) * (width / 360);
         return locationCenters[d.location_name]?.x || width / 2;
-      }).strength(0.05));
+      }).strength(0.04));
       simulation.force('y', d3.forceY().y((d: any) => {
         if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
         return locationCenters[d.location_name]?.y || height / 2;
-      }).strength(0.05));
+      }).strength(0.04));
     } else {
-        // STRONG ANCHOR for Lat/Long when NOT grouped
         simulation.force('x', d3.forceX().x((d: any) => {
             if (d.location?.long) return (d.location.long + 180) * (width / 360);
             return width / 2;
-        }).strength((d: any) => d.location?.long ? 0.3 : 0.05));
+        }).strength((d: any) => d.location?.long ? 0.25 : 0.04));
         simulation.force('y', d3.forceY().y((d: any) => {
             if (d.location?.lat) return (90 - d.location.lat) * (height / 180);
             return height / 2;
-        }).strength((d: any) => d.location?.lat ? 0.3 : 0.05));
+        }).strength((d: any) => d.location?.lat ? 0.25 : 0.04));
     }
 
     const linkSelection = container.append('g')
