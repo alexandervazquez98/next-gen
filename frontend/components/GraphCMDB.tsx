@@ -248,11 +248,53 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
         if (node.status === 'WARNING') return STATUS_COLORS.WARNING;
         return '#345bf2';
       })
-      .attr('stroke-width', (node) => node.status === 'CRITICAL' ? 4 : 2);
+      .attr('stroke-width', (node) => node.status === 'CRITICAL' ? 4 : 2)
+      .attr('class', 'node-circle transition-all duration-300');
 
+    // Label inferior persistente (truncado para no ensuciar)
     nodeSelection.append('text')
-      .attr('dy', '3.5em').attr('text-anchor', 'middle').attr('fill', '#a3a3a3').attr('font-size', '11px')
-      .text((node) => node.label);
+      .attr('dy', '3.5em')
+      .attr('text-anchor', 'middle')
+      .attr('fill', '#a3a3a3')
+      .attr('font-size', '10px')
+      .attr('class', 'node-label pointer-events-none')
+      .text((node) => node.label.length > 15 ? node.label.substring(0, 12) + '...' : node.label);
+
+    // Hover interactions
+    nodeSelection
+      .on('mouseover', function(event, d) {
+          // Highlight current
+          d3.select(this).select('circle')
+            .attr('stroke-width', 6)
+            .attr('filter', 'drop-shadow(0 0 8px currentColor)');
+          
+          d3.select(this).select('.node-label')
+            .attr('fill', 'white')
+            .attr('font-weight', 'bold')
+            .text(d.label); // Show full label on hover
+
+          // Fade others
+          nodeSelection.filter(n => n.id !== d.id).attr('opacity', 0.3);
+          linkSelection.attr('opacity', 0.1);
+          trafficLink.attr('opacity', 0.1);
+      })
+      .on('mouseout', function() {
+          // Reset current
+          const d: any = d3.select(this).datum();
+          d3.select(this).select('circle')
+            .attr('stroke-width', d.status === 'CRITICAL' ? 4 : 2)
+            .attr('filter', null);
+
+          d3.select(this).select('.node-label')
+            .attr('fill', '#a3a3a3')
+            .attr('font-weight', 'normal')
+            .text(d.label.length > 15 ? d.label.substring(0, 12) + '...' : d.label);
+
+          // Reset others
+          nodeSelection.attr('opacity', 1);
+          linkSelection.attr('opacity', 0.6);
+          trafficLink.attr('opacity', 0.7);
+      });
 
     let tickCount = 0;
     simulation.on('tick', () => {
