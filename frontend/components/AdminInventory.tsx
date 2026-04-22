@@ -68,9 +68,12 @@ const AdminInventory: React.FC = () => {
     };
 
     return (
-        <div className="absolute inset-0 flex flex-col p-6 overflow-hidden">
+        <div className="absolute inset-0 flex flex-col p-6 overflow-hidden border-2 border-dashed border-white/5">
+            <div className="absolute top-0 right-0 z-[100] opacity-50 pointer-events-none"><span className="bg-blue-500 text-white text-[8px] px-1 rounded font-black uppercase tracking-tighter">INV_CONTAINER_START</span></div>
+            
             {/* Header section - Fixed height */}
-            <header className="flex justify-between items-end mb-6 shrink-0">
+            <header className="flex justify-between items-end mb-6 shrink-0 relative border-b border-white/5 pb-4">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 opacity-30 pointer-events-none"><span className="bg-green-500 text-black text-[8px] px-1 rounded font-black uppercase">INV_HEADER</span></div>
                 <div>
                     <h2 className="text-3xl font-black text-white tracking-tighter uppercase italic">Inventory</h2>
                     <p className="text-neutral-500 text-sm font-medium tracking-tight">Managing technical assets and configuration state.</p>
@@ -103,7 +106,9 @@ const AdminInventory: React.FC = () => {
             </header>
 
             {/* Main Content Area - Responsive Flex Container */}
-            <div className="flex-1 flex gap-6 min-h-0 overflow-hidden">
+            <div className="flex-1 flex gap-6 min-h-0 overflow-hidden relative">
+                <div className="absolute -top-4 left-0 w-full text-center opacity-30 pointer-events-none z-50"><span className="bg-purple-500 text-white text-[8px] px-1 rounded font-black uppercase">CONTENT_AREA_START</span></div>
+                
                 {/* Table Container */}
                 <div className="flex-1 bg-neutral-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm relative">
                     <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center shrink-0">
@@ -152,6 +157,7 @@ const AdminInventory: React.FC = () => {
                                     ))}
                                 </tbody>
                             </table>
+                            <div className="w-full text-center py-8 opacity-50"><span className="bg-red-500 text-white text-xs px-4 py-1 rounded-full font-black animate-bounce shadow-xl">⚠️ INV_TABLE_END_REACHED ⚠️</span></div>
                         </div>
                     </div>
                 </div>

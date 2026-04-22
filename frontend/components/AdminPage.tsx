@@ -15,9 +15,12 @@ const AdminPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState<AdminTab>('METRICS');
 
     return (
-        <div className="flex flex-col h-screen bg-surface-950 overflow-hidden">
+        <div className="flex flex-col h-screen bg-surface-950 overflow-hidden relative">
+            <div className="absolute top-2 left-2 z-[100] pointer-events-none opacity-50"><span className="bg-red-500 text-white text-[8px] px-1 rounded font-black">ROOT_SCREEN</span></div>
+            
             {/* Admin Navigation Bar - Fixed Height */}
-            <div className="bg-neutral-900/50 backdrop-blur-xl border-b border-white/5 px-8 py-4 flex justify-between items-center shrink-0 z-50">
+            <div className="bg-neutral-900/50 backdrop-blur-xl border-b border-white/5 px-8 py-4 flex justify-between items-center shrink-0 z-50 relative">
+                <div className="absolute bottom-0 left-0 w-full text-center pointer-events-none opacity-50"><span className="bg-yellow-500 text-black text-[8px] px-1 rounded font-black uppercase">TOP_NAV_END</span></div>
                 <div className="flex items-center gap-6">
                     <div>
                         <h1 className="text-xl font-black text-white tracking-tighter uppercase">Nexus Command</h1>
