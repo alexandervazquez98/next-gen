@@ -354,7 +354,6 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     
     params = {**src_params, **tgt_params}
 
-    # Safer assembly using UNWIND to avoid MATCH chain issues
     query = f"""
     {src_match}
     WITH collect(a) as sources
@@ -369,8 +368,8 @@ def execute_mass_links(source_filter: dict, target_filter: dict, relationship: s
     
     with driver.session() as session:
         result = session.run(query, **params)
-        summary = result.consume() 
-        record = result.single()
+        record = result.single() # Read record FIRST
+        summary = result.consume() # Then consume for stats
         
         total = record["total"] if record else 0
         return {
@@ -391,8 +390,11 @@ def execute_mass_delete(source_filter: dict, target_filter: dict, relationship: 
     
     query = f"""
     {src_match}
-    WITH a
+    WITH collect(a) as sources
     {tgt_match}
+    WITH sources, collect(b) as targets
+    UNWIND sources as a
+    UNWIND targets as b
     MATCH (a)-[r:{rel_type}]->(b)
     DELETE r
     RETURN count(r) as total
@@ -417,11 +419,13 @@ def execute_mass_update(source_filter: dict, target_filter: dict, old_relationsh
     
     params = {**src_params, **tgt_params}
     
-    # In Neo4j we must delete the old and create the new
     query = f"""
     {src_match}
-    WITH a
+    WITH collect(a) as sources
     {tgt_match}
+    WITH sources, collect(b) as targets
+    UNWIND sources as a
+    UNWIND targets as b
     MATCH (a)-[old:{old_rel}]->(b)
     DELETE old
     MERGE (a)-[new:{new_rel}]->(b)
