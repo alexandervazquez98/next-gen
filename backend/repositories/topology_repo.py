@@ -4,11 +4,6 @@ from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
 
-# --- VERSION TAG: ATOMIC-MASS-LINKS-V5 ---
-print("**************************************************")
-print("BACKEND: LOADING TOPOLOGY REPO V5 (ATOMIC MATCH)")
-print("**************************************************")
-
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
     query = "MATCH (n:CI)"

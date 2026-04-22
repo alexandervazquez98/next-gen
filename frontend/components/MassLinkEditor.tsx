@@ -180,7 +180,6 @@ const MassLinkEditor: React.FC = () => {
     }, [targetFilter.label]);
 
     const handleSimulate = async () => {
-        console.log("SIMULATING MASS LINKS:", { sourceFilter, targetFilter, relationship });
         setLoading(true);
         setSimulation(null);
         try {
@@ -189,10 +188,8 @@ const MassLinkEditor: React.FC = () => {
                 target_filter: targetFilter,
                 relationship
             });
-            console.log("SIMULATION RESULT:", result);
             setSimulation(result);
         } catch (e: any) {
-            console.error("SIMULATION FAILED:", e);
             alert("Simulation failed: " + e.message);
         } finally {
             setLoading(false);
@@ -201,7 +198,6 @@ const MassLinkEditor: React.FC = () => {
 
     const handleExecute = async () => {
         if (!simulation?.is_safe) return;
-        console.log("EXECUTING MASS LINKS:", { sourceFilter, targetFilter, relationship });
         setLoading(true);
         try {
             const result = await api.post<any>('/links/mass', {
@@ -209,11 +205,9 @@ const MassLinkEditor: React.FC = () => {
                 target_filter: targetFilter,
                 relationship
             });
-            console.log("EXECUTION RESULT:", result);
             alert(result.message);
             setSimulation(null);
         } catch (e: any) {
-            console.error("EXECUTION FAILED:", e);
             alert("Execution failed: " + (e.response?.data?.detail || e.message));
         } finally {
             setLoading(false);
