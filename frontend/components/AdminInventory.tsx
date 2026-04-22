@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../services/api';
 import { GraphNode } from '../types';
+import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
+import { useQuery } from '@tanstack/react-query';
 import CIEditor from './CIEditor';
 import MassAssetCreator from './MassAssetCreator';
 
@@ -20,6 +22,17 @@ const AdminInventory: React.FC = () => {
     // Multi-select State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isBulkEditing, setIsBulkEditing] = useState(false);
+
+    // Catalog Data for Bulk Edit
+    const { data: categories } = useCategoriesQuery();
+    const { data: hardware } = useQuery({
+        queryKey: ['hardware-catalog'],
+        queryFn: () => api.get<any[]>('/catalog/hardware')
+    });
+    const { data: owners } = useQuery({
+        queryKey: ['owners'],
+        queryFn: () => api.get<any[]>('/catalog/owners')
+    });
 
     const fetchData = async () => {
         setLoading(true);
@@ -53,10 +66,10 @@ const AdminInventory: React.FC = () => {
     }, [data, searchTerm, filterLayer, filterStatus]);
 
     // Unique values for filters
-    const layers = useMemo(() => Array.from(new Set(data.map(item => item.type))), [data]);
-    const statuses = useMemo(() => Array.from(new Set(data.map(item => item.status))), [data]);
+    const layerOptions = useMemo(() => Array.from(new Set(data.map(item => item.type))), [data]);
+    const statusOptions = useMemo(() => Array.from(new Set(data.map(item => item.status))), [data]);
 
-    // Bulk Logic Validation
+    // Bulk Selection Logic
     const selectedItems = useMemo(() => 
         data.filter(item => selectedIds.has(item.id)), 
     [data, selectedIds]);
@@ -83,6 +96,7 @@ const AdminInventory: React.FC = () => {
     };
 
     const handleBulkUpdate = async (updates: any) => {
+        setLoading(true);
         try {
             await api.put('/nodes/mass', {
                 ids: Array.from(selectedIds),
@@ -94,6 +108,8 @@ const AdminInventory: React.FC = () => {
             setRefreshKey(prev => prev + 1);
         } catch (e: any) {
             alert('Bulk update failed: ' + e.message);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -143,7 +159,7 @@ const AdminInventory: React.FC = () => {
                 <div className="flex items-center gap-6">
                     <div>
                         <h2 className="text-2xl font-black text-white tracking-tighter uppercase italic leading-none">Inventory</h2>
-                        <p className="text-[10px] text-neutral-500 font-medium tracking-tight mt-1">Managing {filteredData.length} assets.</p>
+                        <p className="text-[10px] text-neutral-500 font-medium tracking-tight mt-1">Total Assets: {filteredData.length}</p>
                     </div>
 
                     {/* Search Bar */}
@@ -151,7 +167,7 @@ const AdminInventory: React.FC = () => {
                         <span className="material-symbols-outlined text-sm text-neutral-500">search</span>
                         <input 
                             className="bg-transparent text-xs text-white outline-none w-48 font-bold placeholder:text-neutral-700"
-                            placeholder="Search by Label, IP, ID..."
+                            placeholder="Search Label, IP, ID..."
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                         />
@@ -165,7 +181,7 @@ const AdminInventory: React.FC = () => {
                             onChange={e => setFilterLayer(e.target.value)}
                         >
                             <option value="">All Layers</option>
-                            {layers.map(l => <option key={l} value={l}>{l}</option>)}
+                            {layerOptions.map(l => <option key={l} value={l}>{l}</option>)}
                         </select>
                         <select 
                             className="bg-neutral-900 border border-white/5 rounded-lg px-2 py-1 text-[10px] font-bold text-neutral-400 outline-none"
@@ -173,7 +189,7 @@ const AdminInventory: React.FC = () => {
                             onChange={e => setFilterStatus(e.target.value)}
                         >
                             <option value="">All Status</option>
-                            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                            {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                     </div>
                 </div>
@@ -183,14 +199,11 @@ const AdminInventory: React.FC = () => {
                         <div className="flex items-center gap-2 mr-4 px-3 py-1.5 bg-brand-500/10 border border-brand-500/20 rounded-xl animate-in fade-in slide-in-from-top-2">
                             <span className="text-[10px] font-black text-brand-400 uppercase tracking-widest">{selectedIds.size} Selected</span>
                             <button 
-                                disabled={!isSelectionUniform}
                                 onClick={() => setIsBulkEditing(true)}
-                                className="px-3 py-1 bg-brand-500 text-black text-[9px] font-black rounded-lg hover:bg-brand-400 disabled:opacity-30 transition-all uppercase"
-                                title={!isSelectionUniform ? "Mixed brand/models cannot be edited in bulk" : "Edit Selection"}
+                                className="px-3 py-1 bg-brand-500 text-black text-[9px] font-black rounded-lg hover:bg-brand-400 transition-all uppercase"
                             >
                                 Bulk Edit
                             </button>
-                            {!isSelectionUniform && <span className="text-[9px] text-red-400 font-bold italic">Mix Detected</span>}
                         </div>
                     )}
 
@@ -298,54 +311,76 @@ const AdminInventory: React.FC = () => {
                                 <header className="flex justify-between items-center border-b border-white/5 pb-4">
                                     <div>
                                         <h3 className="text-xl font-black text-white uppercase italic">Bulk Metadata Edit</h3>
-                                        <p className="text-[10px] text-neutral-500 font-bold uppercase">Updating {selectedIds.size} Assets ({selectedItems[0].brand} {selectedItems[0].model})</p>
+                                        <p className="text-[10px] text-neutral-500 font-bold uppercase tracking-widest">Updating {selectedIds.size} Selected Assets</p>
                                     </div>
                                     <button onClick={() => setIsBulkEditing(false)} className="p-2 hover:bg-white/5 rounded-full text-neutral-500 transition-all"><span className="material-symbols-outlined">close</span></button>
                                 </header>
                                 
-                                <div className="space-y-4">
-                                    <label className="block">
-                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">New Location</span>
-                                        <input 
-                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
-                                            placeholder="Assign new location name..."
-                                            id="bulk-location"
-                                        />
-                                    </label>
-                                    <label className="block">
-                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">New Owner Group</span>
-                                        <input 
-                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
-                                            placeholder="Assign new owner..."
-                                            id="bulk-owner"
-                                        />
-                                    </label>
-                                    <label className="block">
-                                        <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Polling Interval (s)</span>
-                                        <input 
-                                            type="number"
-                                            className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500"
-                                            defaultValue={60}
-                                            id="bulk-polling"
-                                        />
-                                    </label>
+                                <div className="space-y-6">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <label className="block col-span-2">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Technology / Layer</span>
+                                            <select className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" id="bulk-type">
+                                                <option value="">Keep current...</option>
+                                                {categories?.map((c: any) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                                            </select>
+                                        </label>
+                                        <label className="block col-span-2">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Hardware Model</span>
+                                            <select className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" id="bulk-hw">
+                                                <option value="|">Keep current...</option>
+                                                {hardware?.map((h: any) => <option key={`${h.brand}-${h.model}`} value={`${h.brand}|${h.model}`}>{h.brand} {h.model}</option>)}
+                                            </select>
+                                        </label>
+                                        <label className="block">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Operational Status</span>
+                                            <select className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" id="bulk-status">
+                                                <option value="">Keep current...</option>
+                                                <option value="ACTIVE">ACTIVE</option>
+                                                <option value="MAINTENANCE">MAINTENANCE</option>
+                                                <option value="EXCEPTION">EXCEPTION</option>
+                                            </select>
+                                        </label>
+                                        <label className="block">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Polling (s)</span>
+                                            <input type="number" className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" placeholder="60" id="bulk-polling" />
+                                        </label>
+                                        <label className="block col-span-2">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">New Location</span>
+                                            <input className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" placeholder="Search by location..." id="bulk-location" />
+                                        </label>
+                                        <label className="block col-span-2">
+                                            <span className="text-[10px] font-bold text-neutral-500 uppercase mb-1 block">Owner Group</span>
+                                            <select className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500" id="bulk-owner">
+                                                <option value="">Keep current...</option>
+                                                {owners?.map((o: any) => <option key={o.name} value={o.name}>{o.name}</option>)}
+                                            </select>
+                                        </label>
+                                    </div>
                                 </div>
 
-                                <button 
-                                    onClick={() => {
-                                        const loc = (document.getElementById('bulk-location') as HTMLInputElement).value;
-                                        const owner = (document.getElementById('bulk-owner') as HTMLInputElement).value;
-                                        const poll = (document.getElementById('bulk-polling') as HTMLInputElement).value;
-                                        handleBulkUpdate({
-                                            location_name: loc || undefined,
-                                            owner: owner || undefined,
-                                            pollingInterval: poll ? parseInt(poll) : undefined
-                                        });
-                                    }}
-                                    className="w-full py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-xl transition-all"
-                                >
-                                    Apply Changes to {selectedIds.size} CIs
-                                </button>
+                                <div className="pt-6">
+                                    <button 
+                                        disabled={loading}
+                                        onClick={() => {
+                                            const hwValue = (document.getElementById('bulk-hw') as HTMLSelectElement).value;
+                                            const [brand, model] = hwValue.split('|');
+                                            handleBulkUpdate({
+                                                type: (document.getElementById('bulk-type') as HTMLSelectElement).value || undefined,
+                                                brand: brand || undefined,
+                                                model: model || undefined,
+                                                status: (document.getElementById('bulk-status') as HTMLSelectElement).value || undefined,
+                                                location_name: (document.getElementById('bulk-location') as HTMLInputElement).value || undefined,
+                                                owner: (document.getElementById('bulk-owner') as HTMLSelectElement).value || undefined,
+                                                pollingInterval: (document.getElementById('bulk-polling') as HTMLInputElement).value ? parseInt((document.getElementById('bulk-polling') as HTMLInputElement).value) : undefined
+                                            });
+                                        }}
+                                        className="w-full py-4 bg-brand-600 hover:bg-brand-500 text-white rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-xl shadow-brand-900/20 transition-all disabled:opacity-50"
+                                    >
+                                        {loading ? 'Processing Update...' : `Update ${selectedIds.size} Assets`}
+                                    </button>
+                                    <p className="text-[9px] text-neutral-500 mt-4 text-center italic">Leave fields empty to keep their current values.</p>
+                                </div>
                             </div>
                         ) : (
                             <CIEditor 
