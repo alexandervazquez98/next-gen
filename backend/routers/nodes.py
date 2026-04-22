@@ -22,6 +22,22 @@ async def get_nodes(current_user: User = Depends(get_current_active_user)):
     """
     return node_service.get_nodes(current_user)
 
+@router.post("/mass")
+async def execute_mass_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
+    """
+    Executes a mass node creation using a template.
+    Requires CI_EDIT permission.
+    """
+    return node_service.execute_mass_node_creator(current_user, payload)
+
+@router.put("/mass")
+async def execute_mass_update_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
+    """
+    Updates mass nodes with shared metadata.
+    Requires CI_EDIT permission.
+    """
+    return node_service.execute_mass_node_update(current_user, payload)
+
 @router.post("")
 async def create_node(node: Node, current_user: User = Depends(get_current_active_user)):
     """
@@ -94,19 +110,3 @@ async def get_node_metrics(node_id: str, current_user: User = Depends(get_curren
     Get all applicable metrics for a specific Node based on its properties.
     """
     return metric_service.get_applicable_metrics(node_id)
-
-@router.post("/mass")
-async def execute_mass_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
-    """
-    Executes a mass node creation using a template.
-    Requires CI_EDIT permission.
-    """
-    return node_service.execute_mass_node_creator(current_user, payload)
-
-@router.put("/mass")
-async def execute_mass_update_nodes(payload: Dict[str, Any], current_user: User = Depends(get_current_active_user)):
-    """
-    Updates mass nodes with shared metadata.
-    Requires CI_EDIT permission.
-    """
-    return node_service.execute_mass_node_update(current_user, payload)
