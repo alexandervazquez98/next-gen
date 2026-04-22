@@ -105,51 +105,54 @@ const AdminInventory: React.FC = () => {
             {/* Main Content Area - Responsive Flex Container */}
             <div className="flex-1 flex gap-6 min-h-0 overflow-hidden">
                 {/* Table Container */}
-                <div className="flex-1 bg-neutral-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm">
+                <div className="flex-1 bg-neutral-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-2xl backdrop-blur-sm relative">
                     <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center shrink-0">
                         <span className="text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em]">Active Assets (Total: {data.length})</span>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
-                        <table className="w-full border-collapse">
-                            <thead className="sticky top-0 bg-neutral-900 z-10">
-                                <tr className="text-left border-b border-white/5">
-                                    <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">CI Identity</th>
-                                    <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">Network Info</th>
-                                    <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest">Layer / Model</th>
-                                    <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="text-sm divide-y divide-white/5">
-                                {data.map((item: any) => (
-                                    <tr key={item.id} className={`group hover:bg-white/[0.02] transition-colors ${selectedNode?.id === item.id ? 'bg-white/[0.03]' : ''}`}>
-                                        <td className="p-4">
-                                            <div className="flex flex-col">
-                                                <span className="font-black text-white tracking-tight">{item.label}</span>
-                                                <span className="text-[10px] text-neutral-500 font-mono uppercase">{item.id}</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-4">
-                                            <div className="flex flex-col">
-                                                <span className="text-xs text-neutral-300 font-bold">{item.ip || 'No IP'}</span>
-                                                <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-tighter">Status: {item.status}</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="px-2 py-0.5 bg-neutral-800 text-neutral-400 rounded-md text-[10px] font-bold uppercase border border-white/5">{item.type}</span>
-                                                <span className="text-xs text-neutral-500">{item.brand} {item.model}</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            <button onClick={() => { setIsMassDeploying(false); setSelectedNode(item); }} className="p-2 hover:bg-brand-500/10 hover:text-brand-400 text-neutral-600 rounded-xl transition-all">
-                                                <span className="material-symbols-outlined text-sm">edit_note</span>
-                                            </button>
-                                        </td>
+                    {/* This is the key wrapper: relative + flex-1 + overflow-hidden */}
+                    <div className="flex-1 relative overflow-hidden">
+                        <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
+                            <table className="w-full border-collapse">
+                                <thead className="sticky top-0 bg-neutral-900 z-10">
+                                    <tr className="text-left border-b border-white/5">
+                                        <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">CI Identity</th>
+                                        <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">Network Info</th>
+                                        <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest bg-neutral-900">Layer / Model</th>
+                                        <th className="p-4 text-[10px] font-black text-neutral-500 uppercase tracking-widest text-right bg-neutral-900">Actions</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="text-sm divide-y divide-white/5">
+                                    {data.map((item: any) => (
+                                        <tr key={item.id} className={`group hover:bg-white/[0.02] transition-colors ${selectedNode?.id === item.id ? 'bg-white/[0.03]' : ''}`}>
+                                            <td className="p-4">
+                                                <div className="flex flex-col">
+                                                    <span className="font-black text-white tracking-tight">{item.label}</span>
+                                                    <span className="text-[10px] text-neutral-500 font-mono uppercase">{item.id}</span>
+                                                </div>
+                                            </td>
+                                            <td className="p-4">
+                                                <div className="flex flex-col">
+                                                    <span className="text-xs text-neutral-300 font-bold">{item.ip || 'No IP'}</span>
+                                                    <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-tighter">Status: {item.status}</span>
+                                                </div>
+                                            </td>
+                                            <td className="p-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="px-2 py-0.5 bg-neutral-800 text-neutral-400 rounded-md text-[10px] font-bold uppercase border border-white/5">{item.type}</span>
+                                                    <span className="text-xs text-neutral-500">{item.brand} {item.model}</span>
+                                                </div>
+                                            </td>
+                                            <td className="p-4 text-right">
+                                                <button onClick={() => { setIsMassDeploying(false); setSelectedNode(item); }} className="p-2 hover:bg-brand-500/10 hover:text-brand-400 text-neutral-600 rounded-xl transition-all">
+                                                    <span className="material-symbols-outlined text-sm">edit_note</span>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
