@@ -15,7 +15,7 @@ const AdminPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState<AdminTab>('METRICS');
 
     return (
-        <div className="flex flex-col h-screen bg-surface-950 overflow-hidden relative">
+        <div className="flex flex-col h-full bg-surface-950 overflow-hidden relative">
             <div className="absolute top-2 left-2 z-[100] pointer-events-none opacity-50"><span className="bg-red-500 text-white text-[8px] px-1 rounded font-black">ROOT_SCREEN</span></div>
             
             {/* Admin Navigation Bar - Fixed Height */}
@@ -52,15 +52,13 @@ const AdminPage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Content Area - Absolute Container to lock boundaries */}
-            <div className="flex-1 relative overflow-hidden bg-black/20">
-                <div className="absolute inset-0">
-                    {activeTab === 'METRICS' && <MetricsManager />}
-                    {activeTab === 'CATALOG' && <CatalogManager />}
-                    {activeTab === 'LINKS' && <RelationshipManager />}
-                    {activeTab === 'MASS_LINKS' && <MassLinkEditor />}
-                    {activeTab === 'INVENTORY' && <AdminInventory />}
-                </div>
+            {/* Content Area - Uses h-full instead of absolute inset-0 to prevent clipping */}
+            <div className="flex-1 overflow-hidden bg-black/20 relative">
+                {activeTab === 'METRICS' && <MetricsManager />}
+                {activeTab === 'CATALOG' && <CatalogManager />}
+                {activeTab === 'LINKS' && <RelationshipManager />}
+                {activeTab === 'MASS_LINKS' && <MassLinkEditor />}
+                {activeTab === 'INVENTORY' && <AdminInventory />}
             </div>
         </div>
     );

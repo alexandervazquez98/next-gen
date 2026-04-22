@@ -68,7 +68,7 @@ const AdminInventory: React.FC = () => {
     };
 
     return (
-        <div className="absolute inset-0 flex flex-col p-4 overflow-hidden border border-white/5 bg-neutral-950/20">
+        <div className="h-full flex flex-col p-4 overflow-hidden border border-white/5 bg-neutral-950/20">
             {/* Header section - Reduced padding/margins */}
             <header className="flex justify-between items-center mb-4 shrink-0 relative border-b border-white/5 pb-3">
                 <div>
