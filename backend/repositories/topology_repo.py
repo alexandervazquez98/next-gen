@@ -4,6 +4,11 @@ from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
 
+# --- VERSION TAG: ATOMIC-MASS-LINKS-V5 ---
+print("**************************************************")
+print("BACKEND: LOADING TOPOLOGY REPO V5 (ATOMIC MATCH)")
+print("**************************************************")
+
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
     query = "MATCH (n:CI)"
@@ -54,8 +59,8 @@ def delete_node(node_id: str) -> None:
 def get_node_usage(node_id: str) -> int:
     driver = get_db()
     with driver.session() as session:
-        result = session.run("MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id).single()
-        return result["count"] if result else 0
+        res = session.run("MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id).single()
+        return res["count"] if res else 0
 
 def get_valid_owners_and_layers() -> (Set[str], Set[str]):
     driver = get_db()
@@ -133,11 +138,11 @@ def _get_nodes_by_filter(filter_obj, is_admin, allowed_locations):
     
     q = f"MATCH (n:{label})"
     if where: q += " WHERE " + " AND ".join(where)
-    q += " RETURN collect(n) as nodes"
+    q += " RETURN n" # Return nodes directly
     
     with driver.session() as session:
-        res = session.run(q, **params).single()
-        return res["nodes"] if res else []
+        res = session.run(q, **params)
+        return [record["n"] for record in res]
 
 def count_potential_links(source_filter, target_filter, allowed_locations=None, is_admin=False):
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
@@ -153,10 +158,10 @@ def execute_mass_links(source_filter, target_filter, relationship, allowed_locat
     rel = relationship.upper().replace(" ", "_")
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
-    
     src_ids = [n["id"] for n in src_nodes]
     tgt_ids = [n["id"] for n in tgt_nodes]
 
+    # QUERY SIN WHERE DINAMICO - UNA SOLA LINEA
     query = f"MATCH (a:CI), (b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids AND a.id <> b.id MERGE (a)-[r:{rel}]->(b) RETURN count(r) as total"
     
     with driver.session() as session:
@@ -172,7 +177,6 @@ def execute_mass_delete(source_filter, target_filter, relationship, allowed_loca
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     src_ids = [n["id"] for n in src_nodes]
     tgt_ids = [n["id"] for n in tgt_nodes]
-
     query = f"MATCH (a:CI)-[r:{rel}]->(b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE r RETURN count(*) as total"
     with driver.session() as session:
         r = session.run(query, src_ids=src_ids, tgt_ids=tgt_ids).single()
@@ -185,7 +189,6 @@ def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     src_ids = [n["id"] for n in src_nodes]
     tgt_ids = [n["id"] for n in tgt_nodes]
-
     query = f"MATCH (a:CI)-[o:{o_rel}]->(b:CI) WHERE a.id IN $src_ids AND b.id IN $tgt_ids DELETE o MERGE (a)-[n:{n_rel}]->(b) RETURN count(n) as total"
     with driver.session() as session:
         r = session.run(query, src_ids=src_ids, tgt_ids=tgt_ids).single()
