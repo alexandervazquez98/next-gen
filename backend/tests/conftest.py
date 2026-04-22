@@ -178,6 +178,19 @@ class MockNeo4jResult:
             return MockNeo4jRecord(self._records[0])
         return None
 
+    def consume(self):
+        """Simulate Neo4j result consumption/summary."""
+        return MockNeo4jSummary()
+
+
+class MockNeo4jSummary:
+    """Helper to simulate Neo4j query execution summary/counters."""
+
+    def __init__(self):
+        self.counters = MagicMock()
+        self.counters.relationships_created = 0
+        self.counters.nodes_created = 0
+
 
 class MockNeo4jRecord:
     """Simulates a Neo4j record dict-like access."""
