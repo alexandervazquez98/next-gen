@@ -176,7 +176,7 @@ const MassLinkEditor: React.FC = () => {
     const filterNodes = (filter: FilterState) => {
         if (!allNodes) return [];
         return allNodes.filter(n => {
-            // Label filtering (CRITICAL FIX)
+            // Label filtering
             const isMetric = n._labels?.includes('MetricDef');
             if (filter.label === 'MetricDef' && !isMetric) return false;
             if (filter.label === 'CI' && isMetric) return false;
@@ -184,12 +184,16 @@ const MassLinkEditor: React.FC = () => {
             const matchesLayer = !filter.layer || n.type === filter.layer;
             const matchesBrand = !filter.brand || n.brand === filter.brand;
             const matchesModel = !filter.model || n.model === filter.model;
+            
             const s = filter.searchTerm.toLowerCase();
             const matchesSearch = !filter.searchTerm || 
                 n.label?.toLowerCase().includes(s) || 
                 n.id?.toLowerCase().includes(s) || 
                 n.ip?.includes(s) ||
-                n.location_name?.toLowerCase().includes(s);
+                n.location_name?.toLowerCase().includes(s) ||
+                n.brand?.toLowerCase().includes(s) || // Added brand search
+                n.model?.toLowerCase().includes(s);    // Added model search
+                
             return matchesLayer && matchesBrand && matchesModel && matchesSearch;
         });
     };
