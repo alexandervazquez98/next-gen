@@ -298,9 +298,9 @@ def count_potential_links(source_filter: dict, target_filter: dict, allowed_loca
     with driver.session() as session:
         result = session.run(query, **params).single()
         return {
-            "potential_links": result["total"],
-            "source_sample": result["src_sample"],
-            "target_sample": result["tgt_sample"]
+            "total": result["total"],
+            "source_samples": result["src_sample"],
+            "target_samples": result["tgt_sample"]
         }
 
 def execute_mass_links(source_filter: dict, target_filter: dict, relationship: str, allowed_locations: List[str] = None, is_admin: bool = False):
