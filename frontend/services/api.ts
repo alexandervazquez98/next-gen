@@ -35,17 +35,18 @@ const getHeaders = (isJson = true) => {
 async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
     const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
 
-    // Separate logic for Content-Type and Authorization
-    const token = localStorage.getItem('token');
-    const headers: HeadersInit = { ...config.headers };
+    // Build headers — start with any caller-provided headers, then apply defaults
+    const callerHeaders = config.headers as Record<string, string> || {};
+    const headers: Record<string, string> = { ...callerHeaders };
 
-    if (token && !headers['Authorization' as keyof HeadersInit]) {
-        headers['Authorization' as keyof HeadersInit] = `Bearer ${token}`;
+    const token = localStorage.getItem('token');
+    if (token && !headers['Authorization']) {
+        headers['Authorization'] = `Bearer ${token}`;
     }
 
-    // Default to JSON if no body or if body is not FormData
-    if (!(config.body instanceof FormData) && !headers['Content-Type' as keyof HeadersInit]) {
-        headers['Content-Type' as keyof HeadersInit] = 'application/json';
+    // Default to JSON if no body or if body is not FormData and no Content-Type set
+    if (!(config.body instanceof FormData) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
     }
 
     const response = await fetch(url, {

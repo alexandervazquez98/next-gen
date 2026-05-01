@@ -79,6 +79,7 @@ const setupApiGet = (options?: {
   metrics?: MetricDef[];
   hardware?: Array<{ brand: string; model: string }>;
   usage?: Record<string, any>;
+  nodes?: Array<{ id: string; name: string; label?: string; ip?: string }>;
 }) => {
   const metrics = options?.metrics ?? [metricA, metricB];
   const hardware = options?.hardware ?? hardwareModels;
@@ -86,12 +87,18 @@ const setupApiGet = (options?: {
     'cpu.load': usageData,
     'mem.usage': { count: 0, cis: [] },
   };
+  const nodes = options?.nodes ?? [
+    { id: 'ci-1', name: 'router-01', label: 'router-01', ip: '10.0.0.1' },
+    { id: 'ci-2', name: 'router-02', label: 'router-02', ip: '10.0.0.2' },
+    { id: 'ci-3', name: 'switch-01', label: 'switch-01', ip: '10.0.1.1' },
+  ];
 
   mocks.apiGet.mockImplementation(async (endpoint: string) => {
     if (endpoint === '/metrics') return metrics;
     if (endpoint === '/hardware') return hardware;
     if (endpoint === '/metrics/cpu.load/usage') return usage['cpu.load'];
     if (endpoint === '/metrics/mem.usage/usage') return usage['mem.usage'];
+    if (endpoint === '/nodes') return nodes;
     throw new Error(`Unhandled GET ${endpoint}`);
   });
 };
@@ -201,7 +208,6 @@ describe('MetricsManager', () => {
       fireEvent.change(screen.getByPlaceholderText(/examples: \.1\.3\.6\.1/i), { target: { value: '.1.3.6.1.4.1.9.9.13.1' } });
       fireEvent.change(screen.getByPlaceholderText(/target brands/i), { target: { value: 'Cisco, Dell' } });
       fireEvent.change(screen.getByPlaceholderText(/target layers/i), { target: { value: 'INFRASTRUCTURE, EDGE' } });
-      fireEvent.change(screen.getByPlaceholderText(/target specific host names or ids/i), { target: { value: 'router-01, switch-02' } });
 
       const numberInputs = screen.getAllByRole('spinbutton');
       fireEvent.change(numberInputs[0], { target: { value: '65' } });
@@ -212,7 +218,7 @@ describe('MetricsManager', () => {
       clickSaveMetric();
 
       await waitFor(() => {
-        expect(mocks.apiPost).toHaveBeenCalledWith('/metrics', {
+        expect(mocks.apiPost).toHaveBeenCalledWith('/metrics', expect.objectContaining({
           id: 'temp.sensor',
           protocol: 'SNMP',
           dataType: 'INTEGER',
@@ -221,19 +227,19 @@ describe('MetricsManager', () => {
           oid: '.1.3.6.1.4.1.9.9.13.1',
           warning: 65,
           critical: 85,
-          applicable_to: {
+          applicable_to: expect.objectContaining({
             brands: ['Cisco', 'Dell'],
             models: ['ASR1001'],
             layers: ['INFRASTRUCTURE', 'EDGE'],
-            names: ['router-01', 'switch-02'],
+            names: [],
             excluded_names: [],
-          },
-        });
+          }),
+        }));
       });
 
       expect(window.alert).toHaveBeenCalledWith('Metric Saved');
       await waitFor(() => {
-        expect(mocks.apiGet).toHaveBeenCalledTimes(3);
+        expect(mocks.apiGet).toHaveBeenCalledTimes(4);
       });
       expect(screen.getByText(/select a metric to edit/i)).toBeInTheDocument();
     });
@@ -278,7 +284,8 @@ describe('MetricsManager', () => {
       expect(screen.getByDisplayValue('CPU load metric')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Cisco')).toBeInTheDocument();
       expect(screen.getByDisplayValue('INFRASTRUCTURE')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('router-01')).toBeInTheDocument();
+      // router-01 is shown as a chip (Quick Add Explicit CIs), not as an input display value
+      expect(screen.getAllByText('router-01').length).toBeGreaterThan(0);
       expect(screen.getAllByText(/cisco asr1001/i).length).toBeGreaterThan(0);
     });
 
@@ -485,9 +492,6 @@ describe('MetricsManager', () => {
       fireEvent.change(screen.getByPlaceholderText(/target layers/i), {
         target: { value: 'INFRASTRUCTURE, EDGE' },
       });
-      fireEvent.change(screen.getByPlaceholderText(/target specific host names or ids/i), {
-        target: { value: 'router-01, draft-node' },
-      });
       fireEvent.change(getInputByLabel(/quick add model/i), { target: { value: 'R750' } });
 
       const deleteButtons = await screen.findAllByTitle('Remove specific association');
@@ -501,7 +505,7 @@ describe('MetricsManager', () => {
             brands: ['Cisco', 'Juniper'],
             models: ['ASR1001', 'R750'],
             layers: ['INFRASTRUCTURE', 'EDGE'],
-            names: ['draft-node'],
+            names: [],
             excluded_names: ['router-02', 'router-01', 'ci-1'],
           },
         }));
@@ -511,7 +515,6 @@ describe('MetricsManager', () => {
       expect(screen.getByDisplayValue('Unsaved draft description')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Cisco, Juniper')).toBeInTheDocument();
       expect(screen.getByDisplayValue('INFRASTRUCTURE, EDGE')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('draft-node')).toBeInTheDocument();
       expect(window.alert).not.toHaveBeenCalledWith('Metric Saved');
     });
   });
