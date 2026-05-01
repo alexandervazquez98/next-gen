@@ -8,7 +8,7 @@ import services.metric_service as metric_service
 from fastapi.responses import JSONResponse, StreamingResponse
 
 router = APIRouter(
-    prefix="/api/nodes",
+    prefix="/nodes",
     tags=["Nodes"],
     responses={404: {"description": "Not found"}},
 )

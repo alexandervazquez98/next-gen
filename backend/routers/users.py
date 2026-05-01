@@ -9,7 +9,7 @@ from repositories import user_repo
 from models.sql_models import User as PgUser
 
 router = APIRouter(
-    prefix="/api/users",
+    prefix="/users",
     tags=["Users"],
     responses={404: {"description": "Not found"}},
 )

@@ -7,7 +7,7 @@ import services.catalog_service as catalog_service
 from services.auth_service import get_current_active_user, check_permission
 
 router = APIRouter(
-    prefix="/api",
+    prefix="",
     tags=["Catalog"],
     responses={404: {"description": "Not found"}},
 )

@@ -13,7 +13,7 @@ from repositories import user_repo
 from models.user import Token, User, PasswordChangeRequest
 
 router = APIRouter(
-    prefix="/api/auth",
+    prefix="/auth",
     tags=["Authentication"],
     responses={404: {"description": "Not found"}},
 )
