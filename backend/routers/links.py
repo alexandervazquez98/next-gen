@@ -4,7 +4,7 @@ from models.core import Link
 import services.link_service as link_service
 
 router = APIRouter(
-    prefix="/api",
+    prefix="",
     tags=["Topology"],
     responses={404: {"description": "Not found"}},
 )

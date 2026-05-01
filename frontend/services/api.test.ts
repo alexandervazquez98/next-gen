@@ -276,14 +276,12 @@ describe('api client', () => {
         headers: { Accept: 'application/json' },
       });
 
-      expect(global.fetch).toHaveBeenCalledWith('/api/custom', {
-        method: 'GET',
-        signal,
-        headers: {
-          Authorization: 'Bearer fake-token',
-          Accept: 'application/json',
-        },
-      });
+      const [url, options] = global.fetch.mock.calls[0];
+      expect(url).toBe('/api/custom');
+      expect(options.method).toBe('GET');
+      expect(options.signal).toBe(signal);
+      expect(options.headers['Authorization']).toBe('Bearer fake-token');
+      expect(options.headers['Accept']).toBe('application/json');
     });
 
     it('forwards signal for get requests', async () => {

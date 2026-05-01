@@ -7,7 +7,7 @@ from models.core import EventDetailResponse, EventFeedSummary
 from models.user import User, UserPermission
 
 router = APIRouter(
-    prefix="/api/events",
+    prefix="/events",
     tags=["Events"],
     responses={404: {"description": "Not found"}},
 )
