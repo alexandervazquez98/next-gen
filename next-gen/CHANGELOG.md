@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **GeoView CI Visibility**: Resolved an issue where the map appeared empty when >1000 alarms were active due to backend event truncation (LIMIT 100) cascading through the enrichment layer.
+- **MetricAnalytics CI Switch Loading UX**: Resolved missing loading feedback when switching CIs in the Analytics section. Now shows skeleton during fetch, handles race conditions with AbortController, and includes fade-in animation on data load.
 
 ## [1.0.0-prod-init] — 2026-04-22
 
