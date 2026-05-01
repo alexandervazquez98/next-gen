@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Circle, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import DependencyMiniMap from './DependencyMiniMap';
 import { useEventCorrelation } from '../hooks/useEventCorrelation';
+import { useSmartCulling } from '../hooks/useSmartCulling';
 import L from 'leaflet';
 import { useAuth } from '../context/AuthContext';
 import { useEventMutations } from '../hooks/queries/useEventMutations';
@@ -23,6 +24,19 @@ const DefaultIcon = L.icon({
 });
 
 L.Marker.prototype.options.icon = DefaultIcon;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+export const SMART_CULL_THRESHOLD = 200;
+export const TOP_N = 50;
+export const MAX_AURA_RADIUS = 10000;
+export const SEVERITY_WEIGHTS: Record<string, number> = {
+    CRITICAL: 3,
+    WARNING: 2,
+    INFO: 1,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +66,37 @@ export interface NodeRenderConfig {
 // ---------------------------------------------------------------------------
 // Pure helpers — exported for unit tests
 // ---------------------------------------------------------------------------
+
+/**
+ * rankCIs
+ *
+ * Ranks CI nodes by event severity using a weighted sum score.
+ * Pure function — no side effects, no mutations.
+ *
+ * @param nodesWithEvents - array of nodes enriched with event data
+ * @param n - number of top nodes to return
+ * @returns top-n nodes sorted descending by score
+ */
+export function rankCIs<T extends { events?: { severity: string }[] }>(
+    nodesWithEvents: T[],
+    n: number
+): T[] {
+    if (n <= 0 || nodesWithEvents.length === 0) return [];
+
+    const scored = nodesWithEvents.map(node => {
+        const score = (node.events ?? []).reduce(
+            (sum, e) => sum + (SEVERITY_WEIGHTS[e.severity] ?? 0),
+            0
+        );
+        return { node, score };
+    });
+
+    // Stable sort descending by score (Array.sort is not stable in older JS,
+    // but modern engines preserve insertion order for equal elements)
+    scored.sort((a, b) => b.score - a.score);
+
+    return scored.slice(0, n).map(s => s.node);
+}
 
 /**
  * buildLinkConfig
@@ -152,7 +197,7 @@ export function getNodeRenderConfig(node: {
             fillOpacity: 1,
             weight: 2,
             showAura: true,
-            auraRadius: 20000 + critCount * 10000,
+            auraRadius: Math.min(20000 + critCount * 10000, MAX_AURA_RADIUS),
         };
     }
     if (isWarning) {
@@ -162,7 +207,7 @@ export function getNodeRenderConfig(node: {
             fillOpacity: 1,
             weight: 2,
             showAura: true,
-            auraRadius: 10000 + warnCount * 5000,
+            auraRadius: Math.min(10000 + warnCount * 5000, MAX_AURA_RADIUS),
         };
     }
     return {
@@ -363,12 +408,15 @@ const MonitoringConsole: React.FC = () => {
         : nodes.filter(n => (n.category ?? n.type) === filterCategory);
 
     // Enriched Nodes with Event Status
-    const nodesWithEvents = filteredNodes.map(node => {
+    const nodesWithEvents = useMemo(() => filteredNodes.map(node => {
         const nodeEvents = events.filter(e => e.ci_id === node.id);
         const critical = nodeEvents.some(e => e.severity === 'CRITICAL');
         const warning = nodeEvents.some(e => e.severity === 'WARNING');
         return { ...node, hasCritical: critical, hasWarning: warning, events: nodeEvents };
-    });
+    }), [nodes, events, filterCategory]);
+
+    // Smart culling hook — returns top-n nodes when threshold exceeded
+    const { culledNodes, isActive: isSmartMode, toggle: toggleSmartMode } = useSmartCulling(nodesWithEvents, events);
 
     const openEvents = events.filter(e => e.status === 'OPEN');
     const ackEvents = events.filter(e => e.status === 'ACK');
@@ -414,12 +462,27 @@ const MonitoringConsole: React.FC = () => {
                     <h2 className="text-xl font-black text-white uppercase tracking-tighter flex items-center gap-2">
                         <span className="material-symbols-outlined text-brand-400">notifications_active</span>
                         Event Console
+                        {isSmartMode && events.length >= SMART_CULL_THRESHOLD && viewMode === 'DASHBOARD' && (
+                            <span className="text-[10px] text-yellow-400 font-bold animate-pulse ml-2">
+                                ⚠ Smart Mode: top {TOP_N} CIs shown
+                            </span>
+                        )}
                     </h2>
 
                     <div className="flex bg-black/20 p-1 rounded-lg border border-white/5">
                         <button onClick={() => setViewMode('DASHBOARD')} className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${viewMode === 'DASHBOARD' ? 'bg-brand-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'}`}>Stream</button>
                         <button onClick={() => setViewMode('MAP')} className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${viewMode === 'MAP' ? 'bg-brand-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'}`}>Geo View</button>
                     </div>
+
+                    {viewMode === 'MAP' && (
+                        <button
+                            onClick={toggleSmartMode}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all bg-brand-600/30 hover:bg-brand-600/50 text-brand-400 border border-brand-500/30"
+                        >
+                            <span className="material-symbols-outlined text-sm">filter_alt</span>
+                            {isSmartMode ? 'Ver más críticos' : 'Ver todos'}
+                        </button>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -593,7 +656,7 @@ const MonitoringConsole: React.FC = () => {
                                 return null;
                             })}
 
-                            {nodesWithEvents.filter(n => n.location && n.location.lat).map(node => {
+                            {culledNodes.filter(n => n.location && n.location.lat).map(node => {
                                 const cfg = getNodeRenderConfig(node);
 
                                 return (

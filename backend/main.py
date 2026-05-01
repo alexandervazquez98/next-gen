@@ -5,7 +5,11 @@ import asyncio
 import os
 import shutil
 import platform
+from datetime import datetime
 from database import get_db, verify_connection
+
+# Global start time to track system reboots/restarts
+STARTUP_TIME = datetime.now().isoformat()
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
@@ -21,17 +25,30 @@ app = FastAPI(
     title="NEX-GEN API",
     version="1.4.0",
     description="API for CMDB, Monitoring, and AIOps Platform",
+    redirect_slashes=False,
 )
 
-# Include Routers
-app.include_router(auth.router)  # /api/auth (defined in router)
-app.include_router(users.router)  # /api/users
-app.include_router(roles.router)  # /api/roles
-app.include_router(nodes.router)  # /api/nodes
-app.include_router(metrics.router)  # /api/metrics
-app.include_router(catalog.router)  # /api/categories, /api/hardware, /api/owners
-app.include_router(links.router)  # /api/links
-app.include_router(events.router)  # /api/events
+"""
+ROUTING ARCHITECTURE CONVENTIONS:
+1. Centralized Prefix: All routers are included with the '/api' prefix here in main.py.
+2. No Trailing Slashes: Routes are defined WITHOUT trailing slashes to maintain consistency.
+3. Pragmatic REST for Bulk Ops: 
+   - Single resource mutations use standard verbs (GET, POST, PUT, DELETE).
+   - Bulk/Mass operations use POST for compatibility with corporate proxies and firewalls 
+     that often intercept or misinterpret PUT/DELETE on batch endpoints.
+4. Static vs Dynamic Priority: Static routes (like /bulk-update) MUST be registered 
+   before dynamic routes (like /{id}) in their respective routers to prevent collisions.
+"""
+
+# Include Routers with global /api prefix
+app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(roles.router, prefix="/api")
+app.include_router(nodes.router, prefix="/api")
+app.include_router(metrics.router, prefix="/api")
+app.include_router(catalog.router, prefix="/api")
+app.include_router(links.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
@@ -157,6 +174,16 @@ def get_system_status():
     except:
         neo4j_status = "DISCONNECTED"
 
+    postgres_status = "UNKNOWN"
+    try:
+        from postgres_db import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        postgres_status = "CONNECTED"
+    except:
+        postgres_status = "DISCONNECTED"
+
     collector = get_collector_status()
 
     return {
@@ -164,5 +191,7 @@ def get_system_status():
         "ram": round(ram_percent, 1),
         "disk": round(disk_percent, 1),
         "neo4j": neo4j_status,
+        "postgres": postgres_status,
         "collector": collector,
+        "startup_time": STARTUP_TIME
     }

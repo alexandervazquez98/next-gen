@@ -35,10 +35,18 @@ const getHeaders = (isJson = true) => {
 async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
     const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
 
-    const headers = {
-        ...getHeaders(config.headers ? false : true), // Default to JSON unless overridden
-        ...config.headers,
-    };
+    // Separate logic for Content-Type and Authorization
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = { ...config.headers };
+
+    if (token && !headers['Authorization' as keyof HeadersInit]) {
+        headers['Authorization' as keyof HeadersInit] = `Bearer ${token}`;
+    }
+
+    // Default to JSON if no body or if body is not FormData
+    if (!(config.body instanceof FormData) && !headers['Content-Type' as keyof HeadersInit]) {
+        headers['Content-Type' as keyof HeadersInit] = 'application/json';
+    }
 
     const response = await fetch(url, {
         ...config,
@@ -62,6 +70,14 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     const contentType = response.headers.get("content-type");
     if (contentType && contentType.indexOf("application/json") !== -1) {
         return response.json();
+    }
+
+    // Handle binary data (Excel, etc.)
+    if (contentType && (
+        contentType.indexOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") !== -1 ||
+        contentType.indexOf("application/octet-stream") !== -1
+    )) {
+        return response.blob() as unknown as T;
     }
 
     return response.text() as unknown as T;
