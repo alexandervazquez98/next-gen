@@ -19,6 +19,10 @@ export interface SystemStatus {
   };
 }
 
+export interface OwnerRecord {
+  name: string;
+}
+
 export interface CategoryRecord {
   name: string;
 }
@@ -51,3 +55,6 @@ export const fetchRelatedEvents = (ciId: string, { signal }: { signal?: AbortSig
 
 export const fetchGraphTopology = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<GraphTopologyResponse>('/graph/full', { signal });
+
+export const fetchOwners = ({ signal }: { signal?: AbortSignal } = {}) =>
+  api.get<OwnerRecord[]>('/owners', { signal });

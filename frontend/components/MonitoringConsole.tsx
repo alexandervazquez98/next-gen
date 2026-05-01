@@ -31,7 +31,7 @@ L.Marker.prototype.options.icon = DefaultIcon;
 
 export const SMART_CULL_THRESHOLD = 200;
 export const TOP_N = 50;
-export const MAX_AURA_RADIUS = 10000;
+export const MAX_AURA_RADIUS = 50000;
 export const SEVERITY_WEIGHTS: Record<string, number> = {
     CRITICAL: 3,
     WARNING: 2,
@@ -735,39 +735,39 @@ const MonitoringConsole: React.FC = () => {
 
                 const node = nodesWithEvents.find(n => n.id === evt.ci_id);
                 const detailEvent = eventDetail?.event;
+                const displayEvent = detailEvent ?? evt;
                 const businessContext = eventDetail?.business_context;
                 const itsmContext = eventDetail?.itsm_context;
-                const displayEvent = detailEvent ?? evt;
-                 const isBusinessContextReady = canViewEventDetail && eventDetailQuery.isSuccess && Boolean(eventDetail);
-                 const businessContextStatus = isBusinessContextReady
-                     ? businessContext?.source ?? 'unavailable'
-                     : canViewEventDetail && eventDetailQuery.isError
-                         ? 'degraded'
-                         : canViewEventDetail && eventDetailQuery.isLoading
+                const isBusinessContextReady = canViewEventDetail && eventDetailQuery.isSuccess && Boolean(eventDetail);
+                const businessContextStatus = isBusinessContextReady
+                    ? businessContext?.source ?? 'unavailable'
+                    : canViewEventDetail && eventDetailQuery.isError
+                        ? 'degraded'
+                        : canViewEventDetail && eventDetailQuery.isLoading
                             ? 'loading'
                             : 'summary-only';
-                const isAssigned = itsmContext?.assignment_state === 'assigned';
-                const assignedTo = itsmContext?.assigned_to || null;
-                const businessServiceName = isBusinessContextReady ? businessContext?.business_service?.name ?? null : null;
-                const impactedUsers = isBusinessContextReady ? businessContext?.impacted_users ?? null : null;
                 const site = isBusinessContextReady
                     ? businessContext?.site ?? detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.location_name ?? null
                     : detailEvent?.ci_ref?.location_name ?? displayEvent.ci_location_name ?? node?.location_name ?? null;
+                const businessServiceName = isBusinessContextReady ? businessContext?.business_service?.name ?? null : null;
+                const impactedUsers = isBusinessContextReady ? businessContext?.impacted_users ?? null : null;
                 const category = businessContext?.service_catalog?.category ?? node?.category ?? node?.type ?? null;
                 const ageMs = Date.now() - new Date(displayEvent.created_at).getTime();
                 const ageMinutes = Math.floor(ageMs / 60000);
                 const slaRemaining = isBusinessContextReady ? businessContext?.sla_remaining_minutes ?? null : null;
                 const slaCritical = slaRemaining !== null && slaRemaining <= 30;
-                 const eventTier = itsmContext?.escalation_tier ?? null;
-                 const detailFetchBlocked = !canViewEventDetail;
+                const eventTier = itsmContext?.escalation_tier ?? null;
+                const detailFetchBlocked = !canViewEventDetail;
+                const isAssigned = itsmContext?.assignment_state === 'assigned';
+                const assignedTo = itsmContext?.assigned_to || null;
 
                 // M3: Parse timeline entries from comments[]
-                 const parseTimelineEntry = (raw: string) => {
-                     const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
-                     if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
+                const parseTimelineEntry = (raw: string) => {
+                    const diagMatch = raw.match(/^DIAGNOSTIC RUN BY (.+?):\n([\s\S]*)$/);
+                    if (diagMatch) return { type: 'diagnostic' as const, user: diagMatch[1], body: diagMatch[2], raw };
                     const forcedAuditMatch = raw.match(/^\[AUDIT\]\[FORCED_CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (forcedAuditMatch) return { type: 'force_close' as const, user: extractAuditActor(forcedAuditMatch[1]) || '', body: forcedAuditMatch[1], ts: forcedAuditMatch[2], raw };
-                    const closeAuditMatch = raw.match(/^\[AUDIT\]\[CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
+                    const closeAuditMatch = raw.match(/^\[AUDIT]\[CLOSE\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (closeAuditMatch) return { type: 'close' as const, user: extractAuditActor(closeAuditMatch[1]) || '', body: closeAuditMatch[1], ts: closeAuditMatch[2], raw };
                     const ownershipAuditMatch = raw.match(/^\[AUDIT\]\[OWNERSHIP\]\s+([\s\S]+?)(?:\s\((.+)\))?\s*$/);
                     if (ownershipAuditMatch) return { type: 'ownership' as const, user: extractAuditActor(ownershipAuditMatch[1]) || '', body: ownershipAuditMatch[1], ts: ownershipAuditMatch[2], raw };
@@ -775,7 +775,6 @@ const MonitoringConsole: React.FC = () => {
                     if (forceMatch) return { type: 'force_close' as const, user: '', body: raw, raw };
                     const closeMatch = raw.match(/^\[CIERRE/);
                     if (closeMatch) return { type: 'close' as const, user: '', body: raw, raw };
-                    // Standard format: "user: message (datetime)"
                     const stdMatch = raw.match(/^(.+?):\s([\s\S]+?)\s\((.+)\)$/);
                     if (stdMatch) {
                         const [, user, body, ts] = stdMatch;

@@ -60,6 +60,8 @@ function buildEventDetail(event: any, node: any, overrides: any = {}) {
                 hostname: node?.ip ?? null,
                 location_name: event.ci_location_name ?? node?.location_name ?? metadata.site ?? null,
             },
+            // Explicitly preserve comments so the detail payload matches the EventDetailEvent interface
+            ...('comments' in event ? { comments: event.comments } : {}),
         },
         business_context: {
             source: metadata.business_service || metadata.impacted_users || metadata.sla_minutes ? 'snapshot' : 'unavailable',
@@ -148,6 +150,7 @@ vi.mock('../../services/api', () => ({
             if (url === '/links') return [];
             if (url.startsWith('/events?')) return [MOCK_EVENT_WITHIN_SLA];
             if (url === `/events/${MOCK_EVENT_WITHIN_SLA.id}`) return buildEventDetail(MOCK_EVENT_WITHIN_SLA, MOCK_NODE);
+            if (url === `/events/${MOCK_EVENT_WITH_COMMENTS.id}`) return buildEventDetail(MOCK_EVENT_WITH_COMMENTS, MOCK_NODE);
             if (url.startsWith('/events/related/')) return [];
             return [];
         }),
@@ -238,6 +241,13 @@ async function renderAndOpenModal(eventOverride?: any, nodeOverride?: any, detai
     await waitFor(() => {
         expect(screen.getByText('Timeline de Investigación')).toBeDefined();
     }, { timeout: 3000 });
+
+    // For events with comments, also wait for the detail query to complete
+    if (mockEvent?.comments?.length > 0) {
+        await waitFor(() => {
+            expect(screen.getByText('Corp-WAN')).toBeDefined();
+        }, { timeout: 5000 });
+    }
 
     return result;
 }
@@ -467,7 +477,7 @@ describe('M2 — Ownership Bar', () => {
             const calls = (api.post as any).mock.calls;
             const ackCall = calls.find((c: any[]) => c[0].includes('/ack'));
             expect(ackCall).toBeDefined();
-            expect(ackCall[1]).toEqual({});
+            expect(ackCall[1]).toEqual({ comment_message: expect.stringContaining("[AUDIT][OWNERSHIP]") });
         });
     });
 
@@ -649,7 +659,7 @@ describe('Auth Context Integration', () => {
             const calls = (api.post as any).mock.calls;
             const ackCall = calls.find((c: any[]) => c[0].includes('/ack'));
             expect(ackCall).toBeDefined();
-            expect(ackCall[1]).toEqual({});
+            expect(ackCall[1]).toEqual({ comment_message: expect.stringContaining("[AUDIT][OWNERSHIP]") });
         });
     });
 
