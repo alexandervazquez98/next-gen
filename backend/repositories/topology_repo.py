@@ -250,9 +250,10 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
     if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
     w_str = (" WHERE " + " AND ".join(where)) if where else ""
     with driver.session() as session:
-        # Fetch nodes with explicit location extraction and metrics
+        # Build the query: only CIs with valid location coordinates
         node_query = f"""
             MATCH (n:CI)
+            WHERE n.location IS NOT NULL AND n.location.latitude IS NOT NULL AND n.location.longitude IS NOT NULL
             {w_str}
             OPTIONAL MATCH (n)-[r:HAS_METRIC]->(m:MetricDef)
             RETURN n, 
