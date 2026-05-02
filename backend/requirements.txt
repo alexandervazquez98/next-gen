@@ -14,3 +14,4 @@ python-multipart==0.0.9
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
+apscheduler==3.10.4
