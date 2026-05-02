@@ -80,7 +80,7 @@ function buildEventDetail(event: any, node: any, overrides: any = {}) {
             } : null,
             impacted_users: metadata.impacted_users ? Number(metadata.impacted_users) : null,
             sla_remaining_minutes: defaultSla !== null ? defaultSla - ageMinutes : null,
-            site: event.ci_location_name ?? node?.locationName ?? metadata.site ?? null,
+            site: event.ci_location_name ?? node?.location_name ?? metadata.site ?? null,
             ...overrides.business_context,
         },
         itsm_context: {

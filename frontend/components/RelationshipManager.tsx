@@ -1,7 +1,62 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GraphNode } from '../types';
 import TopologyViewer from './TopologyViewer';
 import { api } from '../services/api';
+import RelationshipBadge from './RelationshipBadge';
+import RelationshipTooltip from './RelationshipTooltip';
+
+// ============================================================================
+// Relationship Indicators — Types & Utilities
+// ============================================================================
+
+interface CiRelationshipEntry {
+  otherId: string;
+  otherLabel: string;
+  type: string;
+}
+
+interface CiRelationships {
+  asSource: CiRelationshipEntry[];
+  asTarget: CiRelationshipEntry[];
+}
+
+type CiRelationshipMap = Map<string, CiRelationships>;
+
+export interface LinkData {
+  source: string;
+  source_label?: string;
+  target: string;
+  target_label?: string;
+  relationship: string;
+}
+
+/**
+ * Derives a Map<ciId, {asSource[], asTarget[]}> from raw link data.
+ * O(n) per call — called inside useMemo in the component.
+ */
+export const computeRelationshipMap = (links: LinkData[]): CiRelationshipMap => {
+  const map: CiRelationshipMap = new Map();
+
+  for (const link of links) {
+    // Skip HAS_METRIC links — not relevant to CI-to-CI relationship topology
+    if (link.relationship === 'HAS_METRIC') continue;
+
+    const sourceId = link.source;
+    const targetId = link.target;
+    const sourceLabel = link.source_label || link.source;
+    const targetLabel = link.target_label || link.target;
+
+    // Initialize both endpoints if not already in map
+    if (!map.has(sourceId)) map.set(sourceId, { asSource: [], asTarget: [] });
+    if (!map.has(targetId)) map.set(targetId, { asSource: [], asTarget: [] });
+
+    // source → target: source is "asSource", target is "asTarget"
+    map.get(sourceId)!.asSource.push({ otherId: targetId, otherLabel: targetLabel, type: link.relationship });
+    map.get(targetId)!.asTarget.push({ otherId: sourceId, otherLabel: sourceLabel, type: link.relationship });
+  }
+
+  return map;
+};
 
 interface RelationshipManagerProps {
     onRefresh: () => void;
@@ -31,7 +86,15 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     const [relType, setRelType] = useState<string>('DEPENDS_ON');
 
     // --- State: Links & Graph ---
-    const [links, setLinks] = useState<any[]>([]);
+    const [links, setLinks] = useState<LinkData[]>([]);
+
+    // --- Derived: Relationship map for indicators ---
+    // recomputes when links change, O(n) with typical CI counts (<1000)
+    const relationshipMap = useMemo(() => computeRelationshipMap(links), [links]);
+
+    // --- Memoized: filtered link lists to avoid repeated filter calls ---
+    const ciLinks = useMemo(() => links.filter(l => l.relationship !== 'HAS_METRIC'), [links]);
+    const metricLinks = useMemo(() => links.filter(l => l.relationship === 'HAS_METRIC'), [links]);
 
     // --- State: Mode (Links/Metrics) ---
     const [viewMode, setViewMode] = useState<'LINKS' | 'METRICS'>('LINKS');
@@ -138,13 +201,17 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
         if (confirm(`Create ${targetNodeIds.length} links from ${sourceNodeId}?`)) {
             setLoading(true);
             try {
-                // Batch create
-                for (const targetId of targetNodeIds) {
-                    await api.post('/links', {
-                        source: sourceNodeId,
-                        target: targetId,
-                        relationship: relType
-                    });
+                // Batch create with concurrency limit of 10
+                const batchSize = 10;
+                for (let i = 0; i < targetNodeIds.length; i += batchSize) {
+                    const batch = targetNodeIds.slice(i, i + batchSize);
+                    await Promise.all(batch.map(targetId =>
+                        api.post('/links', {
+                            source: sourceNodeId,
+                            target: targetId,
+                            relationship: relType
+                        })
+                    ));
                 }
                 alert("Relationships created successfully!");
                 setTargetNodeIds([]); // Reset targets
@@ -287,7 +354,10 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                         onClick={() => toggleTarget(n.id)}
                                         className={`p-2 rounded cursor-pointer text-xs flex items-center justify-between transition-colors ${targetNodeIds.includes(n.id) ? 'bg-accent-cyan/20 text-accent-cyan' : 'text-neutral-400 hover:bg-white/5'}`}
                                     >
-                                        <span>{n.label}</span>
+                                        <RelationshipTooltip key={n.id} ciId={n.id} relationships={relationshipMap}>
+                                            <span>{n.label}</span>
+                                        </RelationshipTooltip>
+                                        <RelationshipBadge ciId={n.id} relationships={relationshipMap} />
                                         {targetNodeIds.includes(n.id) && <span className="material-symbols-outlined text-sm">check</span>}
                                     </div>
                                 ))}
@@ -355,7 +425,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                 <div className="flex-1 flex flex-col min-h-0">
                     <h3 className="text-sm font-bold text-white uppercase mb-4 flex items-center gap-2">
                         <span className="material-symbols-outlined text-brand-500">hub</span>
-                        CI Relationships ({links.filter(l => l.relationship !== 'HAS_METRIC').length})
+                        CI Relationships ({ciLinks.length})
                     </h3>
                     <div className="flex-1 overflow-y-auto custom-scrollbar border border-white/5 rounded-lg bg-black/20">
                         <table className="w-full text-left border-collapse">
@@ -368,7 +438,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                 </tr>
                             </thead>
                             <tbody className="text-sm">
-                                {links.filter(l => l.relationship !== 'HAS_METRIC').map((link, i) => (
+                                {ciLinks.map((link, i) => (
                                     <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                                         <td className="p-3 font-mono text-brand-400" title={link.source}>{link.source_label || link.source}</td>
                                         <td className="p-3 text-center">
@@ -400,7 +470,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                         </td>
                                     </tr>
                                 ))}
-                                {links.filter(l => l.relationship !== 'HAS_METRIC').length === 0 && (
+                                {ciLinks.length === 0 && (
                                     <tr>
                                         <td colSpan={4} className="p-8 text-center text-neutral-500 text-xs text-italic">
                                             No CI-to-CI relationships found.
@@ -416,7 +486,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                 <div className="flex-1 flex flex-col min-h-0 border-t border-white/10 pt-4">
                     <h3 className="text-sm font-bold text-blue-400 uppercase mb-4 flex items-center gap-2">
                         <span className="material-symbols-outlined">bar_chart</span>
-                        Promoted Metrics ({links.filter(l => l.relationship === 'HAS_METRIC').length})
+                        Promoted Metrics ({metricLinks.length})
                     </h3>
                     <div className="flex-1 overflow-y-auto custom-scrollbar border border-white/5 rounded-lg bg-black/20">
                         <table className="w-full text-left border-collapse">
@@ -428,7 +498,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                 </tr>
                             </thead>
                             <tbody className="text-sm">
-                                {links.filter(l => l.relationship === 'HAS_METRIC').map((link, i) => (
+                                {metricLinks.map((link, i) => (
                                     <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                                         <td className="p-3 font-mono text-white" title={link.source}>{link.source_label || link.source}</td>
                                         <td className="p-3 font-mono text-blue-400 flex items-center gap-2" title={link.target}>
@@ -446,7 +516,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                         </td>
                                     </tr>
                                 ))}
-                                {links.filter(l => l.relationship === 'HAS_METRIC').length === 0 && (
+                                {metricLinks.length === 0 && (
                                     <tr>
                                         <td colSpan={3} className="p-8 text-center text-neutral-500 text-xs text-italic">
                                             No promoted metrics found.
