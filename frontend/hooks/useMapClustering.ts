@@ -204,8 +204,8 @@ export function buildClusters(
 
   const threshold = options?.proximityThresholdMeters ?? DEFAULT_PROXIMITY_THRESHOLD;
 
-  // Group by location_name
-  const locationGroups = computeLocationNameGroups(nodes);
+  // Group by location_name - use validNodes only
+  const locationGroups = computeLocationNameGroups(validNodes);
 
   // Events indexed by ci_id for quick lookup
   const eventsByNode = new Map<string, Event[]>();
@@ -247,9 +247,9 @@ export function buildClusters(
     }
   }
 
-  // DEFENSIVE: filter out clusters with [0, 0] centroid (bad location data)
+  // DEFENSIVE: filter out clusters with invalid centroid (undefined, NaN, or [0,0])
   return clusters.filter(c =>
-    c.centroid[0] !== 0 || c.centroid[1] !== 0
+    Number.isFinite(c.centroid[0]) && Number.isFinite(c.centroid[1])
   );
 }
 
