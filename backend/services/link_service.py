@@ -3,13 +3,14 @@ from models.core import Link
 from models.user import User
 from repositories import topology_repo
 
-def get_links(current_user: User) -> List[Dict[str, Any]]:
+def get_links(current_user: User = None) -> List[Dict[str, Any]]:
     """
     Fetch all active relationship links.
     Enforces data scoping based on user allowed locations.
     """
-    is_admin = current_user.role == "ADMIN"
-    return topology_repo.get_links(current_user.allowed_locations, is_admin)
+    is_admin = current_user.role == "ADMIN" if current_user else False
+    allowed_locations = current_user.allowed_locations if current_user else None
+    return topology_repo.get_links(allowed_locations, is_admin)
 
 def create_link(link: Link) -> Dict[str, str]:
     """
@@ -25,15 +26,16 @@ def delete_link(link: Link) -> Dict[str, str]:
     topology_repo.delete_link(link.source, link.target, link.relationship)
     return {"message": "Link deleted"}
 
-def get_full_graph(current_user: User, layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
+def get_full_graph(current_user: User = None, layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Fetch the COMPLETE graph topology for visualization.
     Supports filtering by metadata and data scoping.
     """
-    is_admin = current_user.role == "ADMIN"
+    is_admin = current_user.role == "ADMIN" if current_user else False
+    allowed_locations = current_user.allowed_locations if current_user else None
     raw_nodes, raw_links = topology_repo.get_filtered_graph_data(
         layer=layer, location=location, owner=owner, 
-        allowed_locations=current_user.allowed_locations, is_admin=is_admin
+        allowed_locations=allowed_locations, is_admin=is_admin
     )
 
     nodes = []
