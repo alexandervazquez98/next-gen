@@ -499,6 +499,11 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
     };
     const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
 
+    // DEBUG: log if centroid is invalid
+    if (!cluster.centroid || !Array.isArray(cluster.centroid) || cluster.centroid.length !== 2 || isNaN(cluster.centroid[0]) || isNaN(cluster.centroid[1])) {
+        console.warn('[ClusterMarker] Invalid centroid for cluster:', cluster.id, cluster.label, cluster.centroid);
+    }
+
     return (
         <>
             <CircleMarker
