@@ -14,8 +14,46 @@ from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
 
+# APScheduler for backup scheduling
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+# Global scheduler instance
+backup_scheduler = AsyncIOScheduler()
+
+
+def schedule_daily_backup() -> None:
+    """
+    Schedule the daily automated backup job based on PostgreSQL config.
+    Reads schedule_time from backup_config, defaults to 06:00 (dawn).
+    """
+    from services.backup_service import get_backup_config, trigger_scheduled_backup
+
+    config = get_backup_config()
+
+    # Parse schedule time (HH:MM format)
+    schedule_parts = config.get("scheduled_time", "06:00").split(":")
+    hour = int(schedule_parts[0])
+    minute = int(schedule_parts[1])
+
+    # Clear existing jobs and add new one
+    backup_scheduler.remove_all_jobs()
+
+    if config.get("enabled", True):
+        backup_scheduler.add_job(
+            trigger_scheduled_backup,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            id="daily_backup",
+            name="Daily PostgreSQL Backup",
+            replace_existing=True,
+        )
+        logger.info(f"Scheduled daily backup at {hour:02d}:{minute:02d}")
+    else:
+        logger.info("Daily backup is disabled in config")
+
+
 # Router Imports
-from routers import auth, users, roles, nodes, metrics, catalog, links, events
+from routers import auth, users, roles, nodes, metrics, catalog, links, events, backup
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -49,6 +87,7 @@ app.include_router(metrics.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
+app.include_router(backup.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
@@ -69,20 +108,19 @@ async def startup_event():
     Application startup event handler.
     1. Verifies database connectivity.
     2. Initializes default schema/metrics.
-    3. Starts background tasks (e.g., SNMP Collector).
+    3. Starts background tasks (e.g., SNMP Collector, Backup Scheduler).
     4. Seeds default admin user.
     """
     logger.info("Starting up... Verifying DB connection")
     verify_connection()
 
     # Initialize TimescaleDB Hypertables
-    # Initialize TimescaleDB Hypertables
     try:
         from postgres_db import SessionLocal, engine, Base
         from repositories.metric_repo import create_hypertable
         from models.timescale_models import MetricValue  # Import to register model
 
-        # Create Tables
+        # Create Tables (includes backup_config and backup_history)
         Base.metadata.create_all(bind=engine)
 
         # Inline migration: add 'tier' column if it doesn't exist (safe for existing DBs)
@@ -120,6 +158,24 @@ async def startup_event():
 
     # Start Background SNMP Collector
     asyncio.create_task(snmp_collector_loop())
+
+    # Start Backup Scheduler
+    schedule_daily_backup()
+    backup_scheduler.start()
+    logger.info("Backup scheduler started")
+
+
+def reschedule_backup() -> None:
+    """
+    Reschedule the daily backup job. Called after backup config updates.
+    """
+    schedule_daily_backup()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the backup scheduler on shutdown."""
+    backup_scheduler.shutdown()
 
 
 @app.get("/")
