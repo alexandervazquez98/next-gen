@@ -36,7 +36,7 @@ export interface GraphNode {
   thresholds?: MonitoringThresholds;
   metrics?: MetricValue[]; // Live metrics
   ip?: string;
-  locationName?: string;
+  location_name?: string;
   owner?: string; // Top-level owner group (matches backend Node.owner)
   category?: string; // Optional helper
   location?: { lat: number; long: number };
