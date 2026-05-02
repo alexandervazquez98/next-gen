@@ -15,6 +15,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **GeoView CI Visibility**: Resolved an issue where the map appeared empty when >1000 alarms were active due to backend event truncation (LIMIT 100) cascading through the enrichment layer.
 
+## [1.3.0] — 2026-05-02
+
+### Added
+- **Backup System**: PostgreSQL backup with APScheduler daily scheduling, admin-configurable schedule (default 06:00 dawn), manual backup trigger (ADMIN only), Neo4j BACKUP_SUCCESS/BACKUP_FAILURE events for admin dashboard, backup history and metrics API endpoints.
+- **Backup Config Model**: PostgreSQL table for schedule_type, scheduled_time, enabled, retention_days, storage_path.
+- **Backup History Model**: Audit log of all backups (scheduled/manual) with status, duration, file size.
+- **Backup Metrics Endpoint**: `GET /api/backup/metrics` returns last_backup_at timestamp for admin dashboard.
+
+### Fixed
+- **Backup concurrent safety**: Added threading lock to prevent simultaneous backup runs corrupting files.
+- **Backup cleanup error handling**: Cleanup failures now logged instead of silently swallowed.
+- **APScheduler reschedule race condition**: Using `remove_job` instead of `remove_all_jobs`.
+
+### Security
+- Credentials for pg_dump now read from environment variables instead of hardcoded.
+
+### Testing
+- Judgment Day: 3 rounds, 2 judges, 0 CRITICALs remaining, APPROVED verdict.
+
 ## [1.1.0] — 2026-05-02
 
 ### Added
