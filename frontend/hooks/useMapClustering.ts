@@ -247,7 +247,10 @@ export function buildClusters(
     }
   }
 
-  return clusters;
+  // DEFENSIVE: filter out clusters with [0, 0] centroid (bad location data)
+  return clusters.filter(c =>
+    c.centroid[0] !== 0 || c.centroid[1] !== 0
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
