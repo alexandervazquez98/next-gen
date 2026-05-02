@@ -198,6 +198,10 @@ export function buildClusters(
 ): Cluster[] {
   if (nodes.length === 0) return [];
 
+  // DEFENSIVE: only process nodes with valid location
+  const validNodes = nodes.filter(n => n.location?.lat != null && n.location?.long != null);
+  if (validNodes.length === 0) return [];
+
   const threshold = options?.proximityThresholdMeters ?? DEFAULT_PROXIMITY_THRESHOLD;
 
   // Group by location_name

@@ -6,11 +6,11 @@ from models.core import Node, Link
 
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
-    query = "MATCH (n:CI)"
+    query = "MATCH (n:CI) WHERE n.location IS NOT NULL AND n.location.latitude IS NOT NULL AND n.location.longitude IS NOT NULL"
     params = {}
     if not is_admin:
         if not allowed_locations: return []
-        query += " WHERE n.location_name IN $allowed_locations "
+        query += " AND n.location_name IN $allowed_locations "
         params["allowed_locations"] = allowed_locations
     query += """
         OPTIONAL MATCH (n)-[:CATEGORIZED_AS]->(c:Category)
