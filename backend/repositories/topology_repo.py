@@ -78,6 +78,25 @@ def bulk_insert_node(nid, label, ntype, status, ip, brand, model, serial, firmwa
         """, id=nid, label=label, type=ntype, status=status, ip=ip, brand=brand, model=model, serial=serial, firmware=firmware,
         lat=lat, long=long, loc_name=metadata.get('location_name'), polling=polling, snmp=snmp_str, metadata=metadata, owner=owner)
 
+# Valid relationship types for injection prevention
+_VALID_RELATIONSHIPS = frozenset({"CONNECTS_TO", "HOSTED_ON", "DEPENDS_ON", "MANAGES", "USES", "PROVIDES"})
+
+def _validate_relationship(rel: str) -> str:
+    """Validate and sanitize relationship type. Raises ValueError if invalid."""
+    clean = rel.upper().replace(" ", "_")
+    if clean not in _VALID_RELATIONSHIPS:
+        raise ValueError(f"Invalid relationship type: {rel}")
+    return clean
+
+# Valid node labels for injection prevention
+_VALID_NODE_LABELS = frozenset({"CI", "MetricDef", "Category", "OwnerGroup", "HardwareModel", "User"})
+
+def _validate_node_label(label: str) -> str:
+    """Validate node label. Raises ValueError if invalid."""
+    if label not in _VALID_NODE_LABELS:
+        raise ValueError(f"Invalid node label: {label}")
+    return label
+
 def get_template_data():
     driver = get_db()
     with driver.session() as session:
@@ -89,7 +108,7 @@ def get_links(allowed_locations=None, is_admin=False):
     driver = get_db()
     query = """
         MATCH (a)-[r]->(b)
-        WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef) 
+        WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef)
           AND NOT type(r) IN ['CATEGORIZED_AS', 'OWNED_BY', 'IS_MODEL']
           AND a.id IS NOT NULL AND b.id IS NOT NULL
     """
@@ -104,13 +123,13 @@ def get_links(allowed_locations=None, is_admin=False):
 
 def create_link(source, target, relationship):
     driver = get_db()
-    rel = relationship.upper().replace(" ", "_")
+    rel = _validate_relationship(relationship)
     with driver.session() as session:
-        session.run(f"MATCH (a), (b) WHERE a.id = $s AND b.id = $t MERGE (a)-[r:{rel}]->(b)", s=source, t=target)
+        session.run(f"MATCH (a {{id: $s}}), (b {{id: $t}}) WHERE a.id = $s AND b.id = $t MERGE (a)-[r:{rel}]->(b)", s=source, t=target)
 
 def delete_link(source, target, relationship):
     driver = get_db()
-    rel = relationship.upper().replace(" ", "_")
+    rel = _validate_relationship(relationship)
     with driver.session() as session:
         session.run(f"MATCH (a {{id: $s}})-[r:{rel}]->(b {{id: $t}}) DELETE r", s=source, t=target)
 
@@ -146,7 +165,7 @@ def _get_nodes_by_filter(filter_obj, is_admin, allowed_locations):
         where.append(f"n.location_name IN $allowed")
         params["allowed"] = allowed_locations
     
-    q = f"MATCH (n:{label})"
+    q = f"MATCH (n:{_validate_node_label(label)})"
     if where: q += " WHERE " + " AND ".join(where)
     q += " RETURN n" 
     
@@ -170,7 +189,7 @@ def count_potential_links(source_filter, target_filter, allowed_locations=None, 
 
 def execute_mass_links(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
     driver = get_db()
-    rel = relationship.upper().replace(" ", "_")
+    rel = _validate_relationship(relationship)
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     
@@ -191,7 +210,7 @@ def execute_mass_links(source_filter, target_filter, relationship, allowed_locat
 
 def execute_mass_delete(source_filter, target_filter, relationship, allowed_locations=None, is_admin=False):
     driver = get_db()
-    rel = relationship.upper().replace(" ", "_")
+    rel = _validate_relationship(relationship)
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     src_ids = list(set([n["id"] for n in src_nodes]))
@@ -207,7 +226,8 @@ def execute_mass_delete(source_filter, target_filter, relationship, allowed_loca
 
 def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_locations=None, is_admin=False):
     driver = get_db()
-    o_rel, n_rel = old_rel.upper().replace(" ","_"), new_rel.upper().replace(" ","_")
+    o_rel = _validate_relationship(old_rel)
+    n_rel = _validate_relationship(new_rel)
     src_nodes = _get_nodes_by_filter(source_filter, is_admin, allowed_locations)
     tgt_nodes = _get_nodes_by_filter(target_filter, is_admin, allowed_locations)
     src_ids = list(set([n["id"] for n in src_nodes]))
@@ -271,6 +291,35 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
                 node_data["location"] = {"lat": r["lat"], "long": r["lng"]}
             nodes.append(node_data)
 
-        l_where = (" WHERE " + " AND ".join([c.replace("n.", "a.") for c in where] + [c.replace("n.", "b.") for c in where])) if where else ""
+        # Build link WHERE clause: apply location/owner/layer filters to BOTH endpoints with OR
+        # This ensures links are shown if EITHER endpoint matches the filter
+        # Security constraint (allowed_locations) is ALWAYS AND'd - never mixed with OR
+        link_filters = []
+        security_filter = None
+        for cond in where:
+            if "n." in cond:
+                # Replace n. prefix with a. and b. for the link query
+                link_filters.append(cond.replace("n.", "a."))
+                link_filters.append(cond.replace("n.", "b."))
+            # Extract security filter to apply separately
+            if "allowed_locations" in cond:
+                # Transform to apply to both endpoints a and b
+                security_filter = cond.replace("n.", "a.") + " OR " + cond.replace("n.", "b.")
+
+        # Build the link query with proper AND/OR structure:
+        # Security is always AND'd, user filters are OR'd per condition group
+        link_conditions = []
+        if security_filter:
+            link_conditions.append(f"({security_filter})")
+        if link_filters:
+            # Group by pairs: each original condition produces [a.version, b.version]
+            # Join each pair with OR, then join all pairs with AND
+            # link_filters is [a.cond1, b.cond1, a.cond2, b.cond2, ...]
+            # We need to pair them: (a.cond1 OR b.cond1) AND (a.cond2 OR b.cond2)
+            paired = []
+            for i in range(0, len(link_filters), 2):
+                paired.append(f"({link_filters[i]} OR {link_filters[i+1]})")
+            link_conditions.append(" AND ".join(paired))
+        l_where = (" WHERE " + " AND ".join(link_conditions)) if link_conditions else ""
         links = [{"source_node": dict(r["a"]), "target_node": dict(r["b"]), "type": r["r"].type} for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params)]
         return nodes, links
