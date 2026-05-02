@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Popup } from 'react-leaflet';
+import { createPortal } from 'react-dom';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
@@ -318,66 +319,225 @@ function getSeverityBg(events: Event[]): string {
 }
 
 /**
- * ClusterMarker
- * Renders a single cluster marker with pulsing animation for CRITICAL clusters.
- * Extracted from .map() to comply with React Rules of Hooks.
+ * Helper to get status label for a single CI based on its events
  */
-const ClusterMarker: React.FC<{
-  cluster: Cluster;
-  onExpand: (id: string) => void;
-}> = ({ cluster, onExpand }) => {
-  const markerRef = useRef<L.CircleMarker>(null);
-  const isCritical = cluster.worstSeverity === 'CRITICAL';
+function getCIStatus(events: Event[]): 'CRITICAL' | 'WARNING' | 'OK' {
+    const hasCritical = events.some(e => e.severity === 'CRITICAL');
+    const hasWarning = events.some(e => e.severity === 'WARNING');
+    if (hasCritical) return 'CRITICAL';
+    if (hasWarning) return 'WARNING';
+    return 'OK';
+}
 
-  useEffect(() => {
-    const marker = markerRef.current;
-    if (!marker || !isCritical) return;
-    const el = marker.getElement();
-    if (!el) return;
-    el.classList.add('animate-ping');
-    return () => el.classList.remove('animate-ping');
-  }, [isCritical]);
+/**
+ * ClusterTooltip
+ * Floating hover tooltip for cluster markers.
+ * Appears after 1.5s hover delay, follows mouse, portal-rendered.
+ */
+interface ClusterTooltipProps {
+    cluster: Cluster;
+    position: { x: number; y: number };
+    visible: boolean;
+}
 
-  const clusterRadius = Math.min(12 + cluster.count * 3, 40);
-  const SEVERITY_COLORS: Record<string, string> = {
-    CRITICAL: '#ef4444',
-    WARNING: '#eab308',
-    INFO: '#3b82f6',
-    OK: '#10b981',
-  };
-  const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
+const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visible }) => {
+    const [container, setContainer] = useState<HTMLDivElement | null>(null);
+    const randomId = useRef(Math.random().toString(36).slice(2, 8));
 
-  return (
-    <CircleMarker
-      ref={markerRef}
-      center={cluster.centroid}
-      radius={clusterRadius}
-      pathOptions={{
-        color: clusterColor,
-        fillColor: clusterColor,
-        fillOpacity: 0.7,
-        weight: 2,
-        opacity: 0.9,
-      }}
-      eventHandlers={{
-        click: () => onExpand(cluster.id),
-      }}
-    >
-      <Popup>
-        <div className="p-2 min-w-[200px]">
-          <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
-          <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
-          <div className="space-y-1">
-            {cluster.members.map(m => (
-              <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
-                {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
-              </div>
-            ))}
-          </div>
+    useEffect(() => {
+        if (!visible) {
+            return;
+        }
+
+        const el = document.createElement('div');
+        el.id = `cluster-tooltip-${cluster.id.replace(/[^a-zA-Z0-9]/g, '')}-${randomId.current}`;
+        el.setAttribute('role', 'tooltip');
+        document.body.appendChild(el);
+        setContainer(el);
+
+        return () => {
+            el.remove();
+        };
+    }, [visible, cluster.id, randomId]);
+
+    if (!visible || !container) return null;
+
+    const content = (
+        <div
+            className="fixed z-[99999] bg-neutral-900 border border-white/10 rounded-xl shadow-2xl pointer-events-none w-72"
+            style={{
+                left: position.x,
+                top: position.y,
+                transform: 'translate(-50%, -110%)',
+            }}
+        >
+            <div className="p-3 space-y-2">
+                {/* Header */}
+                <div className="text-xs font-bold text-white border-b border-white/10 pb-2">
+                    <span className="material-symbols-outlined text-brand-400 text-sm align-middle mr-1">location_on</span>
+                    {cluster.label}
+                </div>
+
+                {/* Member list */}
+                <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar">
+                    {cluster.members.map(m => {
+                        const status = getCIStatus(m.events);
+                        const statusColors: Record<string, string> = {
+                            CRITICAL: 'bg-red-500/20 text-red-400 border border-red-500/30',
+                            WARNING: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+                            OK: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+                        };
+                        return (
+                            <div key={m.node.id} className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] text-neutral-300 truncate flex-1" title={m.node.label}>
+                                    {m.node.label}
+                                </span>
+                                <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${statusColors[status]}`}>
+                                    {status}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Tail */}
+            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-neutral-900" />
         </div>
-      </Popup>
-    </CircleMarker>
-  );
+    );
+
+    // Use portal to render into the container
+    return createPortal(content, container);
+};
+
+/**
+ * ClusterMarker
+ * Renders a single cluster marker with:
+ * - Aura ONLY for CRITICAL/WARNING clusters
+ * - Pulsing animation for CRITICAL clusters
+ * - Hover tooltip with 1.5s delay showing all member CIs with status badges
+ * - Click to expand (via onExpand)
+ */
+interface ClusterMarkerProps {
+    cluster: Cluster;
+    onExpand: (id: string) => void;
+}
+
+const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
+    const markerRef = useRef<L.CircleMarker>(null);
+    const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [tooltipVisible, setTooltipVisible] = useState(false);
+    const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+    const isCritical = cluster.worstSeverity === 'CRITICAL';
+    const hasAura = cluster.worstSeverity === 'CRITICAL' || cluster.worstSeverity === 'WARNING';
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (hoverTimeoutRef.current) {
+                clearTimeout(hoverTimeoutRef.current);
+            }
+        };
+    }, []);
+
+    // Pulsing animation for CRITICAL clusters
+    useEffect(() => {
+        const marker = markerRef.current;
+        if (!marker || !isCritical) return;
+        const el = marker.getElement();
+        if (!el) return;
+        el.classList.add('animate-ping');
+        return () => el.classList.remove('animate-ping');
+    }, [isCritical]);
+
+    // Attach mouse event handlers to the Leaflet marker
+    useEffect(() => {
+        const marker = markerRef.current;
+        if (!marker) return;
+
+        const handleMouseEnter = (e: L.LeafletMouseEvent) => {
+            setTooltipPos({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+            hoverTimeoutRef.current = setTimeout(() => {
+                setTooltipVisible(true);
+            }, 1500);
+        };
+
+        const handleMouseLeave = () => {
+            if (hoverTimeoutRef.current) {
+                clearTimeout(hoverTimeoutRef.current);
+                hoverTimeoutRef.current = null;
+            }
+            setTooltipVisible(false);
+        };
+
+        const handleMouseMove = (e: L.LeafletMouseEvent) => {
+            setTooltipPos({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+        };
+
+        marker.on({
+            mouseover: handleMouseEnter,
+            mouseout: handleMouseLeave,
+            mousemove: handleMouseMove,
+        });
+
+        return () => {
+            marker.off({
+                mouseover: handleMouseEnter,
+                mouseout: handleMouseLeave,
+                mousemove: handleMouseMove,
+            });
+        };
+    }, [cluster.id]); // Re-bind when cluster.id changes to ensure handlers have latest cluster data
+
+    const clusterRadius = Math.min(12 + cluster.count * 3, 40);
+    const SEVERITY_COLORS: Record<string, string> = {
+        CRITICAL: '#ef4444',
+        WARNING: '#eab308',
+        INFO: '#3b82f6',
+        OK: '#10b981',
+    };
+    const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
+
+    return (
+        <>
+            <CircleMarker
+                ref={markerRef}
+                center={cluster.centroid}
+                radius={clusterRadius}
+                pathOptions={{
+                    color: clusterColor,
+                    fillColor: clusterColor,
+                    fillOpacity: hasAura ? 0.7 : 0.4,
+                    weight: 2,
+                    opacity: 0.9,
+                }}
+                eventHandlers={{
+                    click: () => onExpand(cluster.id),
+                }}
+            />
+            <Popup>
+                <div className="p-2 min-w-[200px]">
+                    <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
+                    <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
+                    <div className="space-y-1">
+                        {cluster.members.map(m => (
+                            <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
+                                {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </Popup>
+            {tooltipVisible && (
+                <ClusterTooltip
+                    cluster={cluster}
+                    position={tooltipPos}
+                    visible={tooltipVisible}
+                />
+            )}
+        </>
+    );
 };
 
 /**

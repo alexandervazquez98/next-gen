@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-02
+
+### Fixed
+- **CMDB Correlations**: Fixed link query using OR logic so CIs properly display their correlations in the graph view.
+- **Clustering Aura**: Aura now only visible for CRITICAL/WARNING clusters — no more visual noise from healthy clusters.
+- **Clustering Tooltip**: Hover tooltip with 1.5s delay shows all CIs in cluster with individual status badges.
+- **ClusterTooltip DOM ID**: Fixed collision when clusters have IDs differing only in special characters.
+- **Cypher Injection Prevention**: Added allowlist validation for node labels in `_get_nodes_by_filter`.
+
 ### Added
 - **Smart Culling for GeoView Map**: When >200 active alarms, the map now intelligently shows only the top 50 most critical CIs instead of overwhelming the operator with 1000+ markers. Includes a "Ver todos / Ver más críticos" toggle in the map toolbar.
 - **Aura Radius Cap**: Maximum aura radius capped at 10km regardless of event count, preventing visual pollution from 50km+ circles.
