@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Circle, Popup } from 'react-leaflet';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, Event } from '../types';
 import { STATUS_COLORS } from '../utils/status';
 import DependencyMiniMap from './DependencyMiniMap';
 import { useEventCorrelation } from '../hooks/useEventCorrelation';
 import { useSmartCulling } from '../hooks/useSmartCulling';
+import { useMapClustering, Cluster } from '../hooks/useMapClustering';
 import L from 'leaflet';
 import { useAuth } from '../context/AuthContext';
 import { useEventMutations } from '../hooks/queries/useEventMutations';
@@ -265,6 +266,27 @@ const AnimatedPolyline: React.FC<{
 };
 
 /**
+ * MapOutsideClickHandler
+ * Attaches a map-level click listener that fires onMapClick when the user
+ * clicks on the map tile container (not on markers, popups, or other overlays).
+ */
+const MapOutsideClickHandler = ({ onMapClick }: { onMapClick: () => void }) => {
+    const map = useMap();
+    useEffect(() => {
+        const handler = (e: L.LeafletMouseEvent) => {
+            const target = e.originalEvent.target as HTMLElement;
+            // Only fire when clicking the tile container itself (<img> elements inside MapPane)
+            if (target.tagName === 'IMG') {
+                onMapClick();
+            }
+        };
+        map.on('click', handler);
+        return () => { map.off('click', handler); };
+    }, [map, onMapClick]);
+    return null;
+};
+
+/**
  * Auto-Zoom Component used inside MapContainer to fit bounds of nodes.
  */
 const MapBounds = ({ nodes }: { nodes: GraphNode[] }) => {
@@ -282,6 +304,185 @@ const MapBounds = ({ nodes }: { nodes: GraphNode[] }) => {
         }
     }, [nodes, map]);
     return null;
+};
+
+/**
+ * Helper to get severity background class for cluster member tooltips
+ */
+function getSeverityBg(events: Event[]): string {
+    const hasCritical = events.some(e => e.severity === 'CRITICAL');
+    const hasWarning = events.some(e => e.severity === 'WARNING');
+    if (hasCritical) return 'bg-red-100 text-red-800';
+    if (hasWarning) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-green-100 text-green-800';
+}
+
+/**
+ * ClusterMarker
+ * Renders a single cluster marker with pulsing animation for CRITICAL clusters.
+ * Extracted from .map() to comply with React Rules of Hooks.
+ */
+const ClusterMarker: React.FC<{
+  cluster: Cluster;
+  onExpand: (id: string) => void;
+}> = ({ cluster, onExpand }) => {
+  const markerRef = useRef<L.CircleMarker>(null);
+  const isCritical = cluster.worstSeverity === 'CRITICAL';
+
+  useEffect(() => {
+    const marker = markerRef.current;
+    if (!marker || !isCritical) return;
+    const el = marker.getElement();
+    if (!el) return;
+    el.classList.add('animate-ping');
+    return () => el.classList.remove('animate-ping');
+  }, [isCritical]);
+
+  const clusterRadius = Math.min(12 + cluster.count * 3, 40);
+  const SEVERITY_COLORS: Record<string, string> = {
+    CRITICAL: '#ef4444',
+    WARNING: '#eab308',
+    INFO: '#3b82f6',
+    OK: '#10b981',
+  };
+  const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
+
+  return (
+    <CircleMarker
+      ref={markerRef}
+      center={cluster.centroid}
+      radius={clusterRadius}
+      pathOptions={{
+        color: clusterColor,
+        fillColor: clusterColor,
+        fillOpacity: 0.7,
+        weight: 2,
+        opacity: 0.9,
+      }}
+      eventHandlers={{
+        click: () => onExpand(cluster.id),
+      }}
+    >
+      <Popup>
+        <div className="p-2 min-w-[200px]">
+          <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
+          <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
+          <div className="space-y-1">
+            {cluster.members.map(m => (
+              <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
+                {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Popup>
+    </CircleMarker>
+  );
+};
+
+/**
+ * MapFocusZone
+ * Uses useMap() to focus on expanded cluster members.
+ * Renders individual CircleMarkers for expanded cluster + Polyline links.
+ */
+interface MapFocusZoneProps {
+    cluster: Cluster;
+    nodesWithEvents: any[];
+    links: { source: string; target: string; relationship?: string }[];
+}
+
+const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, links }) => {
+    const map = useMap();
+
+    useEffect(() => {
+        if (cluster.members.length > 0) {
+            const validLocations = cluster.members
+                .map(m => m.node.location)
+                .filter((loc): loc is { lat: number; long: number } => Boolean(loc));
+            if (validLocations.length > 0) {
+                const bounds = L.latLngBounds(validLocations.map(loc => [loc.lat, loc.long]));
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+    }, [cluster.id, map]);
+
+    return (
+        <>
+            {cluster.members.map(member => {
+                const loc = member.node.location;
+                if (!loc) return null;
+                const cfg = getNodeRenderConfig({
+                    hasCritical: member.events.some(e => e.severity === 'CRITICAL'),
+                    hasWarning: member.events.some(e => e.severity === 'WARNING'),
+                    events: member.events,
+                });
+                return (
+                    <CircleMarker
+                        key={member.node.id}
+                        center={[loc.lat, loc.long]}
+                        radius={cfg.pixelRadius}
+                        pathOptions={{
+                            color: cfg.color,
+                            fillColor: cfg.color,
+                            fillOpacity: cfg.fillOpacity,
+                            weight: cfg.weight,
+                            opacity: cfg.fillOpacity,
+                        }}
+                    >
+                        <Popup>
+                            <div className="p-1 min-w-[200px]">
+                                <h3 className="font-bold text-sm mb-1">{member.node.label}</h3>
+                                <p className="text-xs text-neutral-500 mb-2">{member.node.ip}</p>
+                                {member.events.length > 0 ? (
+                                    <div className="space-y-1">
+                                        {member.events.map((e: any) => (
+                                            <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                {e.message}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-green-500 text-xs font-bold">Status OK</div>
+                                )}
+                            </div>
+                        </Popup>
+                    </CircleMarker>
+                );
+            })}
+            {/* Polyline links between expanded members */}
+            {cluster.members.map(member => {
+                const loc = member.node.location;
+                if (!loc) return null;
+                const sourceNode = nodesWithEvents.find(n => n.id === member.node.id);
+                if (!sourceNode) return null;
+                return cluster.members
+                    .filter(other => other.node.id !== member.node.id)
+                    .map(other => {
+                        const otherLoc = other.node.location;
+                        if (!otherLoc) return null;
+                        const targetNode = nodesWithEvents.find(n => n.id === other.node.id);
+                        if (!targetNode) return null;
+                        const cfg = buildLinkConfig(
+                            { relationship: 'CONNECTS_TO' },
+                            { hasCritical: sourceNode.hasCritical, hasWarning: sourceNode.hasWarning },
+                            { hasCritical: targetNode.hasCritical, hasWarning: targetNode.hasWarning }
+                        );
+                        return (
+                            <Polyline
+                                key={`${member.node.id}-${other.node.id}`}
+                                positions={[[loc.lat, loc.long], [otherLoc.lat, otherLoc.long]]}
+                                pathOptions={{
+                                    color: cfg.color,
+                                    weight: cfg.weight,
+                                    opacity: cfg.opacity * 0.5,
+                                    dashArray: cfg.dashArray,
+                                }}
+                            />
+                        );
+                    });
+            }).flat()}
+        </>
+    );
 };
 
 /**
@@ -418,6 +619,9 @@ const MonitoringConsole: React.FC = () => {
     // Smart culling hook — returns top-n nodes when threshold exceeded
     const { culledNodes, isActive: isSmartMode, toggle: toggleSmartMode } = useSmartCulling(nodesWithEvents, events);
 
+    // Map clustering hook
+    const { clusters, enabled: clusteringEnabled, toggleClustering, expandedClusterId, expandCluster, collapseCluster } = useMapClustering(nodesWithEvents, events);
+
     const openEvents = events.filter(e => e.status === 'OPEN');
     const ackEvents = events.filter(e => e.status === 'ACK');
 
@@ -475,13 +679,22 @@ const MonitoringConsole: React.FC = () => {
                     </div>
 
                     {viewMode === 'MAP' && (
-                        <button
-                            onClick={toggleSmartMode}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all bg-brand-600/30 hover:bg-brand-600/50 text-brand-400 border border-brand-500/30"
-                        >
-                            <span className="material-symbols-outlined text-sm">filter_alt</span>
-                            {isSmartMode ? 'Ver más críticos' : 'Ver todos'}
-                        </button>
+                        <>
+                            <button
+                                onClick={toggleSmartMode}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all bg-brand-600/30 hover:bg-brand-600/50 text-brand-400 border border-brand-500/30"
+                            >
+                                <span className="material-symbols-outlined text-sm">filter_alt</span>
+                                {isSmartMode ? 'Ver más críticos' : 'Ver todos'}
+                            </button>
+                            <button
+                                onClick={toggleClustering}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all ${clusteringEnabled ? 'bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400 border border-emerald-500/30' : 'bg-neutral-700/30 hover:bg-neutral-700/50 text-neutral-400 border border-neutral-500/30'}`}
+                            >
+                                <span className="material-symbols-outlined text-sm">scatter_plot</span>
+                                {clusteringEnabled ? 'Clustering ON' : 'Clustering OFF'}
+                            </button>
+                        </>
                     )}
                 </div>
 
@@ -607,6 +820,7 @@ const MonitoringConsole: React.FC = () => {
                     <div className="h-full w-full relative">
                         <MapContainer center={[20.5937, -100.3906]} zoom={5} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
                             <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
+                            <MapOutsideClickHandler onMapClick={collapseCluster} />
                             <MapBounds nodes={nodesWithEvents} />
 
                             {links.map((link, i) => {
@@ -656,59 +870,65 @@ const MonitoringConsole: React.FC = () => {
                                 return null;
                             })}
 
-                            {culledNodes.filter(n => n.location && n.location.lat).map(node => {
-                                const cfg = getNodeRenderConfig(node);
+                            {/* Conditional rendering: clusters vs individual markers */}
+                            {!clusteringEnabled ? (
+                                // Task 10: Individual markers when clustering is OFF
+                                culledNodes.filter(n => n.location && n.location.lat).map(node => {
+                                    const cfg = getNodeRenderConfig(node);
 
-                                return (
-                                    <React.Fragment key={node.id}>
-                                        {/* Geographical aura — subtle border ring only, no fill to avoid map tinting */}
-                                        {cfg.showAura && (
-                                            <Circle
+                                    return (
+                                        <React.Fragment key={node.id}>
+                                            <CircleMarker
                                                 center={[node.location!.lat, node.location!.long]}
-                                                radius={cfg.auraRadius}
+                                                radius={cfg.pixelRadius}
                                                 pathOptions={{
                                                     color: cfg.color,
-                                                    fillColor: '#1a1a2e',
-                                                    fillOpacity: 0.04,
-                                                    weight: 1,
-                                                    opacity: 0.25,
-                                                    dashArray: '4, 6',
+                                                    fillColor: cfg.color,
+                                                    fillOpacity: cfg.fillOpacity,
+                                                    weight: cfg.weight,
+                                                    opacity: cfg.fillOpacity,
                                                 }}
-                                            />
-                                        )}
-                                        {/* Core point — no animate-pulse, color drives urgency */}
-                                        <CircleMarker
-                                            center={[node.location!.lat, node.location!.long]}
-                                            radius={cfg.pixelRadius}
-                                            pathOptions={{
-                                                color: cfg.color,
-                                                fillColor: cfg.color,
-                                                fillOpacity: cfg.fillOpacity,
-                                                weight: cfg.weight,
-                                                opacity: cfg.fillOpacity,
-                                            }}
-                                        >
-                                            <Popup>
-                                                <div className="p-1 min-w-[200px]">
-                                                    <h3 className="font-bold text-sm mb-1">{node.label}</h3>
-                                                    <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
-                                                    {node.events && node.events.length > 0 ? (
-                                                        <div className="space-y-1">
-                                                            {node.events.map((e: any) => (
-                                                                <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                                                    {e.message}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className="text-green-500 text-xs font-bold">Status OK</div>
-                                                    )}
-                                                </div>
-                                            </Popup>
-                                        </CircleMarker>
-                                    </React.Fragment>
-                                );
-                            })}
+                                            >
+                                                <Popup>
+                                                    <div className="p-1 min-w-[200px]">
+                                                        <h3 className="font-bold text-sm mb-1">{node.label}</h3>
+                                                        <p className="text-xs text-neutral-500 mb-2">{node.ip}</p>
+                                                        {node.events && node.events.length > 0 ? (
+                                                            <div className="space-y-1">
+                                                                {node.events.map((e: any) => (
+                                                                    <div key={e.id} className={`text-xs p-1 rounded ${e.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                                        {e.message}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-green-500 text-xs font-bold">Status OK</div>
+                                                        )}
+                                                    </div>
+                                                </Popup>
+                                            </CircleMarker>
+                                        </React.Fragment>
+                                    );
+                                })
+                            ) : expandedClusterId ? (
+                                // Task 13: Expanded cluster — render individual markers + lines
+                                (() => {
+                                    const expandedCluster = clusters.find(c => c.id === expandedClusterId);
+                                    if (!expandedCluster) return null;
+                                    return (
+                                        <MapFocusZone
+                                            cluster={expandedCluster}
+                                            nodesWithEvents={nodesWithEvents}
+                                            links={links}
+                                        />
+                                    );
+                                })()
+                            ) : (
+                                // Task 11: Cluster markers
+                                clusters.filter(c => c.count > 0).map(cluster => (
+                                    <ClusterMarker key={cluster.id} cluster={cluster} onExpand={expandCluster} />
+                                ))
+                            )}
                         </MapContainer>
 
                         {/* Status Overlay */}
