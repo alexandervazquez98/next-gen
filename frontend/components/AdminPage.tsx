@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import MetricsManager from './MetricsManager';
 import CIEditor from './CIEditor';
 import RelationshipManager from './RelationshipManager';
@@ -29,6 +29,7 @@ const AdminPage: React.FC = () => {
     const [newItem, setNewItem] = useState<any>({});
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
+    const [inventorySearch, setInventorySearch] = useState('');
 
     useEffect(() => {
         fetchData();
@@ -120,6 +121,27 @@ const AdminPage: React.FC = () => {
         }
     };
 
+    const searchableText = (value: unknown): string => {
+        if (value == null) return '';
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            return String(value);
+        }
+        if (Array.isArray(value)) {
+            return value.map(searchableText).join(' ');
+        }
+        if (typeof value === 'object') {
+            return Object.values(value as Record<string, unknown>).map(searchableText).join(' ');
+        }
+        return '';
+    };
+
+    const filteredInventory = useMemo(() => {
+        const query = inventorySearch.trim().toLowerCase();
+        if (!query) return data;
+
+        return data.filter((item) => searchableText(item).toLowerCase().includes(query));
+    }, [data, inventorySearch]);
+
     return (
         <div className="p-8 h-full overflow-y-auto custom-scrollbar space-y-8">
             <h2 className="text-3xl font-black text-white tracking-tighter uppercase">Administration</h2>
@@ -181,8 +203,33 @@ const AdminPage: React.FC = () => {
 
                         {/* List Panel */}
                         <div className="flex-1 glass rounded-2xl border border-white/5 p-6 flex flex-col overflow-hidden">
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-xl font-bold text-white tracking-tight">INVENTORY</h3>
+                            <div className="flex justify-between items-center mb-6 gap-4">
+                                <div className="flex items-center gap-4 min-w-0">
+                                    <h3 className="text-xl font-bold text-white tracking-tight shrink-0">INVENTORY</h3>
+                                    <div className="relative w-[360px] max-w-[40vw]">
+                                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-sm">search</span>
+                                        <input
+                                            value={inventorySearch}
+                                            onChange={(e) => setInventorySearch(e.target.value)}
+                                            placeholder="Search any CI field..."
+                                            className="w-full bg-neutral-950/80 border border-white/10 rounded-lg pl-9 pr-8 py-2 text-xs text-white placeholder:text-neutral-600 outline-none focus:border-brand-500 transition-colors"
+                                        />
+                                        {inventorySearch && (
+                                            <button
+                                                onClick={() => setInventorySearch('')}
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors"
+                                                title="Clear search"
+                                            >
+                                                <span className="material-symbols-outlined text-sm">close</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                    {inventorySearch && (
+                                        <span className="text-[10px] font-bold uppercase text-neutral-500 shrink-0">
+                                            {filteredInventory.length}/{data.length}
+                                        </span>
+                                    )}
+                                </div>
                                 <div className="flex gap-3">
                                     <button
                                         onClick={() => setSelectedNode(null)}
@@ -229,7 +276,7 @@ const AdminPage: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="text-sm divide-y divide-white/5">
-                                        {data.map((item: any) => (
+                                        {filteredInventory.map((item: any) => (
                                             <tr
                                                 key={item.id}
                                                 className={`hover:bg-brand-500/5 transition-colors cursor-pointer ${selectedNode?.id === item.id ? 'bg-brand-500/10' : ''}`}
