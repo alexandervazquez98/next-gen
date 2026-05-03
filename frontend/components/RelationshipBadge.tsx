@@ -18,7 +18,7 @@ interface RelationshipBadgeProps {
  */
 const RelationshipBadge: React.FC<RelationshipBadgeProps> = ({ ciId, relationships }) => {
   const rels = relationships.get(ciId);
-  if (!rels || rels.asSource.length === 0) return null;
+  if (!rels || (rels.asSource.length === 0 && rels.asTarget.length === 0)) return null;
 
   const hasDepends = rels.asSource.some(r => r.type === 'DEPENDS_ON');
   const hasConnected = rels.asSource.some(r => r.type === 'CONNECTED_TO');

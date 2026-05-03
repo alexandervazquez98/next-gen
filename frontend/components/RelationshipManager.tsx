@@ -370,7 +370,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                         onClick={() => toggleTarget(n.id)}
                                         className={`p-2 rounded cursor-pointer text-xs flex items-center justify-between transition-colors ${targetNodeIds.includes(n.id) ? 'bg-accent-cyan/20 text-accent-cyan' : 'text-neutral-400 hover:bg-white/5'}`}
                                     >
-                                        <RelationshipTooltip key={n.id} ciId={n.id} relationships={relationshipMap}>
+                                        <RelationshipTooltip ciId={n.id} relationships={relationshipMap}>
                                             <span>{n.label}</span>
                                         </RelationshipTooltip>
                                         <RelationshipBadge ciId={n.id} relationships={relationshipMap} />
