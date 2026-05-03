@@ -324,3 +324,26 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
         l_where = (" WHERE " + " AND ".join(link_conditions)) if link_conditions else ""
         links = [{"source_node": dict(r["a"]), "target_node": dict(r["b"]), "type": r["r"].type} for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params)]
         return nodes, links
+
+
+def create_default_ping_metric(node_id: str, node_label: str) -> None:
+    """
+    Create a default ICMP PING metric for a CI node when it has an IP address.
+    Creates a MetricDef node and links it to the CI via HAS_METRIC relationship.
+    """
+    driver = get_db()
+    metric_id = f"PING-{node_label}"
+    with driver.session() as session:
+        # Create or merge the MetricDef for ICMP PING
+        session.run("""
+            MERGE (m:MetricDef {id: $metric_id})
+            SET m.protocol = 'ICMP',
+                m.description = 'ICMP Ping Monitoring',
+                m.applicable_to = $applicable_to,
+                m.operator = '>=',
+                m.criticality = 1
+            WITH m
+            MATCH (n:CI {id: $node_id})
+            MERGE (n)-[:HAS_METRIC]->(m)
+        """, metric_id=metric_id, node_id=node_id,
+           applicable_to=json.dumps({"names": [node_label]}))
