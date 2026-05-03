@@ -521,11 +521,15 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
                     <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
                     <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
                     <div className="space-y-1">
-                        {cluster.members.map(m => (
-                            <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
-                                {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
-                            </div>
-                        ))}
+                        {cluster.members.map(m => {
+                            // DEFENSIVE: skip members without location
+                            if (!m.node.location?.lat || !m.node.location?.long) return null;
+                            return (
+                                <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
+                                    {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             </Popup>
@@ -651,6 +655,36 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
  * Provides a real-time event stream and a geospatial view of infrastructure.
  * Handles event acknowledgement, closing, and diagnostic execution.
  */
+// Error Boundary for Geo View
+class GeoViewErrorBoundary extends React.Component<{}, { hasError: boolean; error?: Error }> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false };
+    }
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+        console.error('[GeoViewErrorBoundary]', error, errorInfo.componentStack);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="h-full flex items-center justify-center bg-red-950/50">
+                    <div className="text-center p-8">
+                        <h2 className="text-xl font-bold text-red-400 mb-2">Geo View Error</h2>
+                        <p className="text-sm text-red-300 mb-4">{this.state.error?.message}</p>
+                        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold">
+                            Reload
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 const MonitoringConsole: React.FC = () => {
     const [viewMode, setViewMode] = useState<'DASHBOARD' | 'MAP'>('DASHBOARD');
     const [filterCategory, setFilterCategory] = useState<string>('ALL');
@@ -977,6 +1011,7 @@ const MonitoringConsole: React.FC = () => {
                         </div>
                     </div>
                 ) : (
+                    <GeoViewErrorBoundary>
                     <div className="h-full w-full relative">
                         <MapContainer center={[20.5937, -100.3906]} zoom={5} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
                             <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
