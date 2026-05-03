@@ -609,12 +609,12 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
             if (validLocations.length > 0) {
                 if (validLocations.length === 1) {
                     const loc = validLocations[0];
-                    map.setView([loc.lat, loc.long], 10);
+                    map.setView([loc.lat, loc.long], 12);
                     return;
                 }
 
                 const bounds = L.latLngBounds(validLocations.map(loc => [loc.lat, loc.long]));
-                map.fitBounds(bounds, { padding: [80, 80], maxZoom: 10 });
+                map.fitBounds(bounds, { padding: [80, 80], maxZoom: 12 });
             }
         }
     }, [cluster.id, map]);
@@ -904,6 +904,14 @@ const MonitoringConsole: React.FC = () => {
         map.setView([20.5937, -100.3906], 5);
     }, [collapseCluster, nodesWithEvents]);
 
+    const handleClusterExpand = useCallback((clusterId: string) => {
+        if (expandedClusterId === clusterId) {
+            resetMapView();
+            return;
+        }
+        expandCluster(clusterId);
+    }, [expandedClusterId, expandCluster, resetMapView]);
+
     const openEvents = events.filter(e => e.status === 'OPEN');
     const ackEvents = events.filter(e => e.status === 'ACK');
 
@@ -968,6 +976,13 @@ const MonitoringConsole: React.FC = () => {
                             >
                                 <span className="material-symbols-outlined text-sm">scatter_plot</span>
                                 {clusteringEnabled ? 'Clustering ON' : 'Clustering OFF'}
+                            </button>
+                            <button
+                                onClick={resetMapView}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all bg-black/30 hover:bg-black/50 text-neutral-300 border border-white/10"
+                            >
+                                <span className="material-symbols-outlined text-sm">center_focus_strong</span>
+                                Reset view
                             </button>
                         </>
                     )}
@@ -1094,9 +1109,9 @@ const MonitoringConsole: React.FC = () => {
                 ) : (
                     <GeoViewErrorBoundary>
                     <div className="h-full w-full relative">
-                        <MapContainer center={[20.5937, -100.3906]} zoom={5} minZoom={4} maxZoom={13} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
+                        <MapContainer center={[20.5937, -100.3906]} zoom={5} minZoom={4} maxZoom={18} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
                             <MapInstanceCapture onReady={handleMapReady} />
-                            <TileLayer maxZoom={13} maxNativeZoom={10} url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
+                            <TileLayer maxZoom={18} maxNativeZoom={10} url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
                             <MapOutsideClickHandler onMapClick={collapseCluster} />
                             <MapBounds nodes={nodesWithEvents} />
 
@@ -1207,7 +1222,7 @@ const MonitoringConsole: React.FC = () => {
                             ) : (
                                 // Task 11: Cluster markers
                                 clusters.filter(c => c.count > 0).map(cluster => (
-                                    <ClusterMarker key={cluster.id} cluster={cluster} onExpand={expandCluster} />
+                                    <ClusterMarker key={cluster.id} cluster={cluster} onExpand={handleClusterExpand} />
                                 ))
                             )}
                         </MapContainer>

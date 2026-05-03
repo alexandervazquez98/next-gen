@@ -8,7 +8,9 @@ def get_links(current_user: User = None) -> List[Dict[str, Any]]:
     Fetch all active relationship links.
     Enforces data scoping based on user allowed locations.
     """
-    is_admin = current_user.role == "ADMIN" if current_user else False
+    # Unauthenticated graph consumers (Geo View) should receive the global topology.
+    # Scoped filtering only applies when an authenticated non-admin user is present.
+    is_admin = current_user.role == "ADMIN" if current_user else True
     allowed_locations = current_user.allowed_locations if current_user else None
     return topology_repo.get_links(allowed_locations, is_admin)
 
