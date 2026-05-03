@@ -248,9 +248,16 @@ export function buildClusters(
   }
 
   // DEFENSIVE: filter out clusters with invalid centroid (undefined, NaN, or [0,0])
-  return clusters.filter(c =>
+  const filtered = clusters.filter(c =>
     Number.isFinite(c.centroid[0]) && Number.isFinite(c.centroid[1])
   );
+
+  // DEBUG: log first few centroids
+  if (filtered.length > 0) {
+    console.log('[buildClusters] centroids:', filtered.slice(0, 3).map(c => c.centroid));
+  }
+
+  return filtered;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
