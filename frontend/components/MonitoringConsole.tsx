@@ -594,9 +594,10 @@ interface MapFocusZoneProps {
     cluster: Cluster;
     nodesWithEvents: any[];
     links: { source: string; target: string; relationship?: string }[];
+    onReset: () => void;
 }
 
-const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, links }) => {
+const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, links, onReset }) => {
     const map = useMap();
 
     useEffect(() => {
@@ -640,6 +641,9 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
                             fillOpacity: cfg.fillOpacity,
                             weight: cfg.weight,
                             opacity: cfg.fillOpacity,
+                        }}
+                        eventHandlers={{
+                            click: onReset,
                         }}
                     >
                         <Popup>
@@ -1109,13 +1113,18 @@ const MonitoringConsole: React.FC = () => {
                 ) : (
                     <GeoViewErrorBoundary>
                     <div className="h-full w-full relative">
-                        <MapContainer center={[20.5937, -100.3906]} zoom={5} minZoom={4} maxZoom={18} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
+                        <MapContainer center={[20.5937, -100.3906]} zoom={5} minZoom={4} maxZoom={20} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
                             <MapInstanceCapture onReady={handleMapReady} />
-                            <TileLayer maxZoom={18} maxNativeZoom={10} url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
-                            <MapOutsideClickHandler onMapClick={collapseCluster} />
+                            <TileLayer
+                                maxZoom={20}
+                                maxNativeZoom={20}
+                                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+                            />
+                            <MapOutsideClickHandler onMapClick={resetMapView} />
                             <MapBounds nodes={nodesWithEvents} />
 
-                            {links.map((link, i) => {
+                            {!expandedClusterId && links.map((link, i) => {
                                 const source = nodesWithEvents.find(n => n.id === link.source);
                                 const target = nodesWithEvents.find(n => n.id === link.target);
 
@@ -1216,6 +1225,7 @@ const MonitoringConsole: React.FC = () => {
                                             cluster={expandedCluster}
                                             nodesWithEvents={nodesWithEvents}
                                             links={links}
+                                            onReset={resetMapView}
                                         />
                                     );
                                 })()
