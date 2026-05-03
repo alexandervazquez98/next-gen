@@ -578,8 +578,14 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
                     loc != null && Number.isFinite(loc.lat) && Number.isFinite(loc.long)
                 );
             if (validLocations.length > 0) {
+                if (validLocations.length === 1) {
+                    const loc = validLocations[0];
+                    map.setView([loc.lat, loc.long], 7);
+                    return;
+                }
+
                 const bounds = L.latLngBounds(validLocations.map(loc => [loc.lat, loc.long]));
-                map.fitBounds(bounds, { padding: [50, 50] });
+                map.fitBounds(bounds, { padding: [80, 80], maxZoom: 7 });
             }
         }
     }, [cluster.id, map]);
@@ -888,13 +894,6 @@ const MonitoringConsole: React.FC = () => {
 
                     {viewMode === 'MAP' && (
                         <>
-                            <button
-                                onClick={toggleSmartMode}
-                                className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all bg-brand-600/30 hover:bg-brand-600/50 text-brand-400 border border-brand-500/30"
-                            >
-                                <span className="material-symbols-outlined text-sm">filter_alt</span>
-                                {isSmartMode ? 'Ver más críticos' : 'Ver todos'}
-                            </button>
                             <button
                                 onClick={toggleClustering}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all ${clusteringEnabled ? 'bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400 border border-emerald-500/30' : 'bg-neutral-700/30 hover:bg-neutral-700/50 text-neutral-400 border border-neutral-500/30'}`}

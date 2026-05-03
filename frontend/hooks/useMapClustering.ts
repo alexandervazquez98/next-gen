@@ -28,7 +28,7 @@ export interface UseMapClusteringOptions {
 }
 
 const DEFAULT_PROXIMITY_THRESHOLD = 500;
-const FEATURE_FLAG_KEY = 'geoview-clustering::enabled';
+const FEATURE_FLAG_KEY = 'geoview-clustering::enabled:v2';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure Functions (exported for unit testing)
