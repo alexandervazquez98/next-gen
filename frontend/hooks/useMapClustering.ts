@@ -247,7 +247,12 @@ export function buildClusters(
     }
   }
 
-  // No debug logs in production path
+  // DEBUG before filter
+  if (filtered.length === 0 && clusters.length > 0) {
+    console.warn('[buildClusters] WARNING: filter removes ALL clusters!');
+    clusters.slice(0, 3).forEach((c, i) => console.log(`  raw[${i}] centroid=`, JSON.stringify(c.centroid), 'type=', typeof c.centroid[0], typeof c.centroid[1]));
+  }
+
   return filtered;
 }
 
