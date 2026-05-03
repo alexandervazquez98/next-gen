@@ -535,24 +535,25 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
                 eventHandlers={{
                     click: () => onExpand(cluster.id),
                 }}
-            />
-            <Popup>
-                <div className="p-2 min-w-[200px]">
-                    <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
-                    <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
-                    <div className="space-y-1">
-                        {cluster.members.map(m => {
-                            // DEFENSIVE: skip members without location
-                            if (!m.node.location?.lat || !m.node.location?.long) return null;
-                            return (
-                                <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
-                                    {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
-                                </div>
-                            );
-                        })}
+            >
+                <Popup>
+                    <div className="p-2 min-w-[200px]">
+                        <h3 className="font-bold text-sm mb-2">{cluster.label}</h3>
+                        <p className="text-xs text-neutral-500 mb-2">{cluster.count} CIs</p>
+                        <div className="space-y-1">
+                            {cluster.members.map(m => {
+                                const loc = m.node.location;
+                                if (!loc || !Number.isFinite(loc.lat) || !Number.isFinite(loc.long)) return null;
+                                return (
+                                    <div key={m.node.id} className={`text-xs p-1 rounded ${getSeverityBg(m.events)}`}>
+                                        {m.node.label} - {m.events.length > 0 ? m.events[0].severity : 'OK'}
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
-                </div>
-            </Popup>
+                </Popup>
+            </CircleMarker>
             {tooltipVisible && (
                 <ClusterTooltip
                     cluster={cluster}
