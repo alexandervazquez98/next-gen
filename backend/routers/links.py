@@ -1,38 +1,130 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
+from pydantic import BaseModel
 from models.core import Link
+from models.user import User
+from services.auth_service import get_current_active_user
 import services.link_service as link_service
 
 router = APIRouter(
-    prefix="",
+    prefix="/api",
     tags=["Topology"],
     responses={404: {"description": "Not found"}},
 )
 
+class MassLinkPayload(BaseModel):
+    source_filter: Dict[str, Any]
+    target_filter: Dict[str, Any]
+    relationship: str
+
+class MassDeletePayload(BaseModel):
+    source_filter: Dict[str, Any]
+    target_filter: Dict[str, Any]
+    relationship: str
+
+class MassUpdatePayload(BaseModel):
+    source_filter: Dict[str, Any]
+    target_filter: Dict[str, Any]
+    old_relationship: str
+    new_relationship: str
+
 @router.get("/links", response_model=List[Dict[str, Any]])
-async def get_links():
+async def get_links(current_user: User = Depends(get_current_active_user)):
     """
-    Fetch all active relationship links between CIs and Metrics.
+    Fetch all active relationship links.
+    Enforces data scoping based on user allowed locations.
     """
-    return link_service.get_links()
+    return link_service.get_links(current_user)
 
 @router.post("/links")
-async def create_link(link: Link):
+async def create_link(link: Link, current_user: User = Depends(get_current_active_user)):
     """
     Create a new relationship (edge) between two nodes.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
     return link_service.create_link(link)
 
 @router.delete("/links")
-async def delete_link(link: Link):
+async def delete_link(link: Link, current_user: User = Depends(get_current_active_user)):
     """
     Delete a relationship between two nodes.
     """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_DELETE, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_DELETE required")
     return link_service.delete_link(link)
 
+@router.post("/links/mass/simulate")
+async def simulate_mass_links(payload: MassLinkPayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Simulates a bulk link creation and returns impact.
+    Requires CI_EDIT permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    return link_service.simulate_bulk_links(current_user, payload.source_filter, payload.target_filter)
+
+@router.post("/links/mass")
+async def execute_mass_links(payload: MassLinkPayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Executes a bulk link creation.
+    Requires CI_EDIT permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    return link_service.execute_bulk_links(current_user, payload.source_filter, payload.target_filter, payload.relationship)
+
+@router.delete("/links/mass")
+async def delete_mass_links(payload: MassDeletePayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Executes a bulk link deletion.
+    Requires CI_DELETE permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_DELETE, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_DELETE required")
+
+    return link_service.execute_bulk_delete(current_user, payload.source_filter, payload.target_filter, payload.relationship)
+
+@router.put("/links/mass")
+async def update_mass_links(payload: MassUpdatePayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Executes a bulk link update (change relationship type).
+    Requires CI_EDIT permission.
+    """
+    from services.auth_service import check_permission
+    from models.user import UserPermission
+
+    if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    return link_service.execute_bulk_update(current_user, payload.source_filter, payload.target_filter, payload.old_relationship, payload.new_relationship)
+
 @router.get("/graph/full")
-async def get_full_graph():
+async def get_full_graph(
+    layer: str = None,
+    location: str = None,
+    owner: str = None,
+    current_user: User = Depends(get_current_active_user)
+):
     """
-    Fetch the COMPLETE graph topology for visualization.
+    Fetch the COMPLETE graph topology.
+    Supports filtering by metadata and data scoping.
     """
-    return link_service.get_full_graph()
+    return link_service.get_full_graph(current_user, layer=layer, location=location, owner=owner)
