@@ -499,19 +499,31 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
     };
     const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
 
-    // GUARD: skip rendering if centroid is invalid
-    const centroidLat = cluster.centroid?.[0];
-    const centroidLong = cluster.centroid?.[1];
-    if (!Number.isFinite(centroidLat) || !Number.isFinite(centroidLong)) {
-        console.warn('[ClusterMarker] Skipping render - invalid centroid:', cluster.id, cluster.label, cluster.centroid);
+    // Recalculate centroid from valid member locations (don't trust cluster.centroid)
+    const validLocations = cluster.members
+        .map(m => m.node.location)
+        .filter((loc): loc is { lat: number; long: number } =>
+            loc != null && Number.isFinite(loc.lat) && Number.isFinite(loc.long)
+        );
+
+    if (validLocations.length === 0) {
+        console.warn('[ClusterMarker] Skipping - no valid locations:', cluster.id, cluster.label);
         return null;
     }
+
+    // Use first valid location as centroid (or average if multiple)
+    const [firstLat, firstLong] = validLocations.length === 1
+        ? [validLocations[0].lat, validLocations[0].long]
+        : [
+            validLocations.reduce((s, l) => s + l.lat, 0) / validLocations.length,
+            validLocations.reduce((s, l) => s + l.long, 0) / validLocations.length,
+        ];
 
     return (
         <>
             <CircleMarker
                 ref={markerRef}
-                center={[centroidLat, centroidLong]}
+                center={[firstLat, firstLong]}
                 radius={clusterRadius}
                 pathOptions={{
                     color: clusterColor,
