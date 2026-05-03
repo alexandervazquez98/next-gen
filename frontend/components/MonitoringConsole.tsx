@@ -499,11 +499,19 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
     };
     const clusterColor = SEVERITY_COLORS[cluster.worstSeverity] || SEVERITY_COLORS.OK;
 
+    // GUARD: skip rendering if centroid is invalid
+    const centroidLat = cluster.centroid?.[0];
+    const centroidLong = cluster.centroid?.[1];
+    if (!Number.isFinite(centroidLat) || !Number.isFinite(centroidLong)) {
+        console.warn('[ClusterMarker] Skipping render - invalid centroid:', cluster.id, cluster.label, cluster.centroid);
+        return null;
+    }
+
     return (
         <>
             <CircleMarker
                 ref={markerRef}
-                center={cluster.centroid}
+                center={[centroidLat, centroidLong]}
                 radius={clusterRadius}
                 pathOptions={{
                     color: clusterColor,
