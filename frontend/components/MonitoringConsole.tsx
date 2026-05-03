@@ -1145,10 +1145,8 @@ const MonitoringConsole: React.FC = () => {
                                 ))
                             )}
                         </MapContainer>
-                    </div>
-                    </GeoViewErrorBoundary>
 
-                    {/* Status Overlay */}
+                        {/* Status Overlay — sibling to MapContainer, inside the relative wrapper */}
                         <div className="absolute top-4 right-4 p-4 glass rounded-xl border border-white/5 shadow-2xl z-[1000] min-w-[250px]">
                             <h4 className="text-xs font-bold text-neutral-400 uppercase mb-2">Live Status</h4>
                             <div className="space-y-2">
@@ -1163,7 +1161,7 @@ const MonitoringConsole: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                )}
+                </GeoViewErrorBoundary>
             </div>
 
             {commentModalOpen && selectedEventId && (() => {
@@ -1650,7 +1648,7 @@ const MonitoringConsole: React.FC = () => {
                 </div>
                 );
             })()}
-        </div >
+        </div>
     );
 };
 
