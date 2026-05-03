@@ -27,6 +27,11 @@ const RelationshipTooltip: React.FC<RelationshipTooltipProps> = ({ ciId, relatio
 
   const rels = relationships.get(ciId);
 
+  // Early return AFTER all hooks — never before
+  if (!rels || (rels.asSource.length === 0 && rels.asTarget.length === 0)) {
+    return <>{children}</>;
+  }
+
   // Portal DOM leak fix: manage portal via ref with useEffect cleanup
   // When visible becomes true, create the portal container; when false or unmount, remove it
   useEffect(() => {
@@ -56,9 +61,6 @@ const RelationshipTooltip: React.FC<RelationshipTooltipProps> = ({ ciId, relatio
   };
 
   const handleLeave = () => setVisible(false);
-  if (!rels || (rels.asSource.length === 0 && rels.asTarget.length === 0)) {
-    return <>{children}</>;
-  }
 
   // Memoize renderRelationList to avoid recreation on every render
   const renderRelationList = useCallback((
@@ -89,6 +91,11 @@ const RelationshipTooltip: React.FC<RelationshipTooltipProps> = ({ ciId, relatio
       </ul>
     );
   }, []);
+
+  // Early return AFTER all hooks
+  if (!rels || (rels.asSource.length === 0 && rels.asTarget.length === 0)) {
+    return <>{children}</>;
+  }
 
   return (
     <>
