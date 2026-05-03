@@ -88,6 +88,9 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     // --- State: Links & Graph ---
     const [links, setLinks] = useState<LinkData[]>([]);
 
+    // --- State: Search ---
+    const [searchCiLinks, setSearchCiLinks] = useState('');
+
     // --- Derived: Relationship map for indicators ---
     // recomputes when links change, O(n) with typical CI counts (<1000)
     const relationshipMap = useMemo(() => computeRelationshipMap(links), [links]);
@@ -95,6 +98,19 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     // --- Memoized: filtered link lists to avoid repeated filter calls ---
     const ciLinks = useMemo(() => links.filter(l => l.relationship !== 'HAS_METRIC'), [links]);
     const metricLinks = useMemo(() => links.filter(l => l.relationship === 'HAS_METRIC'), [links]);
+
+    // --- Memoized: search-filtered CI links ---
+    const filteredCiLinks = useMemo(() => {
+        if (!searchCiLinks.trim()) return ciLinks;
+        const q = searchCiLinks.toLowerCase();
+        return ciLinks.filter(l =>
+            l.source.toLowerCase().includes(q) ||
+            (l.source_label || '').toLowerCase().includes(q) ||
+            l.target.toLowerCase().includes(q) ||
+            (l.target_label || '').toLowerCase().includes(q) ||
+            l.relationship.toLowerCase().includes(q)
+        );
+    }, [ciLinks, searchCiLinks]);
 
     // --- State: Mode (Links/Metrics) ---
     const [viewMode, setViewMode] = useState<'LINKS' | 'METRICS'>('LINKS');
@@ -423,10 +439,30 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
 
                 {/* CI Relationships Table */}
                 <div className="flex-1 flex flex-col min-h-0">
-                    <h3 className="text-sm font-bold text-white uppercase mb-4 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-brand-500">hub</span>
-                        CI Relationships ({ciLinks.length})
-                    </h3>
+                    <div className="flex items-center justify-between mb-4 gap-4">
+                        <h3 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+                            <span className="material-symbols-outlined text-brand-500">hub</span>
+                            CI Relationships ({filteredCiLinks.length})
+                        </h3>
+                        <div className="relative">
+                            <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500 text-sm">search</span>
+                            <input
+                                type="text"
+                                placeholder="Search links..."
+                                value={searchCiLinks}
+                                onChange={e => setSearchCiLinks(e.target.value)}
+                                className="bg-black/40 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-neutral-300 placeholder-neutral-600 focus:outline-none focus:border-brand-500/50 w-48 transition-colors"
+                            />
+                            {searchCiLinks && (
+                                <button
+                                    onClick={() => setSearchCiLinks('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white"
+                                >
+                                    <span className="material-symbols-outlined text-sm">close</span>
+                                </button>
+                            )}
+                        </div>
+                    </div>
                     <div className="flex-1 overflow-y-auto custom-scrollbar border border-white/5 rounded-lg bg-black/20">
                         <table className="w-full text-left border-collapse">
                             <thead>
@@ -438,7 +474,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                 </tr>
                             </thead>
                             <tbody className="text-sm">
-                                {ciLinks.map((link, i) => (
+                                {filteredCiLinks.map((link, i) => (
                                     <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                                         <td className="p-3 font-mono text-brand-400" title={link.source}>{link.source_label || link.source}</td>
                                         <td className="p-3 text-center">
@@ -470,10 +506,10 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                         </td>
                                     </tr>
                                 ))}
-                                {ciLinks.length === 0 && (
+                                {filteredCiLinks.length === 0 && (
                                     <tr>
-                                        <td colSpan={4} className="p-8 text-center text-neutral-500 text-xs text-italic">
-                                            No CI-to-CI relationships found.
+                                        <td colSpan={4} className="p-8 text-center text-neutral-500 text-xs">
+                                            {searchCiLinks ? `No links match "${searchCiLinks}"` : 'No CI-to-CI relationships found.'}
                                         </td>
                                     </tr>
                                 )}
