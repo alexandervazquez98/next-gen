@@ -429,7 +429,6 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
     const [tooltipVisible, setTooltipVisible] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-    const isCritical = cluster.worstSeverity === 'CRITICAL';
     const hasAura = cluster.worstSeverity === 'CRITICAL' || cluster.worstSeverity === 'WARNING';
 
     // Cleanup on unmount
@@ -440,16 +439,6 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
             }
         };
     }, []);
-
-    // Pulsing animation for CRITICAL clusters
-    useEffect(() => {
-        const marker = markerRef.current;
-        if (!marker || !isCritical) return;
-        const el = marker.getElement();
-        if (!el) return;
-        el.classList.add('animate-ping');
-        return () => el.classList.remove('animate-ping');
-    }, [isCritical]);
 
     // Attach mouse event handlers to the Leaflet marker
     useEffect(() => {
@@ -490,7 +479,9 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
         };
     }, [cluster.id]); // Re-bind when cluster.id changes to ensure handlers have latest cluster data
 
-    const clusterRadius = Math.min(12 + cluster.count * 3, 40);
+    const clusterRadius = cluster.worstSeverity === 'OK'
+        ? Math.min(5 + Math.sqrt(cluster.count) * 2, 16)
+        : Math.min(7 + Math.sqrt(cluster.count) * 3, 24);
     const SEVERITY_COLORS: Record<string, string> = {
         CRITICAL: '#ef4444',
         WARNING: '#eab308',
@@ -528,9 +519,9 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
                 pathOptions={{
                     color: clusterColor,
                     fillColor: clusterColor,
-                    fillOpacity: hasAura ? 0.7 : 0.4,
-                    weight: 2,
-                    opacity: 0.9,
+                    fillOpacity: hasAura ? 0.45 : 0.28,
+                    weight: hasAura ? 2 : 1.5,
+                    opacity: hasAura ? 0.85 : 0.7,
                 }}
                 eventHandlers={{
                     click: () => onExpand(cluster.id),
