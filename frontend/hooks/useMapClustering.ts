@@ -247,11 +247,10 @@ export function buildClusters(
     }
   }
 
-  // DEBUG before filter
-  if (filtered.length === 0 && clusters.length > 0) {
-    console.warn('[buildClusters] WARNING: filter removes ALL clusters!');
-    clusters.slice(0, 3).forEach((c, i) => console.log(`  raw[${i}] centroid=`, JSON.stringify(c.centroid), 'type=', typeof c.centroid[0], typeof c.centroid[1]));
-  }
+  // DEFENSIVE: filter out clusters with invalid centroids
+  const filtered = clusters.filter(c =>
+    Number.isFinite(c.centroid[0]) && Number.isFinite(c.centroid[1])
+  );
 
   return filtered;
 }

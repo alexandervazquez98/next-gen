@@ -582,7 +582,9 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
         if (cluster.members.length > 0) {
             const validLocations = cluster.members
                 .map(m => m.node.location)
-                .filter((loc): loc is { lat: number; long: number } => Boolean(loc));
+                .filter((loc): loc is { lat: number; long: number } =>
+                    loc != null && Number.isFinite(loc.lat) && Number.isFinite(loc.long)
+                );
             if (validLocations.length > 0) {
                 const bounds = L.latLngBounds(validLocations.map(loc => [loc.lat, loc.long]));
                 map.fitBounds(bounds, { padding: [50, 50] });
@@ -1042,7 +1044,9 @@ const MonitoringConsole: React.FC = () => {
                                 const source = nodesWithEvents.find(n => n.id === link.source);
                                 const target = nodesWithEvents.find(n => n.id === link.target);
 
-                                if (source?.location?.lat && target?.location?.lat) {
+                                if (source?.location?.lat && target?.location?.lat &&
+                                    Number.isFinite(source.location.lat) && Number.isFinite(source.location.long) &&
+                                    Number.isFinite(target.location.lat) && Number.isFinite(target.location.long)) {
                                     const positions: [number, number][] = [
                                         [source.location.lat, source.location.long],
                                         [target.location.lat, target.location.long]
