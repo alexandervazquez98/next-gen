@@ -1145,6 +1145,7 @@ const MonitoringConsole: React.FC = () => {
                                 ))
                             )}
                         </MapContainer>
+                    </div>
                     </GeoViewErrorBoundary>
 
                     {/* Status Overlay */}
