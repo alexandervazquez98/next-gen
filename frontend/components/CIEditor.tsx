@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { GraphNode, NodeType, SNMPConfig, MonitoringThresholds } from '../types';
+import { api } from '../services/api';
 
 interface CIEditorProps {
   node?: GraphNode | null;
@@ -28,13 +29,13 @@ const CIEditor: React.FC<CIEditorProps> = ({ node, onSave, onDelete, onClose, cl
 
   React.useEffect(() => {
     Promise.all([
-      fetch('/api/categories').then(res => res.json()),
-      fetch('/api/owners').then(res => res.json()),
-      fetch('/api/hardware').then(res => res.json())
+      api.get<{ name: string }[]>('/categories'),
+      api.get<{ name: string }[]>('/owners'),
+      api.get<{ brand: string; model: string }[]>('/hardware')
     ]).then(([cats, owns, hws]) => {
-      setCategories(cats);
-      setOwners(owns);
-      setHardwareModels(hws);
+      setCategories(Array.isArray(cats) ? cats : []);
+      setOwners(Array.isArray(owns) ? owns : []);
+      setHardwareModels(Array.isArray(hws) ? hws : []);
     }).catch(console.error);
   }, []);
 
