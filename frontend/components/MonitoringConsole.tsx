@@ -1166,6 +1166,7 @@ const MonitoringConsole: React.FC = () => {
                         </div>
                     </div>
                 </GeoViewErrorBoundary>
+                )}
             </div>
 
             {commentModalOpen && selectedEventId && (() => {
