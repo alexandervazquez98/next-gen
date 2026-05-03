@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import MetricsManager from './MetricsManager';
 import CIEditor from './CIEditor';
 import RelationshipManager from './RelationshipManager';
+import MassLinkEditor from './MassLinkEditor';
 import CatalogManager from './CatalogManager';
 import { GraphNode } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -19,7 +20,7 @@ import { api } from '../services/api';
  */
 const AdminPage: React.FC = () => {
     const { hasPermission } = useAuth();
-    type AdminTab = 'METRICS' | 'CATALOG' | 'LINKS' | 'INVENTORY';
+    type AdminTab = 'METRICS' | 'CATALOG' | 'LINKS' | 'MASS_LINKS' | 'INVENTORY';
     const [activeTab, setActiveTab] = useState<AdminTab>('METRICS');
 
     const [data, setData] = useState<any[]>([]);
@@ -148,7 +149,7 @@ const AdminPage: React.FC = () => {
 
             {/* Tabs */}
             <div className="flex gap-4 border-b border-white/5 pb-4">
-                {['METRICS', 'CATALOG', 'LINKS', 'INVENTORY'].map(tab => {
+                {['METRICS', 'CATALOG', 'LINKS', 'MASS_LINKS', 'INVENTORY'].map(tab => {
                     return (
                         <button
                             key={tab}
@@ -169,6 +170,8 @@ const AdminPage: React.FC = () => {
                 {activeTab === 'METRICS' && <MetricsManager />}
 
                 {activeTab === 'LINKS' && <RelationshipManager onRefresh={fetchData} />}
+
+                {activeTab === 'MASS_LINKS' && <MassLinkEditor />}
 
                 {activeTab === 'INVENTORY' ? (
                     <div className="flex gap-6 h-full">
