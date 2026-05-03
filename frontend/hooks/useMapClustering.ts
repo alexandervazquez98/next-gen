@@ -317,7 +317,7 @@ export function useMapClustering(
   }, []);
 
   const expandCluster = useCallback((clusterId: string) => {
-    setExpandedClusterId(clusterId);
+    setExpandedClusterId(prev => prev === clusterId ? null : clusterId);
   }, []);
 
   const collapseCluster = useCallback(() => {

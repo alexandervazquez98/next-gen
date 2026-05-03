@@ -287,6 +287,14 @@ const MapOutsideClickHandler = ({ onMapClick }: { onMapClick: () => void }) => {
     return null;
 };
 
+const MapInstanceCapture = ({ onReady }: { onReady: (map: L.Map) => void }) => {
+    const map = useMap();
+    useEffect(() => {
+        onReady(map);
+    }, [map, onReady]);
+    return null;
+};
+
 /**
  * Auto-Zoom Component used inside MapContainer to fit bounds of nodes.
  */
@@ -296,10 +304,12 @@ const MapBounds = ({ nodes }: { nodes: GraphNode[] }) => {
 
     useEffect(() => {
         if (nodes.length > 0 && !hasZoomed.current) {
-            const validNodes = nodes.filter(n => n.location?.lat && n.location?.long);
+            const validNodes = nodes.filter(n =>
+                n.location && Number.isFinite(n.location.lat) && Number.isFinite(n.location.long)
+            );
             if (validNodes.length > 0) {
                 const bounds = L.latLngBounds(validNodes.map(n => [n.location!.lat, n.location!.long]));
-                map.fitBounds(bounds, { padding: [50, 50] });
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
                 hasZoomed.current = true;
             }
         }
@@ -338,9 +348,11 @@ interface ClusterTooltipProps {
     cluster: Cluster;
     position: { x: number; y: number };
     visible: boolean;
+    onMouseEnter?: () => void;
+    onMouseLeave?: () => void;
 }
 
-const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visible }) => {
+const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visible, onMouseEnter, onMouseLeave }) => {
     const [container, setContainer] = useState<HTMLDivElement | null>(null);
     const randomId = useRef(Math.random().toString(36).slice(2, 8));
 
@@ -364,12 +376,14 @@ const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visi
 
     const content = (
         <div
-            className="fixed z-[99999] bg-neutral-900 border border-white/10 rounded-xl shadow-2xl pointer-events-none w-72"
+            className="fixed z-[99999] bg-neutral-900 border border-white/10 rounded-xl shadow-2xl pointer-events-auto w-80"
             style={{
                 left: position.x,
                 top: position.y,
-                transform: 'translate(-50%, -110%)',
+                transform: 'translate(16px, -50%)',
             }}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
         >
             <div className="p-3 space-y-2">
                 {/* Header */}
@@ -379,7 +393,7 @@ const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visi
                 </div>
 
                 {/* Member list */}
-                <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar">
+                <div className="space-y-1.5 max-h-80 overflow-y-auto custom-scrollbar pr-1">
                     {cluster.members.map(m => {
                         const status = getCIStatus(m.events);
                         const statusColors: Record<string, string> = {
@@ -402,7 +416,7 @@ const ClusterTooltip: React.FC<ClusterTooltipProps> = ({ cluster, position, visi
             </div>
 
             {/* Tail */}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-neutral-900" />
+            <div className="absolute top-1/2 right-full -translate-y-1/2 border-4 border-transparent border-r-neutral-900" />
         </div>
     );
 
@@ -426,6 +440,7 @@ interface ClusterMarkerProps {
 const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
     const markerRef = useRef<L.CircleMarker>(null);
     const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [tooltipVisible, setTooltipVisible] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
@@ -437,6 +452,9 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
             if (hoverTimeoutRef.current) {
                 clearTimeout(hoverTimeoutRef.current);
             }
+            if (hideTimeoutRef.current) {
+                clearTimeout(hideTimeoutRef.current);
+            }
         };
     }, []);
 
@@ -446,7 +464,15 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
         if (!marker) return;
 
         const handleMouseEnter = (e: L.LeafletMouseEvent) => {
-            setTooltipPos({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+            if (hideTimeoutRef.current) {
+                clearTimeout(hideTimeoutRef.current);
+                hideTimeoutRef.current = null;
+            }
+            const rect = marker.getElement()?.getBoundingClientRect();
+            setTooltipPos(rect
+                ? { x: rect.right, y: rect.top + rect.height / 2 }
+                : { x: e.originalEvent.clientX, y: e.originalEvent.clientY }
+            );
             hoverTimeoutRef.current = setTimeout(() => {
                 setTooltipVisible(true);
             }, 1500);
@@ -457,24 +483,20 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
                 clearTimeout(hoverTimeoutRef.current);
                 hoverTimeoutRef.current = null;
             }
-            setTooltipVisible(false);
-        };
-
-        const handleMouseMove = (e: L.LeafletMouseEvent) => {
-            setTooltipPos({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+            hideTimeoutRef.current = setTimeout(() => {
+                setTooltipVisible(false);
+            }, 250);
         };
 
         marker.on({
             mouseover: handleMouseEnter,
             mouseout: handleMouseLeave,
-            mousemove: handleMouseMove,
         });
 
         return () => {
             marker.off({
                 mouseover: handleMouseEnter,
                 mouseout: handleMouseLeave,
-                mousemove: handleMouseMove,
             });
         };
     }, [cluster.id]); // Re-bind when cluster.id changes to ensure handlers have latest cluster data
@@ -550,6 +572,13 @@ const ClusterMarker: React.FC<ClusterMarkerProps> = ({ cluster, onExpand }) => {
                     cluster={cluster}
                     position={tooltipPos}
                     visible={tooltipVisible}
+                    onMouseEnter={() => {
+                        if (hideTimeoutRef.current) {
+                            clearTimeout(hideTimeoutRef.current);
+                            hideTimeoutRef.current = null;
+                        }
+                    }}
+                    onMouseLeave={() => setTooltipVisible(false)}
                 />
             )}
         </>
@@ -580,12 +609,12 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
             if (validLocations.length > 0) {
                 if (validLocations.length === 1) {
                     const loc = validLocations[0];
-                    map.setView([loc.lat, loc.long], 7);
+                    map.setView([loc.lat, loc.long], 10);
                     return;
                 }
 
                 const bounds = L.latLngBounds(validLocations.map(loc => [loc.lat, loc.long]));
-                map.fitBounds(bounds, { padding: [80, 80], maxZoom: 7 });
+                map.fitBounds(bounds, { padding: [80, 80], maxZoom: 10 });
             }
         }
     }, [cluster.id, map]);
@@ -594,7 +623,7 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
         <>
             {cluster.members.map(member => {
                 const loc = member.node.location;
-                if (!loc) return null;
+                if (!loc || !Number.isFinite(loc.lat) || !Number.isFinite(loc.long)) return null;
                 const cfg = getNodeRenderConfig({
                     hasCritical: member.events.some(e => e.severity === 'CRITICAL'),
                     hasWarning: member.events.some(e => e.severity === 'WARNING'),
@@ -633,38 +662,54 @@ const MapFocusZone: React.FC<MapFocusZoneProps> = ({ cluster, nodesWithEvents, l
                     </CircleMarker>
                 );
             })}
-            {/* Polyline links between expanded members */}
-            {cluster.members.map(member => {
-                const loc = member.node.location;
-                if (!loc) return null;
-                const sourceNode = nodesWithEvents.find(n => n.id === member.node.id);
-                if (!sourceNode) return null;
-                return cluster.members
-                    .filter(other => other.node.id !== member.node.id)
-                    .map(other => {
-                        const otherLoc = other.node.location;
-                        if (!otherLoc) return null;
-                        const targetNode = nodesWithEvents.find(n => n.id === other.node.id);
-                        if (!targetNode) return null;
-                        const cfg = buildLinkConfig(
-                            { relationship: 'CONNECTS_TO' },
-                            { hasCritical: sourceNode.hasCritical, hasWarning: sourceNode.hasWarning },
-                            { hasCritical: targetNode.hasCritical, hasWarning: targetNode.hasWarning }
-                        );
-                        return (
-                            <Polyline
-                                key={`${member.node.id}-${other.node.id}`}
-                                positions={[[loc.lat, loc.long], [otherLoc.lat, otherLoc.long]]}
+            {/* Real relationship links between expanded members */}
+            {links.map((link, i) => {
+                const sourceNode = nodesWithEvents.find(n => n.id === link.source);
+                const targetNode = nodesWithEvents.find(n => n.id === link.target);
+                const sourceInCluster = cluster.members.some(m => m.node.id === link.source);
+                const targetInCluster = cluster.members.some(m => m.node.id === link.target);
+
+                if (!sourceNode || !targetNode || !sourceInCluster || !targetInCluster) return null;
+                if (!sourceNode.location || !targetNode.location) return null;
+                if (!Number.isFinite(sourceNode.location.lat) || !Number.isFinite(sourceNode.location.long)) return null;
+                if (!Number.isFinite(targetNode.location.lat) || !Number.isFinite(targetNode.location.long)) return null;
+
+                const positions: [number, number][] = [
+                    [sourceNode.location.lat, sourceNode.location.long],
+                    [targetNode.location.lat, targetNode.location.long],
+                ];
+                const cfg = buildLinkConfig(link, sourceNode, targetNode);
+
+                return (
+                    <React.Fragment key={`expanded-link-${i}`}>
+                        <AnimatedPolyline
+                            positions={positions}
+                            pathOptions={{
+                                color: cfg.color,
+                                weight: cfg.weight,
+                                opacity: cfg.opacity,
+                                dashArray: cfg.dashArray,
+                            }}
+                            animationConfig={cfg.animate
+                                ? { from: cfg.animFrom, to: cfg.animTo, dur: cfg.animDur }
+                                : null
+                            }
+                        />
+                        {cfg.showTrafficPulse && (
+                            <AnimatedPolyline
+                                positions={positions}
                                 pathOptions={{
-                                    color: cfg.color,
+                                    color: '#10b981',
                                     weight: cfg.weight,
-                                    opacity: cfg.opacity * 0.5,
-                                    dashArray: cfg.dashArray,
+                                    opacity: 0.8,
+                                    dashArray: '5, 50',
                                 }}
+                                animationConfig={{ from: '0', to: '110', dur: '2s' }}
                             />
-                        );
-                    });
-            }).flat()}
+                        )}
+                    </React.Fragment>
+                );
+            })}
         </>
     );
 };
@@ -831,10 +876,33 @@ const MonitoringConsole: React.FC = () => {
     }), [nodes, events, filterCategory]);
 
     // Smart culling hook — returns top-n nodes when threshold exceeded
-    const { culledNodes, isActive: isSmartMode, toggle: toggleSmartMode } = useSmartCulling(nodesWithEvents, events);
+    const { culledNodes, isActive: isSmartMode } = useSmartCulling(nodesWithEvents, events);
 
     // Map clustering hook
     const { clusters, enabled: clusteringEnabled, toggleClustering, expandedClusterId, expandCluster, collapseCluster } = useMapClustering(nodesWithEvents, events);
+    const mapRef = useRef<L.Map | null>(null);
+
+    const handleMapReady = useCallback((map: L.Map) => {
+        mapRef.current = map;
+    }, []);
+
+    const resetMapView = useCallback(() => {
+        collapseCluster();
+        const map = mapRef.current;
+        if (!map) return;
+
+        const validNodes = nodesWithEvents.filter(n =>
+            n.location && Number.isFinite(n.location.lat) && Number.isFinite(n.location.long)
+        );
+
+        if (validNodes.length > 0) {
+            const bounds = L.latLngBounds(validNodes.map(n => [n.location!.lat, n.location!.long]));
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
+            return;
+        }
+
+        map.setView([20.5937, -100.3906], 5);
+    }, [collapseCluster, nodesWithEvents]);
 
     const openEvents = events.filter(e => e.status === 'OPEN');
     const ackEvents = events.filter(e => e.status === 'ACK');
@@ -1026,8 +1094,9 @@ const MonitoringConsole: React.FC = () => {
                 ) : (
                     <GeoViewErrorBoundary>
                     <div className="h-full w-full relative">
-                        <MapContainer center={[20.5937, -100.3906]} zoom={5} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
-                            <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
+                        <MapContainer center={[20.5937, -100.3906]} zoom={5} minZoom={4} maxZoom={13} scrollWheelZoom={true} className="h-full w-full z-0" zoomControl={false} attributionControl={false}>
+                            <MapInstanceCapture onReady={handleMapReady} />
+                            <TileLayer maxZoom={13} maxNativeZoom={10} url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" />
                             <MapOutsideClickHandler onMapClick={collapseCluster} />
                             <MapBounds nodes={nodesWithEvents} />
 
@@ -1083,7 +1152,9 @@ const MonitoringConsole: React.FC = () => {
                             {/* Conditional rendering: clusters vs individual markers */}
                             {!clusteringEnabled ? (
                                 // Task 10: Individual markers when clustering is OFF
-                                culledNodes.filter(n => n.location && n.location.lat).map(node => {
+                                culledNodes.filter(n =>
+                                    n.location && Number.isFinite(n.location.lat) && Number.isFinite(n.location.long)
+                                ).map(node => {
                                     const cfg = getNodeRenderConfig(node);
 
                                     return (
@@ -1143,7 +1214,15 @@ const MonitoringConsole: React.FC = () => {
 
                         {/* Status Overlay — sibling to MapContainer, inside the relative wrapper */}
                         <div className="absolute top-4 right-4 p-4 glass rounded-xl border border-white/5 shadow-2xl z-[1000] min-w-[250px]">
-                            <h4 className="text-xs font-bold text-neutral-400 uppercase mb-2">Live Status</h4>
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                                <h4 className="text-xs font-bold text-neutral-400 uppercase">Live Status</h4>
+                                <button
+                                    onClick={resetMapView}
+                                    className="px-2 py-1 rounded-md bg-black/30 hover:bg-black/50 border border-white/10 text-[10px] font-bold uppercase text-neutral-300 transition-colors"
+                                >
+                                    Reset view
+                                </button>
+                            </div>
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center">
                                     <span className="text-sm text-red-400">Critical Alerts</span>
