@@ -11,6 +11,7 @@ from database import get_db, verify_connection
 # Global start time to track system reboots/restarts
 STARTUP_TIME = datetime.now().isoformat()
 from services.snmp_service import snmp_collector_loop, get_collector_status
+from services.mqtt_subscriber import mqtt_subscriber_loop
 from seed_admin import seed_admin
 from seed_roles import seed_roles
 
@@ -20,6 +21,9 @@ from apscheduler.triggers.cron import CronTrigger
 
 # Global scheduler instance
 backup_scheduler = AsyncIOScheduler()
+
+# Global MQTT subscriber task reference (for graceful shutdown)
+_mqtt_task: asyncio.Task | None = None
 
 
 def schedule_daily_backup() -> None:
@@ -54,6 +58,7 @@ def schedule_daily_backup() -> None:
 
 # Router Imports
 from routers import auth, users, roles, nodes, metrics, catalog, links, events, backup
+from routers.rtus import router as rtus_router
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +93,7 @@ app.include_router(catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
+app.include_router(rtus_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)
@@ -159,6 +165,11 @@ async def startup_event():
     # Start Background SNMP Collector
     asyncio.create_task(snmp_collector_loop())
 
+    # Start MQTT Subscriber (RTU telemetry background worker)
+    global _mqtt_task
+    _mqtt_task = asyncio.create_task(mqtt_subscriber_loop())
+    logger.info("MQTT subscriber loop started")
+
     # Start Backup Scheduler
     schedule_daily_backup()
     backup_scheduler.start()
@@ -174,7 +185,17 @@ def reschedule_backup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the backup scheduler on shutdown."""
+    """Stop the backup scheduler and MQTT subscriber on shutdown."""
+    # Cancel MQTT subscriber task gracefully
+    global _mqtt_task
+    if _mqtt_task is not None:
+        _mqtt_task.cancel()
+        try:
+            await _mqtt_task
+        except asyncio.CancelledError:
+            logger.info("MQTT subscriber task cancelled")
+        _mqtt_task = None
+
     backup_scheduler.shutdown()
 
 

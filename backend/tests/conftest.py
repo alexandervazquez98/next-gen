@@ -33,6 +33,10 @@ neo4j_stub = MagicMock()
 sys.modules["neo4j"] = neo4j_stub
 sys.modules["neo4j.exceptions"] = MagicMock()
 
+# ── Stub aiomqtt (may not be installed in all Python versions) ──────────────
+aiomqtt_stub = MagicMock()
+sys.modules["aiomqtt"] = aiomqtt_stub
+
 # ── Stub pysnmp (used by snmp_service) ───────────────────────────────────────
 for mod in [
     "pysnmp",
@@ -191,8 +195,27 @@ class MockNeo4jRecord:
     def get(self, key, default=None):
         return self._data.get(key, default)
 
+    def __iter__(self):
+        """Allow iteration over column names (keys), matching Neo4j Record API."""
+        return iter(self._data.keys())
+
     def __contains__(self, key):
         return key in self._data
+
+    def keys(self):
+        """Return column names, matching Neo4j Record.keys()."""
+        return list(self._data.keys())
+
+    def values(self):
+        """Return column values in key order, matching Neo4j Record.values()."""
+        return [self._data[k] for k in self._data.keys()]
+
+    def items(self):
+        """Return (key, value) pairs, matching Neo4j Record.items()."""
+        return [(k, self._data[k]) for k in self._data.keys()]
+
+    def __getitem__(self, key):
+        return self._data.get(key)
 
 
 class MockNeo4jSession:

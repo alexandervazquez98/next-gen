@@ -1,0 +1,115 @@
+services:
+  # Graph Database
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: nexgen_neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474" # HTTP
+      - "${NEO4J_BOLT_PORT:-7687}:7687" # Bolt
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER}/${NEO4J_PASSWORD}"
+    volumes:
+      - ./docker/neo4j/data:/data
+      - ./docker/neo4j/logs:/logs
+      - ./docker/neo4j/entrypoint.sh:/entrypoint.sh
+    entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER}", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # PostgreSQL / TimescaleDB
+  postgres:
+    image: timescale/timescaledb:2.15.0-pg16
+    container_name: nexgen_postgres
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-nexgen_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
+      - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
+    volumes:
+      - ./docker/postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexgen_admin -d nexgen_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # Python Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nexgen_backend
+    ports:
+      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=${NEO4J_URI}
+      - NEO4J_USER=${NEO4J_USER}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - POSTGRES_USER=${POSTGRES_USER:-nexgen_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
+      - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # Frontend (Vite Service)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nexgen_frontend
+    ports:
+      - "${FRONTEND_EXTERNAL_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_TARGET=${VITE_API_TARGET:-http://backend:8000}
+    restart: unless-stopped
+
+  # Engines / Workers
+  snmp-engine:
+    build:
+      context: .
+      dockerfile: engines/Dockerfile
+    container_name: nexgen_snmp_worker
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=${NEO4J_URI}
+      - NEO4J_USER=${NEO4J_USER}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - POSTGRES_USER=${POSTGRES_USER:-nexgen_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
+      - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+    restart: unless-stopped

@@ -1,0 +1,63 @@
+erDiagram
+    %% =========================================================
+    %% CAPA NoSQL - ORIENTADA A GRAFOS (NEO4J)
+    %% =========================================================
+    %% Los Nodos y Edges permiten propiedades dinámicas (Schema-less)
+    
+    NODE_CI {
+        string uuid PK "Identificador único (Ancla del sistema)"
+        string label "Nombre visible"
+        string type "Label de Neo4j (Router, Server, App)"
+        string status "Salud actual (OK, CRITICAL, WARN)"
+        dict properties "Campos dinámicos NoSQL (IP, Brand, Model,etc)"
+        dict snmp_config "Configuración de acceso"
+    }
+
+    METRIC_DEFINITION {
+        string metric_id PK "ID de la métrica"
+        string protocol "SNMP, ICMP, HTTP"
+        string oid "OID Técnico"
+        dict thresholds "Umbrales (Warning/Critical/Exception)"
+        dict applicability "Reglas de Reconciliación"
+    }
+
+    %% =========================================================
+    %% CAPA SQL - SERIES TEMPORALES (TIMESCALE DB)
+    %% =========================================================
+    %% Estructura rígida optimizada para alta velocidad de escritura
+    
+    METRIC_VALUES {
+        datetime time PK "Timestamp (Hypertable Index)"
+        string node_uuid FK "Relación con el Nodo en el Grafo"
+        string metric_id FK "Relación con la Def. de Métrica"
+        float value "Valor capturado"
+    }
+
+    %% =========================================================
+    %% CAPA SQL - RELACIONAL E IAM (POSTGRESQL)
+    %% =========================================================
+    %% Estructura para persistencia de usuarios y seguridad
+    
+    USERS_IAM {
+        int id PK
+        string username UK
+        string hashed_password
+        string role "Admin, Operator, Viewer"
+        string_array permissions "ACLs detalladas"
+        string_array scope "Localizaciones permitidas"
+    }
+
+    %% =========================================================
+    %% RELACIONES TRANSVERSALES
+    %% =========================================================
+
+    %% Relaciones de Grafo (NoSQL)
+    NODE_CI ||--o{ NODE_CI : "DEPENDS_ON / CONNECTS_TO (Topología)"
+    NODE_CI ||--o{ METRIC_DEFINITION : "HAS_METRIC (Asignación lógica)"
+
+    %% Relaciones de Telemetría (Cruce Grafo -> SQL)
+    NODE_CI ||--o{ METRIC_VALUES : "Referencia_por_UUID"
+    METRIC_DEFINITION ||--o{ METRIC_VALUES : "Estructura_de_dato"
+
+    %% Relaciones de Seguridad
+    USERS_IAM }o--o{ NODE_CI : "Access_Control_Scope"

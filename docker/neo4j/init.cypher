@@ -6,6 +6,17 @@ CREATE CONSTRAINT category_name_unique IF NOT EXISTS FOR (c:Category) REQUIRE c.
 CREATE CONSTRAINT user_id_unique IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE;
 CREATE CONSTRAINT user_username_unique IF NOT EXISTS FOR (u:User) REQUIRE u.username IS UNIQUE;
 
+// ── RTU / Sensor Schema (PR #1 RTU/MQTT Telemetry Infrastructure) ──────────────
+
+// RTU node: CI subtype with layer="RTU" for BLIIoT S475E devices
+CREATE CONSTRAINT rtu_id_unique IF NOT EXISTS FOR (r:RTU) REQUIRE r.id IS UNIQUE;
+CREATE CONSTRAINT rtu_mqtt_topic_unique IF NOT EXISTS FOR (r:RTU) REQUIRE r.mqtt_topic IS UNIQUE;
+
+// Sensor node: belongs to RTU via HAS_SENSOR relationship
+// Composite unique: (rtu_id, register_addr, sensor_type)
+CREATE INDEX sensor_rtu_addr_type IF NOT EXISTS FOR (s:Sensor) REQUIRE (s.rtu_id, s.register_addr, s.sensor_type);
+CREATE INDEX sensor_rtu_id IF NOT EXISTS FOR (s:Sensor) REQUIRE s.rtu_id;
+
 CREATE INDEX ci_name_indx IF NOT EXISTS FOR (n:CI) ON (n.name);
 CREATE INDEX ci_ip_indx IF NOT EXISTS FOR (n:CI) ON (n.ip);
 CREATE INDEX ci_location_indx IF NOT EXISTS FOR (n:CI) ON (n.location_name);
