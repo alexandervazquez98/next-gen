@@ -441,3 +441,238 @@ def validate_metric_ids(metric_ids: List[str]) -> tuple[bool, List[str]]:
         invalid = [mid for mid in metric_ids if mid not in found]
 
     return len(invalid) == 0, invalid
+
+
+# ---------------------------------------------------------------------------
+# Preview — Parallel SNMP query for live readings
+# ---------------------------------------------------------------------------
+
+import asyncio
+import ast
+import json
+from concurrent.futures import ThreadPoolExecutor
+
+try:
+    from pysnmp.hlapi import (
+        CommunityData,
+        ContextData,
+        ObjectIdentity,
+        ObjectType,
+        SnmpEngine,
+        UdpTransportTarget,
+        getCmd,
+    )
+    SNMP_AVAILABLE = True
+except ImportError:
+    SNMP_AVAILABLE = False
+
+
+def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
+    """Parse SNMP config from CI node snmp field (dict, JSON string, or ast-literal)."""
+    if not snmp_raw:
+        return {}
+    if isinstance(snmp_raw, dict):
+        return snmp_raw
+    try:
+        return json.loads(snmp_raw)
+    except Exception:
+        try:
+            return ast.literal_eval(snmp_raw)
+        except Exception:
+            return {}
+
+
+def _get_metric_defs(metric_ids: List[str]) -> List[Dict[str, Any]]:
+    """Fetch MetricDef details (oid, warning, critical, operator) for given IDs."""
+    if not metric_ids:
+        return []
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            "MATCH (m:MetricDef) WHERE m.id IN $ids RETURN m",
+            ids=metric_ids,
+        )
+        metric_defs = []
+        for record in result:
+            m = record["m"]
+            metric_defs.append({
+                "id": m.get("id"),
+                "oid": m.get("oid"),
+                "protocol": m.get("protocol", "SNMP"),
+                "warning": m.get("warning"),
+                "critical": m.get("critical"),
+                "operator": m.get("operator", ">="),
+            })
+        return metric_defs
+
+
+def _poll_single_metric(ci_ip: str, snmp_conf: Dict[str, Any], metric_def: Dict[str, Any]):
+    """
+    Poll a single metric on a single CI via SNMP.
+    Returns (value, poll_status_str) where poll_status_str is 'OK' or 'NO_DATA'.
+    Runs in-thread (blocking SNMP call).
+    """
+    if not SNMP_AVAILABLE:
+        return None, "NO_DATA"
+
+    oid = metric_def.get("oid")
+    if not oid or oid == "ICMP":
+        return None, "NO_DATA"
+
+    community = snmp_conf.get("readCommunity")
+    if not community:
+        return None, "NO_DATA"
+
+    port = snmp_conf.get("port", 161)
+    try:
+        error_indication, error_status, error_index, var_binds = next(
+            getCmd(
+                SnmpEngine(),
+                CommunityData(community),
+                UdpTransportTarget((ci_ip, port), timeout=1.0, retries=0),
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+        )
+        if error_indication:
+            return None, "NO_DATA"
+        if error_status:
+            return None, "NO_DATA"
+        value = str(var_binds[0][1])
+        return value, "OK"
+    except Exception:
+        return None, "NO_DATA"
+
+
+def _compute_metric_status(value: Any, metric_def: Dict[str, Any]) -> str:
+    """Determine status (OK/WARNING/CRITICAL/NO_DATA) based on value and thresholds."""
+    if value is None:
+        return "NO_DATA"
+
+    try:
+        num_val = float(value)
+        operator = metric_def.get("operator", ">=")
+
+        def check_op(left, right, oper):
+            if oper == ">=":
+                return left >= right
+            if oper == "<=":
+                return left <= right
+            if oper == "==":
+                return left == right
+            if oper == "!=":
+                return left != right
+            return left >= right
+
+        if metric_def.get("critical") is not None and check_op(
+            num_val, float(metric_def["critical"]), operator
+        ):
+            return "CRITICAL"
+        if metric_def.get("warning") is not None and check_op(
+            num_val, float(metric_def["warning"]), operator
+        ):
+            return "WARNING"
+        return "OK"
+    except (ValueError, TypeError):
+        # Non-numeric value — can't apply thresholds
+        return "OK" if value is not None else "NO_DATA"
+
+
+async def preview_dictionary(
+    dictionary_id: str,
+    ci_ids: List[str],
+) -> List[Dict[str, Any]]:
+    """
+    Preview live SNMP readings for a dictionary applied to specified CIs.
+    For each CI: fetch SNMP config, poll each metric in the dictionary.
+    Runs in parallel batches of 20 CIs.
+    Returns [{ci_id, ci_name, ip, results: [{metric_id, oid, value, status}]}].
+    Raises ValueError if dictionary not found.
+    """
+    dictionary = get_dictionary(dictionary_id)
+    if not dictionary:
+        raise ValueError(f"Dictionary '{dictionary_id}' not found")
+
+    metric_defs = _get_metric_defs(dictionary["metric_ids"])
+    if not metric_defs:
+        return []
+
+    # Fetch CI details (name, ip, snmp) in bulk
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (n:CI)
+            WHERE n.id IN $ids
+            RETURN n.id AS id, n.name AS name, n.ip AS ip, n.snmp AS snmp
+            """,
+            ids=ci_ids,
+        )
+        ci_records = list(result)
+
+    ci_map = {
+        rec["id"]: {
+            "name": rec["name"],
+            "ip": rec["ip"],
+            "snmp": _parse_snmp_config(rec["snmp"]) if rec["snmp"] else {},
+        }
+        for rec in ci_records
+    }
+
+    def poll_ci(ci_id: str) -> Dict[str, Any]:
+        """Poll all metrics for a single CI (runs in thread pool)."""
+        ci = ci_map.get(ci_id, {})
+        ci_name = ci.get("name", ci_id)
+        ip = ci.get("ip")
+        snmp_conf = ci.get("snmp", {})
+
+        results = []
+        for metric_def in metric_defs:
+            if not ip:
+                results.append({
+                    "metric_id": metric_def["id"],
+                    "oid": metric_def.get("oid", ""),
+                    "value": None,
+                    "status": "NO_DATA",
+                })
+                continue
+
+            value, poll_status = _poll_single_metric(ip, snmp_conf, metric_def)
+            if poll_status == "NO_DATA":
+                results.append({
+                    "metric_id": metric_def["id"],
+                    "oid": metric_def.get("oid", ""),
+                    "value": None,
+                    "status": "NO_DATA",
+                })
+            else:
+                status = _compute_metric_status(value, metric_def)
+                results.append({
+                    "metric_id": metric_def["id"],
+                    "oid": metric_def.get("oid", ""),
+                    "value": value,
+                    "status": status,
+                })
+
+        return {
+            "ci_id": ci_id,
+            "ci_name": ci_name,
+            "ip": ip,
+            "results": results,
+        }
+
+    # Parallel execution in batches of 20
+    batch_size = 20
+    previews = []
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=batch_size) as executor:
+        for i in range(0, len(ci_ids), batch_size):
+            batch = ci_ids[i : i + batch_size]
+            futures = [
+                loop.run_in_executor(executor, poll_ci, ci_id)
+                for ci_id in batch
+            ]
+            batch_results = await asyncio.gather(*futures)
+            previews.extend(batch_results)
+
+    return previews

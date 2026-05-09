@@ -4,7 +4,7 @@ Uses FastAPI TestClient with mocked auth and database.
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 
 # Use conftest.py stubs — import app normally
@@ -555,5 +555,135 @@ class TestApplyDictionary:
             assert response.status_code == 200
             data = response.json()
             assert data["applied_count"] == 5
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /api/dictionaries/{id}/preview
+# ---------------------------------------------------------------------------
+
+class TestPreviewDictionary:
+    """Tests for POST /api/dictionaries/{dictionary_id}/preview endpoint."""
+
+    def test_preview_unauthenticated(self):
+        """No auth token should return 401."""
+        response = client.post("/api/dictionaries/dict-1/preview", json={"ci_ids": ["ci-1"]})
+        assert response.status_code == 401
+
+    def test_preview_not_found(self):
+        """Non-existent dictionary should return 404."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.preview_dictionary = AsyncMock(
+                side_effect=ValueError("Dictionary 'missing' not found")
+            )
+
+            response = client.post("/api/dictionaries/missing/preview", json={"ci_ids": ["ci-1"]})
+
+            assert response.status_code == 404
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_preview_success(self):
+        """Should return live SNMP preview readings per CI."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.preview_dictionary = AsyncMock(return_value=[
+                {
+                    "ci_id": "ci-1",
+                    "ci_name": "Switch-A",
+                    "ip": "10.0.0.1",
+                    "results": [
+                        {"metric_id": "cpu-load", "oid": "1.3.6.1.4.1.9.2.1.58.0", "value": "45", "status": "OK"},
+                        {"metric_id": "mem-used", "oid": "1.3.6.1.4.1.9.2.1.59.0", "value": "80", "status": "WARNING"},
+                    ],
+                },
+                {
+                    "ci_id": "ci-2",
+                    "ci_name": "Switch-B",
+                    "ip": "10.0.0.2",
+                    "results": [
+                        {"metric_id": "cpu-load", "oid": "1.3.6.1.4.1.9.2.1.58.0", "value": None, "status": "NO_DATA"},
+                        {"metric_id": "mem-used", "oid": "1.3.6.1.4.1.9.2.1.59.0", "value": None, "status": "NO_DATA"},
+                    ],
+                },
+            ])
+
+            response = client.post("/api/dictionaries/dict-1/preview", json={
+                "ci_ids": ["ci-1", "ci-2"],
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert "previews" in data
+            assert len(data["previews"]) == 2
+            assert data["previews"][0]["ci_id"] == "ci-1"
+            assert data["previews"][0]["results"][0]["status"] == "OK"
+            assert data["previews"][1]["results"][0]["status"] == "NO_DATA"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_preview_no_data_for_ci_without_snmp(self):
+        """CIs without SNMP config should return NO_DATA for all metrics."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.preview_dictionary = AsyncMock(return_value=[
+                {
+                    "ci_id": "ci-no-snmp",
+                    "ci_name": "Router-X",
+                    "ip": None,
+                    "results": [
+                        {"metric_id": "cpu-load", "oid": "1.3.6.1.4.1.9.2.1.58.0", "value": None, "status": "NO_DATA"},
+                    ],
+                },
+            ])
+
+            response = client.post("/api/dictionaries/dict-1/preview", json={
+                "ci_ids": ["ci-no-snmp"],
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["previews"][0]["ip"] is None
+            assert data["previews"][0]["results"][0]["status"] == "NO_DATA"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_preview_no_data_for_ci_without_snmp(self):
+        """CIs without SNMP config should return NO_DATA for all metrics."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.preview_dictionary = AsyncMock(return_value=[
+                {
+                    "ci_id": "ci-no-snmp",
+                    "ci_name": "Router-X",
+                    "ip": None,
+                    "results": [
+                        {"metric_id": "cpu-load", "oid": "1.3.6.1.4.1.9.2.1.58.0", "value": None, "status": "NO_DATA"},
+                    ],
+                },
+            ])
+
+            response = client.post("/api/dictionaries/dict-1/preview", json={
+                "ci_ids": ["ci-no-snmp"],
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["previews"][0]["ip"] is None
+            assert data["previews"][0]["results"][0]["status"] == "NO_DATA"
 
         app.dependency_overrides.pop(get_current_active_user, None)

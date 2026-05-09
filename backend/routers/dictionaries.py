@@ -175,6 +175,28 @@ class ApplyResponse(BaseModel):
     message: str
 
 
+class PreviewRequest(BaseModel):
+    ci_ids: List[str] = []
+
+
+class PreviewMetricResult(BaseModel):
+    metric_id: str
+    oid: str
+    value: Optional[str]
+    status: str  # OK | WARNING | CRITICAL | NO_DATA
+
+
+class CIPreviewResult(BaseModel):
+    ci_id: str
+    ci_name: str
+    ip: Optional[str]
+    results: List[PreviewMetricResult]
+
+
+class PreviewResponse(BaseModel):
+    previews: List[CIPreviewResult]
+
+
 @router.get("/{dictionary_id}/target-cis", response_model=List[Dict[str, Any]])
 async def get_target_cis(
     dictionary_id: str,
@@ -211,6 +233,27 @@ async def apply_dictionary(
             dry_run=body.dry_run,
         )
         return ApplyResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{dictionary_id}/preview", response_model=PreviewResponse)
+async def preview_dictionary(
+    dictionary_id: str,
+    body: PreviewRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Preview live SNMP readings for a dictionary applied to specified CIs.
+    For each CI: polls each dictionary metric and returns current value + status.
+    Use this before applying to see which metrics will actually work on target CIs.
+    """
+    try:
+        previews = await dictionary_service.preview_dictionary(
+            dictionary_id,
+            body.ci_ids,
+        )
+        return PreviewResponse(previews=previews)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
