@@ -718,7 +718,7 @@ def get_applied_dictionary(ci_id: str) -> Optional[Dict[str, Any]]:
         "dictionary_name": result["dictionary_name"],
         "dictionary_brand": result["dictionary_brand"],
         "dictionary_model": result["dictionary_model"],
-        "dictionary_metric_ids": dict_metric_ids,
+        "metric_ids": dict_metric_ids,
         "excluded_metrics": result.get("excluded_metrics") or [],
         "extra_metrics": result.get("extra_metrics") or [],
         "applied_at": result.get("applied_at"),
