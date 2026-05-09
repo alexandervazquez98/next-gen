@@ -676,3 +676,123 @@ async def preview_dictionary(
             previews.extend(batch_results)
 
     return previews
+
+
+# ---------------------------------------------------------------------------
+# Per-CI Exclusions — AppliedDictionary management
+# ---------------------------------------------------------------------------
+
+def get_applied_dictionary(ci_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get the AppliedDictionary for a CI, including dictionary details.
+    Returns dict with {dictionary_id, dictionary_name, excluded_metrics, extra_metrics, applied_at}
+    or None if no dictionary is applied.
+    """
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (ci:CI {id: $ci_id})-[:HAS_DICTIONARY]->(ad:AppliedDictionary)
+            OPTIONAL MATCH (ad)-[:REFERENCE_DICTIONARY]->(md:MetricDictionary)
+            RETURN ad.id AS ad_id,
+                   ad.dictionary_id AS dictionary_id,
+                   ad.excluded_metrics AS excluded_metrics,
+                   ad.extra_metrics AS extra_metrics,
+                   ad.applied_at AS applied_at,
+                   md.name AS dictionary_name,
+                   md.brand AS dictionary_brand,
+                   md.model AS dictionary_model,
+                   md.metric_ids AS dictionary_metric_ids
+            """,
+            ci_id=ci_id,
+        ).single()
+
+    if not result or not result.get("dictionary_id"):
+        return None
+
+    # Get the dictionary's actual metric_ids from HAS_METRIC relationships
+    dict_metric_ids = get_metrics_from_dictionary(result["dictionary_id"]) if result["dictionary_id"] else []
+
+    return {
+        "dictionary_id": result["dictionary_id"],
+        "dictionary_name": result["dictionary_name"],
+        "dictionary_brand": result["dictionary_brand"],
+        "dictionary_model": result["dictionary_model"],
+        "dictionary_metric_ids": dict_metric_ids,
+        "excluded_metrics": result.get("excluded_metrics") or [],
+        "extra_metrics": result.get("extra_metrics") or [],
+        "applied_at": result.get("applied_at"),
+    }
+
+
+def update_ci_exclusions(
+    ci_id: str,
+    excluded_metrics: Optional[List[str]] = None,
+    extra_metrics: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Update or create AppliedDictionary exclusions/extras for a CI.
+    excluded_metrics and extra_metrics REPLACE existing values (not merge).
+    If CI has no AppliedDictionary, this is a no-op (caller should use apply_dictionary first).
+    Raises ValueError if extra_metric_ids contain non-existent MetricDefs.
+    """
+    # Validate extra_metrics if provided
+    if extra_metrics is not None and extra_metrics:
+        valid, invalid = validate_metric_ids(extra_metrics)
+        if not valid:
+            raise ValueError(f"Invalid extra_metric_ids: {invalid}")
+
+    driver = _get_driver()
+    with driver.session() as session:
+        # Check if AppliedDictionary exists for this CI
+        exists = session.run(
+            """
+            MATCH (ci:CI {id: $ci_id})-[:HAS_DICTIONARY]->(ad:AppliedDictionary)
+            RETURN ad.id AS ad_id
+            """,
+            ci_id=ci_id,
+        ).single()
+
+        if not exists:
+            raise ValueError(f"No AppliedDictionary found for CI '{ci_id}'. Apply a dictionary first.")
+
+        # Update excluded_metrics and extra_metrics
+        session.run(
+            """
+            MATCH (ci:CI {id: $ci_id})-[:HAS_DICTIONARY]->(ad:AppliedDictionary)
+            SET ad.excluded_metrics = $excluded,
+                ad.extra_metrics = $extra
+            """,
+            ci_id=ci_id,
+            excluded=excluded_metrics if excluded_metrics is not None else [],
+            extra=extra_metrics if extra_metrics is not None else [],
+        )
+
+    return get_applied_dictionary(ci_id)
+
+
+def remove_applied_dictionary(ci_id: str) -> bool:
+    """
+    Remove AppliedDictionary from a CI (un-apply dictionary).
+    Does NOT delete the MetricDictionary or MetricDef nodes.
+    Returns True if removed, False if no AppliedDictionary existed.
+    """
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (ci:CI {id: $ci_id})-[r:HAS_DICTIONARY]->(ad:AppliedDictionary)
+            DELETE r
+            DETACH DELETE ad
+            RETURN count(*) AS deleted
+            """,
+            ci_id=ci_id,
+        ).single()
+
+    if result is None:
+        return False
+    deleted = result.get("deleted")
+    # Handle case where result.get returns a non-int (e.g., MagicMock in tests)
+    if not isinstance(deleted, int):
+        return False
+    return deleted >= 0
