@@ -114,6 +114,9 @@ class EventFeedSummary(BaseModel):
     ci_location_name: Optional[str] = None
     metric_name: Optional[str] = None
     metric_protocol: Optional[str] = None
+    propagated_from: Optional[str] = None
+    correlation_type: Optional[Literal["ROOT", "PROPAGATED"]] = None
+    root_cause_ci_id: Optional[str] = None
 
 
 class EventDetailEvent(EventFeedSummary):
