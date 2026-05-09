@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-05-09
+
 ### Added
 - **CI Relationship Validator**: Add pre-creation validation to mass link editor and single-link creation. `POST /cis/relationships` batch endpoint returns CI relationship summaries. `RelationshipTooltip` + `RelationshipBadge` integrated into `MassLinkEditor` FilterPanel showing existing connections on hover.
 - **Validation Guard**: `execute_bulk_links` warns when CIs already have the target relationship type before MERGE.
@@ -16,7 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Layer Filter**: Fixed `n.category` vs `n.type` mismatch — layer filter now checks both fields.
 - **Debounce Race**: Fixed timeout race condition — IDs now captured via closure instead of ref.
 
-## [1.2.0] — 2026-05-02
+## [1.4.0] — 2026-05-09
+
+### Added
+- **RTU/MQTT Telemetry Infrastructure (Phase 1)**: Foundation for monitoring BLIIoT S475E RTU devices via MQTT.
+  - `RTUService` — full CRUD for RTU and Sensor entities in Neo4j
+  - RTU/Sensor Pydantic models (`RTU`, `Sensor`, `TelemetryMessage`)
+  - Neo4j repository layer with `find_sensor_by_key`, upsert, delete + Modbus register validation
+  - REST API router with 9 endpoints: RTU CRUD, Sensor CRUD, mass operations
+  - MQTT subscriber with QoS 1 handling, JSON payload parsing
+  - Topic convention: `rtu/{location_id}/{rtu_id}/telemetry`
+  - `MQTTSettings` singleton loaded from environment variables
+  - Neo4j migration: RTU/Sensor node + relationship constraints (IF NOT EXISTS — idempotent)
+
+### Fixed
+- **RTU delete_sensor always returned 404** (issue #64): Removed incorrect existence check that used `find_sensor_by_key` with hardcoded dummy values (`register_addr=0`, `sensor_type=''`). Now delegates to `repo.delete_sensor` directly.
+
+### Testing
+- 7 new test files covering models, repo, service, router, integration, MQTT subscriber
+
+## [1.3.0] — 2026-05-02
 
 ### Fixed
 - **CMDB Correlations**: Fixed link query using OR logic so CIs properly display their correlations in the graph view.
