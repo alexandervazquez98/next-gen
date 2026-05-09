@@ -363,3 +363,197 @@ class TestDeleteDictionary:
             assert response.json()["message"] == "Dictionary deleted"
 
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/dictionaries/{id}/target-cis
+# ---------------------------------------------------------------------------
+
+class TestGetTargetCIs:
+    """Tests for GET /api/dictionaries/{dictionary_id}/target-cis endpoint."""
+
+    def test_target_cis_unauthenticated(self):
+        """No auth token should return 401."""
+        response = client.get("/api/dictionaries/dict-1/target-cis")
+        assert response.status_code == 401
+
+    def test_target_cis_not_found(self):
+        """Non-existent dictionary should return 404."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.get_target_cis.side_effect = ValueError("Dictionary 'missing' not found")
+
+            response = client.get("/api/dictionaries/missing/target-cis")
+
+            assert response.status_code == 404
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_target_cis_success(self):
+        """Should return CIs matching dictionary brand+model."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.get_target_cis.return_value = [
+                {
+                    "id": "ci-1",
+                    "name": "Switch-A",
+                    "ip": "10.0.0.1",
+                    "brand": "Cisco",
+                    "model": "Catalyst-2960",
+                    "location_name": "DC-1",
+                },
+                {
+                    "id": "ci-2",
+                    "name": "Switch-B",
+                    "ip": "10.0.0.2",
+                    "brand": "Cisco",
+                    "model": "Catalyst-2960",
+                    "location_name": "DC-2",
+                },
+            ]
+
+            response = client.get("/api/dictionaries/dict-1/target-cis")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert isinstance(data, list)
+            assert len(data) == 2
+            assert data[0]["id"] == "ci-1"
+            assert data[0]["brand"] == "Cisco"
+            assert data[0]["model"] == "Catalyst-2960"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_target_cis_empty(self):
+        """Should return empty list when no CIs match."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.get_target_cis.return_value = []
+
+            response = client.get("/api/dictionaries/dict-1/target-cis")
+
+            assert response.status_code == 200
+            assert response.json() == []
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /api/dictionaries/{id}/apply
+# ---------------------------------------------------------------------------
+
+class TestApplyDictionary:
+    """Tests for POST /api/dictionaries/{dictionary_id}/apply endpoint."""
+
+    def test_apply_unauthenticated(self):
+        """No auth token should return 401."""
+        response = client.post("/api/dictionaries/dict-1/apply", json={"ci_ids": ["ci-1"]})
+        assert response.status_code == 401
+
+    def test_apply_no_permission(self):
+        """User without CI_EDIT should get 403."""
+        async def override():
+            return _viewer_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        response = client.post("/api/dictionaries/dict-1/apply", json={"ci_ids": ["ci-1"]})
+
+        assert response.status_code == 403
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_apply_not_found(self):
+        """Non-existent dictionary should return 404."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.apply_dictionary.side_effect = ValueError("Dictionary 'missing' not found")
+
+            response = client.post("/api/dictionaries/missing/apply", json={"ci_ids": ["ci-1"]})
+
+            assert response.status_code == 404
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_apply_success(self):
+        """Should apply dictionary to specified CIs."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.apply_dictionary.return_value = {
+                "applied_count": 2,
+                "skipped_count": 0,
+                "message": "Applied to 2 CIs, skipped 0",
+            }
+
+            response = client.post("/api/dictionaries/dict-1/apply", json={
+                "ci_ids": ["ci-1", "ci-2"],
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["applied_count"] == 2
+            assert data["skipped_count"] == 0
+            assert "Applied to 2 CIs" in data["message"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_apply_with_skipped(self):
+        """Should report skipped CIs when some have no IP or don't exist."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.apply_dictionary.return_value = {
+                "applied_count": 1,
+                "skipped_count": 2,
+                "message": "Applied to 1 CIs, skipped 2",
+            }
+
+            response = client.post("/api/dictionaries/dict-1/apply", json={
+                "ci_ids": ["ci-1", "missing-ci", "ci-no-ip"],
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["applied_count"] == 1
+            assert data["skipped_count"] == 2
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_apply_dry_run(self):
+        """dry_run=true should return count without persisting."""
+        async def override():
+            return _admin_user()
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.dictionaries.dictionary_service") as mock_svc:
+            mock_svc.apply_dictionary.return_value = {
+                "applied_count": 5,
+                "skipped_count": 0,
+                "message": "Applied to 5 CIs, skipped 0",
+            }
+
+            response = client.post("/api/dictionaries/dict-1/apply", json={
+                "ci_ids": ["ci-1", "ci-2"],
+                "dry_run": True,
+            })
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["applied_count"] == 5
+
+        app.dependency_overrides.pop(get_current_active_user, None)

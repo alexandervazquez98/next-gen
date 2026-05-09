@@ -187,6 +187,7 @@ class MetricDictionary(BaseModel):
 class AppliedDictionary(BaseModel):
     """Overlay node linking a CI to a dictionary with per-CI exclusions/extras."""
     id: str
+    ci_id: str
     dictionary_id: str
     excluded_metrics: list[str] = []
     extra_metrics: list[str] = []

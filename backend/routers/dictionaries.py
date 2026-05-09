@@ -3,6 +3,7 @@ Dictionary Router — CRUD endpoints for MetricDictionary nodes.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
 
 from models.core import MetricDictionary, AppliedDictionary, DictionaryCreate, DictionaryUpdate
 from services import dictionary_service
@@ -161,6 +162,57 @@ async def update_dictionary(
         return {"message": "Dictionary updated"}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
+class ApplyRequest(BaseModel):
+    ci_ids: List[str] = []
+    dry_run: bool = False
+
+
+class ApplyResponse(BaseModel):
+    applied_count: int
+    skipped_count: int
+    message: str
+
+
+@router.get("/{dictionary_id}/target-cis", response_model=List[Dict[str, Any]])
+async def get_target_cis(
+    dictionary_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Return CIs where brand and model exactly match the dictionary's brand+model.
+    Case-insensitive comparison. Returns [{id, name, ip, brand, model, location_name}].
+    """
+    try:
+        return dictionary_service.get_target_cis(dictionary_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{dictionary_id}/apply", response_model=ApplyResponse)
+async def apply_dictionary(
+    dictionary_id: str,
+    body: ApplyRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Apply a dictionary to specified CI IDs.
+    Creates/updates AppliedDictionary nodes per CI (idempotent).
+    If dry_run=true, returns count without persisting.
+    Raises 404 if dictionary not found.
+    """
+    _require_editor(current_user)
+
+    try:
+        result = dictionary_service.apply_dictionary(
+            dictionary_id,
+            body.ci_ids,
+            dry_run=body.dry_run,
+        )
+        return ApplyResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.delete("/{dictionary_id}")

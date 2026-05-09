@@ -300,6 +300,125 @@ def delete_dictionary(id: str) -> bool:
     return True
 
 
+def get_target_cis(dictionary_id: str) -> List[Dict[str, Any]]:
+    """
+    Return CIs where brand and model match the dictionary's brand+model exactly.
+    Case-insensitive comparison. Returns [{id, name, ip, brand, model, location_name}].
+    Raises ValueError if dictionary not found.
+    """
+    dictionary = get_dictionary(dictionary_id)
+    if not dictionary:
+        raise ValueError(f"Dictionary '{dictionary_id}' not found")
+
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (n:CI)
+            WHERE n.brand IS NOT NULL AND n.model IS NOT NULL
+              AND toLower(n.brand) = toLower($brand)
+              AND toLower(n.model) = toLower($model)
+            RETURN n.id AS id, n.name AS name, n.ip AS ip,
+                   n.brand AS brand, n.model AS model,
+                   n.location_name AS location_name
+            """,
+            brand=dictionary["brand"],
+            model=dictionary["model"],
+        )
+
+        return [
+            {
+                "id": record["id"],
+                "name": record["name"],
+                "ip": record["ip"],
+                "brand": record["brand"],
+                "model": record["model"],
+                "location_name": record["location_name"],
+            }
+            for record in result
+        ]
+
+
+def apply_dictionary(
+    dictionary_id: str,
+    ci_ids: List[str],
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Apply a dictionary to the specified CI list.
+    Creates/updates AppliedDictionary nodes (idempotent MERGE).
+    If dry_run=True, returns count without persisting anything.
+    Returns {applied_count, skipped_count, message}.
+    Raises ValueError if dictionary not found.
+    """
+    dictionary = get_dictionary(dictionary_id)
+    if not dictionary:
+        raise ValueError(f"Dictionary '{dictionary_id}' not found")
+
+    driver = _get_driver()
+    applied_count = 0
+    skipped_count = 0
+
+    for ci_id in ci_ids:
+        with driver.session() as session:
+            # Check CI exists and has IP
+            ci_result = session.run(
+                "MATCH (n:CI {id: $ci_id}) RETURN n.ip AS ip",
+                ci_id=ci_id,
+            ).single()
+
+            if not ci_result:
+                skipped_count += 1
+                logger.warning(f"CI '{ci_id}' not found — skipping")
+                continue
+
+            if not ci_result["ip"]:
+                skipped_count += 1
+                logger.warning(f"CI '{ci_id}' has no IP — skipping")
+                continue
+
+            if dry_run:
+                applied_count += 1
+                continue
+
+            # Upsert AppliedDictionary via MERGE (idempotent)
+            now = _now()
+            session.run(
+                """
+                MERGE (ci:CI {id: $ci_id})-[:HAS_DICTIONARY]->(ad:AppliedDictionary {dictionary_id: $dict_id})
+                ON CREATE SET ad.id = $ad_id,
+                              ad.excluded_metrics = [],
+                              ad.extra_metrics = [],
+                              ad.applied_at = $now
+                ON MATCH SET ad.dictionary_id = $dict_id,
+                            ad.applied_at = $now
+                """,
+                ci_id=ci_id,
+                dict_id=dictionary_id,
+                ad_id=str(uuid.uuid4()),
+                now=now,
+            )
+
+            # Create REFERENCE_DICTIONARY link
+            session.run(
+                """
+                MATCH (ci:CI {id: $ci_id})-[:HAS_DICTIONARY]->(ad:AppliedDictionary {dictionary_id: $dict_id})
+                MATCH (md:MetricDictionary {id: $dict_id})
+                MERGE (ad)-[:REFERENCE_DICTIONARY]->(md)
+                """,
+                ci_id=ci_id,
+                dict_id=dictionary_id,
+            )
+
+            applied_count += 1
+
+    return {
+        "applied_count": applied_count,
+        "skipped_count": skipped_count,
+        "message": f"Applied to {applied_count} CIs, skipped {skipped_count}",
+    }
+
+
 def validate_metric_ids(metric_ids: List[str]) -> tuple[bool, List[str]]:
     """
     Validate that all metric_ids exist as MetricDef nodes.
