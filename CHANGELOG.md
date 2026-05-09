@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-05-09
+
 ### Added
 - **Event Correlation (Root Cause)**: When a parent CI fails, dependent CIs are marked as `PROPAGATED` instead of creating separate events. Reduces alarm noise by showing only the root cause event.
   - New fields on Event: `propagated_from`, `correlation_type` ('ROOT'|'PROPAGATED'), `root_cause_ci_id`
