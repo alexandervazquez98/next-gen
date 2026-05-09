@@ -364,6 +364,44 @@ def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
     return summary
 
 
+def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str, Any]]:
+    """
+    Traverse parent CIs via DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to max_depth levels.
+    Return the first OPEN/ACK event found on a parent CI, plus root_cause_ci_id.
+
+    Returns dict with keys: {parent_event_id, root_cause_ci_id, correlation_type}
+    or None if no parent has an open event.
+
+    Traversal: DEPENDS_ON, HOSTED_ON, CONNECTS_TO up to max_depth levels.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        result = session.run(
+            f"""
+            MATCH (ci:CI {{id: $ci_id}})
+            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..{max_depth}]->(parent:CI)
+            MATCH (parent)-[:HAS_EVENT]->(pe:Event)
+            WHERE pe.status IN ['OPEN', 'ACK']
+            RETURN pe.id AS parent_event_id,
+                   pe.ci_id AS parent_ci_id,
+                   pe.correlation_type AS correlation_type,
+                   pe.root_cause_ci_id AS root_cause_ci_id
+            ORDER BY CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC, pe.created_at ASC
+            LIMIT 1
+            """,
+            ci_id=ci_id,
+        ).single()
+
+        if not result:
+            return None
+
+        return {
+            "parent_event_id": result["parent_event_id"],
+            "root_cause_ci_id": result.get("root_cause_ci_id") or result["parent_ci_id"],
+            "correlation_type": result.get("correlation_type"),
+        }
+
+
 def create_default_ping_metric(node_id: str, node_label: str) -> None:
     """
     Create a default ICMP PING metric for a CI node when it has an IP address.

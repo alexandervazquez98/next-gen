@@ -391,7 +391,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             existing = session.run(
                 """
                 MATCH (existing:Event)
-                WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK']
+                WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK', 'RECOVERED']
                 RETURN existing
                 LIMIT 1
             """,
@@ -400,21 +400,44 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             ).single()
 
             if existing:
+                existing_status = existing["existing"].get("status")
                 session.run(
                     """
                     MATCH (existing:Event)
-                    WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK']
-                    SET existing.last_seen = datetime(),
+                    WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status = $old_status
+                    SET existing.status = 'OPEN',
+                        existing.last_seen = datetime(),
                         existing.message = $msg,
-                        existing.severity = $sev
+                        existing.severity = $sev,
+                        existing.recovered_at = NULL
                 """,
                     nid=ci.get("id"),
                     mid=metric_def["id"],
+                    old_status=existing_status,
                     msg=message,
                     sev=severity,
                 )
             else:
                 snapshot = resolve_event_snapshot(session, ci.get("id"))
+
+                # --- Correlation check: find open parent event ---
+                parent_info = None
+                try:
+                    from repositories.topology_repo import find_open_parent_event
+                    parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
+                except Exception:
+                    pass  # If topology check fails, create as ROOT
+
+                if parent_info:
+                    correlation_type = "PROPAGATED"
+                    propagated_from = parent_info["parent_event_id"]
+                    root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
+                else:
+                    correlation_type = "ROOT"
+                    propagated_from = None
+                    root_cause_ci_id = ci.get("id")
+                # --- End correlation check ---
+
                 session.run(
                     """
                     MATCH (n:CI {id: $nid})
@@ -440,7 +463,10 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         service_catalog_id: $service_catalog_id,
                         service_category: $service_category,
                         service_tier: $service_tier,
-                        sla_minutes: $sla_minutes
+                        sla_minutes: $sla_minutes,
+                        propagated_from: $propagated_from,
+                        correlation_type: $correlation_type,
+                        root_cause_ci_id: $root_cause_ci_id
                     })
                     MERGE (n)-[:HAS_EVENT]->(e)
                     MERGE (e)-[:TRIGGERED_BY]->(m)
@@ -449,14 +475,30 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     mid=metric_def["id"],
                     sev=severity,
                     msg=message,
+                    propagated_from=propagated_from,
+                    correlation_type=correlation_type,
+                    root_cause_ci_id=root_cause_ci_id,
                     **snapshot,
                 )
         else:
+            # Recovery path - check if ROOT event to trigger propagation
             session.run(
                 """
                 MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
                 WHERE e.status IN ['OPEN', 'ACK']
+                  AND e.correlation_type = 'ROOT'
                 SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
+                WITH e
+                CALL {
+                    WITH e
+                    MATCH (pe:Event)
+                    WHERE pe.root_cause_ci_id = e.ci_id
+                      AND pe.correlation_type = 'PROPAGATED'
+                      AND pe.status IN ['OPEN', 'ACK']
+                    SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                    RETURN count(pe) AS propagated_recovered
+                }
+                RETURN e
             """,
                 nid=ci.get("id"),
                 mid=metric_def["id"],

@@ -174,12 +174,19 @@ def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "ci_location_name",
         "metric_name",
         "metric_protocol",
+        "propagated_from",
+        "correlation_type",
+        "root_cause_ci_id",
     }
-    return {
+    result = {
         key: value
         for key, value in summary.items()
         if key in allowed_keys and value is not None
     }
+    # Add computed propagated flag only when correlation_type is PROPAGATED
+    if summary.get("correlation_type") == "PROPAGATED":
+        result["propagated"] = True
+    return result
 
 
 def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[str, str]:

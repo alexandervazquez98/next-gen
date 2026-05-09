@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Event Correlation (Root Cause)**: When a parent CI fails, dependent CIs are marked as `PROPAGATED` instead of creating separate events. Reduces alarm noise by showing only the root cause event.
+  - New fields on Event: `propagated_from`, `correlation_type` ('ROOT'|'PROPAGATED'), `root_cause_ci_id`
+  - `find_open_parent_event()` traverses DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to 3 levels
+  - Recovery propagation: when ROOT event recovers, all PROPAGATED events with same `root_cause_ci_id` also recover
+  - API: events list includes `propagated=true` flag for PROPAGATED events
+  - Dedup: RECOVERED events are re-opened on re-breach instead of creating duplicates
+
 ## [1.5.0] — 2026-05-09
 
 ### Added
