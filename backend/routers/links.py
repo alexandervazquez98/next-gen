@@ -17,6 +17,9 @@ class MassLinkPayload(BaseModel):
     target_filter: Dict[str, Any]
     relationship: str
 
+class CiIdsPayload(BaseModel):
+    ci_ids: List[str]
+
 class MassDeletePayload(BaseModel):
     source_filter: Dict[str, Any]
     target_filter: Dict[str, Any]
@@ -59,6 +62,17 @@ async def delete_link(link: Link, current_user: User = Depends(get_current_activ
     if not check_permission(UserPermission.CI_DELETE, current_user):
         raise HTTPException(status_code=403, detail="Permission denied: CI_DELETE required")
     return link_service.delete_link(link)
+
+@router.post("/cis/relationships")
+async def get_cis_relationships(payload: CiIdsPayload, current_user: User = Depends(get_current_active_user)):
+    """
+    Batch-fetch relationship summary for a list of CI ids.
+    Returns {ci_id: {asSource: [...], asTarget: [...]}}.
+    """
+    from repositories import topology_repo
+    result = topology_repo.get_cis_relationship_summary(payload.ci_ids)
+    return result
+
 
 @router.post("/links/mass/simulate")
 async def simulate_mass_links(payload: MassLinkPayload, current_user: User = Depends(get_current_active_user)):

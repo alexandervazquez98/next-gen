@@ -326,6 +326,44 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
         return nodes, links
 
 
+def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
+    """
+    Batch-fetch relationship summary for a set of CI ids.
+    Returns {ci_id: {asSource: [{otherId, otherLabel, type}], asTarget: [...]}}.
+    Filters out system relationships (CATEGORIZED_AS, OWNED_BY, IS_MODEL).
+    Caps at 1000 ids.
+    """
+    if not ci_ids:
+        return {}
+    ci_ids = list(ci_ids)[:1000]
+
+    driver = get_db()
+    query = """
+        MATCH (a)-[r]->(b)
+        WHERE (a.id IN $ci_ids OR b.id IN $ci_ids)
+          AND (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef)
+          AND NOT type(r) IN ['CATEGORIZED_AS', 'OWNED_BY', 'IS_MODEL']
+        RETURN a.id AS source_id, COALESCE(a.name, a.id) AS source_label,
+               b.id AS target_id, COALESCE(b.name, b.id) AS target_label,
+               type(r) AS rel_type
+    """
+    with driver.session() as session:
+        results = session.run(query, ci_ids=ci_ids)
+
+    summary: dict[str, dict] = {cid: {"asSource": [], "asTarget": []} for cid in ci_ids}
+    for row in results:
+        src, tgt, rel = row["source_id"], row["target_id"], row["rel_type"]
+        src_label, tgt_label = row["source_label"], row["target_label"]
+        # If ci_ids contains source, it appears as "source" in the rel
+        if src in summary:
+            summary[src]["asSource"].append({"otherId": tgt, "otherLabel": tgt_label, "type": rel})
+        # If ci_ids contains target, it appears as "target" in the rel
+        if tgt in summary:
+            summary[tgt]["asTarget"].append({"otherId": src, "otherLabel": src_label, "type": rel})
+
+    return summary
+
+
 def create_default_ping_metric(node_id: str, node_label: str) -> None:
     """
     Create a default ICMP PING metric for a CI node when it has an IP address.

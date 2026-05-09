@@ -1,7 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { api } from '../services/api';
 import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 import { useQuery } from '@tanstack/react-query';
+import RelationshipTooltip from './RelationshipTooltip';
+import RelationshipBadge from './RelationshipBadge';
 
 interface FilterState {
     label: 'CI' | 'MetricDef';
@@ -11,6 +13,19 @@ interface FilterState {
     ids: string[]; // Explicit selection
 }
 
+interface CiRelationshipEntry {
+  otherId: string;
+  otherLabel: string;
+  type: string;
+}
+
+interface CiRelationships {
+  asSource: CiRelationshipEntry[];
+  asTarget: CiRelationshipEntry[];
+}
+
+type RelationshipMap = Map<string, CiRelationships>;
+
 interface FilterPanelProps {
     title: string;
     filter: FilterState;
@@ -18,9 +33,10 @@ interface FilterPanelProps {
     categories?: any[];
     metrics?: any[];
     availableNodes?: any[];
+    relationshipMap?: RelationshipMap;
 }
 
-const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, categories, metrics, availableNodes }) => {
+const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, categories, metrics, availableNodes, relationshipMap }) => {
     const toggleId = (id: string) => {
         const nextIds = filter.ids.includes(id)
             ? filter.ids.filter(i => i !== id)
@@ -113,7 +129,12 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
                                     onChange={() => toggleId(node.id)}
                                 />
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-[11px] font-bold text-white truncate">{node.label}</span>
+                                    {/* T6: Wrap node label in RelationshipTooltip */}
+                                    <RelationshipTooltip ciId={node.id} relationships={relationshipMap || new Map()}>
+                                        <span className="text-[11px] font-bold text-white truncate">{node.label}</span>
+                                    </RelationshipTooltip>
+                                    {/* T7: Add RelationshipBadge */}
+                                    <RelationshipBadge ciId={node.id} relationships={relationshipMap || new Map()} />
                                     <span className="text-[9px] text-neutral-500 font-mono truncate">{node.id} • {node.ip || 'No IP'} • {node.location_name}</span>
                                 </div>
                             </label>
@@ -140,6 +161,33 @@ const MassLinkEditor: React.FC = () => {
     const [simulation, setSimulation] = useState<any>(null);
     const [loading, setLoading] = useState(false);
 
+    // T4: relationshipMap state for batch relationship data
+    const [relationshipMap, setRelationshipMap] = useState<RelationshipMap>(new Map());
+
+    // T5: Debounced batch fetch for hover — captures visible node ids
+    const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingIdsRef = useRef<string[]>([]);
+
+    const fetchRelationships = useCallback((nodeIds: string[]) => {
+        if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current);
+        const ids = nodeIds;
+        fetchTimerRef.current = setTimeout(async () => {
+            if (ids.length === 0) return;
+            try {
+                const res = await api.post<Record<string, CiRelationships>>('/cis/relationships', {
+                    ci_ids: ids,
+                });
+                setRelationshipMap(prev => {
+                    const next = new Map(prev);
+                    Object.entries(res).forEach(([ciId, rels]) => next.set(ciId, rels));
+                    return next;
+                });
+            } catch (e) {
+                console.error("Failed to fetch relationships", e);
+            }
+        }, 150);
+    }, []);
+
     const { data: categories } = useCategoriesQuery();
     const { data: metrics } = useQuery({ queryKey: ['metrics'], queryFn: () => api.get<any[]>('/metrics') });
     const { data: allNodes } = useQuery({ queryKey: ['nodes'], queryFn: () => api.get<any[]>('/nodes') });
@@ -147,7 +195,7 @@ const MassLinkEditor: React.FC = () => {
     const filterNodes = (filter: FilterState) => {
         if (!allNodes) return [];
         return allNodes.filter(n => {
-            const matchesLayer = !filter.layer || n.type === filter.layer;
+            const matchesLayer = !filter.layer || n.category === filter.layer || n.type === filter.layer;
             const s = filter.searchTerm.toLowerCase();
             const matchesSearch = !filter.searchTerm ||
                 n.label?.toLowerCase().includes(s) ||
@@ -160,6 +208,16 @@ const MassLinkEditor: React.FC = () => {
 
     const sourceAvailable = useMemo(() => filterNodes(sourceFilter), [allNodes, sourceFilter.layer, sourceFilter.searchTerm]);
     const targetAvailable = useMemo(() => filterNodes(targetFilter), [allNodes, targetFilter.layer, targetFilter.searchTerm]);
+
+    // T5: Trigger batch fetch when visible node sets change
+    useEffect(() => {
+        const srcIds = sourceAvailable.map(n => n.id);
+        const tgtIds = targetAvailable.map(n => n.id);
+        const allIds = [...new Set([...srcIds, ...tgtIds])];
+        if (allIds.length > 0) {
+            fetchRelationships(allIds);
+        }
+    }, [sourceAvailable, targetAvailable, fetchRelationships]);
 
     const handleReset = () => {
         setSourceFilter({ ...initialFilter });
@@ -272,6 +330,7 @@ const MassLinkEditor: React.FC = () => {
                     categories={categories}
                     metrics={metrics}
                     availableNodes={sourceAvailable}
+                    relationshipMap={relationshipMap}
                 />
 
                 <div className="flex flex-col justify-center items-center px-2 shrink-0">
@@ -287,6 +346,7 @@ const MassLinkEditor: React.FC = () => {
                     categories={categories}
                     metrics={metrics}
                     availableNodes={targetAvailable}
+                    relationshipMap={relationshipMap}
                 />
             </div>
 
