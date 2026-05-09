@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-05-09
+
+### Added
+- **CI Relationship Validator**: Add pre-creation validation to mass link editor and single-link creation. `POST /cis/relationships` batch endpoint returns CI relationship summaries. `RelationshipTooltip` + `RelationshipBadge` integrated into `MassLinkEditor` FilterPanel showing existing connections on hover.
+- **Validation Guard**: `execute_bulk_links` warns when CIs already have the target relationship type before MERGE.
+- **Simulate Enrichment**: `/links/mass/simulate` response includes `has_existing_relationships` with source/target CI lists.
+
+### Fixed
+- **Layer Filter**: Fixed `n.category` vs `n.type` mismatch — layer filter now checks both fields.
+- **Debounce Race**: Fixed timeout race condition — IDs now captured via closure instead of ref.
+
 ## [1.4.0] — 2026-05-09
 
 ### Added
@@ -26,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Testing
 - 7 new test files covering models, repo, service, router, integration, MQTT subscriber
 
-## [1.2.0] — 2026-05-02
+## [1.3.0] — 2026-05-02
 
 ### Fixed
 - **CMDB Correlations**: Fixed link query using OR logic so CIs properly display their correlations in the graph view.

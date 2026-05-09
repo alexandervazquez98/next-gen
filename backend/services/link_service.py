@@ -89,7 +89,7 @@ def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: 
     Enforces data scoping.
     """
     is_admin = current_user.role == "ADMIN"
-    
+
     if not is_admin:
         if source_filter.get("location") and source_filter["location"] not in current_user.allowed_locations:
              raise ValueError(f"Unauthorized location in source filter: {source_filter['location']}")
@@ -97,20 +97,42 @@ def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: 
              raise ValueError(f"Unauthorized location in target filter: {target_filter['location']}")
 
     data = topology_repo.count_potential_links(
-        source_filter, target_filter, 
-        allowed_locations=current_user.allowed_locations, 
+        source_filter, target_filter,
+        allowed_locations=current_user.allowed_locations,
         is_admin=is_admin
     )
-    
+
     count = data["total"]
-    
+
+    # T8: Enrich with existing relationship info for the simulate response
+    src_ids, tgt_ids = _get_filtered_node_ids(source_filter, target_filter, is_admin, current_user.allowed_locations)
+    all_ids = list(set(src_ids + tgt_ids))
+    existing_rels = topology_repo.get_cis_relationship_summary(all_ids)
+
+    sources_with_rels = [sid for sid in src_ids if existing_rels.get(sid, {}).get("asSource")]
+    targets_with_rels = [tid for tid in tgt_ids if existing_rels.get(tid, {}).get("asTarget")]
+
     return {
         "potential_links": count,
         "source_samples": data["source_samples"],
         "target_samples": data["target_samples"],
         "is_safe": count <= 500,
-        "message": "Ready to execute" if count <= 500 else "Too many potential links (> 500). Please refine filters."
+        "message": "Ready to execute" if count <= 500 else "Too many potential links (> 500). Please refine filters.",
+        "has_existing_relationships": {
+            "source": sources_with_rels,
+            "target": targets_with_rels,
+        }
     }
+
+def _get_filtered_node_ids(source_filter: dict, target_filter: dict, is_admin: bool, allowed_locations: Optional[list]) -> tuple[list[str], list[str]]:
+    """Extract unique node ids from source and target filters."""
+    from repositories import topology_repo
+    src_nodes = topology_repo._get_nodes_by_filter(source_filter, is_admin, allowed_locations)
+    tgt_nodes = topology_repo._get_nodes_by_filter(target_filter, is_admin, allowed_locations)
+    src_ids = list(set(n["id"] for n in src_nodes))
+    tgt_ids = list(set(n["id"] for n in tgt_nodes))
+    return src_ids, tgt_ids
+
 
 def execute_bulk_links(current_user: User, source_filter: dict, target_filter: dict, relationship: str) -> Dict[str, Any]:
     """
@@ -118,22 +140,50 @@ def execute_bulk_links(current_user: User, source_filter: dict, target_filter: d
     """
     sim = simulate_bulk_links(current_user, source_filter, target_filter)
     if not sim["is_safe"]:
-        return {"success": False, "message": sim["message"]}
-    
+        affected_sources = sim.get("has_existing_relationships", {}).get("source", [])
+        result = {"success": False, "message": sim["message"]}
+        if affected_sources:
+            result["existing_relationships_warning"] = (
+                f"Some source CIs already have outgoing {relationship} relationships: "
+                + ", ".join(affected_sources[:10])
+                + (f" and {len(affected_sources) - 10} more" if len(affected_sources) > 10 else "")
+            )
+        return result
+
     is_admin = current_user.role == "ADMIN"
+    allowed_locations = current_user.allowed_locations
+
+    src_ids, tgt_ids = _get_filtered_node_ids(source_filter, target_filter, is_admin, allowed_locations)
+    all_ids = list(set(src_ids + tgt_ids))
+    existing_rels = topology_repo.get_cis_relationship_summary(all_ids)
+
+    affected_sources = [
+        sid for sid in src_ids
+        if any(r["type"] == relationship for r in existing_rels.get(sid, {}).get("asSource", []))
+    ]
+
     report = topology_repo.execute_mass_links(
         source_filter, target_filter, relationship,
-        allowed_locations=current_user.allowed_locations,
+        allowed_locations=allowed_locations,
         is_admin=is_admin
     )
-    
-    return {
-        "success": True, 
+
+    result = {
+        "success": True,
         "message": f"Operation complete: {report['created']} new links created, {report['verified']} links verified.",
         "created_count": report['created'],
         "verified_count": report['verified'],
-        "total": report['total']
+        "total": report['total'],
     }
+
+    if affected_sources:
+        result["existing_relationships_warning"] = (
+            f"Some source CIs already have outgoing {relationship} relationships: "
+            + ", ".join(affected_sources[:10])
+            + (f" and {len(affected_sources) - 10} more" if len(affected_sources) > 10 else "")
+        )
+
+    return result
 
 def execute_bulk_delete(current_user: User, source_filter: dict, target_filter: dict, relationship: str) -> Dict[str, Any]:
     """
