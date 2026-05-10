@@ -34,6 +34,7 @@ const getHeaders = (isJson = true) => {
  */
 async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
     const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+    const responseType = (config as RequestInit & { responseType?: string }).responseType;
 
     // Build headers — start with any caller-provided headers, then apply defaults
     const callerHeaders = config.headers as Record<string, string> || {};
@@ -65,6 +66,10 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new ApiError(errorData.detail || response.statusText, response.status);
+    }
+
+    if (responseType === 'blob') {
+        return response.blob() as unknown as T;
     }
 
     // Return JSON if content exists

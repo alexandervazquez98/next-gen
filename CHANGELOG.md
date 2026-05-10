@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Nexgen-frontend proxy hostname conflict**: Vite proxy fallback changed from `localhost:8000` to `nexgen_backend:8000` to fix 404 on `GET /api/dictionaries/template-csv` caused by port conflict with netai-backend
 - **Neo4j ResultConsumedError in topology_repo**: `get_cis_relationship_summary()` now consumes result set inside session context, fixing 500 error on `POST /api/cis/relationships`
 - **Dictionary CSV template route ordering**: `GET /api/dictionaries/template-csv` now registers before `GET /api/dictionaries/{dictionary_id}` so FastAPI does not treat `template-csv` as a dictionary ID
+- **CSV template download blob handling**: `api.ts` now respects `responseType: 'blob'` before content-type inspection so `URL.createObjectURL()` receives a real `Blob`
+- **RelationshipTooltip hook ordering**: removed the early return that executed before `useEffect`, fixing the React hooks order crash in mass link views
 
 ## [1.8.0] — 2026-05-10
 

@@ -27,11 +27,6 @@ const RelationshipTooltip: React.FC<RelationshipTooltipProps> = ({ ciId, relatio
 
   const rels = relationships.get(ciId);
 
-  // Early return AFTER all hooks — never before
-  if (!rels || (rels.asSource.length === 0 && rels.asTarget.length === 0)) {
-    return <>{children}</>;
-  }
-
   // Portal DOM leak fix: manage portal via ref with useEffect cleanup
   // When visible becomes true, create the portal container; when false or unmount, remove it
   useEffect(() => {
