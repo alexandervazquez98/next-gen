@@ -62,6 +62,14 @@ function formatOpenAge(event: Event): string {
     return `${minutes}m`;
 }
 
+function getOpenAgeTone(event: Event): string {
+    const totalMinutes = Math.floor(getEventOpenAgeMs(event) / 60000);
+
+    if (totalMinutes >= 60) return 'text-red-400';
+    if (totalMinutes >= 15) return 'text-yellow-300';
+    return 'text-emerald-300';
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1122,7 +1130,7 @@ const MonitoringConsole: React.FC = () => {
                                                         {new Date(evt.created_at).toLocaleTimeString()}
                                                         <div className="text-[10px] opacity-50">{new Date(evt.created_at).toLocaleDateString()}</div>
                                                     </td>
-                                                    <td className="p-3 text-xs font-bold text-neutral-200 whitespace-nowrap">{formatOpenAge(evt)}</td>
+                                                    <td className={`p-3 text-xs font-bold whitespace-nowrap ${getOpenAgeTone(evt)}`}>{formatOpenAge(evt)}</td>
                                                     <td className="p-3 font-bold text-white">{evt.ci_name || evt.ci_id}</td>
                                                     <td className="p-3 text-neutral-300">
                                                         <div className="flex flex-col">
