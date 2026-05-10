@@ -36,6 +36,15 @@ const metricA: MetricDef = {
   },
 };
 
+const metricADetail: MetricDef = {
+  ...metricA,
+  operator: '<=',
+  warning: 55,
+  critical: 25,
+  unit: 'ms',
+  polling_interval: 300,
+};
+
 const metricB: MetricDef = {
   id: 'mem.usage',
   protocol: 'SNMP',
@@ -87,6 +96,10 @@ const setupApiGet = (options?: {
     'cpu.load': usageData,
     'mem.usage': { count: 0, cis: [] },
   };
+  const metricDetails = {
+    'cpu.load': metricADetail,
+    'mem.usage': metricB,
+  };
   const nodes = options?.nodes ?? [
     { id: 'ci-1', name: 'router-01', label: 'router-01', ip: '10.0.0.1' },
     { id: 'ci-2', name: 'router-02', label: 'router-02', ip: '10.0.0.2' },
@@ -95,6 +108,8 @@ const setupApiGet = (options?: {
 
   mocks.apiGet.mockImplementation(async (endpoint: string) => {
     if (endpoint === '/metrics') return metrics;
+    if (endpoint === '/metrics/cpu.load') return metricDetails['cpu.load'];
+    if (endpoint === '/metrics/mem.usage') return metricDetails['mem.usage'];
     if (endpoint === '/hardware') return hardware;
     if (endpoint === '/metrics/cpu.load/usage') return usage['cpu.load'];
     if (endpoint === '/metrics/mem.usage/usage') return usage['mem.usage'];
@@ -282,11 +297,15 @@ describe('MetricsManager', () => {
       expect(screen.getByText('Edit Metric')).toBeInTheDocument();
       expect(screen.getByDisplayValue('cpu.load')).toBeDisabled();
       expect(screen.getByDisplayValue('CPU load metric')).toBeInTheDocument();
+      expect((getInputByLabel(/threshold rule/i) as HTMLSelectElement).value).toBe('<=');
+      expect(screen.getByDisplayValue('55')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('25')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Cisco')).toBeInTheDocument();
       expect(screen.getByDisplayValue('INFRASTRUCTURE')).toBeInTheDocument();
       // router-01 is shown as a chip (Quick Add Explicit CIs), not as an input display value
       expect(screen.getAllByText('router-01').length).toBeGreaterThan(0);
       expect(screen.getAllByText(/cisco asr1001/i).length).toBeGreaterThan(0);
+      expect(mocks.apiGet).toHaveBeenCalledWith('/metrics/cpu.load');
     });
 
     it('edits an existing metric and saves the updated payload', async () => {
@@ -325,6 +344,8 @@ describe('MetricsManager', () => {
       const usageDeferred = createDeferred<typeof usageData>();
       mocks.apiGet.mockImplementation((endpoint: string) => {
         if (endpoint === '/metrics') return Promise.resolve([metricA, metricB]);
+        if (endpoint === '/metrics/cpu.load') return Promise.resolve(metricADetail);
+        if (endpoint === '/metrics/mem.usage') return Promise.resolve(metricB);
         if (endpoint === '/hardware') return Promise.resolve(hardwareModels);
         if (endpoint === '/metrics/cpu.load/usage') return usageDeferred.promise;
         if (endpoint === '/metrics/mem.usage/usage') return Promise.resolve({ count: 0, cis: [] });
@@ -334,6 +355,7 @@ describe('MetricsManager', () => {
       renderMetricsManager();
       fireEvent.click(await screen.findByText('cpu.load'));
 
+      await screen.findByText('Edit Metric');
       expect(await screen.findByText(/loading coverage/i)).toBeInTheDocument();
 
       usageDeferred.resolve(usageData);

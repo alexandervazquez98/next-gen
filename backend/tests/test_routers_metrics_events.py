@@ -210,6 +210,54 @@ class TestMetricsList:
         assert data[0]["id"] == "cpu-load"
         assert data[0]["protocol"] == "SNMP"
 
+    def test_get_single_metric_returns_full_payload(self, mock_neo4j_driver):
+        class DictRecord(dict):
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+        class FakeNode(dict):
+            def get(self, key, default=None):
+                return super().get(key, default)
+
+        class SingleResult:
+            def single(self):
+                return DictRecord(
+                    {
+                        "m": FakeNode(
+                            {
+                                "id": "cpu-load",
+                                "protocol": "SNMP",
+                                "warning": 80.0,
+                                "critical": 95.0,
+                                "oid": "1.3.6.1.2.1.25.3.3.1.2",
+                                "dataType": "INTEGER",
+                                "unit": "%",
+                                "description": "CPU Load",
+                                "operator": ">=",
+                                "criticality": 2,
+                                "polling_interval": 120,
+                                "applicable_to": '{"brands": ["cisco"], "models": ["asr1000"]}',
+                            }
+                        )
+                    }
+                )
+
+        mock_session = MagicMock()
+        mock_session.run.return_value = SingleResult()
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.get("/api/metrics/cpu-load")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "cpu-load"
+        assert data["warning"] == 80.0
+        assert data["critical"] == 95.0
+        assert data["operator"] == ">="
+        assert data["polling_interval"] == 120
+        assert data["applicable_to"]["models"] == ["asr1000"]
+
     def test_list_metrics_no_auth_required(self):
         """Metrics list should NOT require authentication (documented gap)."""
         # No auth headers, no overrides — should still succeed (200, not 401)

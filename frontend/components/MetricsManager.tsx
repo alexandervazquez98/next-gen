@@ -86,19 +86,28 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
         }
     };
 
-    const handleEdit = (metric: MetricDef) => {
-        setSelectedMetric(metric);
-        setFormData(metric);
-        setIsEditing(true);
-        // Parse criteria
-        const app = metric.applicable_to || {};
+    const loadMetricDetail = async (metricId: string) => {
+        const detail = await api.get<MetricDef>(`/metrics/${metricId}`);
+        setSelectedMetric(detail);
+        setFormData(detail);
+        const app = detail.applicable_to || {};
         setCriteria({
             brands: (app.brands || []).join(', '),
             models: (app.models || []).join(', '),
             layers: (app.layers || []).join(', '),
             names: (app.names || []).join(', '),
-            excluded_names: (app.excluded_names || []).join(', ')
+            excluded_names: (app.excluded_names || []).join(', '),
         });
+        setIsEditing(true);
+    };
+
+    const handleEdit = async (metric: MetricDef) => {
+        try {
+            await loadMetricDetail(metric.id);
+        } catch (e) {
+            console.error(e);
+            alert('Error loading metric details');
+        }
     };
 
     const handleCreate = () => {

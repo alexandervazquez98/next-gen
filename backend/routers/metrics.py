@@ -40,6 +40,15 @@ async def get_metrics():
     return metric_service.get_metrics()
 
 
+@router.get("/{metric_id}", response_model=Dict[str, Any])
+async def get_metric(metric_id: str):
+    """Fetch a single metric definition."""
+    metric = metric_service.get_metric(metric_id)
+    if not metric:
+        raise HTTPException(status_code=404, detail="Metric not found")
+    return metric
+
+
 @router.post("")
 async def create_metric(
     metric: MetricDef,

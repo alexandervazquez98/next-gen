@@ -82,6 +82,38 @@ def get_metrics() -> List[Dict[str, Any]]:
             })
         return metrics
 
+
+def get_metric(metric_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a single metric definition with its persisted fields."""
+    driver = get_db()
+    with driver.session() as session:
+        record = session.run("MATCH (m:MetricDef {id: $id}) RETURN m", id=metric_id).single()
+        if not record:
+            return None
+
+        m = record["m"]
+        criteria = {}
+        if m.get("applicable_to"):
+            try:
+                criteria = json.loads(m.get("applicable_to"))
+            except Exception:
+                criteria = {}
+
+        return {
+            "id": m.get("id"),
+            "protocol": m.get("protocol"),
+            "warning": m.get("warning"),
+            "critical": m.get("critical"),
+            "oid": m.get("oid"),
+            "dataType": m.get("dataType"),
+            "unit": m.get("unit"),
+            "description": m.get("description"),
+            "operator": m.get("operator", ">="),
+            "criticality": m.get("criticality", 1),
+            "applicable_to": criteria,
+            "polling_interval": m.get("polling_interval", 60),
+        }
+
 def create_metric(metric: MetricDef) -> Dict[str, str]:
     """
     Define a new Metric for monitoring.

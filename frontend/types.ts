@@ -156,6 +156,7 @@ export interface MetricDef {
   criticality?: 1 | 2 | 3; // 1: Info, 2: Warning, 3: Exception (Critical)
   operator?: string; // >=, <=, ==, !=
   applicable_to?: ApplicabilityCriteria;
+  polling_interval?: number;
 }
 
 export interface ApplicabilityCriteria {
