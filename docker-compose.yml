@@ -88,7 +88,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_TARGET=${VITE_API_TARGET:-http://backend:8000}
+      - VITE_API_TARGET=${VITE_API_TARGET:-http://nexgen_backend:8000}
     restart: unless-stopped
 
   # Engines / Workers
