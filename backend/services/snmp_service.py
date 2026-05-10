@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Any, Dict
 
 from database import get_db
+from postgres_db import SessionLocal
+from repositories.metric_repo import insert_metric_value
 from services.metric_service import metric_matches_ci
 
 logger = logging.getLogger(__name__)
@@ -283,6 +285,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
     severity = "INFO"
     is_breach = False
     message = f"Metric {metric_def.get('name', metric_def['id'])} is OK. Value: {val}"
+    numeric_value = None
 
     if poll_status != "OK":
         status = "CRITICAL"
@@ -293,6 +296,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
     elif val is not None:
         try:
             num_val = float(val)
+            numeric_value = num_val
             is_availability_metric = (
                 metric_def.get("protocol") == "ICMP"
                 or metric_def.get("name") == "mariadb-GS"
@@ -334,6 +338,20 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                 message = f"Service/Host Down: {metric_def.get('name')}"
         except ValueError:
             pass
+
+    if numeric_value is not None:
+        pg_db = SessionLocal()
+        try:
+            insert_metric_value(pg_db, ci.get("id"), metric_def["id"], numeric_value)
+        except Exception:
+            pg_db.rollback()
+            logger.exception(
+                "[Collector] Failed to persist metric %s for CI %s",
+                metric_def.get("id"),
+                ci.get("id"),
+            )
+        finally:
+            pg_db.close()
 
     with driver.session() as session:
         session.run(

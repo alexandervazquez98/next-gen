@@ -1,5 +1,6 @@
 import importlib
 import sys
+from unittest.mock import MagicMock, patch
 
 
 def _load_snmp_service_module():
@@ -88,3 +89,33 @@ def test_store_metric_result_writes_snapshot_fields_on_new_event(mock_neo4j_driv
     assert create_event_query["params"]["service_catalog_id"] == "sla-002"
     assert create_event_query["params"]["service_tier"] == "Platinum"
     assert create_event_query["params"]["sla_minutes"] == 30
+
+
+def test_store_metric_result_persists_numeric_values_to_timescale(mock_neo4j_driver):
+    snmp_service = _load_snmp_service_module()
+
+    fake_pg = MagicMock()
+
+    with (
+        patch("services.snmp_service.SessionLocal", return_value=fake_pg),
+        patch("services.snmp_service.insert_metric_value") as mock_insert,
+    ):
+        snmp_service.store_metric_result(
+            {"id": "ci-003", "ip": "10.0.0.3", "name": "Core-Router"},
+            {
+                "id": "cmb450i-cpu-util",
+                "name": "cmb450i-cpu-util",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 95,
+                "warning": 80,
+                "operator": ">=",
+            },
+            "17",
+            "OK",
+            None,
+            mock_neo4j_driver,
+        )
+
+    mock_insert.assert_called_once_with(fake_pg, "ci-003", "cmb450i-cpu-util", 17.0)
+    fake_pg.close.assert_called_once()
