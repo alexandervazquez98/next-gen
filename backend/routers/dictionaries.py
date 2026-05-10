@@ -1,7 +1,10 @@
 """
 Dictionary Router — CRUD endpoints for MetricDictionary nodes.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import csv
+import io
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, Form
+from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
@@ -272,3 +275,169 @@ async def delete_dictionary(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dictionary not found")
     return {"message": "Dictionary deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Bulk CSV Upload Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/template-csv")
+async def get_template_csv(
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Download a CSV template pre-populated with distinct brand+model pairs
+    from existing CI nodes, plus one example row.
+    """
+    brands_models = dictionary_service.get_template_brands_models()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["brand", "model", "name", "polling_interval", "metric_ids"])
+
+    # One example row (user can remove)
+    writer.writerow(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
+
+    # Pre-populate with existing brand+model pairs
+    for brand, model in brands_models:
+        writer.writerow([brand, model, "", "60", ""])
+
+    output.seek(0)
+    csv_content = output.getvalue()
+
+    return StreamingResponse(
+        io.BytesIO(csv_content.encode("utf-8")),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=dictionary_template.csv",
+        },
+    )
+
+
+class BulkValidateResponse(BaseModel):
+    rows: List[Dict[str, Any]]
+    errors: List[Dict[str, Any]]
+    valid_count: int
+    error_count: int
+
+
+@router.post("/bulk", response_model=BulkValidateResponse)
+async def bulk_upload(
+    file: UploadFile,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Parse and validate a CSV file for bulk dictionary creation.
+    Returns preview of parsed rows + errors. No commit.
+    """
+    _require_editor(current_user)
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File must be a .csv",
+        )
+
+    content = await file.read()
+    # Reject files > 10k rows as a safeguard
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    if len(lines) > 10001:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CSV exceeds 10,000 row limit",
+        )
+
+    try:
+        reader = csv.DictReader(lines)
+        rows = []
+        for i, row in enumerate(reader):
+            row["row_index"] = i + 2  # +2 because row 1 is header, csv is 1-indexed
+            rows.append(row)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"CSV parse error: {str(e)}",
+        )
+
+    valid_rows, errors = dictionary_service.bulk_validate_rows(rows)
+
+    return BulkValidateResponse(
+        rows=valid_rows,
+        errors=errors,
+        valid_count=len(valid_rows),
+        error_count=len(errors),
+    )
+
+
+class BulkValidateSampleRequest(BaseModel):
+    rows: List[Dict[str, Any]]
+
+
+@router.post("/bulk/validate-sample")
+async def bulk_validate_sample(
+    body: BulkValidateSampleRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Run SNMP polling validation on a 10% random sample of CIs per brand+model.
+    Accepts validated rows from POST /bulk. Returns aggregated SNMP results.
+    """
+    validated_rows = body.rows
+    if not validated_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No rows provided",
+        )
+
+    results = dictionary_service.bulk_validate_snmp_sample(validated_rows)
+    return results
+
+
+class BulkConfirmRequest(BaseModel):
+    rows: List[Dict[str, Any]]
+
+
+class BulkConfirmResponse(BaseModel):
+    created: List[Dict[str, Any]]
+    count: int
+
+
+@router.post("/bulk/confirm", response_model=BulkConfirmResponse)
+async def bulk_confirm(
+    body: BulkConfirmRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Atomically create all MetricDictionary nodes and HAS_METRIC links
+    from previously validated rows. Returns created dictionary summaries.
+    """
+    _require_editor(current_user)
+
+    validated_rows = body.rows
+    if not validated_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No rows provided",
+        )
+
+    try:
+        validated_rows, errors = dictionary_service.bulk_validate_rows(body.rows)
+        if errors:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Re-validation failed", "errors": errors},
+            )
+        created = dictionary_service.bulk_create_dictionaries(validated_rows)
+        return BulkConfirmResponse(created=created, count=len(created))
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": str(e)},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Bulk creation failed",
+        )
