@@ -325,7 +325,7 @@ const DictionaryBulkUpload: React.FC<DictionaryBulkUploadProps> = ({ onClose }) 
                             : 'text-neutral-500 hover:text-white'
                     }`}
                 >
-                    Upload CSV
+                    Upload File
                 </button>
                 <button
                     onClick={() => setActiveTab('apply')}
@@ -431,7 +431,7 @@ const UploadPanel: React.FC<UploadPanelProps> = ({
 
                 <label className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg font-bold text-sm cursor-pointer transition-colors">
                     <span className="material-symbols-outlined text-sm">upload</span>
-                    {uploading ? 'Parsing...' : 'Upload CSV'}
+                    {uploading ? 'Parsing...' : 'Upload XLSX/CSV'}
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -538,7 +538,7 @@ const UploadPanel: React.FC<UploadPanelProps> = ({
                                     onClick={onReset}
                                     className="mt-2 px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg text-sm font-bold transition-colors"
                                 >
-                                    Upload Another CSV
+                                    Upload Another File
                                 </button>
                             </div>
                         )}

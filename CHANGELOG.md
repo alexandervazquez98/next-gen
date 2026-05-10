@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CSV template download blob handling**: `api.ts` now respects `responseType: 'blob'` before content-type inspection so `URL.createObjectURL()` receives a real `Blob`
 - **RelationshipTooltip hook ordering**: removed the early return that executed before `useEffect`, fixing the React hooks order crash in mass link views
 - **Dictionary template visual cleanup**: template download now returns `.xlsx` with brand/model references on a separate sheet, and bulk upload accepts `.xlsx` as well as `.csv`
+- **Dictionary upload copy consistency**: frontend labels now say `XLSX/CSV` or generic `File` so the UI matches the accepted upload formats
 
 ## [1.8.0] — 2026-05-10
 
