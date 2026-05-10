@@ -134,7 +134,7 @@ def get_metric_usage(metric_id: str) -> Dict[str, Any]:
         # 1. Base Query: CIs that already have this metric assigned/collected
         query = """
             MATCH (n:CI)-[:HAS_METRIC]->(m:MetricDef {id: $id})
-            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand
+            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand, n.layer as layer
         """
         
         # 2. Add CIs matching criteria candidates, then filter with the same applicability logic used elsewhere.

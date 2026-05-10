@@ -142,3 +142,44 @@ class TestMetricMatching:
         }
 
         assert metric_matches_ci(criteria, {"id": "ci-1", "name": "Router-01", "brand": "Cisco"}) is False
+
+
+class TestMetricUsageQuery:
+    def test_get_metric_usage_returns_consistent_union_columns(self):
+        from services.metric_service import get_metric_usage
+
+        seen_queries = []
+
+        class SingleResult:
+            def single(self):
+                return {"apt": '{"brands": ["Cambium Networks"], "models": ["450i"], "excluded_names": []}'}
+
+        class ListResult(list):
+            pass
+
+        class FakeSession:
+            def run(self, query, **params):
+                return side_effect(query, **params)
+
+        class FakeDriver:
+            def session(self):
+                return self
+
+            def __enter__(self):
+                return FakeSession()
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def side_effect(query, **params):
+            seen_queries.append(query)
+            if "RETURN m.applicable_to as apt" in query:
+                return SingleResult()
+
+            return ListResult([])
+
+        with patch("services.metric_service.get_db", return_value=FakeDriver()):
+            get_metric_usage("cmb450i-cpu-util")
+
+        metric_query = next(query for query in seen_queries if "MATCH (n:CI)-[:HAS_METRIC]" in query)
+        assert metric_query.count("RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand, n.layer as layer") == 2
