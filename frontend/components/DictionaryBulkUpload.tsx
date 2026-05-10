@@ -141,7 +141,7 @@ const DictionaryBulkUpload: React.FC<DictionaryBulkUploadProps> = ({ onClose }) 
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'dictionary_template.csv';
+            a.download = 'dictionary_template.xlsx';
             a.click();
             URL.revokeObjectURL(url);
         });
@@ -426,7 +426,7 @@ const UploadPanel: React.FC<UploadPanelProps> = ({
                     className="flex items-center gap-2 px-4 py-2 bg-cyan-900/40 hover:bg-cyan-800/40 border border-cyan-700/50 text-cyan-400 rounded-lg font-bold text-sm transition-colors"
                 >
                     <span className="material-symbols-outlined text-sm">download</span>
-                    Download Template CSV
+                    Download Template XLSX
                 </button>
 
                 <label className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg font-bold text-sm cursor-pointer transition-colors">
@@ -435,7 +435,7 @@ const UploadPanel: React.FC<UploadPanelProps> = ({
                     <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".csv"
+                        accept=".csv,.xlsx"
                         onChange={onFileChange}
                         className="hidden"
                     />
@@ -549,7 +549,7 @@ const UploadPanel: React.FC<UploadPanelProps> = ({
             {uploadStep === 'idle' && (
                 <div className="flex flex-col items-center justify-center h-48 text-neutral-500 border border-dashed border-white/10 rounded-xl">
                     <span className="material-symbols-outlined text-4xl mb-2">upload_file</span>
-                    <p className="text-sm italic">Download the template, fill it, then upload the CSV</p>
+                    <p className="text-sm italic">Download the template, fill it in the main sheet, and upload the CSV or XLSX</p>
                 </div>
             )}
         </div>
