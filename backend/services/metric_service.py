@@ -7,6 +7,49 @@ from models.core import MetricDef
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_criteria_values(values: List[str]) -> List[str]:
+    return [value.strip().lower() for value in values if isinstance(value, str) and value.strip()]
+
+
+def metric_matches_ci(criteria: Optional[Dict[str, List[str]]], ci: Dict[str, Any]) -> bool:
+    criteria = criteria or {}
+
+    ci_name = str(ci.get("name") or "").strip().lower()
+    ci_id = str(ci.get("id") or "").strip().lower()
+    ci_brand = str(ci.get("brand") or "").strip().lower()
+    ci_model = str(ci.get("model") or "").strip().lower()
+    ci_layer = str(ci.get("layer") or "").strip().lower()
+
+    requested_names = _normalize_criteria_values(criteria.get("names", []))
+    excluded_names = _normalize_criteria_values(criteria.get("excluded_names", []))
+    requested_brands = _normalize_criteria_values(criteria.get("brands", []))
+    requested_models = _normalize_criteria_values(criteria.get("models", []))
+    requested_layers = _normalize_criteria_values(criteria.get("layers", []))
+
+    if requested_names and ci_name not in requested_names and ci_id not in requested_names:
+        return False
+
+    if requested_brands and ci_brand not in requested_brands:
+        return False
+
+    if requested_models and ci_model not in requested_models:
+        return False
+
+    if requested_layers and ci_layer not in requested_layers:
+        return False
+
+    has_positive_filters = any(
+        [requested_names, requested_brands, requested_models, requested_layers]
+    )
+    if not has_positive_filters:
+        return False
+
+    if excluded_names and (ci_name in excluded_names or ci_id in excluded_names):
+        return False
+
+    return True
+
 def get_metrics() -> List[Dict[str, Any]]:
     """
     Fetch all Metric Definitions.
@@ -94,23 +137,28 @@ def get_metric_usage(metric_id: str) -> Dict[str, Any]:
             RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand
         """
         
-        # 2. Add CIs matching criteria (if any)
+        # 2. Add CIs matching criteria candidates, then filter with the same applicability logic used elsewhere.
         if models or brands or layers or names:
             query += """
             UNION
             MATCH (n:CI)
-            WHERE (n.model IN $models OR n.brand IN $brands OR n.layer IN $layers OR n.name IN $names OR n.id IN $names)
-            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand
+            WHERE (
+                ($models <> [] AND n.model IN $models)
+                OR ($brands <> [] AND n.brand IN $brands)
+                OR ($layers <> [] AND n.layer IN $layers)
+                OR ($names <> [] AND (n.name IN $names OR n.id IN $names))
+            )
+            RETURN n.id as id, n.name as name, n.ip as ip, n.model as model, n.brand as brand, n.layer as layer
             """
-            
+
         result = session.run(query, id=metric_id, models=models, brands=brands, layers=layers, names=names)
         cis = [dict(record) for record in result]
         
         # Deduplicate and Apply Exclusions
         unique_cis = {}
         for ci in cis:
-             if ci['name'] not in excluded_names and ci['id'] not in excluded_names:
-                 unique_cis[ci['id']] = ci
+            if metric_matches_ci(criteria, ci):
+                unique_cis[ci['id']] = ci
         
         cis_list = list(unique_cis.values())
         return {"count": len(cis_list), "cis": cis_list, "criteria": criteria}
@@ -147,12 +195,6 @@ def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
             return []
         
         node = record["n"]
-        brand = (node.get("brand") or "").strip().lower()
-        model = (node.get("model") or "").strip().lower()
-        layer = (node.get("layer") or "").strip().lower()
-        node_name = (node.get("name") or "").strip().lower()
-        node_ci_id = (node.get("id") or "").strip().lower()
-        
         # 2. Fetch All Metric Definitions
         res_metrics = session.run("MATCH (m:MetricDef) RETURN m")
         applicable_metrics = []
@@ -165,32 +207,10 @@ def get_applicable_metrics(node_id: str) -> List[Dict[str, Any]]:
                 
             try:
                 criteria = json.loads(criteria_json)
-                
-                # Check specifics (Direct Name Match)
-                req_names = [n.strip().lower() for n in criteria.get("names", [])]
-                if req_names and (node_name in req_names or node_ci_id in req_names):
+                if metric_matches_ci(criteria, node):
                     applicable_metrics.append({
                         "id": m.get("id"),
                         "name": m.get("id"),
-                        "description": m.get("description"),
-                        "unit": m.get("unit")
-                    })
-                    continue
-
-                # Check Categories (Brand/Model/Layer)
-                req_brands = [b.strip().lower() for b in criteria.get("brands", [])]
-                req_models = [m.strip().lower() for m in criteria.get("models", [])]
-                req_layers = [l.strip().lower() for l in criteria.get("layers", [])]
-                
-                match = False
-                if req_brands and brand in req_brands: match = True
-                if req_models and model in req_models: match = True
-                if req_layers and layer in req_layers: match = True
-                
-                if match:
-                    applicable_metrics.append({
-                        "id": m.get("id"),
-                        "name": m.get("id"), 
                         "description": m.get("description"),
                         "unit": m.get("unit")
                     })

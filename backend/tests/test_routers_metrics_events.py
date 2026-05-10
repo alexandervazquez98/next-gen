@@ -432,6 +432,63 @@ class TestMetricsUsage:
         assert "count" in data
         assert "criteria" in data
 
+    def test_metric_usage_filters_union_candidates_with_and_logic(self, mock_neo4j_driver):
+        """Usage should not count brand-only matches when model filter is also required."""
+
+        class DictRecord(dict):
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+        call_count = [0]
+
+        def mock_run(query, **params):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return MagicMock(
+                    single=MagicMock(
+                        return_value=DictRecord(
+                            {
+                                "apt": '{"brands": ["Cambium Networks"], "models": ["450i"], "excluded_names": []}'
+                            }
+                        )
+                    )
+                )
+
+            return [
+                DictRecord(
+                    {
+                        "id": "ci-450i",
+                        "name": "Cambium-450i",
+                        "ip": "10.0.0.1",
+                        "model": "450i",
+                        "brand": "Cambium Networks",
+                        "layer": "wireless",
+                    }
+                ),
+                DictRecord(
+                    {
+                        "id": "ci-45700",
+                        "name": "Cambium-45700",
+                        "ip": "10.0.0.2",
+                        "model": "45700",
+                        "brand": "Cambium Networks",
+                        "layer": "wireless",
+                    }
+                ),
+            ]
+
+        mock_session = MagicMock()
+        mock_session.run.side_effect = mock_run
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+
+        with patch("database.driver", mock_neo4j_driver):
+            response = client.get("/api/metrics/cmb450i-cpu-util/usage")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["cis"][0]["id"] == "ci-450i"
+
 
 class TestMetricsPromote:
     """Tests for POST /api/metrics/promote — promote metric to graph node."""

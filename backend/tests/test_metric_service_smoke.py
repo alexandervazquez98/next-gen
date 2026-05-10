@@ -98,3 +98,47 @@ class TestMetricServiceSmoke:
 
         assert len(mock_neo4j_session.queries) >= 1
         assert "detach delete" in mock_neo4j_session.queries[0]["query"].lower()
+
+
+class TestMetricMatching:
+    def test_metric_matches_ci_requires_all_populated_filters(self):
+        from services.metric_service import metric_matches_ci
+
+        criteria = {
+            "brands": ["Cambium Networks"],
+            "models": ["450i"],
+            "layers": [],
+            "names": [],
+            "excluded_names": [],
+        }
+
+        assert metric_matches_ci(criteria, {"brand": "Cambium Networks", "model": "450i"}) is True
+        assert metric_matches_ci(criteria, {"brand": "Cambium Networks", "model": "45700"}) is False
+        assert metric_matches_ci(criteria, {"brand": "Other", "model": "450i"}) is False
+
+    def test_metric_matches_ci_allows_name_plus_category_filters(self):
+        from services.metric_service import metric_matches_ci
+
+        criteria = {
+            "brands": ["Cisco"],
+            "models": [],
+            "layers": [],
+            "names": ["Router-01"],
+            "excluded_names": [],
+        }
+
+        assert metric_matches_ci(criteria, {"id": "ci-1", "name": "Router-01", "brand": "Cisco"}) is True
+        assert metric_matches_ci(criteria, {"id": "ci-1", "name": "Router-01", "brand": "Juniper"}) is False
+
+    def test_metric_matches_ci_applies_exclusions_last(self):
+        from services.metric_service import metric_matches_ci
+
+        criteria = {
+            "brands": ["Cisco"],
+            "models": [],
+            "layers": [],
+            "names": [],
+            "excluded_names": ["Router-01"],
+        }
+
+        assert metric_matches_ci(criteria, {"id": "ci-1", "name": "Router-01", "brand": "Cisco"}) is False

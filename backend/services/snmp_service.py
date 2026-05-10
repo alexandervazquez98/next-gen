@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 from database import get_db
+from services.metric_service import metric_matches_ci
 
 logger = logging.getLogger(__name__)
 
@@ -189,41 +190,11 @@ def run_snmp_cycle_sync(driver):
 
 def process_ci_metrics(ci, metrics, driver):
     snmp_conf = _parse_snmp_config(ci.get("snmp"))
-    ci_brand = ci.get("brand", "").lower() if ci.get("brand") else ""
-    ci_model = ci.get("model", "").lower() if ci.get("model") else ""
-    ci_layer = ci.get("layer", "").lower() if ci.get("layer") else ""
 
     target_metrics = []
     for metric in metrics:
         criteria = metric.get("applicable_to", {})
-        match = False
-        requested_names = [name.strip().lower() for name in criteria.get("names", [])]
-
-        if requested_names and (
-            ci.get("name", "").lower() in requested_names
-            or ci.get("id", "").lower() in requested_names
-        ):
-            match = True
-        else:
-            requested_brands = [brand.lower() for brand in criteria.get("brands", [])]
-            requested_models = [model.lower() for model in criteria.get("models", [])]
-            requested_layers = [layer.lower() for layer in criteria.get("layers", [])]
-
-            if requested_brands and ci_brand in requested_brands:
-                match = True
-            if requested_models and ci_model in requested_models:
-                match = True
-            if requested_layers and ci_layer in requested_layers:
-                match = True
-
-        excluded_names = [
-            name.strip().lower() for name in criteria.get("excluded_names", [])
-        ]
-        if match and (
-            ci.get("name", "").lower() in excluded_names
-            or ci.get("id", "").lower() in excluded_names
-        ):
-            match = False
+        match = metric_matches_ci(criteria, ci)
 
         if match and (metric.get("oid") or metric.get("protocol") == "ICMP"):
             target_metrics.append(metric)
