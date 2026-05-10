@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import MetricsManager from './MetricsManager';
+import DictionaryManager from './DictionaryManager';
 import CIEditor from './CIEditor';
 import RelationshipManager from './RelationshipManager';
 import MassLinkEditor from './MassLinkEditor';
@@ -20,7 +21,7 @@ import { api } from '../services/api';
  */
 const AdminPage: React.FC = () => {
     const { hasPermission } = useAuth();
-    type AdminTab = 'METRICS' | 'CATALOG' | 'LINKS' | 'MASS_LINKS' | 'INVENTORY';
+    type AdminTab = 'METRICS' | 'DICTIONARIES' | 'CATALOG' | 'LINKS' | 'MASS_LINKS' | 'INVENTORY';
     const [activeTab, setActiveTab] = useState<AdminTab>('METRICS');
 
     const [data, setData] = useState<any[]>([]);
@@ -149,7 +150,7 @@ const AdminPage: React.FC = () => {
 
             {/* Tabs */}
             <div className="flex gap-4 border-b border-white/5 pb-4">
-                {['METRICS', 'CATALOG', 'LINKS', 'MASS_LINKS', 'INVENTORY'].map(tab => {
+                {['METRICS', 'DICTIONARIES', 'CATALOG', 'LINKS', 'MASS_LINKS', 'INVENTORY'].map(tab => {
                     return (
                         <button
                             key={tab}
@@ -166,6 +167,8 @@ const AdminPage: React.FC = () => {
             {/* Content Area */}
             <div className="h-[calc(100vh-250px)]">
                 {activeTab === 'CATALOG' && <CatalogManager />}
+
+                {activeTab === 'DICTIONARIES' && <DictionaryManager />}
 
                 {activeTab === 'METRICS' && <MetricsManager />}
 
