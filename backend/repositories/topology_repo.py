@@ -349,9 +349,10 @@ def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
     """
     with driver.session() as session:
         results = session.run(query, ci_ids=ci_ids)
+        records = list(results)  # Consume all records inside the session block
 
     summary: dict[str, dict] = {cid: {"asSource": [], "asTarget": []} for cid in ci_ids}
-    for row in results:
+    for row in records:
         src, tgt, rel = row["source_id"], row["target_id"], row["rel_type"]
         src_label, tgt_label = row["source_label"], row["target_label"]
         # If ci_ids contains source, it appears as "source" in the rel
