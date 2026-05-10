@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import DictionaryBulkUpload from './DictionaryBulkUpload';
 
 interface MetricDef {
     id: string;
@@ -43,6 +44,7 @@ const DictionaryManager: React.FC<DictionaryManagerProps> = ({ onClose }) => {
     const [loading, setLoading] = useState(false);
     const [selectedDictionary, setSelectedDictionary] = useState<DictionaryItem | null>(null);
     const [isEditing, setIsEditing] = useState(false);
+    const [showBulkUpload, setShowBulkUpload] = useState(false);
 
     // Form State
     const [formData, setFormData] = useState<Partial<DictionaryItem>>({});
@@ -179,9 +181,14 @@ const DictionaryManager: React.FC<DictionaryManagerProps> = ({ onClose }) => {
             <div className="w-1/3 glass rounded-2xl border border-white/5 flex flex-col overflow-hidden">
                 <div className="p-4 border-b border-white/5 flex justify-between items-center bg-black/20">
                     <h3 className="font-bold text-white uppercase tracking-wider text-sm">Metric Dictionaries</h3>
-                    <button onClick={handleCreate} className="bg-brand-600 hover:bg-brand-500 text-white rounded p-1">
-                        <span className="material-symbols-outlined text-sm">add</span>
-                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowBulkUpload(true)} className="bg-cyan-900/40 hover:bg-cyan-800/40 text-cyan-400 rounded p-1" title="Bulk Upload">
+                            <span className="material-symbols-outlined text-sm">upload</span>
+                        </button>
+                        <button onClick={handleCreate} className="bg-brand-600 hover:bg-brand-500 text-white rounded p-1">
+                            <span className="material-symbols-outlined text-sm">add</span>
+                        </button>
+                    </div>
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
                     {loading ? (
@@ -337,6 +344,15 @@ const DictionaryManager: React.FC<DictionaryManagerProps> = ({ onClose }) => {
                     </div>
                 )}
             </div>
+
+            {/* Bulk Upload Modal */}
+            {showBulkUpload && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="w-[90vw] h-[85vh] glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+                        <DictionaryBulkUpload onClose={() => setShowBulkUpload(false)} />
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

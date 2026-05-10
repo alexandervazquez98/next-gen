@@ -86,11 +86,19 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
 
 export const api = {
     get: <T>(endpoint: string, config: RequestInit = {}) => request<T>(endpoint, { ...config, method: 'GET' }),
-    post: <T>(endpoint: string, body: any, config: RequestInit = {}) => request<T>(endpoint, {
-        ...config,
-        method: 'POST',
-        body: JSON.stringify(body),
-    }),
+    post: <T>(endpoint: string, body: any, config: RequestInit = {}) => {
+        let serializedBody: any = body;
+        if (body instanceof FormData || body instanceof Blob || body instanceof ArrayBuffer) {
+            serializedBody = body;
+        } else {
+            serializedBody = JSON.stringify(body);
+        }
+        return request<T>(endpoint, {
+            ...config,
+            method: 'POST',
+            body: serializedBody,
+        });
+    },
     put: <T>(endpoint: string, body: any, config: RequestInit = {}) => request<T>(endpoint, {
         ...config,
         method: 'PUT',

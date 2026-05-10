@@ -447,6 +447,51 @@ def validate_metric_ids(metric_ids: List[str]) -> tuple[bool, List[str]]:
     return len(invalid) == 0, invalid
 
 
+# ---- 3. Batch metric_ids collection per brand+model group ----
+def _collect_metric_ids_by_group(
+    rows: List[Dict[str, Any]],
+) -> Dict[tuple[str, str], List[str]]:
+    """Group metric_ids by brand+model, deduplicated."""
+    by_group: Dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        key = (row["brand"].lower(), row["model"].lower())
+        by_group.setdefault(key, set()).update(row["metric_ids"])
+    return {k: list(v) for k, v in by_group.items()}
+
+
+# ---- 4. Pre-validate all metric_ids before transaction ----
+def _pre_validate_metric_ids(
+    rows: List[Dict[str, Any]],
+) -> tuple[bool, Dict[str, List[str]]]:
+    """
+    Collect all unique metric_ids across all rows and validate in one query.
+    Returns (all_valid, per_row_errors) where per_row_errors maps row_index to invalid ids.
+    """
+    all_metric_ids: set[str] = set()
+    for row in rows:
+        all_metric_ids.update(row["metric_ids"])
+
+    if not all_metric_ids:
+        return True, {}
+
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            "MATCH (m:MetricDef) WHERE m.id IN $ids RETURN m.id AS id",
+            ids=list(all_metric_ids),
+        )
+        found = {record["id"] for record in result}
+
+    invalid_by_row: Dict[str, List[str]] = {}
+    for row in rows:
+        invalid = [mid for mid in row["metric_ids"] if mid not in found]
+        if invalid:
+            key = str(row["row_index"])
+            invalid_by_row[key] = invalid
+
+    return len(invalid_by_row) == 0, invalid_by_row
+
+
 # ---------------------------------------------------------------------------
 # Preview — Parallel SNMP query for live readings
 # ---------------------------------------------------------------------------
@@ -800,3 +845,308 @@ def remove_applied_dictionary(ci_id: str) -> bool:
     if not isinstance(deleted, int):
         return False
     return deleted >= 0
+
+
+# ---------------------------------------------------------------------------
+# Bulk CSV Upload Helpers
+# ---------------------------------------------------------------------------
+
+def get_template_brands_models() -> List[tuple[str, str]]:
+    """
+    Return distinct (brand, model) pairs from CI nodes that have both fields.
+    Used to pre-populate the CSV template.
+    """
+    driver = _get_driver()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (n:CI)
+            WHERE n.brand IS NOT NULL AND n.model IS NOT NULL
+              AND n.brand <> '' AND n.model <> ''
+            RETURN DISTINCT n.brand AS brand, n.model AS model
+            ORDER BY n.brand, n.model
+            """
+        )
+        return [(record["brand"], record["model"]) for record in result]
+
+
+def bulk_validate_rows(
+    rows: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Validate a list of parsed CSV rows (dicts with brand, model, name,
+    polling_interval, metric_ids keys).
+
+    Validation steps:
+      1. Format completeness (all required fields present and non-empty)
+      2. CI existence per brand+model (at least one CI matches)
+      3. metric_ids exist as MetricDef nodes
+      4. Duplicate within CSV (same brand+model+name triple)
+
+    Returns (valid_rows, errors):
+      valid_rows: list of validated row dicts with row_index included
+      errors: list of {row, field, message} dicts
+    """
+    errors: List[Dict[str, Any]] = []
+    validated_rows: List[Dict[str, Any]] = []
+
+    # Collect existing brand+model pairs from CIs once
+    existing_pairs: set[tuple[str, str]] = set(get_template_brands_models())
+
+    # Collect all (brand, model, name) triples for duplicate detection
+    seen_triples: set[tuple[str, str, str]] = set()
+
+    # Pre-collect ALL metric_ids across all rows for batch validation
+    all_row_metric_ids: List[List[str]] = []
+    row_metric_ids_map: Dict[int, List[str]] = {}
+    for row in rows:
+        row_idx = row.get("row_index", 0)
+        metric_ids = [mid.strip() for mid in str(row.get("metric_ids") or "").split(",") if mid.strip()]
+        all_row_metric_ids.append(metric_ids)
+        row_metric_ids_map[row_idx] = metric_ids
+
+    all_unique_metric_ids = set()
+    for mids in all_row_metric_ids:
+        all_unique_metric_ids.update(mids)
+
+    if all_unique_metric_ids:
+        driver = _get_driver()
+        with driver.session() as session:
+            result = session.run(
+                "MATCH (m:MetricDef) WHERE m.id IN $ids RETURN m.id AS id",
+                ids=list(all_unique_metric_ids),
+            )
+            valid_metric_ids = {record["id"] for record in result}
+    else:
+        valid_metric_ids = set()
+
+    for row in rows:
+        row_idx = row.get("row_index", 0)
+
+        # ---- 1. Format completeness ----
+        required = ["brand", "model", "name", "polling_interval", "metric_ids"]
+        for field in required:
+            if field not in row or str(row.get(field) or "").strip() == "":
+                errors.append({"row": row_idx, "field": field, "message": f"Missing or empty '{field}'"})
+                break
+        else:
+            brand = str(row["brand"]).strip()
+            model = str(row["model"]).strip()
+            name = str(row["name"]).strip()
+            metric_ids_str = str(row["metric_ids"] or "").strip()
+            polling_interval_str = str(row["polling_interval"] or "60").strip()
+
+            # ---- 4. Duplicate within CSV ----
+            triple = (brand.lower(), model.lower(), name.lower())
+            if triple in seen_triples:
+                errors.append({"row": row_idx, "field": "name", "message": f"Duplicate dictionary name '{name}' for brand='{brand}' model='{model}'"})
+            else:
+                seen_triples.add(triple)
+
+            # ---- 2. CI existence ----
+            if (brand.lower(), model.lower()) not in existing_pairs:
+                errors.append({"row": row_idx, "field": "brand", "message": f"No CIs found for brand='{brand}' model='{model}'"})
+
+            # ---- 3. metric_ids exist (in-memory check against batch-validated set) ----
+            metric_ids = row_metric_ids_map.get(row_idx, [])
+            if metric_ids:
+                invalid = [mid for mid in metric_ids if mid not in valid_metric_ids]
+                if invalid:
+                    errors.append({"row": row_idx, "field": "metric_ids", "message": f"Invalid metric_ids: {invalid}"})
+
+            # ---- polling_interval must be numeric ----
+            try:
+                int(polling_interval_str)
+            except ValueError:
+                errors.append({"row": row_idx, "field": "polling_interval", "message": f"polling_interval must be an integer, got '{polling_interval_str}'"})
+
+            # If no errors for this row, add to validated_rows
+            row_errors = [e for e in errors if e["row"] == row_idx]
+            if not row_errors:
+                validated_rows.append({
+                    "brand": brand,
+                    "model": model,
+                    "name": name,
+                    "polling_interval": int(polling_interval_str),
+                    "metric_ids": metric_ids,
+                    "row_index": row_idx,
+                })
+
+    return validated_rows, errors
+
+
+def bulk_validate_snmp_sample(
+    validated_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    For each distinct brand+model in validated_rows, select ~10% of matching CIs
+    at random and poll each metric via SNMP.  Returns aggregated results.
+
+    validated_rows: list of row dicts from bulk_validate_rows
+
+    Returns:
+      {
+        "results": {
+          "brand+model_key": {
+            "sampled_ips": [...],
+            "polled": [{ip, metric_id, value, status}],
+            "no_data": [{ip, metric_id, status}],
+          }
+        }
+      }
+    """
+    import random
+
+    results: Dict[str, Any] = {}
+    driver = _get_driver()
+
+    # Group rows by brand+model
+    by_brand_model: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for row in validated_rows:
+        key = (row["brand"].lower(), row["model"].lower())
+        by_brand_model.setdefault(key, []).append(row)
+
+    for (brand, model), _ in by_brand_model.items():
+        # Get all CIs for this brand+model
+        with driver.session() as session:
+            cis = list(session.run(
+                """
+                MATCH (n:CI)
+                WHERE n.brand IS NOT NULL AND n.model IS NOT NULL
+                  AND toLower(n.brand) = $brand
+                  AND toLower(n.model) = $model
+                  AND n.ip IS NOT NULL AND n.ip <> ''
+                RETURN n.id AS id, n.ip AS ip, n.snmp AS snmp, n.name AS name
+                """,
+                brand=brand,
+                model=model,
+            ))
+
+        if not cis:
+            continue
+
+        # Select ~10% random CIs (minimum 1)
+        sample_size = max(1, int(len(cis) * 0.1))
+        sampled = random.sample(cis, min(sample_size, len(cis)))
+        sampled_ips = [c["ip"] for c in sampled]
+
+        polled: List[Dict[str, Any]] = []
+        no_data: List[Dict[str, Any]] = []
+
+        all_metric_ids_for_group: List[str] = []
+        for row in by_brand_model[(brand, model)]:
+            all_metric_ids_for_group.extend(row["metric_ids"])
+        unique_metric_ids = list(set(all_metric_ids_for_group))
+        metric_defs_by_id = {m["id"]: m for m in _get_metric_defs(unique_metric_ids)}
+
+        for ci in sampled:
+            ip = ci["ip"]
+            snmp_conf = _parse_snmp_config(ci["snmp"]) if ci["snmp"] else {}
+
+            # Poll each metric from each row for this brand+model
+            for row in by_brand_model[(brand, model)]:
+                for metric_id in row["metric_ids"]:
+                    metric_def = metric_defs_by_id.get(metric_id)
+                    if not metric_def:
+                        no_data.append({"ip": ip, "metric_id": metric_id, "status": "NO_DATA"})
+                        continue
+
+                    value, poll_status = _poll_single_metric(ip, snmp_conf, metric_def)
+
+                    if poll_status == "NO_DATA" or value is None:
+                        no_data.append({"ip": ip, "metric_id": metric_id, "status": "NO_DATA"})
+                    else:
+                        polled.append({
+                            "ip": ip,
+                            "metric_id": metric_id,
+                            "value": value,
+                            "status": "OK",
+                        })
+
+        key = f"{brand}-{model}"
+        results[key] = {
+            "sampled_ips": sampled_ips,
+            "polled": polled,
+            "no_data": no_data,
+        }
+
+    return {"results": results}
+
+
+def bulk_create_dictionaries(
+    validated_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Atomically create all MetricDictionary nodes and their HAS_METRIC links
+    in a single Neo4j write transaction.
+
+    validated_rows: list of row dicts from bulk_validate_rows
+
+    Returns list of created dictionary summaries: [{id, name, brand, model}].
+    Raises ValueError on any failure (transaction rollback).
+    """
+    if not validated_rows:
+        return []
+
+    driver = _get_driver()
+    created: List[Dict[str, Any]] = []
+
+    def write_tx(tx):
+        now = _now()
+        for row in validated_rows:
+            dict_id = str(uuid.uuid4())
+
+            tx.run(
+                """
+                CREATE (md:MetricDictionary {
+                    id: $id,
+                    name: $name,
+                    brand: $brand,
+                    model: $model,
+                    polling_interval: $polling_interval,
+                    created_at: $now,
+                    updated_at: $now
+                })
+                """,
+                id=dict_id,
+                name=row["name"],
+                brand=row["brand"],
+                model=row["model"],
+                polling_interval=row["polling_interval"],
+                now=now,
+            )
+
+            for metric_id in row["metric_ids"]:
+                result = tx.run(
+                    """
+                    MATCH (md:MetricDictionary {id: $dict_id})
+                    MATCH (m:MetricDef {id: $mid})
+                    RETURN md
+                    """,
+                    dict_id=dict_id,
+                    mid=metric_id,
+                )
+                if result.single() is None:
+                    raise ValueError(f"MetricDef {metric_id} not found during transaction")
+
+                tx.run(
+                    """
+                    MATCH (md:MetricDictionary {id: $dict_id})
+                    MATCH (m:MetricDef {id: $mid})
+                    CREATE (md)-[:HAS_METRIC]->(m)
+                    """,
+                    dict_id=dict_id,
+                    mid=metric_id,
+                )
+
+            created.append({
+                "id": dict_id,
+                "name": row["name"],
+                "brand": row["brand"],
+                "model": row["model"],
+            })
+
+    with driver.session() as session:
+        session.execute_write(write_tx)
+
+    return created

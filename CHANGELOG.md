@@ -8,7 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Mass Metric Dictionary Apply**: Bundle OIDs per brand+model into reusable "MetricDictionary" entities with live SNMP preview before bulk-applying to CIs, plus per-CI exclusion/inclusion customization.
+- (nothing yet)
+
+## [1.8.0] — 2026-05-10
+
+### Added
+- **Bulk Metric Dictionary Upload**: CSV-based bulk creation of MetricDictionary nodes with pre-populated template, 10% SNMP validation before commit, and automatic HAS_METRIC link creation on confirm.
+  - `GET /api/dictionaries/template-csv` — download CSV template pre-populated with existing brand+model pairs from CI nodes
+  - `POST /api/dictionaries/bulk` — parse and validate CSV (no commit), returns preview with per-row errors
+  - `POST /api/dictionaries/bulk/validate-sample` — run SNMP polling on 10% random CIs per brand+model, return aggregated results
+  - `POST /api/dictionaries/bulk/confirm` — atomic Neo4j transaction creating all MetricDictionary + HAS_METRIC links
+  - `bulk_validate_rows()` batch-validates metric_ids in single Neo4j query (N+1 eliminated)
+  - `bulk_validate_snmp_sample()` caches metric_defs per brand+model group (N+1 eliminated)
+  - Metric validation inside write_tx guarantees atomicity (no stale pre-check race conditions)
+  - Frontend: `DictionaryBulkUpload.tsx` component with Upload CSV + Apply tabs
+  - Apply tab defaults all matching CIs selected (with deselect option)
+  - `api.ts` fixed: FormData/Blob passed directly without JSON.stringify
+
+### Fixed
+- **StreamingResponse import**: `StreamingResponse` now correctly imported from `fastapi.responses` instead of `fastapi` (was blocking test collection)
   - `MetricDictionary` Neo4j nodes with brand+model required keys
   - `AppliedDictionary` overlay per CI for per-device customization
   - `GET/POST/PUT/DELETE /api/dictionaries` — Dictionary CRUD endpoints
