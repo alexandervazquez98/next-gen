@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Mass Metric Dictionary Apply**: Bundle OIDs per brand+model into reusable "MetricDictionary" entities with live SNMP preview before bulk-applying to CIs, plus per-CI exclusion/inclusion customization.
+  - `MetricDictionary` Neo4j nodes with brand+model required keys
+  - `AppliedDictionary` overlay per CI for per-device customization
+  - `GET/POST/PUT/DELETE /api/dictionaries` — Dictionary CRUD endpoints
+  - `GET /api/dictionaries/{id}/target-cis` — list CIs matching dictionary's brand+model
+  - `POST /api/dictionaries/{id}/apply` — apply dictionary to selected CIs (idempotent MERGE)
+  - `POST /api/dictionaries/{id}/preview` — parallel SNMP preview (batch 20), OK/WARNING/CRITICAL/NO_DATA status
+  - `GET/PUT/DELETE /api/cis/{ci_id}/applied-dictionary` — per-CI dictionary management
+  - `reconcile_node_metrics()` updated: effective = (applicable ∪ dict_metrics) - excluded ∪ extra
+  - Frontend: `DictionaryManager`, `DictionaryMassApply`, `CIDictionaryCustomization` components
+
 ## [1.6.0] — 2026-05-09
 
 ### Added
