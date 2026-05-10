@@ -65,6 +65,39 @@ async def create_dictionary(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
+@router.get("/template-csv")
+async def get_template_csv(
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Download a CSV template pre-populated with distinct brand+model pairs
+    from existing CI nodes, plus one example row.
+    """
+    brands_models = dictionary_service.get_template_brands_models()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["brand", "model", "name", "polling_interval", "metric_ids"])
+
+    # One example row (user can remove)
+    writer.writerow(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
+
+    # Pre-populate with existing brand+model pairs
+    for brand, model in brands_models:
+        writer.writerow([brand, model, "", "60", ""])
+
+    output.seek(0)
+    csv_content = output.getvalue()
+
+    return StreamingResponse(
+        io.BytesIO(csv_content.encode("utf-8")),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=dictionary_template.csv",
+        },
+    )
+
+
 @router.get("/{dictionary_id}", response_model=Dict[str, Any])
 async def get_dictionary(
     dictionary_id: str,
@@ -280,39 +313,6 @@ async def delete_dictionary(
 # ---------------------------------------------------------------------------
 # Bulk CSV Upload Endpoints
 # ---------------------------------------------------------------------------
-
-@router.get("/template-csv")
-async def get_template_csv(
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Download a CSV template pre-populated with distinct brand+model pairs
-    from existing CI nodes, plus one example row.
-    """
-    brands_models = dictionary_service.get_template_brands_models()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["brand", "model", "name", "polling_interval", "metric_ids"])
-
-    # One example row (user can remove)
-    writer.writerow(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
-
-    # Pre-populate with existing brand+model pairs
-    for brand, model in brands_models:
-        writer.writerow([brand, model, "", "60", ""])
-
-    output.seek(0)
-    csv_content = output.getvalue()
-
-    return StreamingResponse(
-        io.BytesIO(csv_content.encode("utf-8")),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=dictionary_template.csv",
-        },
-    )
-
 
 class BulkValidateResponse(BaseModel):
     rows: List[Dict[str, Any]]
