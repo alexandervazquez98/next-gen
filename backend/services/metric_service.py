@@ -114,6 +114,28 @@ def get_metric(metric_id: str) -> Optional[Dict[str, Any]]:
             "polling_interval": m.get("polling_interval", 60),
         }
 
+
+def _reconcile_metric_assignments(metric_id: str, criteria: Optional[Dict[str, List[str]]]) -> None:
+    """Keep persisted HAS_METRIC links aligned with criteria-based applicability."""
+    driver = get_db()
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (n:CI)
+            OPTIONAL MATCH (n)-[:HAS_METRIC]->(m:MetricDef {id: $metric_id})
+            RETURN n AS node, m IS NOT NULL AS currently_linked
+            """,
+            metric_id=metric_id,
+        )
+        affected_nodes = [
+            dict(record["node"])
+            for record in result
+            if record["currently_linked"] or metric_matches_ci(criteria, dict(record["node"]))
+        ]
+
+    for node in affected_nodes:
+        reconcile_node_metrics(node)
+
 def create_metric(metric: MetricDef) -> Dict[str, str]:
     """
     Define a new Metric for monitoring.
@@ -134,6 +156,8 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
              unit=metric.unit, desc=metric.description, criteria=criteria_str,
              operator=metric.operator or ">=", criticality=metric.criticality or 1,
              polling_interval=metric.polling_interval or 60)
+
+    _reconcile_metric_assignments(metric.id, metric.applicable_to)
     return {"message": "Metric defined"}
 
 def delete_metric(metric_id: str) -> Dict[str, str]:

@@ -84,11 +84,13 @@ class TestMetricServiceSmoke:
         from models.core import MetricDef
 
         metric = MetricDef(id="test-metric", protocol="SNMP")
-        create_metric(metric)
+        with patch("services.metric_service._reconcile_metric_assignments") as mock_reconcile:
+            create_metric(metric)
 
         # Verify a query was executed
         assert len(mock_neo4j_session.queries) >= 1
         assert "merge" in mock_neo4j_session.queries[0]["query"].lower()
+        mock_reconcile.assert_called_once_with("test-metric", None)
 
     def test_delete_metric_calls_detach_delete(self, mock_neo4j_session):
         """delete_metric should execute a DETACH DELETE query."""

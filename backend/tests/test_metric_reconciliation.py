@@ -352,5 +352,55 @@ class TestReconcileNodeMetricsSmoke:
         from services.metric_service import reconcile_node_metrics
 
         reconcile_node_metrics({})
+
+
+class TestReconcileMetricAssignments:
+    @patch("services.metric_service.get_db")
+    @patch("services.metric_service.reconcile_node_metrics")
+    def test_reconcile_metric_assignments_includes_matching_and_linked_nodes(
+        self, mock_reconcile_node_metrics, mock_get_db
+    ):
+        from services.metric_service import _reconcile_metric_assignments
+
+        mock_session = MagicMock()
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__.return_value = mock_session
+        mock_get_db.return_value = mock_driver
+
+        mock_session.run.return_value = FakeResult(
+            [
+                FakeRecord(
+                    {
+                        "node": {"id": "ci-match", "name": "AP-1", "brand": "Cambium Networs", "model": "450i"},
+                        "currently_linked": False,
+                    }
+                ),
+                FakeRecord(
+                    {
+                        "node": {"id": "ci-linked", "name": "Router-1", "brand": "Other", "model": "Other"},
+                        "currently_linked": True,
+                    }
+                ),
+                FakeRecord(
+                    {
+                        "node": {"id": "ci-skip", "name": "Router-2", "brand": "Other", "model": "Other"},
+                        "currently_linked": False,
+                    }
+                ),
+            ]
+        )
+
+        _reconcile_metric_assignments(
+            "cmb450i-cpu-util",
+            {"brands": ["Cambium Networs"], "models": ["450i"], "layers": [], "names": [], "excluded_names": []},
+        )
+
+        assert mock_reconcile_node_metrics.call_count == 2
+        mock_reconcile_node_metrics.assert_any_call(
+            {"id": "ci-match", "name": "AP-1", "brand": "Cambium Networs", "model": "450i"}
+        )
+        mock_reconcile_node_metrics.assert_any_call(
+            {"id": "ci-linked", "name": "Router-1", "brand": "Other", "model": "Other"}
+        )
         mock_get_db.return_value.session.return_value.__enter__.return_value.session \
             .assert_not_called()
