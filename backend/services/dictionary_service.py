@@ -19,6 +19,10 @@ def _now():
     return datetime.now()
 
 
+# SNMP preview parallel query batch size
+SNMP_PREVIEW_BATCH_SIZE = 20
+
+
 def get_metrics_from_dictionary(dictionary_id: str) -> List[str]:
     """
     Resolve HAS_METRIC relationships from a MetricDictionary to get metric_ids.
@@ -661,8 +665,8 @@ async def preview_dictionary(
             "results": results,
         }
 
-    # Parallel execution in batches of 20
-    batch_size = 20
+    # Parallel execution in batches of SNMP_PREVIEW_BATCH_SIZE
+    batch_size = SNMP_PREVIEW_BATCH_SIZE
     previews = []
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=batch_size) as executor:

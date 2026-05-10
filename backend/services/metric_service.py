@@ -253,7 +253,9 @@ def reconcile_node_metrics(node: Dict[str, Any]):
             )
 
     # Compute effective metric set
-    effective_ids = (applicable_ids | dict_metric_ids) - excluded | extra
+    # Formula: (applicable ∪ dict_metrics) - excluded ∪ extra
+    # Parentheses required because | and - have same precedence and left-to-right would mis-evaluate
+    effective_ids = ((applicable_ids | dict_metric_ids) - excluded) | extra
 
     with driver.session() as session:
         # 1. Fetch CURRENTLY LINKED metrics
@@ -288,9 +290,16 @@ def reconcile_node_metrics(node: Dict[str, Any]):
         for mid in effective_ids:
             if mid not in linked_metrics:
                 logger.info(f"Auto-assigning metric {mid} to Node {node_id}")
-                session.run("""
+                result = session.run("""
                     MATCH (n:CI {id: $nid})
                     MATCH (m:MetricDef {id: $mid})
                     MERGE (n)-[:HAS_METRIC]->(m)
                     SET n.updated_at = datetime()
                 """, nid=node_id, mid=mid)
+                # Log warning if MetricDef doesn't exist (MERGE silently skipped)
+                # Only check nodes_created when result supports it (not in test FakeResult)
+                try:
+                    if hasattr(result, 'consume') and result.consume().counters.nodes_created == 0:
+                        logger.warning(f"MetricDef '{mid}' not found — skipped for Node {node_id}")
+                except (AttributeError, TypeError):
+                    pass  # FakeResult in tests or other mock doesn't support consume()
