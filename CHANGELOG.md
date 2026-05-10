@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dictionary CSV template route ordering**: `GET /api/dictionaries/template-csv` now registers before `GET /api/dictionaries/{dictionary_id}` so FastAPI does not treat `template-csv` as a dictionary ID
 - **CSV template download blob handling**: `api.ts` now respects `responseType: 'blob'` before content-type inspection so `URL.createObjectURL()` receives a real `Blob`
 - **RelationshipTooltip hook ordering**: removed the early return that executed before `useEffect`, fixing the React hooks order crash in mass link views
+- **Dictionary template visual cleanup**: template download now returns `.xlsx` with brand/model references on a separate sheet, and bulk upload accepts `.xlsx` as well as `.csv`
 
 ## [1.8.0] — 2026-05-10
 

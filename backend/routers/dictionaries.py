@@ -3,6 +3,7 @@ Dictionary Router — CRUD endpoints for MetricDictionary nodes.
 """
 import csv
 import io
+import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
@@ -24,6 +25,62 @@ router = APIRouter(
 def _require_editor(current_user: User):
     if not check_permission(UserPermission.CI_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to manage dictionaries")
+
+
+def _parse_bulk_csv(content: bytes) -> List[Dict[str, Any]]:
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    if len(lines) > 10001:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CSV exceeds 10,000 row limit",
+        )
+
+    try:
+        reader = csv.DictReader(lines)
+        rows = []
+        for i, row in enumerate(reader):
+            row["row_index"] = i + 2  # +2 because row 1 is header, csv is 1-indexed
+            rows.append(row)
+        return rows
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"CSV parse error: {str(e)}",
+        )
+
+
+def _parse_bulk_xlsx(content: bytes) -> List[Dict[str, Any]]:
+    try:
+        workbook = openpyxl.load_workbook(filename=io.BytesIO(content), data_only=True)
+        worksheet = workbook[workbook.sheetnames[0]]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Excel parse error: {str(e)}",
+        )
+
+    if worksheet.max_row > 10001:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Excel exceeds 10,000 row limit",
+        )
+
+    rows_iter = worksheet.iter_rows(values_only=True)
+    header_row = next(rows_iter, None)
+    if not header_row:
+        return []
+
+    headers = [str(value).strip() if value is not None else "" for value in header_row]
+    rows: List[Dict[str, Any]] = []
+    for i, row in enumerate(rows_iter, start=2):
+        values = ["" if value is None else str(value).strip() for value in row]
+        if not any(values):
+            continue
+        parsed_row = {headers[idx]: values[idx] if idx < len(values) else "" for idx in range(len(headers))}
+        parsed_row["row_index"] = i
+        rows.append(parsed_row)
+
+    return rows
 
 
 @router.get("", response_model=List[Dict[str, Any]])
@@ -75,25 +132,26 @@ async def get_template_csv(
     """
     brands_models = dictionary_service.get_template_brands_models()
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["brand", "model", "name", "polling_interval", "metric_ids"])
+    workbook = openpyxl.Workbook()
+    template_sheet = workbook.active
+    template_sheet.title = "dictionary_template"
+    template_sheet.append(["brand", "model", "name", "polling_interval", "metric_ids"])
+    template_sheet.append(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
 
-    # One example row (user can remove)
-    writer.writerow(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
-
-    # Pre-populate with existing brand+model pairs
+    reference_sheet = workbook.create_sheet(title="brand_model_reference")
+    reference_sheet.append(["brand", "model"])
     for brand, model in brands_models:
-        writer.writerow([brand, model, "", "60", ""])
+        reference_sheet.append([brand, model])
 
+    output = io.BytesIO()
+    workbook.save(output)
     output.seek(0)
-    csv_content = output.getvalue()
 
     return StreamingResponse(
-        io.BytesIO(csv_content.encode("utf-8")),
-        media_type="text/csv",
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": "attachment; filename=dictionary_template.csv",
+            "Content-Disposition": "attachment; filename=dictionary_template.xlsx",
         },
     )
 
@@ -332,32 +390,21 @@ async def bulk_upload(
     """
     _require_editor(current_user)
 
-    if not file.filename or not file.filename.lower().endswith(".csv"):
+    if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="File must be a .csv",
+            detail="File is required",
+        )
+
+    filename = file.filename.lower()
+    if not (filename.endswith(".csv") or filename.endswith(".xlsx")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File must be a .csv or .xlsx",
         )
 
     content = await file.read()
-    # Reject files > 10k rows as a safeguard
-    lines = content.decode("utf-8", errors="replace").splitlines()
-    if len(lines) > 10001:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="CSV exceeds 10,000 row limit",
-        )
-
-    try:
-        reader = csv.DictReader(lines)
-        rows = []
-        for i, row in enumerate(reader):
-            row["row_index"] = i + 2  # +2 because row 1 is header, csv is 1-indexed
-            rows.append(row)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"CSV parse error: {str(e)}",
-        )
+    rows = _parse_bulk_xlsx(content) if filename.endswith(".xlsx") else _parse_bulk_csv(content)
 
     valid_rows, errors = dictionary_service.bulk_validate_rows(rows)
 
