@@ -235,4 +235,97 @@ describe('MonitoringConsole smoke tests', () => {
         expect(source).not.toContain("className: 'animate-ping'");
         expect(source).not.toContain("className: 'animate-pulse'");
     });
+
+    it('GIVEN mixed event states WHEN KPI cards are clicked THEN stream auto-filters and keeps newest first', async () => {
+        const { default: MonitoringConsole } = await import('../MonitoringConsole');
+
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/nodes') {
+                return Promise.resolve([
+                    {
+                        id: 'ci-1',
+                        label: 'Router-01',
+                        type: 'INFRASTRUCTURE',
+                        status: 'OK',
+                        metadata: {},
+                        category: 'NETWORK',
+                        ip: '10.0.0.1',
+                        location: { lat: 40.4, long: -3.7 },
+                        location_name: 'Madrid HQ',
+                    },
+                ]);
+            }
+            if (url === '/links') return Promise.resolve([]);
+            if (url === '/categories') return Promise.resolve([{ name: 'NETWORK' }]);
+            if (url === '/events?status=ACTIVE') {
+                return Promise.resolve([
+                    {
+                        id: 'evt-older-warning',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-warning',
+                        metric_name: 'Latency',
+                        metric_protocol: 'SNMP',
+                        status: 'OPEN',
+                        severity: 'WARNING',
+                        message: 'Older warning',
+                        created_at: '2026-04-04T19:00:00.000Z',
+                        last_seen: '2026-04-04T19:00:00.000Z',
+                        ack: false,
+                        comments: [],
+                    },
+                    {
+                        id: 'evt-newer-critical',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-critical',
+                        metric_name: 'CPU',
+                        metric_protocol: 'SNMP',
+                        status: 'OPEN',
+                        severity: 'CRITICAL',
+                        message: 'Newest critical',
+                        created_at: '2026-04-04T21:00:00.000Z',
+                        last_seen: '2026-04-04T21:00:00.000Z',
+                        ack: false,
+                        comments: [],
+                    },
+                    {
+                        id: 'evt-ack',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-ack',
+                        metric_name: 'Power',
+                        metric_protocol: 'SNMP',
+                        status: 'ACK',
+                        severity: 'CRITICAL',
+                        message: 'Acknowledged event',
+                        created_at: '2026-04-04T20:00:00.000Z',
+                        last_seen: '2026-04-04T20:00:00.000Z',
+                        ack: true,
+                        ack_by: 'admin',
+                        comments: [],
+                    },
+                ]);
+            }
+            return Promise.resolve([]);
+        });
+
+        renderWithQueryClient(<MonitoringConsole />);
+
+        expect(await screen.findByText('Newest critical')).toBeInTheDocument();
+        expect(screen.getByText('Older warning')).toBeInTheDocument();
+        expect(screen.getByText('Acknowledged event')).toBeInTheDocument();
+
+        const rows = screen.getAllByRole('row');
+        expect(rows[1]).toHaveTextContent('Newest critical');
+
+        fireEvent.click(screen.getByRole('button', { name: /Warnings/i }));
+        expect(screen.getByText('Older warning')).toBeInTheDocument();
+        expect(screen.queryByText('Newest critical')).toBeNull();
+        expect(screen.queryByText('Acknowledged event')).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', { name: /Acknowledged/i }));
+        expect(screen.getByText('Acknowledged event')).toBeInTheDocument();
+        expect(screen.queryByText('Older warning')).toBeNull();
+    });
 });

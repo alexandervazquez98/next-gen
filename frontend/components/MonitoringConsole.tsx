@@ -757,8 +757,11 @@ class GeoViewErrorBoundary extends React.Component<{}, { hasError: boolean; erro
 const MonitoringConsole: React.FC = () => {
     const [viewMode, setViewMode] = useState<'DASHBOARD' | 'MAP'>('DASHBOARD');
     const [filterCategory, setFilterCategory] = useState<string>('ALL');
+    const [streamFilter, setStreamFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'ACK'>('ALL');
+    const [streamPage, setStreamPage] = useState(1);
     const { nodes, links, events, categories } = useMonitoringConsoleData();
     const eventMutations = useEventMutations();
+    const EVENTS_PER_PAGE = 12;
 
     // --- Actions ---
 
@@ -932,8 +935,29 @@ const MonitoringConsole: React.FC = () => {
 
     // --- Event Correlation & Grouping Engine ---
     const groupedEvents = useEventCorrelation(events, links);
+    const sortedEventStream = useMemo(
+        () => [...groupedEvents].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        [groupedEvents]
+    );
+    const filteredEventStream = useMemo(() => {
+        if (streamFilter === 'CRITICAL') return sortedEventStream.filter(e => e.status === 'OPEN' && e.severity === 'CRITICAL');
+        if (streamFilter === 'WARNING') return sortedEventStream.filter(e => e.status === 'OPEN' && e.severity === 'WARNING');
+        if (streamFilter === 'ACK') return sortedEventStream.filter(e => e.status === 'ACK');
+        return sortedEventStream;
+    }, [sortedEventStream, streamFilter]);
+    const totalStreamPages = Math.max(1, Math.ceil(filteredEventStream.length / EVENTS_PER_PAGE));
+    const activeEventsDisplay = useMemo(() => {
+        const start = (streamPage - 1) * EVENTS_PER_PAGE;
+        return filteredEventStream.slice(start, start + EVENTS_PER_PAGE);
+    }, [filteredEventStream, streamPage]);
 
-    const activeEventsDisplay = groupedEvents;
+    useEffect(() => {
+        setStreamPage(1);
+    }, [streamFilter]);
+
+    useEffect(() => {
+        setStreamPage(current => Math.min(current, totalStreamPages));
+    }, [totalStreamPages]);
 
     const extractAuditActor = (body: string): string | null => {
         const patterns = [
@@ -1029,18 +1053,23 @@ const MonitoringConsole: React.FC = () => {
                     <div className="h-full p-8 overflow-y-auto custom-scrollbar space-y-8">
                         {/* KPI Cards */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                            <StatCard label="Critical Events" value={kpiCritical} icon="dangerous" color="text-red-500" bg="bg-red-500/10" animate={kpiCritical > 0} />
-                            <StatCard label="Warnings" value={kpiWarning} icon="warning" color="text-yellow-500" bg="bg-yellow-500/10" />
-                            <StatCard label="Acknowledged" value={kpiAck} icon="thumb_up" color="text-blue-400" bg="bg-blue-500/10" />
-                            <StatCard label="Total Active" value={events.length} icon="dns" color="text-white" />
+                            <StatCard label="Critical Events" value={kpiCritical} icon="dangerous" color="text-red-500" bg="bg-red-500/10" animate={kpiCritical > 0} active={streamFilter === 'CRITICAL'} onClick={() => setStreamFilter('CRITICAL')} />
+                            <StatCard label="Warnings" value={kpiWarning} icon="warning" color="text-yellow-500" bg="bg-yellow-500/10" active={streamFilter === 'WARNING'} onClick={() => setStreamFilter('WARNING')} />
+                            <StatCard label="Acknowledged" value={kpiAck} icon="thumb_up" color="text-blue-400" bg="bg-blue-500/10" active={streamFilter === 'ACK'} onClick={() => setStreamFilter('ACK')} />
+                            <StatCard label="Total Active" value={events.length} icon="dns" color="text-white" active={streamFilter === 'ALL'} onClick={() => setStreamFilter('ALL')} />
                         </div>
 
                         {/* Event Stream Table */}
-                        <div className="glass p-6 rounded-2xl border border-white/5 flex flex-col h-[600px]">
-                            <h3 className="text-sm font-bold text-neutral-400 uppercase mb-4 flex items-center gap-2">
-                                <span className="material-symbols-outlined text-brand-400">history</span>
-                                Live Event Stream
-                            </h3>
+                        <div className="glass p-6 rounded-2xl border border-white/5 flex flex-col min-h-[68vh] max-h-[72vh] overflow-hidden">
+                            <div className="mb-4 flex items-center justify-between gap-4">
+                                <h3 className="text-sm font-bold text-neutral-400 uppercase flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-brand-400">history</span>
+                                    Live Event Stream
+                                </h3>
+                                <div className="text-[11px] font-bold uppercase tracking-widest text-neutral-500">
+                                    {streamFilter === 'ALL' ? 'All events' : streamFilter === 'ACK' ? 'ACK events' : `${streamFilter.toLowerCase()} only`}
+                                </div>
+                            </div>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                                 <table className="w-full text-left border-collapse">
                                     <thead className="sticky top-0 bg-neutral-900/90 backdrop-blur z-10">
@@ -1107,6 +1136,29 @@ const MonitoringConsole: React.FC = () => {
                                         )}
                                     </tbody>
                                 </table>
+                            </div>
+                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/5 pt-4">
+                                <div className="text-xs text-neutral-500">
+                                    Page {totalStreamPages === 0 ? 0 : streamPage} of {totalStreamPages}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setStreamPage(page => Math.max(1, page - 1))}
+                                        disabled={streamPage === 1}
+                                        className="px-3 py-1.5 rounded-lg border border-white/10 bg-black/30 text-xs font-bold uppercase text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                        Prev
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStreamPage(page => Math.min(totalStreamPages, page + 1))}
+                                        disabled={streamPage >= totalStreamPages}
+                                        className="px-3 py-1.5 rounded-lg border border-white/10 bg-black/30 text-xs font-bold uppercase text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1756,8 +1808,12 @@ const MonitoringConsole: React.FC = () => {
  * StatCard Component
  * Displays a single KPI with an icon and optional animation.
  */
-const StatCard = ({ label, value, icon, color, bg, animate }: any) => (
-    <div className={`glass p-6 rounded-2xl border border-white/5 flex items-center justify-between group transform transition-all hover:scale-[1.02] ${bg || 'bg-white/5'} ${animate ? 'animate-pulse border-red-500/50' : ''}`}>
+const StatCard = ({ label, value, icon, color, bg, animate, active, onClick }: any) => (
+    <button
+        type="button"
+        onClick={onClick}
+        className={`glass w-full p-6 rounded-2xl border flex items-center justify-between text-left group transform transition-all hover:scale-[1.02] ${bg || 'bg-white/5'} ${animate ? 'animate-pulse border-red-500/50' : 'border-white/5'} ${active ? 'ring-2 ring-brand-500/70 border-brand-500/60' : ''}`}
+    >
         <div>
             <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">{label}</p>
             <h3 className={`text-3xl font-black ${color}`}>{value}</h3>
@@ -1765,7 +1821,7 @@ const StatCard = ({ label, value, icon, color, bg, animate }: any) => (
         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color} bg-black/20`}>
             <span className="material-symbols-outlined text-2xl">{icon}</span>
         </div>
-    </div>
+    </button>
 );
 
 // --- Visualizations ---
