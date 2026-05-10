@@ -40,6 +40,28 @@ export const SEVERITY_WEIGHTS: Record<string, number> = {
     INFO: 1,
 };
 
+const STREAM_STATUS_WEIGHTS: Record<string, number> = {
+    OPEN: 2,
+    ACK: 1,
+    RECOVERED: 0,
+    CLOSED: 0,
+};
+
+function getEventOpenAgeMs(event: Event): number {
+    return Math.max(0, Date.now() - new Date(event.created_at).getTime());
+}
+
+function formatOpenAge(event: Event): string {
+    const totalMinutes = Math.floor(getEventOpenAgeMs(event) / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -758,10 +780,8 @@ const MonitoringConsole: React.FC = () => {
     const [viewMode, setViewMode] = useState<'DASHBOARD' | 'MAP'>('DASHBOARD');
     const [filterCategory, setFilterCategory] = useState<string>('ALL');
     const [streamFilter, setStreamFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'ACK'>('ALL');
-    const [streamPage, setStreamPage] = useState(1);
     const { nodes, links, events, categories } = useMonitoringConsoleData();
     const eventMutations = useEventMutations();
-    const EVENTS_PER_PAGE = 12;
 
     // --- Actions ---
 
@@ -936,7 +956,18 @@ const MonitoringConsole: React.FC = () => {
     // --- Event Correlation & Grouping Engine ---
     const groupedEvents = useEventCorrelation(events, links);
     const sortedEventStream = useMemo(
-        () => [...groupedEvents].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        () => [...groupedEvents].sort((a, b) => {
+            const statusDelta = (STREAM_STATUS_WEIGHTS[b.status] ?? 0) - (STREAM_STATUS_WEIGHTS[a.status] ?? 0);
+            if (statusDelta !== 0) return statusDelta;
+
+            const severityDelta = (SEVERITY_WEIGHTS[b.severity] ?? 0) - (SEVERITY_WEIGHTS[a.severity] ?? 0);
+            if (severityDelta !== 0) return severityDelta;
+
+            const ageDelta = getEventOpenAgeMs(b) - getEventOpenAgeMs(a);
+            if (ageDelta !== 0) return ageDelta;
+
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }),
         [groupedEvents]
     );
     const filteredEventStream = useMemo(() => {
@@ -945,19 +976,6 @@ const MonitoringConsole: React.FC = () => {
         if (streamFilter === 'ACK') return sortedEventStream.filter(e => e.status === 'ACK');
         return sortedEventStream;
     }, [sortedEventStream, streamFilter]);
-    const totalStreamPages = Math.max(1, Math.ceil(filteredEventStream.length / EVENTS_PER_PAGE));
-    const activeEventsDisplay = useMemo(() => {
-        const start = (streamPage - 1) * EVENTS_PER_PAGE;
-        return filteredEventStream.slice(start, start + EVENTS_PER_PAGE);
-    }, [filteredEventStream, streamPage]);
-
-    useEffect(() => {
-        setStreamPage(1);
-    }, [streamFilter]);
-
-    useEffect(() => {
-        setStreamPage(current => Math.min(current, totalStreamPages));
-    }, [totalStreamPages]);
 
     const extractAuditActor = (body: string): string | null => {
         const patterns = [
@@ -1060,14 +1078,18 @@ const MonitoringConsole: React.FC = () => {
                         </div>
 
                         {/* Event Stream Table */}
-                        <div className="glass p-6 rounded-2xl border border-white/5 flex flex-col min-h-[68vh] max-h-[72vh] overflow-hidden">
+                        <div className="glass p-6 rounded-2xl border border-white/5 flex flex-col min-h-[74vh] max-h-[82vh] overflow-hidden">
                             <div className="mb-4 flex items-center justify-between gap-4">
                                 <h3 className="text-sm font-bold text-neutral-400 uppercase flex items-center gap-2">
                                     <span className="material-symbols-outlined text-brand-400">history</span>
                                     Live Event Stream
                                 </h3>
-                                <div className="text-[11px] font-bold uppercase tracking-widest text-neutral-500">
-                                    {streamFilter === 'ALL' ? 'All events' : streamFilter === 'ACK' ? 'ACK events' : `${streamFilter.toLowerCase()} only`}
+                                <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-widest text-neutral-500">
+                                    <span>{filteredEventStream.length} events</span>
+                                    <span className="text-neutral-700">•</span>
+                                    <span>{streamFilter === 'ALL' ? 'All events' : streamFilter === 'ACK' ? 'ACK events' : `${streamFilter.toLowerCase()} only`}</span>
+                                    <span className="text-neutral-700">•</span>
+                                    <span>Criticality first</span>
                                 </div>
                             </div>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
@@ -1075,7 +1097,8 @@ const MonitoringConsole: React.FC = () => {
                                     <thead className="sticky top-0 bg-neutral-900/90 backdrop-blur z-10">
                                         <tr className="text-xs text-neutral-500 uppercase border-b border-white/10">
                                             <th className="p-3 w-16">Sev</th>
-                                            <th className="p-3">Time</th>
+                                            <th className="p-3">Open Since</th>
+                                            <th className="p-3">Duration</th>
                                             <th className="p-3">CI Name</th>
                                             <th className="p-3">Message</th>
                                             <th className="p-3">Status</th>
@@ -1083,12 +1106,12 @@ const MonitoringConsole: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="text-sm divide-y divide-white/5">
-                                        {activeEventsDisplay.length === 0 ? (
+                                        {filteredEventStream.length === 0 ? (
                                             <tr>
-                                                <td colSpan={6} className="p-8 text-center text-neutral-600 italic">No active alarms. System healthy.</td>
+                                                <td colSpan={7} className="p-8 text-center text-neutral-600 italic">No active alarms. System healthy.</td>
                                             </tr>
                                         ) : (
-                                            activeEventsDisplay.map(evt => (
+                                            filteredEventStream.map(evt => (
                                                 <tr key={evt.id} className="hover:bg-white/5 transition-colors group">
                                                     <td className="p-3">
                                                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${evt.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-500 animate-pulse' : evt.severity === 'WARNING' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-blue-500/20 text-blue-500'}`}>
@@ -1099,6 +1122,7 @@ const MonitoringConsole: React.FC = () => {
                                                         {new Date(evt.created_at).toLocaleTimeString()}
                                                         <div className="text-[10px] opacity-50">{new Date(evt.created_at).toLocaleDateString()}</div>
                                                     </td>
+                                                    <td className="p-3 text-xs font-bold text-neutral-200 whitespace-nowrap">{formatOpenAge(evt)}</td>
                                                     <td className="p-3 font-bold text-white">{evt.ci_name || evt.ci_id}</td>
                                                     <td className="p-3 text-neutral-300">
                                                         <div className="flex flex-col">
@@ -1136,29 +1160,6 @@ const MonitoringConsole: React.FC = () => {
                                         )}
                                     </tbody>
                                 </table>
-                            </div>
-                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/5 pt-4">
-                                <div className="text-xs text-neutral-500">
-                                    Page {totalStreamPages === 0 ? 0 : streamPage} of {totalStreamPages}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setStreamPage(page => Math.max(1, page - 1))}
-                                        disabled={streamPage === 1}
-                                        className="px-3 py-1.5 rounded-lg border border-white/10 bg-black/30 text-xs font-bold uppercase text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                                    >
-                                        Prev
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setStreamPage(page => Math.min(totalStreamPages, page + 1))}
-                                        disabled={streamPage >= totalStreamPages}
-                                        className="px-3 py-1.5 rounded-lg border border-white/10 bg-black/30 text-xs font-bold uppercase text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                                    >
-                                        Next
-                                    </button>
-                                </div>
                             </div>
                         </div>
                     </div>

@@ -236,7 +236,7 @@ describe('MonitoringConsole smoke tests', () => {
         expect(source).not.toContain("className: 'animate-pulse'");
     });
 
-    it('GIVEN mixed event states WHEN KPI cards are clicked THEN stream auto-filters and keeps newest first', async () => {
+    it('GIVEN mixed event states WHEN KPI cards are clicked THEN stream auto-filters and sorts by severity then open age', async () => {
         const { default: MonitoringConsole } = await import('../MonitoringConsole');
 
         mockApiGet.mockImplementation((url: string) => {
@@ -271,6 +271,21 @@ describe('MonitoringConsole smoke tests', () => {
                         message: 'Older warning',
                         created_at: '2026-04-04T19:00:00.000Z',
                         last_seen: '2026-04-04T19:00:00.000Z',
+                        ack: false,
+                        comments: [],
+                    },
+                    {
+                        id: 'evt-older-critical',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-critical-older',
+                        metric_name: 'CPU',
+                        metric_protocol: 'SNMP',
+                        status: 'OPEN',
+                        severity: 'CRITICAL',
+                        message: 'Older critical',
+                        created_at: '2026-04-04T18:00:00.000Z',
+                        last_seen: '2026-04-04T18:00:00.000Z',
                         ack: false,
                         comments: [],
                     },
@@ -313,15 +328,18 @@ describe('MonitoringConsole smoke tests', () => {
         renderWithQueryClient(<MonitoringConsole />);
 
         expect(await screen.findByText('Newest critical')).toBeInTheDocument();
+        expect(screen.getByText('Older critical')).toBeInTheDocument();
         expect(screen.getByText('Older warning')).toBeInTheDocument();
         expect(screen.getByText('Acknowledged event')).toBeInTheDocument();
 
         const rows = screen.getAllByRole('row');
-        expect(rows[1]).toHaveTextContent('Newest critical');
+        expect(rows[1]).toHaveTextContent('Older critical');
+        expect(rows[2]).toHaveTextContent('Newest critical');
 
         fireEvent.click(screen.getByRole('button', { name: /Warnings/i }));
         expect(screen.getByText('Older warning')).toBeInTheDocument();
         expect(screen.queryByText('Newest critical')).toBeNull();
+        expect(screen.queryByText('Older critical')).toBeNull();
         expect(screen.queryByText('Acknowledged event')).toBeNull();
 
         fireEvent.click(screen.getByRole('button', { name: /Acknowledged/i }));
