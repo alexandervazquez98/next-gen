@@ -205,32 +205,70 @@ def reconcile_node_metrics(node: Dict[str, Any]):
     Re-evaluates metric applicability for a Node after an update.
     1. Removes :HAS_METRIC relationships for metrics that NO LONGER apply (and aren't explicit).
     2. Adds :HAS_METRIC relationships for metrics that NOW apply.
+    
+    With AppliedDictionary overlay: effective = (applicable ∪ dict_metrics) - excluded + extra
     """
+    from services.dictionary_service import get_metrics_from_dictionary
+
     driver = get_db()
     node_id = node.get("id")
-    if not node_id: return
-    
-    # Get currently applicable metrics based on NEW properties
-    # node dict is already updated at this point hopefully (passed from node_service)
-    # We must fetch the FRESH node from DB just to be sure if 'node' is partial?
-    # Actually, let's trust the logic in get_applicable_metrics which fetches from DB.
-    
+    if not node_id:
+        return
+
+    # Get currently applicable metrics based on brand/model criteria
     applicable = get_applicable_metrics(node_id)
-    applicable_ids = [m["id"] for m in applicable]
-    
+    applicable_ids = set(m["id"] for m in applicable)
+
+    # Lookup AppliedDictionary overlay (if any)
+    dict_metric_ids: set[str] = set()
+    excluded: set[str] = set()
+    extra: set[str] = set()
+
+    with driver.session() as session:
+        ad_result = session.run("""
+            MATCH (ci:CI {id: $nid})-[:HAS_DICTIONARY]->(ad:AppliedDictionary)
+            OPTIONAL MATCH (ad)-[:REFERENCE_DICTIONARY]->(md:MetricDictionary)
+            RETURN ad.dictionary_id AS dictionary_id,
+                   ad.excluded_metrics AS excluded_metrics,
+                   ad.extra_metrics AS extra_metrics,
+                   md.id AS md_id
+        """, nid=node_id).single()
+
+        if ad_result and ad_result.get("dictionary_id"):
+            dictionary_id = ad_result["dictionary_id"]
+            excluded = set(ad_result.get("excluded_metrics") or [])
+            extra = set(ad_result.get("extra_metrics") or [])
+
+            # Fetch dictionary metric_ids via HAS_METRIC rel (handle deleted dict gracefully)
+            if ad_result.get("md_id") and dictionary_id:
+                try:
+                    dict_metric_ids = set(get_metrics_from_dictionary(dictionary_id))
+                except Exception:
+                    logger.warning(f"Failed to fetch dictionary '{dictionary_id}' metrics — treating as empty")
+                    dict_metric_ids = set()
+
+            logger.info(
+                f"AppliedDictionary overlay: dict={dictionary_id}, "
+                f"excluded={excluded}, extra={extra}"
+            )
+
+    # Compute effective metric set
+    # Formula: (applicable ∪ dict_metrics) - excluded ∪ extra
+    # Parentheses required because | and - have same precedence and left-to-right would mis-evaluate
+    effective_ids = ((applicable_ids | dict_metric_ids) - excluded) | extra
+
     with driver.session() as session:
         # 1. Fetch CURRENTLY LINKED metrics
         result = session.run("""
             MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef)
             RETURN m.id as mid, m.applicable_to as apt
         """, nid=node_id)
-        
+
         linked_metrics = {rec["mid"]: rec["apt"] for rec in result}
-        
+
         # 2. Determine Removals
-        # Remove if: Linked AND (Not in Applicable) AND (Not explicitly named in criteria)
         for mid, apt_json in linked_metrics.items():
-            if mid not in applicable_ids:
+            if mid not in effective_ids:
                 # Check if explicitly named (Safety check)
                 is_explicit = False
                 try:
@@ -238,24 +276,30 @@ def reconcile_node_metrics(node: Dict[str, Any]):
                     names = apt.get("names", [])
                     if node.get("name") in names or node_id in names:
                         is_explicit = True
-                except: pass
-                
+                except Exception:
+                    pass
+
                 if not is_explicit:
-                    # DELETE RELATIONSHIP
                     logger.info(f"Removing obsolete metric {mid} from Node {node_id}")
                     session.run("""
                         MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
                         DELETE r
                     """, nid=node_id, mid=mid)
 
-        # 3. Determine Additions (Optional but good for UX)
-        # The polling worker would pick them up anyway, but creating the rel confirms intent.
-        for m in applicable:
-             if m["id"] not in linked_metrics:
-                 logger.info(f"Auto-assigning new metric {m['id']} to Node {node_id}")
-                 session.run("""
+        # 3. Determine Additions — use effective_ids so dictionary/extras are included
+        for mid in effective_ids:
+            if mid not in linked_metrics:
+                logger.info(f"Auto-assigning metric {mid} to Node {node_id}")
+                result = session.run("""
                     MATCH (n:CI {id: $nid})
                     MATCH (m:MetricDef {id: $mid})
                     MERGE (n)-[:HAS_METRIC]->(m)
                     SET n.updated_at = datetime()
-                 """, nid=node_id, mid=m["id"])
+                """, nid=node_id, mid=mid)
+                # Log warning if MetricDef doesn't exist (MERGE silently skipped)
+                # Only check nodes_created when result supports it (not in test FakeResult)
+                try:
+                    if hasattr(result, 'consume') and result.consume().counters.nodes_created == 0:
+                        logger.warning(f"MetricDef '{mid}' not found — skipped for Node {node_id}")
+                except (AttributeError, TypeError):
+                    pass  # FakeResult in tests or other mock doesn't support consume()

@@ -1,8 +1,9 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
+from datetime import datetime
 
-# --- Models ---
+# --- Models -->
 
 
 class Node(BaseModel):
@@ -169,3 +170,42 @@ class EventDetailResponse(BaseModel):
     event: EventDetailEvent
     business_context: BusinessContext
     itsm_context: ItsmContext
+
+
+class MetricDictionary(BaseModel):
+    """A reusable OID bundle for a specific brand+model combination."""
+    id: str
+    name: str
+    brand: str  # MANDATORY, exact match
+    model: str  # MANDATORY, exact match
+    metric_ids: list[str] = []
+    polling_interval: int = 60
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AppliedDictionary(BaseModel):
+    """Overlay node linking a CI to a dictionary with per-CI exclusions/extras."""
+    id: str
+    ci_id: str
+    dictionary_id: str
+    excluded_metrics: list[str] = []
+    extra_metrics: list[str] = []
+    applied_at: Optional[datetime] = None
+
+
+class DictionaryCreate(BaseModel):
+    id: str
+    name: str
+    brand: str
+    model: str
+    metric_ids: list[str] = []
+    polling_interval: int = 60
+
+
+class DictionaryUpdate(BaseModel):
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    metric_ids: Optional[list[str]] = None
+    polling_interval: Optional[int] = None
