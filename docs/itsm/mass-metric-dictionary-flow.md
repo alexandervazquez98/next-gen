@@ -140,8 +140,7 @@ AppliedDictionary (Neo4j node)
 ## Validación y Testing
 
 - **49 tests** cubriendo router, service y reconcile
-- **Judgment Day**: 5/5 PRs APPROVED
-- **Operador precedence**: `((applicable | dict) - excluded) | extra` — paréntesis requeridos
+
 
 ## Referencias cruzadas
 
