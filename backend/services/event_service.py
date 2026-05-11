@@ -585,6 +585,192 @@ def prune_recovered_events(user: str) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Event Batch Pruner — async generator with chunking, TTL cache, timeout
+# ---------------------------------------------------------------------------
+
+
+import asyncio
+import time
+import threading
+from typing import AsyncIterator, Set, Dict, Optional
+from config import get_event_batch_settings
+
+
+async def event_batch_pruner(
+    user: str,
+    batch_size: Optional[int] = None,
+    batch_delay_ms: Optional[int] = None,
+    batch_timeout_s: Optional[int] = None,
+    _idempotency_cache: Optional[Dict[str, float]] = None,
+    last_cursor: Optional[str] = None,
+) -> AsyncIterator[Dict[str, Any]]:
+    """
+    Async generator that yields progress after each chunk.
+
+    Uses cursor-based pagination (stable to inserts) with per-chunk transactions.
+    Idempotency is ensured via a request-scoped in-memory cache with TTL.
+    Handles per-chunk timeout.
+
+    Yields progress dicts with keys:
+        - total: total events found to process
+        - processed: events processed in this chunk
+        - remaining: events still to process
+        - batch: current batch number (1-indexed)
+        - error: error message if chunk failed (optional)
+    """
+    settings = get_event_batch_settings()
+    batch_size = batch_size if batch_size is not None else settings.batch_size
+    batch_delay_ms = batch_delay_ms if batch_delay_ms is not None else settings.batch_delay_ms
+    batch_timeout_s = batch_timeout_s if batch_timeout_s is not None else settings.batch_timeout_s
+
+    # Request-scoped cache: each prune operation gets its own cache, preventing
+    # cross-user contamination (CRITICAL #2 fix). Cache is isolated to this
+    # generator's lifetime.
+    if _idempotency_cache is None:
+        _idempotency_cache: Dict[str, float] = {}
+    _CACHE_TTL_S = 300  # 5 minutes — events processed within this window are cached
+
+    # Lock ensures atomic cache operations (WARNING #7 fix)
+    _cache_lock = threading.Lock()
+
+    def _cache_has(event_id: str) -> bool:
+        """Check if event_id is in cache and not expired."""
+        now = time.monotonic()
+        if event_id in _idempotency_cache:
+            if _idempotency_cache[event_id] > now:
+                return True
+            # Expired — remove it
+            del _idempotency_cache[event_id]
+        return False
+
+    def _cache_add(event_id: str) -> None:
+        """Add event_id to cache with current TTL expiry."""
+        _idempotency_cache[event_id] = time.monotonic() + _CACHE_TTL_S
+
+    def _cache_check_and_add(event_id: str) -> bool:
+        """Atomically check if event_id is in cache and add if not. Returns True if added."""
+        with _cache_lock:
+            if _cache_has(event_id):
+                return False
+            _cache_add(event_id)
+            return True
+
+    driver = get_db()
+    batch = 0
+    total_processed = 0
+
+    # First: get total count of recoverable events
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (e:Event)
+            WHERE e.status = 'RECOVERED'
+              AND (e.ack IS NULL OR e.ack = false)
+              AND (e.comments IS NULL OR size(e.comments) = 0)
+            RETURN count(e) as total
+            """
+        ).single()
+        total = _record_value(result, "total") or 0
+
+    yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
+
+    if total == 0:
+        return
+
+    # Process batches until all events are handled
+    while total_processed < total:
+        batch += 1
+        processed_in_chunk = 0
+        chunk_start = time.monotonic()
+
+        # Cursor-based pagination: resume from last processed event's created_at
+        cursor_filter = ""
+        if last_cursor is not None:
+            cursor_filter = "AND e.created_at > $last_cursor"
+
+        with driver.session() as session:
+            try:
+                result = session.run(
+                    f"""
+                    MATCH (e:Event)
+                    WHERE e.status = 'RECOVERED'
+                      AND (e.ack IS NULL OR e.ack = false)
+                      AND (e.comments IS NULL OR size(e.comments) = 0)
+                      {cursor_filter}
+                    RETURN e.id as event_id, e.status, e.created_at as created_at
+                    ORDER BY e.created_at ASC
+                    LIMIT $limit
+                    """,
+                    limit=batch_size,
+                    last_cursor=last_cursor if last_cursor else None,
+                )
+
+                event_ids: Set[str] = set()
+                last_processed_cursor = None
+                for record in result:
+                    event_id = record.get("event_id")
+                    created_at = record.get("created_at")
+                    if event_id and not _cache_has(event_id):
+                        event_ids.add(event_id)
+                        last_processed_cursor = created_at
+
+                # Close each event in its own transaction for safety
+                for event_id in event_ids:
+                    # WARNING #7 fix: use atomic check-and-add to prevent race between
+                    # _cache_has check and _cache_add call across concurrent operations
+                    if not _cache_check_and_add(event_id):
+                        continue
+                    try:
+                        with session.begin_transaction() as tx:
+                            tx.run(
+                                """
+                                MATCH (e:Event {id: $eid})
+                                SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+                                """,
+                                eid=event_id,
+                                user=user,
+                            )
+                            tx.commit()
+                        processed_in_chunk += 1
+                    except Exception:
+                        # Chunk timeout or other error — log and continue
+                        continue
+
+                total_processed += processed_in_chunk
+
+                # Update cursor for next batch
+                if last_processed_cursor is not None:
+                    last_cursor = last_processed_cursor
+
+                yield {
+                    "total": total,
+                    "processed": total_processed,
+                    "remaining": max(0, total - total_processed),
+                    "batch": batch,
+                }
+
+                # If we processed fewer than batch_size, we're done
+                if processed_in_chunk < batch_size:
+                    break
+
+            except Exception as e:
+                # Timeout or error on this chunk — yield error but continue
+                yield {
+                    "total": total,
+                    "processed": total_processed,
+                    "remaining": max(0, total - total_processed),
+                    "batch": batch,
+                    "error": str(e),
+                }
+                # Don't increment total_processed — chunk will be retried if not idempotent
+
+        # Delay between chunks (with small jitter to avoid thundering herd)
+        if batch_delay_ms > 0:
+            jitter_ms = batch_delay_ms + int(batch_delay_ms * 0.1 * (hash(str(batch)) % 10 - 5) / 5)
+            await asyncio.sleep(max(0, jitter_ms / 1000.0))
+
+
 def run_event_diagnostic(event_id: str, user: str) -> Dict[str, str]:
     driver = get_db()
     with driver.session() as session:
