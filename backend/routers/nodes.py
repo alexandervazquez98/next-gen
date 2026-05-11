@@ -88,6 +88,18 @@ async def get_node_template(current_user: User = Depends(get_current_active_user
 
     return node_service.get_node_template()
 
+@router.get("/search", response_model=List[Dict[str, Any]])
+async def search_nodes(q: str, current_user: User = Depends(get_current_active_user)):
+    """
+    Search Configuration Items (CIs) by text query.
+    Returns matching nodes with id, label, ip, status, brand, model.
+    Minimum query length: 2 characters.
+    """
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+    return node_service.search_nodes(current_user, q)
+
+
 @router.get("/{node_id}/metrics")
 async def get_node_metrics(node_id: str):
     """
