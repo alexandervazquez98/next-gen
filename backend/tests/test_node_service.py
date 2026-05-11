@@ -1665,3 +1665,112 @@ class TestGetNodeTemplate:
             assert len(df) == 1
             assert df.iloc[0]["Label"] == "Sample Router"
             assert df.iloc[0]["Brand"] == "Cisco"
+
+
+# ---------------------------------------------------------------------------
+# Tests: search_nodes()
+# ---------------------------------------------------------------------------
+
+
+class TestSearchNodes:
+    """Tests for the search_nodes service function."""
+
+    def test_admin_search_returns_all_nodes_no_location_filter(self):
+        """Admin user should search all nodes with is_admin=True, no location filter."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        node_record = _make_full_record(
+            node_props=_make_node_record(node_id="ci-001", name="Router-01"),
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.search_nodes.return_value = [
+                {
+                    "id": "ci-001",
+                    "label": "Router-01",
+                    "ip": "192.168.1.1",
+                    "status": "OK",
+                    "brand": "Cisco",
+                    "model": "ASR-1000",
+                }
+            ]
+
+            from services.node_service import search_nodes
+
+            result = search_nodes(admin, "Router")
+
+            assert len(result) == 1
+            assert result[0]["label"] == "Router-01"
+            mock_repo.search_nodes.assert_called_once()
+            call_args = mock_repo.search_nodes.call_args
+            # Admin: is_admin=True (arg 2), term passed as keyword arg
+            assert call_args[0][0] == "Router"  # term
+            assert call_args[0][2] is True  # is_admin
+
+    def test_operator_search_scoped_by_location(self):
+        """Operator should have results scoped to allowed_locations."""
+        operator = _make_user(
+            username="op",
+            role="OPERATOR",
+            allowed_locations=["HQ-Madrid"],
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.search_nodes.return_value = [
+                {
+                    "id": "ci-002",
+                    "label": "Switch-01",
+                    "ip": "192.168.1.2",
+                    "status": "OK",
+                    "brand": "Cisco",
+                    "model": "Catalyst",
+                }
+            ]
+
+            from services.node_service import search_nodes
+
+            result = search_nodes(operator, "Switch")
+
+            assert len(result) == 1
+            mock_repo.search_nodes.assert_called_once()
+            call_args = mock_repo.search_nodes.call_args
+            # Non-admin: passes term, allowed_locations, is_admin=False
+            assert call_args[0][0] == "Switch"  # term
+            assert call_args[0][1] == ["HQ-Madrid"]  # allowed_locations
+            assert call_args[0][2] is False  # is_admin
+
+    def test_operator_no_locations_returns_empty(self):
+        """Operator with no allowed_locations should return empty list."""
+        operator = _make_user(
+            username="op",
+            role="OPERATOR",
+            allowed_locations=[],
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.search_nodes.return_value = []
+
+            from services.node_service import search_nodes
+
+            result = search_nodes(operator, "Router")
+
+            assert result == []
+            mock_repo.search_nodes.assert_called_once()
+            call_args = mock_repo.search_nodes.call_args
+            # Empty list passed for non-admin with no scopes: term='Router', allowed_locations=[], is_admin=False
+            assert call_args[0][0] == "Router"  # term
+            assert call_args[0][1] == []  # allowed_locations
+
+    def test_search_passes_term_correctly(self):
+        """Search term should be passed to repo unchanged."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.search_nodes.return_value = []
+
+            from services.node_service import search_nodes
+
+            search_nodes(admin, "Madrid")
+
+            call_args = mock_repo.search_nodes.call_args
+            assert call_args[0][0] == "Madrid"  # term

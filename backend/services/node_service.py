@@ -285,6 +285,21 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
     return {"message": f"Successfully processed {processed_count} CIs"}
 
 
+def search_nodes(current_user: User, term: str) -> List[Dict[str, Any]]:
+    """
+    Search CI nodes by term with permission scoping.
+
+    Admin users see all matching nodes. Non-admin users are scoped to their
+    allowed_locations. The term is passed directly to the repo which handles
+    metacharacter stripping.
+    """
+    is_admin = current_user.role == "ADMIN" or current_user.role == UserRole.ADMIN.value
+    allowed_locations = None if is_admin else current_user.allowed_locations
+
+    raw_nodes = topology_repo.search_nodes(term, allowed_locations, is_admin)
+    return raw_nodes
+
+
 def get_node_template() -> StreamingResponse:
     owners_list, layers_list = topology_repo.get_template_data()
 
