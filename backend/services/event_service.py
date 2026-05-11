@@ -586,6 +586,102 @@ def prune_recovered_events(user: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Distributed Prune Lock — prevents concurrent prune operations across operators
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import text
+from postgres_db import SessionLocal
+from models.prune_lock import PruneLock
+
+
+def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3) -> bool:
+    """
+    Atomically acquire the prune lock using INSERT ... ON CONFLICT DO NOTHING.
+    Returns True only if we successfully acquired the lock.
+    Uses bounded retry (max_attempts) to prevent stack overflow under contention.
+    """
+    db = SessionLocal()
+    try:
+        for attempt in range(max_attempts):
+            expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+
+            # Atomic: try to insert, if lock exists and not expired, conflict
+            result = db.execute(
+                text("""
+                    INSERT INTO prune_lock (lock_key, owner, acquired_at, expires_at)
+                    VALUES ('prune', :owner, :acquired_at, :expires_at)
+                    ON CONFLICT (lock_key) DO NOTHING
+                    RETURNING id
+                """),
+                {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at}
+            )
+            row = result.fetchone()
+
+            if row is not None:
+                # We acquired the lock
+                db.commit()
+                return True
+
+            # Lock exists — check if it's ours or expired
+            existing = db.execute(
+                text("SELECT owner, expires_at FROM prune_lock WHERE lock_key = 'prune'")
+            ).fetchone()
+
+            if existing is None:
+                # Lock doesn't exist (race with delete) — retry
+                db.commit()
+                continue
+
+            existing_owner, existing_expires = existing
+
+            if existing_owner == owner:
+                # We already own it — extend TTL (re-acquire)
+                db.execute(
+                    text("""
+                        UPDATE prune_lock
+                        SET expires_at = :expires_at
+                        WHERE lock_key = 'prune' AND owner = :owner
+                    """),
+                    {"owner": owner, "expires_at": expires_at}
+                )
+                db.commit()
+                return True
+
+            if existing_expires < datetime.utcnow():
+                # Expired — delete and retry
+                db.execute(
+                    text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND expires_at < :now"),
+                    {"now": datetime.utcnow()}
+                )
+                db.commit()
+                continue
+
+            # Lock held by another unexpired operator — give up
+            return False
+
+        # Exhausted all attempts
+        return False
+    finally:
+        db.close()
+
+
+def release_prune_lock(owner: str) -> bool:
+    """Release prune lock if we own it."""
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND owner = :owner RETURNING id"),
+            {"owner": owner}
+        )
+        released = result.fetchone() is not None
+        db.commit()
+        return released
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Event Batch Pruner — async generator with chunking, TTL cache, timeout
 # ---------------------------------------------------------------------------
 
