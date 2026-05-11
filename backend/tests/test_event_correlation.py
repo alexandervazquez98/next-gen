@@ -23,6 +23,7 @@ from datetime import datetime
 def determine_correlation_fields(
     parent_event: dict | None,
     ci_id: str,
+    can_propagate: bool = True,
 ) -> dict:
     """
     Pure function that determines correlation fields from parent event context.
@@ -37,6 +38,12 @@ def determine_correlation_fields(
             "root_cause_ci_id": ci_id,
         }
     else:
+        if not can_propagate:
+            return {
+                "correlation_type": "ROOT",
+                "propagated_from": None,
+                "root_cause_ci_id": ci_id,
+            }
         return {
             "correlation_type": "PROPAGATED",
             "propagated_from": parent_event["id"],
@@ -369,3 +376,72 @@ class TestPropagatedFlagInAPI:
         assert "propagated" not in result
         assert "correlation_type" not in result
         assert "root_cause_ci_id" not in result
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (new) — can_propagate field tests
+# ---------------------------------------------------------------------------
+
+class TestCanPropagate:
+    """Unit tests for can_propagate field behavior."""
+
+    def test_can_propagate_false_creates_root_event(self):
+        """
+        GIVEN a parent CI has an OPEN event
+        AND can_propagate=False
+        WHEN determine_correlation_fields is called
+        THEN correlation_type='ROOT' (no propagation, even with parent event)
+        """
+        parent_event = {
+            "id": "evt-parent-001",
+            "ci_id": "ci-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+        }
+        result = determine_correlation_fields(
+            parent_event=parent_event,
+            ci_id="ci-child-001",
+            can_propagate=False,
+        )
+        assert result["correlation_type"] == "ROOT"
+        assert result["propagated_from"] is None
+        assert result["root_cause_ci_id"] == "ci-child-001"
+
+    def test_can_propagate_true_propagates_with_parent(self):
+        """
+        GIVEN a parent CI has an OPEN event
+        AND can_propagate=True
+        WHEN determine_correlation_fields is called
+        THEN correlation_type='PROPAGATED' with inherited root cause
+        """
+        parent_event = {
+            "id": "evt-parent-001",
+            "ci_id": "ci-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+        }
+        result = determine_correlation_fields(
+            parent_event=parent_event,
+            ci_id="ci-child-001",
+            can_propagate=True,
+        )
+        assert result["correlation_type"] == "PROPAGATED"
+        assert result["propagated_from"] == "evt-parent-001"
+        assert result["root_cause_ci_id"] == "ci-parent-001"
+
+    def test_default_can_propagate_is_true_for_backward_compat(self):
+        """
+        GIVEN no explicit can_propagate value passed
+        WHEN determine_correlation_fields is called with parent_event
+        THEN correlation_type='PROPAGATED' (backward compatible default)
+        """
+        parent_event = {
+            "id": "evt-parent-001",
+            "ci_id": "ci-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+        }
+        # can_propagate defaults to True
+        result = determine_correlation_fields(parent_event=parent_event, ci_id="ci-child-001")
+        assert result["correlation_type"] == "PROPAGATED"
+        assert result["propagated_from"] == "evt-parent-001"

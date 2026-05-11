@@ -150,12 +150,14 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
                 m.oid = $oid, m.dataType = $dtype, m.unit = $unit,
                 m.description = $desc, m.applicable_to = $criteria,
                 m.operator = $operator, m.criticality = $criticality,
-                m.polling_interval = $polling_interval
+                m.polling_interval = $polling_interval,
+                m.can_propagate = $can_propagate
         """, id=metric.id, prot=metric.protocol, warn=metric.warning, 
              crit=metric.critical, oid=metric.oid, dtype=metric.dataType,
              unit=metric.unit, desc=metric.description, criteria=criteria_str,
              operator=metric.operator or ">=", criticality=metric.criticality or 1,
-             polling_interval=metric.polling_interval or 60)
+             polling_interval=metric.polling_interval or 60,
+             can_propagate=metric.can_propagate)
 
     _reconcile_metric_assignments(metric.id, metric.applicable_to)
     return {"message": "Metric defined"}

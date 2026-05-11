@@ -417,10 +417,16 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                 except Exception:
                     pass  # If topology check fails, create as ROOT
 
+                # Check can_propagate BEFORE expensive graph traversal
                 if parent_info:
-                    correlation_type = "PROPAGATED"
-                    propagated_from = parent_info["parent_event_id"]
-                    root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
+                    if not metric_def.get("can_propagate", True):
+                        correlation_type = "ROOT"
+                        propagated_from = None
+                        root_cause_ci_id = ci.get("id")
+                    else:
+                        correlation_type = "PROPAGATED"
+                        propagated_from = parent_info["parent_event_id"]
+                        root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
                 else:
                     correlation_type = "ROOT"
                     propagated_from = None
