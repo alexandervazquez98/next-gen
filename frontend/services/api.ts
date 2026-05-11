@@ -114,6 +114,25 @@ export const api = {
         method: 'DELETE',
         body: body ? JSON.stringify(body) : undefined
     }),
+    // Download a file with authentication (returns blob URL for download)
+    download: (endpoint: string) => {
+        return request<Blob>(endpoint, { responseType: 'blob', method: 'GET' })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'template.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                // Revoke after a tick so browser finishes reading
+                setTimeout(() => URL.revokeObjectURL(url), 0);
+            })
+            .catch(err => {
+                console.error('Download failed:', err);
+                throw err;
+            });
+    },
     // raw request for custom config
     request
 };
