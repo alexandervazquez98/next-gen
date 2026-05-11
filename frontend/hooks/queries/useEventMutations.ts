@@ -82,7 +82,7 @@ export const useEventMutations = () => {
         setState({ status: 'streaming', progress: { total: 0, processed: 0, remaining: 0, batch: 0 } });
 
         try {
-          const response = await fetch('/events/bulk/stream-progress', {
+          const response = await fetch('/api/events/bulk/stream-progress', {
             signal: controller.signal,
             headers: { Accept: 'text/event-stream' },
           });
