@@ -401,7 +401,6 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
             WHERE ($status IS NULL OR e.status = $status OR ($status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED']))
             RETURN e, ci, m
             ORDER BY e.created_at DESC
-            LIMIT 100
         """,
             status=status,
         )
