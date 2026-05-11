@@ -145,6 +145,9 @@ async def _sse_event_generator(
 
     WARNING #4 fix: Uses try/finally to ensure cleanup runs on disconnect,
     preventing abandoned generator resource leaks.
+
+    Distributed lock: endpoint already acquired lock before SSE starts.
+    Generator releases lock when stream ends (client disconnect or completion).
     """
     import json
     try:
@@ -157,9 +160,9 @@ async def _sse_event_generator(
             yield f"data: {json.dumps(progress)}\n\n"
     finally:
         # WARNING #4 fix: explicit cleanup when client disconnects
-        # No async resources to clean up currently, but the structure ensures
-        # future cleanup (e.g., DB session release) is properly handled
-        pass
+        # Release distributed lock when SSE stream ends
+        from services.event_service import release_prune_lock
+        release_prune_lock(owner=user)
 
 
 @router.get("/bulk/stream-progress")
@@ -175,9 +178,20 @@ async def stream_prune_progress(
     Last-Event-ID is parsed as the created_at timestamp cursor.
 
     Requires EVENT_CLOSE permission.
+
+    Distributed lock ensures only ONE prune operation can run at a time
+    across ALL operators. Returns HTTP 409 if another prune is in progress.
     """
     if not check_permission(UserPermission.EVENT_CLOSE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to prune events")
+
+    # Check distributed lock BEFORE starting SSE stream
+    from services.event_service import acquire_prune_lock
+    if not acquire_prune_lock(owner=current_user.username, ttl_seconds=300):
+        raise HTTPException(
+            status_code=409,
+            detail="Another prune operation is in progress",
+        )
 
     # WARNING #6 fix: validate batch_size is a positive integer, cap at max 10000
     batch_size_str = request.query_params.get("batch_size")
