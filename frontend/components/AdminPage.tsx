@@ -249,7 +249,7 @@ const AdminPage: React.FC = () => {
                                     </button>
                                     <div className="h-6 w-px bg-white/10 mx-2" />
                                     <button
-                                        onClick={() => window.open('/api/nodes/template', '_blank')}
+                                        onClick={() => api.download('/nodes/template')}
                                         className="btn-secondary text-xs"
                                     >
                                         <span className="material-symbols-outlined text-sm">download</span>
