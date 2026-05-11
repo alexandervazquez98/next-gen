@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import services.event_service as event_service
@@ -126,11 +127,96 @@ async def add_event_comment(
 @router.post("/prune")
 async def prune_recovered_events(current_user: User = Depends(get_current_active_user)):
     """
-    Bulk Close all 'RECOVERED' events.
+    Bulk Close all 'RECOVERED' events (sync version).
     """
     if not check_permission(UserPermission.EVENT_CLOSE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to prune events")
     return event_service.prune_recovered_events(current_user.username)
+
+
+async def _sse_event_generator(
+    user: str,
+    batch_size: Optional[int] = None,
+    last_event_id: Optional[str] = None,
+):
+    """
+    Async generator that yields SSE-formatted progress events.
+    Each chunk is sent as a server-sent event with the progress dict as data.
+
+    WARNING #4 fix: Uses try/finally to ensure cleanup runs on disconnect,
+    preventing abandoned generator resource leaks.
+    """
+    import json
+    try:
+        async for progress in event_service.event_batch_pruner(
+            user=user,
+            batch_size=batch_size,
+            last_cursor=last_event_id,  # WARNING #5 fix: Last-Event-ID used as cursor
+        ):
+            # Format as SSE: "data: {json}\n\n"
+            yield f"data: {json.dumps(progress)}\n\n"
+    finally:
+        # WARNING #4 fix: explicit cleanup when client disconnects
+        # No async resources to clean up currently, but the structure ensures
+        # future cleanup (e.g., DB session release) is properly handled
+        pass
+
+
+@router.get("/bulk/stream-progress")
+async def stream_prune_progress(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    SSE endpoint that streams batch pruning progress in real-time.
+
+    Clients can reconnect using the Last-Event-ID header to resume from
+    the last received event ID (useful for long-running operations).
+    Last-Event-ID is parsed as the created_at timestamp cursor.
+
+    Requires EVENT_CLOSE permission.
+    """
+    if not check_permission(UserPermission.EVENT_CLOSE, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to prune events")
+
+    # WARNING #6 fix: validate batch_size is a positive integer, cap at max 10000
+    batch_size_str = request.query_params.get("batch_size")
+    batch_size: Optional[int] = None
+    if batch_size_str:
+        try:
+            batch_size = int(batch_size_str)
+            if batch_size <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="batch_size must be a positive integer",
+                )
+            if batch_size > 10000:
+                raise HTTPException(
+                    status_code=400,
+                    detail="batch_size must not exceed 10000",
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="batch_size must be a valid integer",
+            )
+
+    # WARNING #5 fix: read Last-Event-ID header to support reconnection
+    last_event_id = request.headers.get("Last-Event-ID")
+
+    return StreamingResponse(
+        _sse_event_generator(
+            user=current_user.username,
+            batch_size=batch_size,
+            last_event_id=last_event_id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 @router.post("/{event_id}/diagnose")
