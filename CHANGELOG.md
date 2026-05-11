@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-05-11
+
+### Added
+- **Batch Event Closure with SSE Progress Streaming**: Bulk close all RECOVERED events via `POST /events/prune` with real-time progress via `GET /events/bulk/stream-progress`
+  - `event_batch_pruner()` async generator with cursor-based pagination (stable to inserts between batches)
+  - Configurable batch size, delay, and timeout via `EVENT_BATCH_SIZE`, `EVENT_BATCH_DELAY_MS`, `EVENT_BATCH_TIMEOUT_S`
+  - Request-scoped idempotency cache (no cross-user contamination)
+  - `Last-Event-ID` header support for SSE reconnection
+  - Anti-doble-click guard: button disabled + loading state during operation
+  - Frontend progress indicator in MonitoringConsole
+
 ## [Unreleased]
 
 ### Added
