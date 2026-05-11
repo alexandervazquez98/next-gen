@@ -965,6 +965,13 @@ const MonitoringConsole: React.FC = () => {
     const pruneState = eventMutations.usePruneRecovered();
     const [pruneError, setPruneError] = React.useState<string | null>(null);
 
+    // Completion feedback for prune operation
+    React.useEffect(() => {
+        if (pruneState.isComplete && pruneState.progress) {
+            alert(`Limpieza completada: ${pruneState.progress.processed} eventos cerrados`);
+        }
+    }, [pruneState.isComplete, pruneState.progress]);
+
     // --- Event Correlation & Grouping Engine ---
     const groupedEvents = useEventCorrelation(events, links);
     const sortedEventStream = useMemo(

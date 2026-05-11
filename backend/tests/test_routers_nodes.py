@@ -693,3 +693,100 @@ class TestGetNodeTemplate:
 
             assert response.status_code == 200
         app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/nodes/search — CI text search
+# ---------------------------------------------------------------------------
+
+
+class TestSearchNodes:
+    """Tests for GET /api/nodes/search endpoint."""
+
+    def test_search_nodes_unauthenticated(self):
+        """No auth token should return 401."""
+        response = client.get("/api/nodes/search?q=router")
+        assert response.status_code == 401
+
+    def test_search_nodes_query_too_short(self):
+        """Query with fewer than 2 chars should return 400."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/nodes/search?q=a")
+        assert response.status_code == 400
+        assert "at least 2 characters" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_search_nodes_success(self):
+        """Valid query should return 200 with array of matching nodes."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        node_record = _make_neo4j_node_record(
+            node_id="ci-001",
+            name="Router-01",
+            brand="Cisco",
+            model="ASR-1000",
+        )
+
+        with patch("routers.nodes.node_service") as mock_service:
+            mock_service.search_nodes.return_value = [
+                {
+                    "id": "ci-001",
+                    "label": "Router-01",
+                    "ip": "192.168.1.1",
+                    "status": "OK",
+                    "brand": "Cisco",
+                    "model": "ASR-1000",
+                }
+            ]
+
+            response = client.get("/api/nodes/search?q=Router")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert data[0]["label"] == "Router-01"
+            mock_service.search_nodes.assert_called_once()
+            call_args = mock_service.search_nodes.call_args
+            assert call_args[0][0].username == "admin"
+            assert call_args[0][1] == "Router"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_search_nodes_empty_results(self):
+        """Empty results should return 200 with empty array."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.nodes.node_service") as mock_service:
+            mock_service.search_nodes.return_value = []
+
+            response = client.get("/api/nodes/search?q=NonExistent")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data == []
+
+        app.dependency_overrides.pop(get_current_active_user, None)
