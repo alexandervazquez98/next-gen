@@ -409,28 +409,21 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             else:
                 snapshot = resolve_event_snapshot(session, ci.get("id"))
 
-                # --- Correlation check: find open parent event ---
-                parent_info = None
-                try:
-                    from repositories.topology_repo import find_open_parent_event
-                    parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
-                except Exception:
-                    pass  # If topology check fails, create as ROOT
+                # --- Correlation check: only if metric CAN propagate ---
+                correlation_type = "ROOT"
+                propagated_from = None
+                root_cause_ci_id = ci.get("id")
 
-                # Check can_propagate BEFORE expensive graph traversal
-                if parent_info:
-                    if not metric_def.get("can_propagate", True):
-                        correlation_type = "ROOT"
-                        propagated_from = None
-                        root_cause_ci_id = ci.get("id")
-                    else:
-                        correlation_type = "PROPAGATED"
-                        propagated_from = parent_info["parent_event_id"]
-                        root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
-                else:
-                    correlation_type = "ROOT"
-                    propagated_from = None
-                    root_cause_ci_id = ci.get("id")
+                if metric_def.get("can_propagate", True):
+                    try:
+                        from repositories.topology_repo import find_open_parent_event
+                        parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
+                        if parent_info:
+                            correlation_type = "PROPAGATED"
+                            propagated_from = parent_info["parent_event_id"]
+                            root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
+                    except Exception:
+                        pass  # If topology check fails, keep ROOT
                 # --- End correlation check ---
 
                 session.run(
