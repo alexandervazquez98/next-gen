@@ -12,6 +12,44 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+# ---------------------------------------------------------------------------
+# Event Batch Pruner Settings
+# ---------------------------------------------------------------------------
+
+
+class EventBatchSettings(BaseModel):
+    """Batch processing settings for the event batch pruner."""
+
+    batch_size: int = 500
+    batch_delay_ms: int = 100
+    batch_timeout_s: int = 30
+
+    @classmethod
+    def from_env(cls) -> "EventBatchSettings":
+        """Load event batch settings from environment variables."""
+        return cls(
+            batch_size=int(os.getenv("EVENT_BATCH_SIZE", "500")),
+            batch_delay_ms=int(os.getenv("EVENT_BATCH_DELAY_MS", "100")),
+            batch_timeout_s=int(os.getenv("EVENT_BATCH_TIMEOUT_S", "30")),
+        )
+
+
+_event_batch_settings: Optional[EventBatchSettings] = None
+
+
+def get_event_batch_settings() -> EventBatchSettings:
+    """Return cached event batch settings (singleton)."""
+    global _event_batch_settings
+    if _event_batch_settings is None:
+        _event_batch_settings = EventBatchSettings.from_env()
+    return _event_batch_settings
+
+
+# ---------------------------------------------------------------------------
+# MQTT Settings
+# ---------------------------------------------------------------------------
+
+
 class MQTTSettings(BaseModel):
     """MQTT broker connection settings."""
 

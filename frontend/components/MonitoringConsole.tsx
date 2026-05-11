@@ -961,6 +961,10 @@ const MonitoringConsole: React.FC = () => {
         e.status === 'RECOVERED' && !e.ack
     ).length;
 
+    // Streaming prune state
+    const pruneState = eventMutations.usePruneRecovered();
+    const [pruneError, setPruneError] = React.useState<string | null>(null);
+
     // --- Event Correlation & Grouping Engine ---
     const groupedEvents = useEventCorrelation(events, links);
     const sortedEventStream = useMemo(
@@ -1047,15 +1051,25 @@ const MonitoringConsole: React.FC = () => {
                         onClick={async () => {
                             if (cleanableCount === 0) return;
                             if (!window.confirm(`About to close ${cleanableCount} RECOVERED events that have no Acks or Comments. Proceed?`)) return;
-                            const res: any = await eventMutations.pruneEvents();
-                            alert(res.message);
+                            setPruneError(null);
+                            pruneState.start();
                         }}
-                        disabled={cleanableCount === 0}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all ${cleanableCount > 0 ? 'bg-brand-600 hover:bg-brand-500 text-white animate-pulse' : 'bg-white/5 text-neutral-600 opacity-30 cursor-not-allowed'}`}
+                        disabled={cleanableCount === 0 || pruneState.isStreaming}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase flex items-center gap-2 transition-all ${cleanableCount > 0 && !pruneState.isStreaming ? 'bg-brand-600 hover:bg-brand-500 text-white animate-pulse' : 'bg-white/5 text-neutral-600 opacity-30 cursor-not-allowed'}`}
                     >
                         <span className="material-symbols-outlined text-sm">cleaning_services</span>
-                        Clean recovered ({cleanableCount})
+                        {pruneState.isStreaming
+                            ? `Cleaning (${pruneState.progress?.processed ?? 0}/${pruneState.progress?.total ?? cleanableCount})...`
+                            : cleanableCount > 0
+                                ? `Clean recovered (${cleanableCount})`
+                                : `Clean recovered (${cleanableCount})`
+                        }
                     </button>
+                    {pruneState.isError && (
+                        <div className="text-xs text-red-400 max-w-[200px] truncate" title={pruneState.errorMessage ?? ''}>
+                            Error: {pruneState.errorMessage}
+                        </div>
+                    )}
 
                     <div className="h-6 w-px bg-white/10 mx-2"></div>
 
