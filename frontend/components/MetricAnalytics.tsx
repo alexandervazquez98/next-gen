@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GraphNode, MetricDef } from '../types';
 import MetricHistoryChart from './MetricHistoryChart';
+import { fetchNodesSearch } from '../services/queryResources';
 
 const MetricAnalytics: React.FC = () => {
     const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -9,8 +10,14 @@ const MetricAnalytics: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [searchResults, setSearchResults] = useState<GraphNode[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Fetch Nodes on Mount
+    // Fetch Nodes on Mount (original behavior)
     useEffect(() => {
         const token = localStorage.getItem('token');
         fetch('/api/nodes', {
@@ -31,7 +38,62 @@ const MetricAnalytics: React.FC = () => {
             });
     }, []);
 
-    const selectedNode = nodes.find(n => n.id === selectedNodeId);
+    // Debounced search effect
+    useEffect(() => {
+        // Abort any in-flight request from previous effect run
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+
+        // Clear previous timer
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+
+// Skip if less than 2 characters
+        if (searchTerm.length < 2) {
+            setSearchResults([]);
+            setIsSearching(false);
+            setSearchError(null);
+            return;
+        }
+
+        // Create AbortController BEFORE setTimeout so cleanup can abort
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        // Set up new debounce timer
+        debounceTimerRef.current = setTimeout(() => {
+            setIsSearching(true);
+            setSearchError(null);
+
+            fetchNodesSearch({ q: searchTerm, signal: controller.signal })
+                .then((results) => {
+                    setSearchResults(results);
+                    setIsSearching(false);
+                })
+                .catch((err) => {
+                    if (err.name !== 'AbortError') {
+                        console.error('Search failed:', err);
+                        setSearchError(err.message);
+                        setSearchResults([]);
+                    }
+                    setIsSearching(false);
+                });
+        }, 300);
+
+        return () => {
+            controller.abort(); // abort in-flight request on effect cleanup
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+        };
+    }, [searchTerm]);
+
+    // Use search results if available, otherwise fall back to original nodes
+    const displayNodes = searchResults.length > 0 ? searchResults : nodes;
+
+    const selectedNode = displayNodes.find(n => n.id === selectedNodeId);
 
     // Update available metrics when node changes
     useEffect(() => {
@@ -62,19 +124,49 @@ const MetricAnalytics: React.FC = () => {
                     {/* Node Selector */}
                     <div className="bg-surface-900 border border-white/5 rounded-xl p-5 mb-0">
                         <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">Select Resource (CI)</label>
-                        <select
-                            value={selectedNodeId}
-                            onChange={(e) => setSelectedNodeId(e.target.value)}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors appearance-none"
-                        >
-                            <option value="" disabled>Select a CI...</option>
-                            {nodes.map(n => (
-                                <option key={n.id} value={n.id}>
-                                    {n.label || n.id} ({n.ip || 'No IP'})
-                                </option>
-                            ))}
-                        </select>
-                        {selectedNode && (
+                        <input
+                            type="text"
+                            role="searchbox"
+                            name="ci-search"
+                            aria-label="Search CIs"
+                            aria-autocomplete="list"
+                            placeholder="Search CIs..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            maxLength={200}
+                            className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
+                        />
+                        {isSearching && (
+                            <p className="text-xs text-neutral-500 mt-2">Loading...</p>
+                        )}
+                        {searchError && (
+                            <p className="text-xs text-red-400 mt-2">{searchError}</p>
+                        )}
+                        {!isSearching && searchTerm.length >= 2 && searchResults.length === 0 && !searchError && (
+                            <p className="text-xs text-neutral-500 mt-2">No results found</p>
+                        )}
+                        {searchResults.length > 0 && (
+                            <div className="mt-2 max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
+                                {searchResults.map(n => (
+                                    <button
+                                        key={n.id}
+                                        onClick={() => {
+                                            setSelectedNodeId(n.id);
+                                            setSearchTerm('');
+                                            setSearchResults([]);
+                                        }}
+                                        className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0"
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className={`w-2 h-2 rounded-full ${n.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                                            <span className="text-sm text-white">{n.label || n.id}</span>
+                                        </div>
+                                        <p className="text-[10px] text-neutral-500 font-mono ml-4">{n.ip || 'No IP'}</p>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {selectedNode && !isSearching && searchResults.length === 0 && (
                             <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/5">
                                 <div className="flex items-center gap-2 mb-2">
                                     <span className={`w-2 h-2 rounded-full ${selectedNode.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
