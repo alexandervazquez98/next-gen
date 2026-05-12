@@ -161,13 +161,13 @@ export function buildLinkConfig(
             return {
                 color,
                 weight: isCritical ? 5 : isWarning ? 4 : 3,
-                opacity: 0.85,
+                opacity: 0.6,
                 dashArray: undefined,
                 animate: false,
-                animFrom: '0',
-                animTo: '0',
-                animDur: '0s',
-                showTrafficPulse: true,
+                animFrom: undefined,
+                animTo: undefined,
+                animDur: undefined,
+                showTrafficPulse: false,
             };
 
         case 'HOSTED_ON':
