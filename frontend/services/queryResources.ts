@@ -73,9 +73,10 @@ export interface FetchMetricsHistoryOptions {
 }
 
 export const fetchMetricsHistory = async (options: FetchMetricsHistoryOptions): Promise<MultiMetricHistoryResponse> => {
-  const { nodeIds, metricId, hours = 24, startTime, endTime, limit = 1000, signal } = options;
+  const { nodeIds, metricId, hours, startTime, endTime, limit = 1000, signal } = options;
   const params = new URLSearchParams();
-  params.set('hours', String(hours));
+  // Only set hours if provided (backend defaults to 24)
+  if (hours !== undefined) params.set('hours', String(hours));
   if (startTime) params.set('start_time', startTime);
   if (endTime) params.set('end_time', endTime);
   params.set('limit', String(limit));

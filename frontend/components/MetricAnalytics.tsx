@@ -33,10 +33,11 @@ const MetricAnalytics: React.FC = () => {
     const [secondaryMetricId, setSecondaryMetricId] = useState<string>('');
     const [secondaryMultiCiData, setSecondaryMultiCiData] = useState<NodeMetricData[]>([]);
 
-    // Reset brush when node selection changes (indices are specific to each node's data)
+    // Reset brush when node selection, date range, or metric changes
+    // (indices are specific to each dataset)
     useEffect(() => {
         setBrushRange(null);
-    }, [selectedNodeIds]);
+    }, [selectedNodeIds, startDate, endDate, selectedMetric]);
 
     // Fetch Nodes on Mount
     useEffect(() => {
