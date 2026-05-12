@@ -75,7 +75,7 @@ const MetricAnalytics: React.FC = () => {
                 .catch((err) => {
                     if (err.name !== 'AbortError') {
                         console.error('Search failed:', err);
-                        setSearchError(err.message);
+                        setSearchError(err.message || `Error ${err.status}`);
                         setSearchResults([]);
                     }
                     setIsSearching(false);
