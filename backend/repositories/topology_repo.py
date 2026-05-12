@@ -368,20 +368,20 @@ def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
 
 def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str, Any]]:
     """
-    Traverse parent CIs via DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to max_depth levels.
+    Traverse parent CIs via DEPENDS_ON/HOSTED_ON relationships up to max_depth levels.
     Return the first OPEN/ACK event found on a parent CI, plus root_cause_ci_id.
 
     Returns dict with keys: {parent_event_id, root_cause_ci_id, correlation_type}
     or None if no parent has an open event.
 
-    Traversal: DEPENDS_ON, HOSTED_ON, CONNECTS_TO up to max_depth levels.
+    Traversal: DEPENDS_ON, HOSTED_ON,  up to max_depth levels.
     """
     driver = get_db()
     with driver.session() as session:
         result = session.run(
             f"""
             MATCH (ci:CI {{id: $ci_id}})
-            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..{max_depth}]->(parent:CI)
+            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON*1..{max_depth}]->(parent:CI)
             MATCH (parent)-[:HAS_EVENT]->(pe:Event)
             WHERE pe.status IN ['OPEN', 'ACK']
             RETURN pe.id AS parent_event_id,
