@@ -80,11 +80,12 @@ describe('buildLinkConfig', () => {
     });
 
     // SC-01-D — CONNECTS_TO con CRITICAL en cualquier extremo
-    it('CONNECTS_TO + CRITICAL target → showTrafficPulse true, color rojo, sin dashArray', () => {
+    it('CONNECTS_TO + CRITICAL target → static, showTrafficPulse false, color rojo', () => {
         const link = { relationship: 'CONNECTS_TO' };
         const cfg = buildLinkConfig(link, healthyNode, criticalNode);
 
-        expect(cfg.showTrafficPulse).toBe(true);
+        expect(cfg.showTrafficPulse).toBe(false);
+        expect(cfg.opacity).toBe(0.6);
         expect(cfg.color).toBe('#ef4444');
         expect(cfg.dashArray).toBeUndefined();
         expect(cfg.animate).toBe(false);
@@ -92,11 +93,12 @@ describe('buildLinkConfig', () => {
     });
 
     // SC-01-D2
-    it('CONNECTS_TO + OK → showTrafficPulse true, color verde, weight 3', () => {
+    it('CONNECTS_TO + OK → static, showTrafficPulse false, color verde', () => {
         const link = { relationship: 'CONNECTS_TO' };
         const cfg = buildLinkConfig(link, healthyNode, healthyNode);
 
-        expect(cfg.showTrafficPulse).toBe(true);
+        expect(cfg.showTrafficPulse).toBe(false);
+        expect(cfg.opacity).toBe(0.6);
         expect(cfg.color).toBe('#10b981');
         expect(cfg.animate).toBe(false);
         expect(cfg.weight).toBe(3);
