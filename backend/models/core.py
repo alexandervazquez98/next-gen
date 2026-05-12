@@ -58,6 +58,7 @@ class MetricDef(BaseModel):
     criticality: Optional[int] = 1  # 1: Info, 2: Warning, 3: Exception
     applicable_to: Optional[Dict[str, List[str]]] = None
     polling_interval: Optional[int] = 60
+    can_propagate: bool = True
 
 
 class HardwareModel(BaseModel):
