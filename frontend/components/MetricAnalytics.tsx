@@ -28,7 +28,7 @@ const MetricAnalytics: React.FC = () => {
                 if (Array.isArray(data)) {
                     setNodes(data);
                     // Default select first one if available
-                    if (data.length > 0) setSelectedNodeId(data[0].id);
+                    if (data.length > 0 && !selectedNodeId) setSelectedNodeId(data[0].id);
                 }
                 setLoading(false);
             })
@@ -50,7 +50,14 @@ const MetricAnalytics: React.FC = () => {
             clearTimeout(debounceTimerRef.current);
         }
 
-// Skip if less than 2 characters
+        // Skip if less than 2 characters or if searchTerm is empty (user cleared it to show dropdown)
+        if (!searchTerm.trim()) {
+            setSearchResults([]);
+            setIsSearching(false);
+            setSearchError(null);
+            return;
+        }
+
         if (searchTerm.length < 2) {
             setSearchResults([]);
             setIsSearching(false);
@@ -109,6 +116,18 @@ const MetricAnalytics: React.FC = () => {
         setEndDate('');
     };
 
+    const handleSelectFromSearch = (nodeId: string) => {
+        setSelectedNodeId(nodeId);
+        // Keep search term so user can see what they searched for
+    };
+
+    const handleClearSearch = () => {
+        setSearchTerm('');
+        setSearchResults([]);
+        setIsSearching(false);
+        setSearchError(null);
+    };
+
     return (
         <div className="flex flex-col h-full bg-surface-950 text-white p-8 overflow-hidden">
             <header className="mb-8 flex justify-between items-end">
@@ -124,18 +143,35 @@ const MetricAnalytics: React.FC = () => {
                     {/* Node Selector */}
                     <div className="bg-surface-900 border border-white/5 rounded-xl p-5 mb-0">
                         <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">Select Resource (CI)</label>
-                        <input
-                            type="text"
-                            role="searchbox"
-                            name="ci-search"
-                            aria-label="Search CIs"
-                            aria-autocomplete="list"
-                            placeholder="Search CIs..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            maxLength={200}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
-                        />
+
+                        {/* Search Input Row */}
+                        <div className="flex gap-2">
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    role="searchbox"
+                                    name="ci-search"
+                                    aria-label="Search CIs"
+                                    aria-autocomplete="list"
+                                    placeholder="Search CIs..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    maxLength={200}
+                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
+                                />
+                                {searchTerm && (
+                                    <button
+                                        onClick={handleClearSearch}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors p-1"
+                                        title="Clear search"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">close</span>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Search Status Messages */}
                         {isSearching && (
                             <p className="text-xs text-neutral-500 mt-2">Loading...</p>
                         )}
@@ -145,16 +181,14 @@ const MetricAnalytics: React.FC = () => {
                         {!isSearching && searchTerm.length >= 2 && searchResults.length === 0 && !searchError && (
                             <p className="text-xs text-neutral-500 mt-2">No results found</p>
                         )}
+
+                        {/* Search Results Dropdown */}
                         {searchResults.length > 0 && (
                             <div className="mt-2 max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
                                 {searchResults.map(n => (
                                     <button
                                         key={n.id}
-                                        onClick={() => {
-                                            setSelectedNodeId(n.id);
-                                            setSearchTerm('');
-                                            setSearchResults([]);
-                                        }}
+                                        onClick={() => handleSelectFromSearch(n.id)}
                                         className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0"
                                     >
                                         <div className="flex items-center gap-2">
@@ -166,7 +200,25 @@ const MetricAnalytics: React.FC = () => {
                                 ))}
                             </div>
                         )}
-                        {selectedNode && !isSearching && searchResults.length === 0 && (
+
+                        {/* Original Dropdown - always visible when not searching */}
+                        {!isSearching && searchResults.length === 0 && (
+                            <select
+                                value={selectedNodeId}
+                                onChange={(e) => setSelectedNodeId(e.target.value)}
+                                className="w-full mt-3 bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors appearance-none"
+                            >
+                                <option value="" disabled>Select a CI...</option>
+                                {nodes.map(n => (
+                                    <option key={n.id} value={n.id}>
+                                        {n.label || n.id} ({n.ip || 'No IP'})
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+
+                        {/* Selected Node Info */}
+                        {selectedNode && !isSearching && (
                             <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/5">
                                 <div className="flex items-center gap-2 mb-2">
                                     <span className={`w-2 h-2 rounded-full ${selectedNode.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
