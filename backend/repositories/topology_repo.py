@@ -424,3 +424,25 @@ def create_default_ping_metric(node_id: str, node_label: str) -> None:
             MERGE (n)-[:HAS_METRIC]->(m)
         """, metric_id=metric_id, node_id=node_id,
            applicable_to=json.dumps({"names": [node_label]}))
+
+
+def update_node_metadata(node_id: str, metadata: dict) -> bool:
+    """
+    Update CI node metadata fields (status, pollingInterval, owner, location_name).
+    Used by AI agents for restricted metadata updates.
+    """
+    driver = get_db()
+    # Build SET clause for allowed fields
+    set_parts = []
+    params = {"id": node_id}
+    for key, value in metadata.items():
+        set_parts.append(f"n.{key} = ${key}")
+        params[key] = value
+
+    if not set_parts:
+        return False
+
+    query = f"MATCH (n:CI {{id: $id}}) SET n.updated_at = datetime(), n += $metadata"
+    with driver.session() as session:
+        result = session.run(query, id=node_id, metadata=metadata)
+        return True

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import List, Dict, Any
-from services.auth_service import get_current_active_user
+from services.auth_service import get_current_active_user, get_current_ai_agent
 from models.user import User
 from models.core import Node
 import services.node_service as node_service
 import services.metric_service as metric_service
+from services.node_service import validate_ai_metadata_update, NodeMetadataUpdate
 from fastapi.responses import JSONResponse, StreamingResponse
 
 router = APIRouter(
@@ -44,6 +45,59 @@ async def get_node_usage(node_id: str):
     Check the usage of a CI (number of relationships).
     """
     return node_service.get_node_usage(node_id)
+
+
+@router.put("/{node_id}/metadata")
+async def update_ci_metadata(
+    node_id: str,
+    metadata_update: NodeMetadataUpdate,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    AI-safe endpoint for updating CI metadata.
+    Only allows updating: status, pollingInterval, owner, location_name, metadata.
+    Regular users can update all fields; AI agents are restricted.
+    """
+    from services.auth_service import AIAgentInfo
+
+    ai_info = None
+
+    # Check if user is AI agent by examining their role
+    if current_user.role and str(current_user.role).startswith("AI_"):
+        # C3 fix: add proper guard flow — check_all_guards before operation
+        from services.ai_guard_service import check_all_guards
+        guard_result = check_all_guards(current_user.username, "ci_metadata_update", [node_id])
+        if not guard_result.allowed:
+            raise HTTPException(status_code=403, detail=guard_result.reason)
+
+        # AI agent — validate field restrictions
+        update_data = metadata_update.dict(exclude_unset=True)
+        is_valid, blocked = validate_ai_metadata_update(update_data)
+        if not is_valid:
+            raise HTTPException(
+                status_code=403,
+                detail=f"AI agents cannot modify fields: {blocked}",
+            )
+        ai_info = current_user.username
+
+    # Perform the update via node_service
+    result = node_service.update_node_metadata(node_id, metadata_update)
+
+    # C3 fix: record operation for AI agents
+    if ai_info is not None:
+        from services.ai_guard_service import record_operation
+        record_operation(
+            ai_persona=str(current_user.role),
+            ai_agent_id=current_user.username,
+            operation="ci_metadata_update",
+            target_type="ci",
+            target_id=node_id,
+            target_name=f"CI {node_id}",
+            result="success",
+        )
+
+    return result
+
 
 @router.post("/upload")
 async def upload_nodes(
