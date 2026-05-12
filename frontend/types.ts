@@ -166,3 +166,31 @@ export interface ApplicabilityCriteria {
   names?: string[];
   excluded_names?: string[];
 }
+
+// =============================================================================
+// Multi-CI Metric Analytics Types
+// =============================================================================
+
+export interface DataPoint {
+  time: string;
+  value: number;
+}
+
+export interface NodeMetricData {
+  node_id: string;
+  label: string;
+  data: DataPoint[];
+}
+
+export interface MultiMetricHistoryRequest {
+  nodeIds: string[];
+  metricId: string;
+  hours?: number;
+  startTime?: string;
+  endTime?: string;
+  limit?: number;
+}
+
+export interface MultiMetricHistoryResponse {
+  nodes: NodeMetricData[];
+}
