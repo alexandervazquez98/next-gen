@@ -58,3 +58,6 @@ export const fetchGraphTopology = ({ signal }: { signal?: AbortSignal } = {}) =>
 
 export const fetchOwners = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<OwnerRecord[]>('/owners', { signal });
+
+export const fetchNodesSearch = ({ q, signal }: { q: string; signal?: AbortSignal } = {}) =>
+  api.get<GraphNode[]>('/nodes/search', { q, signal });
