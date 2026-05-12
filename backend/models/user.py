@@ -10,6 +10,18 @@ class UserRole(str, Enum):
     CUSTOM = "CUSTOM"
 
 
+class AIPermission(str, Enum):
+    """Permissions exclusive to AI agents."""
+
+    AI_RUN_DIAGNOSTIC = "AI_RUN_DIAGNOSTIC"
+    AI_VIEW_ALL = "AI_VIEW_ALL"
+    AI_EVENT_ACK = "AI_EVENT_ACK"
+    AI_EVENT_COMMENT = "AI_EVENT_COMMENT"
+    AI_CI_UPDATE_METADATA = "AI_CI_UPDATE_METADATA"
+    AI_EVENT_CLOSE = "AI_EVENT_CLOSE"
+    AI_DICTIONARY_PREVIEW = "AI_DICTIONARY_PREVIEW"
+
+
 class UserPermission(str, Enum):
     # Event Management
     EVENT_VIEW = "EVENT_VIEW"
@@ -36,25 +48,25 @@ class UserPermission(str, Enum):
 class Role(BaseModel):
     name: str
     description: Optional[str] = None
-    permissions: List[UserPermission] = []
+    permissions: List[str] = []  # Store as strings; UserPermission or AIPermission string values
     is_system: bool = False  # If True, cannot be deleted (e.g. ADMIN)
 
 
 class RoleCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    permissions: List[UserPermission] = []
+    permissions: List[str] = []  # Store as strings
 
 
 class RoleUpdate(BaseModel):
     description: Optional[str] = None
-    permissions: Optional[List[UserPermission]] = None
+    permissions: Optional[List[str]] = None
 
 
 class UserBase(BaseModel):
     username: str
-    role: str = "VIEWER"  # Changed from Enum to str to support custom role names
-    permissions: List[UserPermission] = []
+    role: str = UserRole.VIEWER.value
+    permissions: List[str] = []  # Store as strings; validated at service layer
     allowed_locations: List[str] = []  # List of Location Names
     allowed_ci_types: Optional[List[str]] = None
     phone: Optional[str] = None
@@ -70,7 +82,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     tier: Optional[Literal["T1", "T2", "T3"]] = None
-    permissions: Optional[List[UserPermission]] = None
+    permissions: Optional[List[str]] = None
     allowed_locations: Optional[List[str]] = None
     allowed_ci_types: Optional[List[str]] = None
 
