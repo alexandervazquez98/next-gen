@@ -118,7 +118,9 @@ const MetricAnalytics: React.FC = () => {
 
     const handleSelectFromSearch = (nodeId: string) => {
         setSelectedNodeId(nodeId);
-        // Keep search term so user can see what they searched for
+        // Don't clear searchTerm - user might want to search again
+        // But clear results so dropdown shows
+        setSearchResults([]);
     };
 
     const handleClearSearch = () => {
