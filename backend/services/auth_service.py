@@ -6,6 +6,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from models.user import TokenData, User, UserRole, UserPermission, UserInDB
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 from postgres_db import get_pg_db
 from repositories import user_repo
 from utils.security import verify_password, get_password_hash
@@ -81,3 +83,55 @@ def check_permission(permission: UserPermission, user: User):
     if permission in user.permissions:
         return True
     return False
+
+
+# ── AI Agent Detection ─────────────────────────────────────────────────────────
+
+AI_PERSONAS = {"AI_DIAGNOSTIC", "AI_OPERATOR", "AI_ADMIN"}
+
+
+class AIAgentInfo(BaseModel):
+    """Info extracted from AI agent JWT."""
+    ai_agent_id: str
+    persona: str
+    permissions: list[str] = []
+
+
+async def get_current_ai_agent(
+    token: str = Depends(oauth2_scheme), db: Session = Depends(get_pg_db)
+) -> AIAgentInfo:
+    """FastAPI dependency that extracts AI agent info from JWT.
+
+    Returns AIAgentInfo dict with {ai_agent_id, persona, permissions}.
+    Raises 401 if not a valid AI agent token.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate AI agent credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        token_type = payload.get("type")
+        if token_type != "ai_agent":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not an AI agent token",
+            )
+        ai_agent_id = payload.get("sub")
+        if ai_agent_id is None:
+            raise credentials_exception
+        persona = payload.get("role")
+        if persona not in AI_PERSONAS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Invalid AI persona: {persona}",
+            )
+        permissions = payload.get("permissions", [])
+        return AIAgentInfo(
+            ai_agent_id=ai_agent_id,
+            persona=persona,
+            permissions=permissions,
+        )
+    except JWTError:
+        raise credentials_exception
