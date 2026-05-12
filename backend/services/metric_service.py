@@ -64,7 +64,8 @@ def get_metrics() -> List[Dict[str, Any]]:
             criteria = {}
             if m.get("applicable_to"):
                 try: criteria = json.loads(m.get("applicable_to"))
-                except: pass
+                except Exception:
+                    logger.warning("Failed to parse applicable_to for metric %s", m.get("id"), exc_info=True)
 
             metrics.append({
                 "id": m.get("id"),
@@ -78,7 +79,8 @@ def get_metrics() -> List[Dict[str, Any]]:
                 "operator": m.get("operator", ">="),
                 "criticality": m.get("criticality", 1),
                 "applicable_to": criteria,
-                "polling_interval": m.get("polling_interval", 60)
+                "polling_interval": m.get("polling_interval", 60),
+                "can_propagate": m.get("can_propagate", True)
             })
         return metrics
 
@@ -112,6 +114,7 @@ def get_metric(metric_id: str) -> Optional[Dict[str, Any]]:
             "criticality": m.get("criticality", 1),
             "applicable_to": criteria,
             "polling_interval": m.get("polling_interval", 60),
+            "can_propagate": m.get("can_propagate", True),
         }
 
 
@@ -181,7 +184,8 @@ def get_metric_usage(metric_id: str) -> Dict[str, Any]:
         
         criteria = {}
         try: criteria = json.loads(record["apt"] or "{}")
-        except: pass
+        except Exception:
+            logger.warning("Failed to parse applicable_to for metric %s", metric_id, exc_info=True)
             
         models = criteria.get("models", [])
         brands = criteria.get("brands", [])

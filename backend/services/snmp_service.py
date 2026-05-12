@@ -177,6 +177,7 @@ def run_snmp_cycle_sync(driver):
                     "critical": metric.get("critical"),
                     "operator": metric.get("operator", ">="),
                     "applicable_to": criteria,
+                    "can_propagate": metric.get("can_propagate", True),
                 }
             )
 
@@ -422,8 +423,9 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                             correlation_type = "PROPAGATED"
                             propagated_from = parent_info["parent_event_id"]
                             root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
-                    except Exception:
-                        pass  # If topology check fails, keep ROOT
+                    except Exception as exc:
+                        logger.warning("Topology correlation check failed for CI %s metric %s: %s",
+                                       ci.get("id"), metric_def.get("id"), exc)
                 # --- End correlation check ---
 
                 session.run(
@@ -479,10 +481,11 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                 WITH e
                 CALL {
                     WITH e
-                    MATCH (pe:Event)
+                    MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
                     WHERE pe.root_cause_ci_id = e.ci_id
                       AND pe.correlation_type = 'PROPAGATED'
                       AND pe.status IN ['OPEN', 'ACK']
+                      AND m.can_propagate = true
                     SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
                     RETURN count(pe) AS propagated_recovered
                 }
