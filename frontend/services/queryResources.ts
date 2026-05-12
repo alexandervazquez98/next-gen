@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { EventDetail, EventSummary, GraphLink, GraphNode } from '../types';
+import type { EventDetail, EventSummary, GraphLink, GraphNode, MultiMetricHistoryResponse } from '../types';
 
 export interface SystemStatus {
   cpu: number;
@@ -61,3 +61,26 @@ export const fetchOwners = ({ signal }: { signal?: AbortSignal } = {}) =>
 
 export const fetchNodesSearch = ({ q, signal }: { q: string; signal?: AbortSignal } = {}) =>
   api.get<GraphNode[]>(`/nodes/search?q=${encodeURIComponent(q)}`, { signal });
+
+export interface FetchMetricsHistoryOptions {
+  nodeIds: string[];
+  metricId: string;
+  hours?: number;
+  startTime?: string;
+  endTime?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export const fetchMetricsHistory = async (options: FetchMetricsHistoryOptions): Promise<MultiMetricHistoryResponse> => {
+  const { nodeIds, metricId, hours = 24, startTime, endTime, limit = 1000, signal } = options;
+  const params = new URLSearchParams();
+  params.set('hours', String(hours));
+  if (startTime) params.set('start_time', startTime);
+  if (endTime) params.set('end_time', endTime);
+  params.set('limit', String(limit));
+  params.set('node_ids', nodeIds.join(','));
+  
+  const url = `/api/metrics/${encodeURIComponent(metricId)}/history?${params.toString()}`;
+  return api.get<MultiMetricHistoryResponse>(url, { signal });
+};
