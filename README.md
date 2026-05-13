@@ -30,6 +30,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 ## Documentacion Canonica
 
 - [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) - manual del operador: login, consola, eventos, metricas, troubleshooting.
+- [`docs/AI_AGENT_GUIDE.md`](docs/AI_AGENT_GUIDE.md) - guia para agentes IA que operan via REST API: permisos, operaciones permitidas, guards y campos restringidos.
 - [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
 - [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
 - [`docs/reference/modelo_entidad_relacion.md`](docs/reference/modelo_entidad_relacion.md) - referencia tecnica de entidades, relaciones y payloads relevantes.
