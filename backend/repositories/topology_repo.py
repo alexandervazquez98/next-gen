@@ -1,6 +1,5 @@
 from typing import List, Dict, Any, Optional, Set
 import json
-import re
 from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
@@ -368,20 +367,20 @@ def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
 
 def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str, Any]]:
     """
-    Traverse parent CIs via DEPENDS_ON/HOSTED_ON relationships up to max_depth levels.
+    Traverse parent CIs via DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to max_depth levels.
     Return the first OPEN/ACK event found on a parent CI, plus root_cause_ci_id.
 
     Returns dict with keys: {parent_event_id, root_cause_ci_id, correlation_type}
     or None if no parent has an open event.
 
-    Traversal: DEPENDS_ON, HOSTED_ON,  up to max_depth levels.
+    Traversal: DEPENDS_ON, HOSTED_ON, CONNECTS_TO up to max_depth levels.
     """
     driver = get_db()
     with driver.session() as session:
         result = session.run(
             f"""
             MATCH (ci:CI {{id: $ci_id}})
-            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON*1..{max_depth}]->(parent:CI)
+            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..{max_depth}]->(parent:CI)
             MATCH (parent)-[:HAS_EVENT]->(pe:Event)
             WHERE pe.status IN ['OPEN', 'ACK']
             RETURN pe.id AS parent_event_id,
@@ -427,67 +426,23 @@ def create_default_ping_metric(node_id: str, node_label: str) -> None:
            applicable_to=json.dumps({"names": [node_label]}))
 
 
-# Metacharacters to strip from search terms before using in regex
-_REGEX_METACHAR = re.compile(r'[.*+?^${}()|[\]\\]')
-
-
-def search_nodes(term: str, allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
+def update_node_metadata(node_id: str, metadata: dict) -> bool:
     """
-    Search CI nodes by regex across all CI fields (id, name, label, ip, brand, model,
-    serialNumber, firmwareVersion, owner, location_name, status).
-
-    Admin users (is_admin=True) search all matching CIs. Non-admin users are scoped
-    to their allowed_locations. If allowed_locations is empty for a non-admin,
-    returns empty list immediately.
-
-    Args:
-        term: Search term (metacharacters will be stripped)
-        allowed_locations: List of location names to scope results (for non-admins)
-        is_admin: If True, no location filter is applied
-
-    Returns:
-        List of node dicts with id, label, ip, status, brand, model fields
+    Update CI node metadata fields (status, pollingInterval, owner, location_name).
+    Used by AI agents for restricted metadata updates.
     """
-    # Non-admin with no location scopes gets nothing
-    if not is_admin and not allowed_locations:
-        return []
-
     driver = get_db()
+    # Build SET clause for allowed fields
+    set_parts = []
+    params = {"id": node_id}
+    for key, value in metadata.items():
+        set_parts.append(f"n.{key} = ${key}")
+        params[key] = value
 
-    # Strip regex metacharacters to prevent injection
-    safe_term = _REGEX_METACHAR.sub('', term)
+    if not set_parts:
+        return False
 
-    # All CI fields to search across (from spec: id, name, label, ip, brand, model,
-    # serialNumber, firmwareVersion, owner, location_name, status)
-    # Note: "name" and "label" both map to n.name in the graph
-    searchable_fields = [
-        "id", "name", "ip", "brand", "model",
-        "serialNumber", "firmwareVersion", "owner", "location_name", "status",
-    ]
-
-    # Build OR'd regex conditions
-    conditions = [f"n.{f} =~ $search" for f in searchable_fields]
-    where_clause = " OR ".join(conditions)
-
-    query = f"MATCH (n:CI) WHERE {where_clause}"
-
-    # Non-admin: scope to allowed locations
-    if not is_admin and allowed_locations:
-        query += " AND n.location_name IN $allowed_locations"
-
-    query += " RETURN n LIMIT 50"
-
+    query = f"MATCH (n:CI {{id: $id}}) SET n.updated_at = datetime(), n += $metadata"
     with driver.session() as session:
-        result = session.run(query, search=f"(?i).*{safe_term}.*", allowed_locations=allowed_locations)
-        nodes = []
-        for r in result:
-            n = dict(r["n"])
-            nodes.append({
-                "id": n.get("id"),
-                "label": n.get("name"),
-                "ip": n.get("ip"),
-                "status": n.get("status", "OK"),
-                "brand": n.get("brand"),
-                "model": n.get("model"),
-            })
-        return nodes
+        result = session.run(query, id=node_id, metadata=metadata)
+        return True
