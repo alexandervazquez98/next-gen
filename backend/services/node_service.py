@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -5,6 +7,8 @@ import pandas as pd
 import io
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
+
 from models.user import User, UserRole, UserPermission
 from models.core import Node
 from services.auth_service import check_permission
@@ -12,6 +16,36 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from repositories import topology_repo
 
 logger = logging.getLogger(__name__)
+
+
+# ── AI Field-Level Validation ─────────────────────────────────────────────────
+
+ALLOWED_AI_METADATA_FIELDS = {"status", "pollingInterval", "owner", "location_name", "metadata"}
+
+BLOCKED_AI_UPDATE_FIELDS = {
+    "id", "label", "type", "brand", "model", "serialNumber",
+    "firmwareVersion", "ip", "snmp", "location",
+}
+
+
+class NodeMetadataUpdate(BaseModel):
+    """AI-safe subset of node fields for metadata update."""
+    status: Optional[str] = None
+    pollingInterval: Optional[int] = Field(None, ge=10, le=3600)
+    owner: Optional[str] = None
+    location_name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+def validate_ai_metadata_update(update_data: dict) -> tuple[bool, list[str]]:
+    """Returns (is_valid, blocked_fields)"""
+    blocked = []
+    for key in update_data.keys():
+        if key in BLOCKED_AI_UPDATE_FIELDS:
+            blocked.append(key)
+    if blocked:
+        return False, blocked
+    return True, []
 
 
 def get_nodes(current_user: User) -> List[Dict[str, Any]]:
@@ -150,6 +184,26 @@ def get_node_usage(node_id: str) -> Dict[str, int]:
     """
     count = topology_repo.get_node_usage(node_id)
     return {"count": count}
+
+
+def update_node_metadata(node_id: str, metadata_update: NodeMetadataUpdate) -> Dict[str, str]:
+    """Update CI metadata fields (status, pollingInterval, owner, location_name, metadata).
+
+    This is the AI-safe update path — field validation is done by the caller.
+    """
+    from repositories import topology_repo
+    update_data = metadata_update.dict(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Build the metadata dict
+    metadata = update_data.get("metadata", {})
+    for key in ["status", "pollingInterval", "owner", "location_name"]:
+        if key in update_data:
+            metadata[key] = update_data[key]
+
+    topology_repo.update_node_metadata(node_id, metadata)
+    return {"message": "Node metadata updated", "id": node_id}
 
 
 async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse:
