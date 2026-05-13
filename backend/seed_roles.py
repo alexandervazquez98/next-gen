@@ -1,6 +1,6 @@
 import asyncio
 from database import get_db, close_db
-from models.user import UserPermission
+from models.user import UserPermission, AIPermission
 
 
 async def seed_roles():
@@ -36,13 +36,39 @@ async def seed_roles():
             ],
             "is_system": True,
         },
+        "AI_DIAGNOSTIC": {
+            "description": "AI agent for initial triage and investigation",
+            "permissions": [
+                AIPermission.AI_VIEW_ALL.value,
+                AIPermission.AI_RUN_DIAGNOSTIC.value,
+                AIPermission.AI_EVENT_ACK.value,
+                AIPermission.AI_EVENT_COMMENT.value,
+                AIPermission.AI_CI_UPDATE_METADATA.value,
+                AIPermission.AI_DICTIONARY_PREVIEW.value,
+            ],
+            "is_system": True,
+        },
+        "AI_OPERATOR": {
+            "description": "AI agent for full incident lifecycle management",
+            "permissions": [
+                AIPermission.AI_VIEW_ALL.value,
+                AIPermission.AI_RUN_DIAGNOSTIC.value,
+                AIPermission.AI_EVENT_ACK.value,
+                AIPermission.AI_EVENT_COMMENT.value,
+                AIPermission.AI_EVENT_CLOSE.value,
+                AIPermission.AI_CI_UPDATE_METADATA.value,
+                AIPermission.AI_DICTIONARY_PREVIEW.value,
+            ],
+            "is_system": True,
+        },
     }
 
     with driver.session() as session:
         for name, data in roles.items():
             # Check if exists
             res = session.run("MATCH (r:Role {name: $name}) RETURN r", name=name)
-            if not res.single():
+            existing = res.single()
+            if not existing:
                 print(f"Creating role: {name}")
                 session.run(
                     """
@@ -59,19 +85,21 @@ async def seed_roles():
                     sys=data["is_system"],
                 )
             else:
-                # Optional: Update permissions if system role definition changed?
-                # Probably safer to not overwrite existing customizations if system allowed it?
-                # But system roles are usually fixed.
-                # Let's update permissions just in case we add new features (like ROLE_MANAGE).
-                print(f"Updating system role: {name}")
-                session.run(
-                    """
-                    MATCH (r:Role {name: $name})
-                    SET r.permissions = $perms, r.is_system = true
-                """,
-                    name=name,
-                    perms=data["permissions"],
-                )
+                # System roles are protected from overwrite once created
+                # If is_system is None (key absent or null), treat as non-system and allow update
+                existing_is_system = existing.get("r", {}).get("is_system")
+                if existing_is_system is True:
+                    print(f"Skipping system role {name} — already exists, not overwriting")
+                else:
+                    print(f"Updating non-system role: {name}")
+                    session.run(
+                        """
+                        MATCH (r:Role {name: $name})
+                        SET r.permissions = $perms, r.is_system = false
+                    """,
+                        name=name,
+                        perms=data["permissions"],
+                    )
 
     print("Roles Seeded.")
     close_db()
