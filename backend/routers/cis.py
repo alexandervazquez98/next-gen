@@ -18,6 +18,12 @@ router = APIRouter(
 
 
 def _require_editor(current_user: User):
+    # Block AI agents from dictionary exclusion management
+    if current_user.role and str(current_user.role).startswith("AI_"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI agents cannot manage CI dictionary exclusions",
+        )
     if not current_user.role == "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -50,11 +56,18 @@ async def get_applied_dictionary(
     Get the AppliedDictionary for a CI with full details.
     Returns dictionary_id, dictionary_name, excluded_metrics, extra_metrics, applied_at.
     Returns 404 if no dictionary is applied to this CI.
+    C4 fix: requires authentication and non-AI agent to read exclusion data.
     """
+    # C4 fix: block AI agents from reading CI exclusion data
+    if current_user.role and str(current_user.role).startswith("AI_"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI agents cannot read CI dictionary exclusion data",
+        )
     result = dictionary_service.get_applied_dictionary(ci_id)
     if not result:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            code=status.HTTP_404_NOT_FOUND,
             detail=f"No dictionary applied to CI '{ci_id}'",
         )
     return result

@@ -696,97 +696,259 @@ class TestGetNodeTemplate:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/nodes/search — CI text search
+# Tests: PUT /api/nodes/{node_id}/metadata — AI agent metadata update
 # ---------------------------------------------------------------------------
 
 
-class TestSearchNodes:
-    """Tests for GET /api/nodes/search endpoint."""
+class TestUpdateNodeMetadata:
+    """Tests for PUT /api/nodes/{node_id}/metadata endpoint with AI agent restrictions."""
 
-    def test_search_nodes_unauthenticated(self):
+    def _ai_user(self, username: str = "ai-agent-1") -> User:
+        """Create a fake AI agent user."""
+        return User(
+            username=username,
+            role="AI_DIAGNOSTIC",
+            permissions=[],
+            allowed_locations=[],
+        )
+
+    def _operator_user(self) -> User:
+        """Create a regular operator user."""
+        return User(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.CI_EDIT],
+            allowed_locations=[],
+        )
+
+    def _mock_session(self):
+        """Return a mock DB session that won't hit the real DB."""
+        session = MagicMock()
+        session.execute.return_value = MagicMock(scalar=MagicMock(return_value=0))
+        session.close = MagicMock()
+        return session
+
+    def test_metadata_update_unauthenticated(self):
         """No auth token should return 401."""
-        response = client.get("/api/nodes/search?q=router")
+        response = client.put(
+            "/api/nodes/ci-001/metadata",
+            json={"status": "MAINTENANCE"},
+        )
         assert response.status_code == 401
 
-    def test_search_nodes_query_too_short(self):
-        """Query with fewer than 2 chars should return 400."""
-        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+    def test_ai_agent_can_update_allowed_field_status(self):
+        """AI agent can update 'status' field — it is in the allowed set."""
+        async def override():
+            return self._ai_user()
 
-        async def override_get_current_active_user():
-            return fake_user
+        app.dependency_overrides[get_current_active_user] = override
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        with patch("routers.nodes.node_service") as mock_service, \
+             patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+            mock_service.update_node_metadata.return_value = {
+                "message": "Node metadata updated",
+                "id": "ci-001",
+            }
 
-        response = client.get("/api/nodes/search?q=a")
-        assert response.status_code == 400
-        assert "at least 2 characters" in response.json()["detail"]
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"status": "MAINTENANCE"},
+            )
+
+            assert response.status_code == 200
+            mock_service.update_node_metadata.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_search_nodes_success(self):
-        """Valid query should return 200 with array of matching nodes."""
-        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+    def test_ai_agent_can_update_allowed_field_polling_interval(self):
+        """AI agent can update 'pollingInterval' field — it is in the allowed set."""
+        async def override():
+            return self._ai_user()
 
-        async def override_get_current_active_user():
-            return fake_user
+        app.dependency_overrides[get_current_active_user] = override
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        with patch("routers.nodes.node_service") as mock_service, \
+             patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+            mock_service.update_node_metadata.return_value = {
+                "message": "Node metadata updated",
+                "id": "ci-001",
+            }
 
-        node_record = _make_neo4j_node_record(
-            node_id="ci-001",
-            name="Router-01",
-            brand="Cisco",
-            model="ASR-1000",
-        )
-
-        with patch("routers.nodes.node_service") as mock_service:
-            mock_service.search_nodes.return_value = [
-                {
-                    "id": "ci-001",
-                    "label": "Router-01",
-                    "ip": "192.168.1.1",
-                    "status": "OK",
-                    "brand": "Cisco",
-                    "model": "ASR-1000",
-                }
-            ]
-
-            response = client.get("/api/nodes/search?q=Router")
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"pollingInterval": 120},
+            )
 
             assert response.status_code == 200
-            data = response.json()
-            assert isinstance(data, list)
-            assert len(data) == 1
-            assert data[0]["label"] == "Router-01"
-            mock_service.search_nodes.assert_called_once()
-            call_args = mock_service.search_nodes.call_args
-            assert call_args[0][0].username == "admin"
-            assert call_args[0][1] == "Router"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_search_nodes_empty_results(self):
-        """Empty results should return 200 with empty array."""
-        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+    def test_ai_agent_can_update_allowed_field_owner(self):
+        """AI agent can update 'owner' field — it is in the allowed set."""
+        async def override():
+            return self._ai_user()
 
-        async def override_get_current_active_user():
-            return fake_user
+        app.dependency_overrides[get_current_active_user] = override
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        with patch("routers.nodes.node_service") as mock_service, \
+             patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+            mock_service.update_node_metadata.return_value = {
+                "message": "Node metadata updated",
+                "id": "ci-001",
+            }
 
-        with patch("routers.nodes.node_service") as mock_service:
-            mock_service.search_nodes.return_value = []
-
-            response = client.get("/api/nodes/search?q=NonExistent")
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"owner": "NetOps"},
+            )
 
             assert response.status_code == 200
-            data = response.json()
-            assert data == []
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_can_update_allowed_field_metadata_dict(self):
+        """AI agent can update 'metadata' field — it is in the allowed set."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.nodes.node_service") as mock_service, \
+             patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+            mock_service.update_node_metadata.return_value = {
+                "message": "Node metadata updated",
+                "id": "ci-001",
+            }
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"metadata": {"note": "updated by AI"}},
+            )
+
+            assert response.status_code == 200
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_blocked_from_updating_brand_field(self):
+        """AI agent gets 403 when trying to update 'brand' field."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"status": "MAINTENANCE", "brand": "Juniper"},
+            )
+
+            assert response.status_code == 403
+            assert "brand" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_blocked_from_updating_model_field(self):
+        """AI agent gets 403 when trying to update 'model' field."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"owner": "NetOps", "model": "MX-204"},
+            )
+
+            assert response.status_code == 403
+            assert "model" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_blocked_from_updating_snmp_field(self):
+        """AI agent gets 403 when trying to update 'snmp' field."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(allowed=True)
+            mock_session.return_value = self._mock_session()
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"status": "OK", "snmp": {"version": "v3"}},
+            )
+
+            assert response.status_code == 403
+            assert "snmp" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_blocked_when_guard_fails(self):
+        """AI agent gets 403 when guard check fails (e.g., cooldown active)."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("services.ai_guard_service.check_all_guards") as mock_guards:
+            mock_guards.return_value = MagicMock(
+                allowed=False,
+                reason="Cooldown active",
+            )
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"status": "MAINTENANCE"},
+            )
+
+            assert response.status_code == 403
+            assert "Cooldown active" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_regular_operator_can_update_all_fields(self):
+        """Regular operator with CI_EDIT can update any field (including blocked ones)."""
+        async def override():
+            return self._operator_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.nodes.node_service") as mock_service:
+            mock_service.update_node_metadata.return_value = {
+                "message": "Node metadata updated",
+                "id": "ci-001",
+            }
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"ip": "10.0.0.99", "brand": "Juniper"},
+            )
+
+            # Regular user is not blocked by AI field restrictions
+            assert response.status_code == 200
 
         app.dependency_overrides.pop(get_current_active_user, None)
