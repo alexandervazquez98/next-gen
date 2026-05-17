@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GraphNode, MetricDef, NodeMetricData } from '../types';
+import { GraphNode, MetricValue, NodeMetricData } from '../types';
 import MetricHistoryChart from './MetricHistoryChart';
 import MultiSelectCIs from './MultiSelectCIs';
 import MultiMetricChart from './MultiMetricChart';
@@ -12,9 +12,9 @@ interface BrushRange {
 
 const MetricAnalytics: React.FC = () => {
     const [nodes, setNodes] = useState<GraphNode[]>([]);
-    const [selectedNodeId, setSelectedNodeId] = useState<string>('');
     const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-    const [selectedMetric, setSelectedMetric] = useState<MetricDef | null>(null);
+    const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+    const [selectedMetric, setSelectedMetric] = useState<MetricValue | null>(null);
     const [loading, setLoading] = useState(true);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -32,12 +32,18 @@ const MetricAnalytics: React.FC = () => {
     const [showSecondary, setShowSecondary] = useState(false);
     const [secondaryMetricId, setSecondaryMetricId] = useState<string>('');
     const [secondaryMultiCiData, setSecondaryMultiCiData] = useState<NodeMetricData[]>([]);
+    const [secondaryMultiCiLoading, setSecondaryMultiCiLoading] = useState(false);
 
     // Reset brush when node selection, date range, or metric changes
     // (indices are specific to each dataset)
     useEffect(() => {
         setBrushRange(null);
     }, [selectedNodeIds, startDate, endDate, selectedMetric]);
+
+    // Derive selectedNode from selectedNodeIds[0]
+    useEffect(() => {
+        setSelectedNode(nodes.find(n => n.id === selectedNodeIds[0]) || null);
+    }, [selectedNodeIds, nodes]);
 
     // Fetch Nodes on Mount (original behavior)
     useEffect(() => {
@@ -49,12 +55,6 @@ const MetricAnalytics: React.FC = () => {
             .then(data => {
                 if (Array.isArray(data)) {
                     setNodes(data);
-                    // Default select first one if available
-                    if (data.length > 0) {
-                        const firstId = data[0].id;
-                        setSelectedNodeId(firstId);
-                        setSelectedNodeIds([firstId]);
-                    }
                 }
                 setLoading(false);
             })
@@ -119,11 +119,6 @@ const MetricAnalytics: React.FC = () => {
         };
     }, [searchTerm]);
 
-    // Use search results if available, otherwise fall back to original nodes
-    const displayNodes = searchResults.length > 0 ? searchResults : nodes;
-
-    const selectedNode = displayNodes.find(n => n.id === selectedNodeId);
-
     // Update available metrics when node changes
     useEffect(() => {
         if (selectedNode && selectedNode.metrics && selectedNode.metrics.length > 0) {
@@ -131,7 +126,7 @@ const MetricAnalytics: React.FC = () => {
         } else {
             setSelectedMetric(null);
         }
-    }, [selectedNodeId, nodes]);
+    }, [selectedNode]);
 
     // Fetch multi-CI data when selectedNodeIds or selectedMetric changes
     useEffect(() => {
@@ -175,11 +170,14 @@ const MetricAnalytics: React.FC = () => {
 
     // Fetch secondary metric data
     useEffect(() => {
-        if (!showSecondary || secondaryMetricId.length === 0 || selectedNodeIds.length <= 1) {
+        if (!showSecondary || secondaryMetricId.length === 0 || selectedNodeIds.length === 0) {
             setSecondaryMultiCiData([]);
+            setSecondaryMultiCiLoading(false);
             return;
         }
 
+        setSecondaryMultiCiLoading(true);
+        setSecondaryMultiCiData([]);
         const controller = new AbortController();
         const customRange = startDate && endDate
             ? { start: new Date(startDate).toISOString(), end: new Date(endDate).toISOString() }
@@ -195,11 +193,13 @@ const MetricAnalytics: React.FC = () => {
         })
             .then((response) => {
                 setSecondaryMultiCiData(response.nodes);
+                setSecondaryMultiCiLoading(false);
             })
             .catch((err) => {
                 if (err.name !== 'AbortError') {
                     console.error('Failed to fetch secondary metric history', err);
                 }
+                setSecondaryMultiCiLoading(false);
             });
 
         return () => controller.abort();
@@ -210,26 +210,9 @@ const MetricAnalytics: React.FC = () => {
         setEndDate('');
     };
 
-    const handleSelectFromSearch = (nodeId: string) => {
-        setSelectedNodeId(nodeId);
-        setSelectedNodeIds([nodeId]);
-        setSearchResults([]);
-        setBrushRange(null);
-    };
-
-    const handleClearSearch = () => {
-        setSearchTerm('');
-        setSearchResults([]);
-        setIsSearching(false);
-        setSearchError(null);
-    };
-
     const handleMultiCiChange = (ids: string[]) => {
         setSelectedNodeIds(ids);
         setBrushRange(null);
-        if (ids.length > 0 && !selectedNodeIds.includes(ids[0])) {
-            setSelectedNodeId(ids[0]);
-        }
     };
 
     const handleBrushChange = (range: BrushRange | null) => {
@@ -249,97 +232,7 @@ const MetricAnalytics: React.FC = () => {
 
             <div className="grid grid-cols-12 gap-8 h-full">
                 {/* Controls Sidebar */}
-                <div className="col-span-12 lg:col-span-3 space-y-6 flex flex-col h-full overflow-hidden">
-                    {/* Node Selector - Single CI */}
-                    <div className="bg-surface-900 border border-white/5 rounded-xl p-5 mb-0">
-                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">Select Resource (CI)</label>
-{/* Search Input Row */}
-                        <div className="flex gap-2">
-                            <div className="relative flex-1">
-                                <input
-                                    type="text"
-                                    role="searchbox"
-                                    name="ci-search"
-                                    aria-label="Search CIs"
-                                    aria-autocomplete="list"
-                                    placeholder="Search CIs..."
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    maxLength={200}
-                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
-                                />
-                                {searchTerm && (
-                                    <button
-                                        onClick={handleClearSearch}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors p-1"
-                                        title="Clear search"
-                                    >
-                                        <span className="material-symbols-outlined text-sm">close</span>
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Search Status Messages */}
-                        {isSearching && (
-                            <p className="text-xs text-neutral-500 mt-2">Loading...</p>
-                        )}
-                        {searchError && (
-                            <p className="text-xs text-red-400 mt-2">{searchError}</p>
-                        )}
-                        {!isSearching && searchTerm.length >= 2 && searchResults.length === 0 && !searchError && (
-                            <p className="text-xs text-neutral-500 mt-2">No results found</p>
-                        )}
-{/* Search Results Dropdown */}
-                        {searchResults.length > 0 && (
-                            <div className="mt-2 max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
-                                {searchResults.map(n => (
-                                    <button
-                                        key={n.id}
-                                        onClick={() => handleSelectFromSearch(n.id)}
-                                        className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className={`w-2 h-2 rounded-full ${n.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                                            <span className="text-sm text-white">{n.label || n.id}</span>
-                                        </div>
-                                        <p className="text-[10px] text-neutral-500 font-mono ml-4">{n.ip || 'No IP'}</p>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-{/* Original Dropdown - always visible when not searching */}
-                        {!isSearching && searchResults.length === 0 && (
-                            <select
-                                value={selectedNodeId}
-                                onChange={(e) => {
-                                    setSelectedNodeId(e.target.value);
-                                    setSelectedNodeIds([e.target.value]);
-                                    setBrushRange(null);
-                                }}
-                                className="w-full mt-3 bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors appearance-none"
-                            >
-                                <option value="" disabled>Select a CI...</option>
-                                {nodes.map(n => (
-                                    <option key={n.id} value={n.id}>
-                                        {n.label || n.id} ({n.ip || 'No IP'})
-                                    </option>
-                                ))}
-                            </select>
-                        )}
-
-                        {/* Selected Node Info */}
-                        {selectedNode && !isSearching && (
-                            <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/5">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className={`w-2 h-2 rounded-full ${selectedNode.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                                    <span className="text-xs font-bold">{selectedNode.status}</span>
-                                </div>
-                                <p className="text-[10px] text-neutral-500 font-mono break-all">{selectedNode.id}</p>
-                            </div>
-                        )}
-                    </div>
-
+                <div className="col-span-12 lg:col-span-3 space-y-6 flex flex-col h-full overflow-hidden min-w-0">
                     {/* Multi-CI Selector */}
                     <div className="bg-surface-900 border border-white/5 rounded-xl p-5">
                         <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">Compare Multiple CIs</label>
@@ -443,7 +336,7 @@ const MetricAnalytics: React.FC = () => {
                 </div>
 
                 {/* Main Chart Area */}
-                <div className="col-span-12 lg:col-span-9 flex flex-col gap-6 h-full overflow-hidden pb-8">
+                <div className="col-span-12 lg:col-span-9 flex flex-col gap-6 h-full overflow-hidden pb-8 min-w-0">
                     {hasMultipleSelected && selectedMetric ? (
                         <>
                             {/* Multi-CI Chart View */}
@@ -453,7 +346,7 @@ const MetricAnalytics: React.FC = () => {
                                 </div>
 
                                 <div className="relative z-10 flex-1 flex flex-col min-h-0">
-                                    {multiCiLoading && multiCiData.length === 0 ? (
+                                    {multiCiLoading ? (
                                         <div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
                                             LOADING METRICS...
                                         </div>
@@ -480,12 +373,18 @@ const MetricAnalytics: React.FC = () => {
                                             <h3 className="text-white font-bold uppercase tracking-tight">{secondaryMetricId} Comparison</h3>
                                             <p className="text-xs text-neutral-500">Secondary metric overlay</p>
                                         </div>
-                                        <MultiMetricChart
-                                            nodeData={secondaryMultiCiData}
-                                            brushRange={brushRange}
-                                            onBrushChange={handleBrushChange}
-                                            metricName={secondaryMetricId}
-                                        />
+                                        {secondaryMultiCiLoading ? (
+                                            <div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
+                                                LOADING SECONDARY METRIC...
+                                            </div>
+                                        ) : (
+                                            <MultiMetricChart
+                                                nodeData={secondaryMultiCiData}
+                                                brushRange={brushRange}
+                                                onBrushChange={handleBrushChange}
+                                                metricName={secondaryMetricId}
+                                            />
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -525,7 +424,7 @@ const MetricAnalytics: React.FC = () => {
     );
 };
 
-const StatCard: React.FC<{ label: string, value: any, unit?: string, isStatus?: boolean, isDate?: boolean }> = ({ label, value, unit, isStatus, isDate }) => {
+const StatCard: React.FC<{ label: string, value: string | number | null | undefined, unit?: string, isStatus?: boolean, isDate?: boolean }> = ({ label, value, unit, isStatus, isDate }) => {
     let displayValue = value ?? '--';
     let colorClass = 'text-white';
 

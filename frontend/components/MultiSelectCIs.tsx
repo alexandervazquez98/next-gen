@@ -75,13 +75,12 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [searchTerm, selectedIds]);
+  }, [searchTerm]);
 
   const handleAddNode = (nodeId: string) => {
     if (selectedIds.length >= maxCIs) return;
     if (selectedIds.includes(nodeId)) return;
     onChange([...selectedIds, nodeId]);
-    setSearchTerm('');
     setSearchResults([]);
   };
 
@@ -137,7 +136,8 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
             <button
               key={n.id}
               onClick={() => handleAddNode(n.id)}
-              className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2"
+              disabled={selectedIds.length >= maxCIs}
+              className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <span className={`w-2 h-2 rounded-full ${n.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
               <span className="text-sm text-white">{n.label || n.id}</span>
