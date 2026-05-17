@@ -82,6 +82,6 @@ export const fetchMetricsHistory = async (options: FetchMetricsHistoryOptions): 
   params.set('limit', String(limit));
   params.set('node_ids', nodeIds.join(','));
   
-  const url = `/api/metrics/${encodeURIComponent(metricId)}/history?${params.toString()}`;
+  const url = `/metrics/${encodeURIComponent(metricId)}/history?${params.toString()}`;
   return api.get<MultiMetricHistoryResponse>(url, { signal });
 };
