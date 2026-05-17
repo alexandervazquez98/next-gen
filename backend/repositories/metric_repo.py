@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 import logging
 from models.timescale_models import MetricValue
@@ -23,7 +23,7 @@ def create_hypertable(db: Session):
 
 def insert_metric_value(db: Session, node_id: str, metric_id: str, value: float, timestamp: datetime = None):
     if timestamp is None:
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
     
     mv = MetricValue(
         time=timestamp,
@@ -42,7 +42,7 @@ def bulk_insert_metrics(db: Session, metrics: List[Dict[str, Any]]):
     metrics: List of dicts with keys: node_id, metric_id, value, time (optional)
     """
     objects = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for m in metrics:
         objects.append(MetricValue(
             time=m.get('time', now),
@@ -74,10 +74,10 @@ def get_metric_history(
             query = query.filter(MetricValue.time >= start, MetricValue.time <= end)
         except ValueError:
              # Fallback or error? For now fallback to hours
-             cutoff = datetime.utcnow() - timedelta(hours=hours)
+             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
              query = query.filter(MetricValue.time >= cutoff)
     else:
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         query = query.filter(MetricValue.time >= cutoff)
         
     results = query.order_by(MetricValue.time.asc()).limit(limit).all()
@@ -198,10 +198,10 @@ def get_metric_history_batch(
             start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
             end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
         except ValueError:
-            end_dt = datetime.utcnow()
+            end_dt = datetime.now(timezone.utc)
             start_dt = end_dt - timedelta(hours=hours)
     else:
-        end_dt = datetime.utcnow()
+        end_dt = datetime.now(timezone.utc)
         start_dt = end_dt - timedelta(hours=hours)
     
     # Build 30-second interpolation grid
