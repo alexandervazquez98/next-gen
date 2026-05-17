@@ -171,7 +171,7 @@ const MetricAnalytics: React.FC = () => {
             });
 
         return () => controller.abort();
-    }, [selectedNodeIds, selectedMetric, startDate, endDate, customRange]);
+    }, [selectedNodeIds, selectedMetric, startDate, endDate]);
 
     // Fetch secondary metric data
     useEffect(() => {
