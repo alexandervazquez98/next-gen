@@ -30,10 +30,6 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
   unit,
   metricName,
 }) => {
-  const isSelecting = false;
-  const selectionStart = null;
-  const selectionEnd = null;
-
   const formattedData = useMemo(() => {
     return data
       .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())

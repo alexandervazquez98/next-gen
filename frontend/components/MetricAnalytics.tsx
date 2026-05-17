@@ -14,7 +14,7 @@ const MetricAnalytics: React.FC = () => {
     const [nodes, setNodes] = useState<GraphNode[]>([]);
     const [selectedNodeId, setSelectedNodeId] = useState<string>('');
     const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-    const [selectedMetric, setSelectedMetric] = useState<any | null>(null);
+    const [selectedMetric, setSelectedMetric] = useState<MetricDef | null>(null);
     const [loading, setLoading] = useState(true);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -171,7 +171,7 @@ const MetricAnalytics: React.FC = () => {
             });
 
         return () => controller.abort();
-    }, [selectedNodeIds, selectedMetric, startDate, endDate]);
+    }, [selectedNodeIds, selectedMetric, startDate, endDate, customRange]);
 
     // Fetch secondary metric data
     useEffect(() => {

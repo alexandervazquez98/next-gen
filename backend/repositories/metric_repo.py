@@ -2,7 +2,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+import logging
 from models.timescale_models import MetricValue
+
+logger = logging.getLogger(__name__)
 
 def create_hypertable(db: Session):
     """
@@ -186,9 +189,9 @@ def get_metric_history_batch(
     Returns:
         List of {node_id, label, data: [{time, value}]} dicts
     """
-    from database import get_neo4j_session
+    from database import get_db
     from models.core import Node
-    
+
     # Determine time range
     if start_time and end_time:
         try:
@@ -211,7 +214,7 @@ def get_metric_history_batch(
     # Fetch node labels from Neo4j (batch query - single round trip)
     node_labels: Dict[str, str] = {}
     try:
-        neo4j_session = get_neo4j_session()
+        neo4j_session = get_db()
         result = neo4j_session.run(
             "MATCH (n:CiNode) WHERE n.nodeId IN $nodeIds RETURN n.nodeId AS nodeId, n.label AS label",
             nodeIds=node_ids
