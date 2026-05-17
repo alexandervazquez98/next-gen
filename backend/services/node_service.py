@@ -219,6 +219,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
 
     validation_errors = []
     processed_count = 0
+    new_nodes = []
 
     for index, row in df.iterrows():
         row_idx = index + 2
@@ -325,7 +326,25 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             metadata,
             owner,
         )
+        # Collect node dict for metric reconciliation after all inserts
+        new_nodes.append({
+            "id": nid,
+            "name": label,
+            "brand": brand,
+            "model": model,
+            "layer": ntype,
+        })
         processed_count += 1
+
+    # Reconcile metrics for all newly inserted CIs
+    if new_nodes:
+        from services.metric_service import reconcile_node_metrics
+
+        for node_dict in new_nodes:
+            try:
+                reconcile_node_metrics(node_dict)
+            except Exception as e:
+                logger.error(f"Error reconciling metrics for {node_dict['id']}: {e}")
 
     if validation_errors:
         return JSONResponse(
