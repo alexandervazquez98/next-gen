@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional, Set
 import json
+import re
 from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
@@ -446,3 +447,69 @@ def update_node_metadata(node_id: str, metadata: dict) -> bool:
     with driver.session() as session:
         result = session.run(query, id=node_id, metadata=metadata)
         return True
+
+
+# Metacharacters to strip from search terms before using in regex
+_REGEX_METACHAR = re.compile(r'[.*+?^${}()|[\]\\]')
+
+
+def search_nodes(term: str, allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
+    """
+    Search CI nodes by regex across all CI fields (id, name, label, ip, brand, model,
+    serialNumber, firmwareVersion, owner, location_name, status).
+
+    Admin users (is_admin=True) search all matching CIs. Non-admin users are scoped
+    to their allowed_locations. If allowed_locations is empty for a non-admin,
+    returns empty list immediately.
+
+    Args:
+        term: Search term (metacharacters will be stripped)
+        allowed_locations: List of location names to scope results (for non-admins)
+        is_admin: If True, no location filter is applied
+
+    Returns:
+        List of node dicts with id, label, ip, status, brand, model fields
+    """
+    # Non-admin with no location scopes gets nothing
+    if not is_admin and not allowed_locations:
+        return []
+
+    driver = get_db()
+
+    # Strip regex metacharacters to prevent injection
+    safe_term = _REGEX_METACHAR.sub('', term)
+
+    # All CI fields to search across (from spec: id, name, label, ip, brand, model,
+    # serialNumber, firmwareVersion, owner, location_name, status)
+    # Note: "name" and "label" both map to n.name in the graph
+    searchable_fields = [
+        "id", "name", "ip", "brand", "model",
+        "serialNumber", "firmwareVersion", "owner", "location_name", "status",
+    ]
+
+    # Build OR'd regex conditions
+    conditions = [f"n.{f} =~ $search" for f in searchable_fields]
+    where_clause = " OR ".join(conditions)
+
+    query = f"MATCH (n:CI) WHERE {where_clause}"
+
+    # Non-admin: scope to allowed locations
+    if not is_admin and allowed_locations:
+        query += " AND n.location_name IN $allowed_locations"
+
+    query += " RETURN n LIMIT 50"
+
+    with driver.session() as session:
+        result = session.run(query, search=f"(?i).*{safe_term}.*", allowed_locations=allowed_locations)
+        nodes = []
+        for r in result:
+            n = dict(r["n"])
+            nodes.append({
+                "id": n.get("id"),
+                "label": n.get("name"),
+                "ip": n.get("ip"),
+                "status": n.get("status", "OK"),
+                "brand": n.get("brand"),
+                "model": n.get("model"),
+            })
+        return nodes

@@ -716,6 +716,132 @@ class TestMetricsHistory:
         app.dependency_overrides.pop(get_pg_db, None)
 
 
+class TestMultiMetricsHistory:
+    """Tests for GET /api/metrics/{metric_id}/history?node_ids=... — multi-CI batch endpoint."""
+
+    def test_multi_history_returns_nodes_array(self, mock_db):
+        """Multi-CI history with valid node_ids returns nodes array."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        # Mock the query chain for TimescaleDB
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = []
+        mock_db.query.return_value = mock_query
+
+        response = client.get("/api/metrics/cpu-load/history?node_ids=ci-001,ci-002&hours=24")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        assert isinstance(data["nodes"], list)
+        assert len(data["nodes"]) == 2
+        assert data["nodes"][0]["node_id"] == "ci-001"
+        assert data["nodes"][1]["node_id"] == "ci-002"
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_multi_history_max_10_cis_enforced(self, mock_db):
+        """Request with more than 10 node_ids returns HTTP 400."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        too_many_ids = ",".join([f"ci-{i}" for i in range(15)])
+        response = client.get(f"/api/metrics/cpu-load/history?node_ids={too_many_ids}&hours=24")
+
+        assert response.status_code == 400
+        assert "Max 10 CIs allowed" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_multi_history_empty_node_ids_returns_400(self, mock_db):
+        """Request with empty node_ids returns HTTP 400."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        response = client.get("/api/metrics/cpu-load/history?node_ids=&hours=24")
+
+        assert response.status_code == 400
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_multi_history_single_ci_still_returns_nodes_array(self, mock_db):
+        """Single CI in node_ids still returns nodes array (not flat array)."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = []
+        mock_db.query.return_value = mock_query
+
+        response = client.get("/api/metrics/cpu-load/history?node_ids=ci-001&hours=24")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        assert len(data["nodes"]) == 1
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_multi_history_no_node_ids_returns_400(self, mock_db):
+        """Request without node_ids on multi-CI endpoint returns HTTP 400."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        response = client.get("/api/metrics/cpu-load/history?hours=24")
+
+        assert response.status_code == 400
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_multi_history_node_with_no_data_returns_empty_data_array(self, mock_db):
+        """CI with no metric data returns node entry with empty data array."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = []  # No data for this CI
+        mock_db.query.return_value = mock_query
+
+        response = client.get("/api/metrics/cpu-load/history?node_ids=ci-empty&hours=24")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        ci_node = next((n for n in data["nodes"] if n["node_id"] == "ci-empty"), None)
+        assert ci_node is not None
+        assert ci_node["data"] == []
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+
 # ===========================================================================
 # EVENTS ROUTER TESTS
 # ===========================================================================
