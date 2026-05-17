@@ -81,14 +81,16 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
     if (selectedIds.length >= maxCIs) return;
     if (selectedIds.includes(nodeId)) return;
     onChange([...selectedIds, nodeId]);
-    setSearchResults([]);
+    // Keep search results visible while searchTerm exists — only clear on explicit searchTerm change
   };
 
   const handleRemoveNode = (nodeId: string) => {
     onChange(selectedIds.filter(id => id !== nodeId));
   };
 
-  const displayNodes = searchResults.length > 0 ? searchResults : availableNodes;
+  const displayNodes = searchResults.length > 0
+    ? searchResults.filter(n => !selectedIds.includes(n.id))
+    : availableNodes;
   const selectedNodesMap = new Map(selectedIds.map(id => [id, availableNodes.find(n => n.id === id)]));
 
   return (
@@ -132,7 +134,7 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
       {/* Search Results Dropdown */}
       {searchResults.length > 0 && (
         <div className="max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
-          {searchResults.map(n => (
+          {displayNodes.map(n => (
             <button
               key={n.id}
               onClick={() => handleAddNode(n.id)}

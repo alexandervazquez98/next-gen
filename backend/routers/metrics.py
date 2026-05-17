@@ -110,6 +110,46 @@ async def validate_oid_endpoint(
     return result
 
 
+@router.get("/{metric_id}/history")
+async def get_metric_history(
+    metric_id: str,
+    hours: int = 24,
+    limit: int = 1000,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    node_ids: Optional[str] = Query(None, description="Comma-separated list of node IDs, max 10"),
+    db: Session = Depends(get_pg_db),
+):
+    """
+    Fetch historical data for the same metric across multiple CIs.
+
+    Supports two modes:
+    - Multi-CI:  GET /api/metrics/{metric_id}/history?node_ids=ci1,ci2,ci3&hours=24
+    - Single-CI: GET /api/metrics/{node_id}/{metric_id}/history (backward compatible, see below)
+
+    When node_ids is provided (comma-separated list), returns batch data for all CIs
+    with server-side 30-second interpolation onto a common time grid.
+    Maximum 10 CIs allowed per request.
+
+    Without node_ids, raises HTTP 400 directing callers to the single-CI endpoint.
+    """
+    if node_ids:
+        node_id_list = [n.strip() for n in node_ids.split(",") if n.strip()]
+        if len(node_id_list) > 10:
+            raise HTTPException(status_code=400, detail="Max 10 CIs allowed")
+        if not node_id_list:
+            raise HTTPException(status_code=400, detail="node_ids must not be empty")
+
+        return {"nodes": metric_repo.get_metric_history_batch(
+            db, node_id_list, metric_id, hours, start_time, end_time, limit
+        )}
+
+    raise HTTPException(
+        status_code=400,
+        detail="Use GET /api/metrics/{node_id}/{metric_id}/history for single-CI or include node_ids for multi-CI"
+    )
+
+
 # Original single-CI history endpoint — preserved for backward compatibility
 @router.get("/{node_id}/{metric_id}/history")
 async def get_metric_history_single(
@@ -127,45 +167,4 @@ async def get_metric_history_single(
     """
     return metric_repo.get_metric_history(
         db, node_id, metric_id, limit, hours, start_time, end_time
-    )
-
-
-# New multi-CI history endpoint
-@router.get("/{metric_id}/history")
-async def get_metric_history(
-    metric_id: str,
-    hours: int = 24,
-    limit: int = 1000,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    node_ids: Optional[str] = Query(None, description="Comma-separated list of node IDs, max 10"),
-    db: Session = Depends(get_pg_db),
-):
-    """
-    Fetch historical data for a specific metric.
-
-    Supports two modes:
-    - Single-CI: GET /api/metrics/{node_id}/{metric_id}/history (backward compatible)
-    - Multi-CI: GET /api/metrics/{metric_id}/history?node_ids=ci1,ci2,ci3&hours=24
-
-    When node_ids is provided (comma-separated list), returns batch data for all CIs
-    with server-side 30-second interpolation onto a common time grid.
-    Maximum 10 CIs allowed per request.
-    """
-    if node_ids:
-        # Multi-CI batch mode
-        node_id_list = [n.strip() for n in node_ids.split(",") if n.strip()]
-        if len(node_id_list) > 10:
-            raise HTTPException(status_code=400, detail="Max 10 CIs allowed")
-        if not node_id_list:
-            raise HTTPException(status_code=400, detail="node_ids must not be empty")
-
-        return metric_repo.get_metric_history_batch(
-            db, node_id_list, metric_id, hours, start_time, end_time, limit
-        )
-
-    # No node_ids — require single-CI path
-    raise HTTPException(
-        status_code=400,
-        detail="Use GET /api/metrics/{node_id}/{metric_id}/history for single-CI or include node_ids for multi-CI"
     )
