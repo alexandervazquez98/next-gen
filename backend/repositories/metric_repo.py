@@ -214,17 +214,17 @@ def get_metric_history_batch(
     # Fetch node labels from Neo4j (batch query - single round trip)
     node_labels: Dict[str, str] = {}
     try:
-        neo4j_session = get_db()
-        result = neo4j_session.run(
-            "MATCH (n:CiNode) WHERE n.nodeId IN $nodeIds RETURN n.nodeId AS nodeId, n.label AS label",
-            nodeIds=node_ids
-        )
-        for record in result:
-            node_labels[record["nodeId"]] = record["label"] or record["nodeId"]
-        # Fill missing with node_id
-        for node_id in node_ids:
-            if node_id not in node_labels:
-                node_labels[node_id] = node_id
+        with get_db().session() as neo4j_session:
+            result = neo4j_session.run(
+                "MATCH (n:CiNode) WHERE n.nodeId IN $nodeIds RETURN n.nodeId AS nodeId, n.label AS label",
+                nodeIds=node_ids
+            )
+            for record in result:
+                node_labels[record["nodeId"]] = record["label"] or record["nodeId"]
+            # Fill missing with node_id
+            for node_id in node_ids:
+                if node_id not in node_labels:
+                    node_labels[node_id] = node_id
     except Exception as e:
         logger.error(f"Failed to fetch node labels: {e}")
         # Fallback: use node_id as label
