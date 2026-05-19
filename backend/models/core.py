@@ -47,7 +47,7 @@ class MetricDef(BaseModel):
     """Definition of a monitored metric."""
 
     id: str
-    protocol: str = "SNMP"
+    protocol: Literal["SNMP", "ICMP", "CLI"] = "SNMP"
     oid: Optional[str] = None
     warning: Optional[float] = None
     critical: Optional[float] = None
@@ -59,6 +59,14 @@ class MetricDef(BaseModel):
     applicable_to: Optional[Dict[str, List[str]]] = None
     polling_interval: Optional[int] = 60
     can_propagate: bool = True
+    # CLI-specific fields (optional, validated only when protocol == "CLI")
+    cli_command: Optional[str] = None
+    cli_target: Optional[str] = None
+    cli_value_extractor: Optional[str] = None
+    cli_credential_ref: Optional[str] = None
+    cli_escalation_script: Optional[str] = None
+    cli_protocol: Optional[Literal["SSH", "Telnet"]] = "SSH"
+    cli_timeout: Optional[int] = 30
 
 
 class HardwareModel(BaseModel):

@@ -53,7 +53,7 @@ def schedule_daily_backup() -> None:
 
 
 # Router Imports
-from routers import auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis
+from routers import auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -90,6 +90,7 @@ app.include_router(events.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(dictionaries.router, prefix="/api")
 app.include_router(cis.router, prefix="/api")
+app.include_router(cli.router, prefix="/api")
 
 
 @app.exception_handler(Exception)

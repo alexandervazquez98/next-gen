@@ -21,6 +21,15 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     const [testCommunity, setTestCommunity] = useState('public');
     const [testResult, setTestResult] = useState<any>(null);
 
+    // CLI Test State
+    const [cliTestResult, setCliTestResult] = useState<{
+        success: boolean;
+        raw_output?: string;
+        extracted_value?: string | null;
+        numeric_value?: number | null;
+        status: string;
+    } | null>(null);
+
     // Hardware Models for selection
     const [hardwareModels, setHardwareModels] = useState<{ brand: string, model: string }[]>([]);
     const [filterBrand, setFilterBrand] = useState('');
@@ -245,6 +254,44 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
         }
     };
 
+    const handleTestCLI = async () => {
+        if (!formData.cli_command || !formData.cli_test_ip || !formData.cli_test_user || !formData.cli_test_pass) {
+            return alert("CLI command, device IP, username, and password are all required to test.");
+        }
+        setCliTestResult(null);
+        try {
+            const data = await api.post<any>('/cli/test', {
+                ip: formData.cli_test_ip,
+                cli_protocol: formData.cli_protocol || 'SSH',
+                username: formData.cli_test_user,
+                password: formData.cli_test_pass,
+                cli_command: formData.cli_command,
+                cli_value_extractor: formData.cli_value_extractor || '',
+                cli_timeout: formData.cli_timeout || 30,
+                escalation_script: formData.cli_escalation_script || undefined,
+            });
+            setCliTestResult(data);
+        } catch (e: any) {
+            setCliTestResult({
+                success: false,
+                status: e?.message || 'REQUEST_FAILED',
+                raw_output: e?.detail || String(e),
+            });
+        }
+    };
+
+    const handleSaveCLI = async () => {
+        if (!formData.id || !formData.cli_command) {
+            return alert("Metric ID and CLI command are required to save.");
+        }
+        await handleSave({
+            ...formData,
+            protocol: 'CLI',
+            cli_protocol: formData.cli_protocol || 'SSH',
+            cli_timeout: formData.cli_timeout || 30,
+        });
+    };
+
     const toggleModel = (modelName: string) => {
         const currentModels = (criteria.models || '').split(',').map(s => s.trim()).filter(s => s);
         let newModels;
@@ -274,7 +321,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                 <span className="font-bold text-white text-sm">{m.id}</span>
                                 <span className="text-[10px] bg-white/10 px-1.5 rounded text-neutral-300">{m.dataType}</span>
                             </div>
-                            <div className="text-xs text-neutral-500 font-mono mt-1 truncate">{m.oid || 'NO OID'}</div>
+                            <div className="text-xs text-neutral-500 font-mono mt-1 truncate">{m.protocol === 'CLI' ? (m.cli_command || 'CLI') : (m.oid || 'NO OID')}</div>
                         </div>
                     ))}
                 </div>
@@ -302,6 +349,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                     <option value="TOKEN">TOKEN</option>
                                     <option value="API">API</option>
                                     <option value="SSH">SSH</option>
+                                    <option value="CLI">CLI</option>
                                 </select>
                             </div>
                         </div>
@@ -350,6 +398,139 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                 </div>
                             )}
                         </div>
+
+                        {/* ── CLI Configuration Panel ─────────────────────────────────── */}
+                        {formData.protocol === 'CLI' && (
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/5 space-y-4">
+                                <h3 className="text-sm font-bold text-white uppercase">CLI Configuration</h3>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Credential Ref</label>
+                                        <input className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="e.g. CLI_DEFAULT (env: CLI_DEFAULT_USER / CLI_DEFAULT_PASS)"
+                                            value={formData.cli_credential_ref || ''}
+                                            onChange={e => setFormData({ ...formData, cli_credential_ref: e.target.value })} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Transport</label>
+                                        <select className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            value={formData.cli_protocol || 'SSH'}
+                                            onChange={e => setFormData({ ...formData, cli_protocol: e.target.value as 'SSH' | 'Telnet' })}>
+                                            <option value="SSH">SSH</option>
+                                            <option value="Telnet">Telnet</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase">CLI Command</label>
+                                    <input className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs font-mono"
+                                        placeholder="e.g. show interfaces GigabitEthernet0/0 status | include {target}"
+                                        value={formData.cli_command || ''}
+                                        onChange={e => setFormData({ ...formData, cli_command: e.target.value })} />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Target (optional)</label>
+                                        <input className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="e.g. GigabitEthernet0/0"
+                                            value={formData.cli_target || ''}
+                                            onChange={e => setFormData({ ...formData, cli_target: e.target.value })} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Timeout (seconds)</label>
+                                        <input type="number" className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="30"
+                                            value={formData.cli_timeout ?? 30}
+                                            onChange={e => setFormData({ ...formData, cli_timeout: parseInt(e.target.value) || 30 })} />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase">Regex Extractor</label>
+                                    <input className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs font-mono"
+                                        placeholder="e.g. regex:is (up|down)  or  regex:load (\d+)"
+                                        value={formData.cli_value_extractor || ''}
+                                        onChange={e => setFormData({ ...formData, cli_value_extractor: e.target.value })} />
+                                    <p className="text-[10px] text-neutral-600">Format: <span className="font-mono">regex:pattern</span> or <span className="font-mono">regex:pattern (group_index)</span>. Keywords: up→1, down→0, enabled→1, disabled→0, ok→1, error/fail→0.</p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase">Escalation Script (optional)</label>
+                                    <textarea className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs font-mono"
+                                        placeholder="One command per line, e.g.:&#10;enable&#10;secret_password"
+                                        rows={2}
+                                        value={formData.cli_escalation_script || ''}
+                                        onChange={e => setFormData({ ...formData, cli_escalation_script: e.target.value })} />
+                                </div>
+
+                                {/* ── CLI Test Section ──────────────────────────────────────── */}
+                                <div className="border-t border-white/10 pt-4 space-y-3">
+                                    <div className="flex justify-between items-center">
+                                        <h4 className="text-xs font-bold text-white uppercase">Test Query</h4>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <input className="bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="Device IP (e.g. 192.168.1.1)"
+                                            value={formData.cli_test_ip || ''}
+                                            onChange={e => setFormData({ ...formData, cli_test_ip: e.target.value })} />
+                                        <input className="bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="Username"
+                                            value={formData.cli_test_user || ''}
+                                            onChange={e => setFormData({ ...formData, cli_test_user: e.target.value })} />
+                                        <input className="bg-black/40 border border-white/10 p-2 rounded text-white text-xs"
+                                            placeholder="Password"
+                                            type="password"
+                                            value={formData.cli_test_pass || ''}
+                                            onChange={e => setFormData({ ...formData, cli_test_pass: e.target.value })} />
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={handleTestCLI}
+                                            disabled={!formData.cli_command || !formData.cli_test_ip || !formData.cli_test_user || !formData.cli_test_pass}
+                                            className="text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-neutral-600 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition-colors">
+                                            Test CLI Query
+                                        </button>
+                                        <button
+                                            onClick={() => handleSaveCLI()}
+                                            disabled={!formData.cli_command}
+                                            className="text-xs bg-green-600/80 hover:bg-green-600 disabled:bg-neutral-600 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition-colors">
+                                            Save as Metric
+                                        </button>
+                                    </div>
+
+                                    {cliTestResult && (
+                                        <div className={`p-3 rounded text-xs font-mono border ${cliTestResult.success ? 'bg-green-500/10 border-green-500/50 text-green-400' : 'bg-red-500/10 border-red-500/50 text-red-400'}`}>
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-bold">Status:</span>
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${cliTestResult.success ? 'bg-green-500/30' : 'bg-red-500/30'}`}>
+                                                    {cliTestResult.status}
+                                                </span>
+                                            </div>
+                                            {cliTestResult.raw_output !== undefined && (
+                                                <div className="mb-1">
+                                                    <span className="font-bold text-neutral-400">Raw Output:</span>
+                                                    <pre className="whitespace-pre-wrap break-all mt-1 text-[10px] text-neutral-300">{cliTestResult.raw_output}</pre>
+                                                </div>
+                                            )}
+                                            {cliTestResult.extracted_value !== undefined && cliTestResult.extracted_value !== null && (
+                                                <div className="mb-1">
+                                                    <span className="font-bold text-neutral-400">Extracted:</span> {cliTestResult.extracted_value}
+                                                </div>
+                                            )}
+                                            {cliTestResult.numeric_value !== undefined && cliTestResult.numeric_value !== null && (
+                                                <div>
+                                                    <span className="font-bold text-neutral-400">Numeric:</span> {String(cliTestResult.numeric_value)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-4 gap-4">
                             <div className="space-y-2">

@@ -41,6 +41,15 @@ for mod in [
 ]:
     sys.modules[mod] = MagicMock()
 
+# ── Stub schedule (used by cli_worker engine) ───────────────────────────────
+schedule_stub = MagicMock()
+sys.modules["schedule"] = schedule_stub
+
+# ── Stub paramiko (used by cli_worker engine) ─────────────────────────────────
+paramiko_stub = MagicMock()
+sys.modules["paramiko"] = paramiko_stub
+sys.modules["paramiko.client"] = paramiko_stub
+
 # Ensure backend root is on the import path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
