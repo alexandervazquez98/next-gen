@@ -4,3 +4,4 @@ pysnmp==4.4.12
 pandas==2.2.0
 scikit-learn==1.4.0
 schedule==1.2.1
+paramiko>=3.4.0

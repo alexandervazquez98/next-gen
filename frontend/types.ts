@@ -157,6 +157,14 @@ export interface MetricDef {
   operator?: string; // >=, <=, ==, !=
   applicable_to?: ApplicabilityCriteria;
   polling_interval?: number;
+  // CLI-specific fields (present when protocol === "CLI")
+  cli_command?: string;
+  cli_target?: string;
+  cli_value_extractor?: string;
+  cli_credential_ref?: string;
+  cli_escalation_script?: string;
+  cli_protocol?: 'SSH' | 'Telnet';
+  cli_timeout?: number;
 }
 
 export interface ApplicabilityCriteria {

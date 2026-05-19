@@ -80,7 +80,15 @@ def get_metrics() -> List[Dict[str, Any]]:
                 "criticality": m.get("criticality", 1),
                 "applicable_to": criteria,
                 "polling_interval": m.get("polling_interval", 60),
-                "can_propagate": m.get("can_propagate", True)
+                "can_propagate": m.get("can_propagate", True),
+                # CLI-specific fields
+                "cli_command": m.get("cli_command"),
+                "cli_target": m.get("cli_target"),
+                "cli_value_extractor": m.get("cli_value_extractor"),
+                "cli_credential_ref": m.get("cli_credential_ref"),
+                "cli_escalation_script": m.get("cli_escalation_script"),
+                "cli_protocol": m.get("cli_protocol"),
+                "cli_timeout": m.get("cli_timeout"),
             })
         return metrics
 
@@ -115,6 +123,14 @@ def get_metric(metric_id: str) -> Optional[Dict[str, Any]]:
             "applicable_to": criteria,
             "polling_interval": m.get("polling_interval", 60),
             "can_propagate": m.get("can_propagate", True),
+            # CLI-specific fields
+            "cli_command": m.get("cli_command"),
+            "cli_target": m.get("cli_target"),
+            "cli_value_extractor": m.get("cli_value_extractor"),
+            "cli_credential_ref": m.get("cli_credential_ref"),
+            "cli_escalation_script": m.get("cli_escalation_script"),
+            "cli_protocol": m.get("cli_protocol"),
+            "cli_timeout": m.get("cli_timeout"),
         }
 
 
@@ -145,7 +161,7 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
     """
     driver = get_db()
     criteria_str = json.dumps(metric.applicable_to) if metric.applicable_to else "{}"
-    
+
     with driver.session() as session:
         session.run("""
             MERGE (m:MetricDef {id: $id})
@@ -154,13 +170,27 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
                 m.description = $desc, m.applicable_to = $criteria,
                 m.operator = $operator, m.criticality = $criticality,
                 m.polling_interval = $polling_interval,
-                m.can_propagate = $can_propagate
-        """, id=metric.id, prot=metric.protocol, warn=metric.warning, 
+                m.can_propagate = $can_propagate,
+                m.cli_command = $cli_command,
+                m.cli_target = $cli_target,
+                m.cli_value_extractor = $cli_value_extractor,
+                m.cli_credential_ref = $cli_credential_ref,
+                m.cli_escalation_script = $cli_escalation_script,
+                m.cli_protocol = $cli_protocol,
+                m.cli_timeout = $cli_timeout
+        """, id=metric.id, prot=metric.protocol, warn=metric.warning,
              crit=metric.critical, oid=metric.oid, dtype=metric.dataType,
              unit=metric.unit, desc=metric.description, criteria=criteria_str,
              operator=metric.operator or ">=", criticality=metric.criticality or 1,
              polling_interval=metric.polling_interval or 60,
-             can_propagate=metric.can_propagate)
+             can_propagate=metric.can_propagate,
+             cli_command=metric.cli_command,
+             cli_target=metric.cli_target,
+             cli_value_extractor=metric.cli_value_extractor,
+             cli_credential_ref=metric.cli_credential_ref,
+             cli_escalation_script=metric.cli_escalation_script,
+             cli_protocol=metric.cli_protocol,
+             cli_timeout=metric.cli_timeout)
 
     _reconcile_metric_assignments(metric.id, metric.applicable_to)
     return {"message": "Metric defined"}

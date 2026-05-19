@@ -83,3 +83,36 @@ def get_mqtt_settings() -> MQTTSettings:
     if _mqtt_settings is None:
         _mqtt_settings = MQTTSettings.from_env()
     return _mqtt_settings
+
+
+# ---------------------------------------------------------------------------
+# CLI Credentials Settings
+# ---------------------------------------------------------------------------
+
+
+class CLICredentialsSettings(BaseModel):
+    """CLI credential settings for network device access."""
+
+    default_user: Optional[str] = None
+    default_pass: Optional[str] = None
+    enable_pass: Optional[str] = None
+
+    @classmethod
+    def from_env(cls) -> "CLICredentialsSettings":
+        """Load CLI credentials from environment variables."""
+        return cls(
+            default_user=os.getenv("CLI_DEFAULT_USER"),
+            default_pass=os.getenv("CLI_DEFAULT_PASS"),
+            enable_pass=os.getenv("CLI_ENABLE_PASS"),
+        )
+
+
+_cli_credentials_settings: Optional[CLICredentialsSettings] = None
+
+
+def get_cli_credentials_settings() -> CLICredentialsSettings:
+    """Return cached CLI credentials settings (singleton)."""
+    global _cli_credentials_settings
+    if _cli_credentials_settings is None:
+        _cli_credentials_settings = CLICredentialsSettings.from_env()
+    return _cli_credentials_settings
