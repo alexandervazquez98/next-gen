@@ -29,8 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-05-19
+
 ### Added
-- (nothing yet)
+- **CLI Polling Monitoring**: Execute CLI commands on multi-vendor network equipment via SSH/Telnet, extract values via regex, and feed numeric results into the ITOM monitoring pipeline
+  - `MetricDef.protocol` extended with `CLI` value alongside existing SNMP and ICMP
+  - `cli_worker.py` engine with SSH (preferred) and Telnet (fallback), privilege escalation, regex extraction, and NaN rate limiter (3 consecutive misses → alert)
+  - `POST /api/cli/test` endpoint for interactive CLI query testing with raw output and extraction preview
+  - CLI panel in MetricsManager UI for Test Query workflow: iterate on regex until satisfied, then Save as Metric
+  - 34 unit tests covering regex extraction, credential resolution, escalation, and NaN rate limiting
+  - `docs/cli-regex-manual.md` with regex format, numeric mapping table, 8 worked examples, and gotchas
+  - `CLICredentialsSettings` in `backend/config.py` for `CLI_DEFAULT_USER`, `CLI_DEFAULT_PASS`, `CLI_ENABLE_PASS` env vars
+
+### Fixed
+- **CLI protocol branch bug**: `cli_protocol == 'SSH'` changed to `!= 'Telnet'` so Telnet-only mode works correctly
 
 ### Fixed
 - **Nexgen-frontend proxy hostname conflict**: Vite proxy fallback changed from `localhost:8000` to `nexgen_backend:8000` to fix 404 on `GET /api/dictionaries/template-csv` caused by port conflict with netai-backend
