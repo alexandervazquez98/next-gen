@@ -238,6 +238,7 @@ def fetch_cli_value(metric_def: dict, node: dict) -> Tuple[Optional[str], Option
 
 # Keyword-to-numeric mapping as per spec
 _KEYWORD_MAP = {
+    # Generic states
     'up': 1.0,
     'down': 0.0,
     'enabled': 1.0,
@@ -245,6 +246,13 @@ _KEYWORD_MAP = {
     'ok': 1.0,
     'error': 0.0,
     'fail': 0.0,
+    # OSPF neighbor states
+    'full': 1.0,
+    'drother': 0.5,
+    'exstart': 0.3,
+    'exchange': 0.4,
+    'loading': 0.6,
+    'init': 0.2,
 }
 
 
