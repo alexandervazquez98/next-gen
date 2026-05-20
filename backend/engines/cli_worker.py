@@ -70,6 +70,13 @@ def resolve_credential(cli_credential_ref: Optional[str]) -> Tuple[Optional[str]
     username = os.getenv(f"{cli_credential_ref}_USER")
     password = os.getenv(f"{cli_credential_ref}_PASS")
 
+    # Fallback: CLI_TEST_* for direct test credentials from router
+    if not username:
+        username = os.getenv("CLI_TEST_USER")
+    if not password:
+        password = os.getenv("CLI_TEST_PASS")
+
+    # Second fallback: CLI_DEFAULT_*
     if not username:
         username = os.getenv("CLI_DEFAULT_USER")
     if not password:
