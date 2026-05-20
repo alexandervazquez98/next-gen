@@ -38,6 +38,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     // Usage Data
     const [usageData, setUsageData] = useState<any>(null);
     const [usageLoading, setUsageLoading] = useState(false);
+    const [showRegexHelp, setShowRegexHelp] = useState(false);
 
     useEffect(() => {
         if (selectedMetric) {
@@ -449,12 +450,38 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-neutral-500 uppercase">Regex Extractor</label>
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase">Regex Extractor</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowRegexHelp(!showRegexHelp)}
+                                            className="text-[10px] text-brand-400 hover:text-brand-300 underline"
+                                        >
+                                            {showRegexHelp ? 'Ocultar ayuda' : '¿Necesitas ayuda?'}
+                                        </button>
+                                    </div>
                                     <input className="input-field w-full bg-black/40 border border-white/10 p-2 rounded text-white text-xs font-mono"
                                         placeholder="e.g. regex:is (up|down)  or  regex:load (\d+)"
                                         value={formData.cli_value_extractor || ''}
                                         onChange={e => setFormData({ ...formData, cli_value_extractor: e.target.value })} />
-                                    <p className="text-[10px] text-neutral-600">Format: <span className="font-mono">regex:pattern</span> or <span className="font-mono">regex:pattern (group_index)</span>. Keywords: up→1, down→0, enabled→1, disabled→0, ok→1, error/fail→0.</p>
+                                    {showRegexHelp && (
+                                        <div className="bg-black/60 border border-white/10 rounded p-3 text-[10px] text-neutral-400 space-y-2">
+                                            <div>
+                                                <span className="font-bold text-brand-400">💡 Recomendado:</span> Pide a la AI que te genere el regex. Ejemplo: <span className="font-mono text-neutral-300">"Genera un regex para extraer el estado FULL/ de la salida: Neighbor ID     Pri   State\n10.53.5.21        0   FULL/  -"</span>
+                                            </div>
+                                            <div className="border-t border-white/5 pt-2 space-y-1">
+                                                <div><span className="font-bold text-neutral-300">Formato:</span> <span className="font-mono">regex:pattern</span> o <span className="font-mono">regex:pattern (grupo)</span></div>
+                                                <div><span className="font-bold text-neutral-300">Keywords numéricos:</span> up/full/enabled/ok→<span className="text-brand-400">1.0</span>, down/disabled/error/fail→<span className="text-red-400">0.0</span>, drother→<span className="text-yellow-400">0.5</span></div>
+                                                <div><span className="font-bold text-neutral-300">Para números:</span> <span className="font-mono">regex:(\d+\.\d+)</span> o <span className="font-mono">regex:(\d+)</span></div>
+                                            </div>
+                                            <div className="border-t border-white/5 pt-2">
+                                                <span className="font-bold text-neutral-300">Ejemplos OSPF:</span>
+                                                <div className="font-mono mt-1">• FULL (up): <span className="text-brand-300">regex:FULL</span> → 1.0</div>
+                                                <div className="font-mono">• Dead Time: <span className="text-brand-300">regex:(\d+:\d+:\d+)</span></div>
+                                                <div className="font-mono">• Neighbor IP: <span className="text-brand-300">regex:(\d+\.\d+\.\d+\.\d+)</span></div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="space-y-2">
