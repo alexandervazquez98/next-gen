@@ -56,7 +56,7 @@ async def test_cli_query(
 
     # Import CLI engine functions at request time to avoid import-time side effects
     import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'engines'))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'engines'))
 
     try:
         from cli_worker import fetch_cli_value, extract_regex_value
