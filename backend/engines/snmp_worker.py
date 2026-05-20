@@ -11,8 +11,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../backend'))
 
 from neo4j import GraphDatabase
-from backend.repositories.metric_repo import insert_metric_value
-from backend.postgres_db import SessionLocal
+from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+from postgres_db import SessionLocal
 
 # SNMP Support
 try:
@@ -92,7 +92,7 @@ def fetch_snmp_value(ip, community, oid, port=161):
     except Exception:
         return None
 
-from backend.repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 
 # ... (resto de funciones fetch_icmp_ping, fetch_snmp_value, etc.)
 

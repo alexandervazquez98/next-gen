@@ -22,8 +22,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../backend'))
 
 from neo4j import GraphDatabase
-from backend.repositories.metric_repo import insert_metric_value, bulk_insert_metrics
-from backend.postgres_db import SessionLocal
+from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+from postgres_db import SessionLocal
 
 # Paramiko for SSH; socket for Telnet fallback
 try:
