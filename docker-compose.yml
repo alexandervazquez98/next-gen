@@ -94,8 +94,8 @@ services:
   # Engines / Workers
   snmp-engine:
     build:
-      context: .
-      dockerfile: engines/Dockerfile
+      context: backend/engines
+      dockerfile: Dockerfile
     container_name: nexgen_snmp_worker
     depends_on:
       neo4j:
