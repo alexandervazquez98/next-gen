@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements-engine.txt
 COPY ../ /app/backend
 COPY . /app/engines
 
-# Set Python Path to root to allow imports like 'from backend.postgres_db ...'
-ENV PYTHONPATH=/app
+# Set Python Path to backend so 'from repositories ...' works
+ENV PYTHONPATH=/app/backend
 
 CMD ["python", "-u", "engines/snmp_worker.py"]
