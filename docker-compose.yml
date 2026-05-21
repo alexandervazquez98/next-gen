@@ -111,4 +111,8 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      # ICMP polling: timeout in ms (default 3000), retries (default 2), debounce_count (default 3)
+      - ICMP_TIMEOUT_MS=${ICMP_TIMEOUT_MS:-3000}
+      - ICMP_RETRIES=${ICMP_RETRIES:-2}
+      - ICMP_DEBOUNCE_COUNT=${ICMP_DEBOUNCE_COUNT:-3}
     restart: unless-stopped

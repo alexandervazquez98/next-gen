@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -116,3 +116,36 @@ def get_cli_credentials_settings() -> CLICredentialsSettings:
     if _cli_credentials_settings is None:
         _cli_credentials_settings = CLICredentialsSettings.from_env()
     return _cli_credentials_settings
+
+
+# ---------------------------------------------------------------------------
+# ICMP Settings
+# ---------------------------------------------------------------------------
+
+
+class ICMPSettings(BaseModel):
+    """ICMP polling settings for timeout, retry, and debounce behavior."""
+
+    timeout_ms: int = Field(default=3000, ge=1)
+    retries: int = Field(default=2, ge=0)
+    debounce_count: int = Field(default=3, ge=1)
+
+    @classmethod
+    def from_env(cls) -> "ICMPSettings":
+        """Load ICMP settings from environment variables."""
+        return cls(
+            timeout_ms=int(os.getenv("ICMP_TIMEOUT_MS", "3000")),
+            retries=int(os.getenv("ICMP_RETRIES", "2")),
+            debounce_count=int(os.getenv("ICMP_DEBOUNCE_COUNT", "3")),
+        )
+
+
+_icmp_settings: Optional[ICMPSettings] = None
+
+
+def get_icmp_settings() -> ICMPSettings:
+    """Return cached ICMP settings (singleton)."""
+    global _icmp_settings
+    if _icmp_settings is None:
+        _icmp_settings = ICMPSettings.from_env()
+    return _icmp_settings
