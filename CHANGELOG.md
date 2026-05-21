@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Anti-doble-click guard: button disabled + loading state during operation
   - Frontend progress indicator in MonitoringConsole
 
+## [1.11.4] — 2026-05-20
+
+### Fixed
+- **ICMP polling false positives**: Fixed timeout, retry, and debounce logic in `snmp_worker.py`
+  - Added `ICMPSettings` class with configurable `timeout_ms` (default 3s), `retries` (default 2), `debounce_count` (default 3)
+  - Fixed platform-conditional ping: Linux uses `ping -W` (seconds), Windows uses `ping -w` (ms)
+  - Added retry loop: any success returns UP, all fail returns DOWN
+  - Added debounce counter: DOWN only after 3 consecutive failures
+  - Fixed bare `except Exception: pass` causing silent failures — now logs `OSError`
+  - Fixed protocol check using substring matching — now uses exact `protocol.upper() == 'ICMP'`
+  - Removed duplicate status update path (debounce only sets status)
+  - Added Pydantic Field validation to prevent invalid configs (0 timeout, -1 retries, 0 debounce)
+  - Added 12 unit tests covering ICMPSettings, fetch_icmp_ping retry, and debounce counter
+  - Added `ICMP_TIMEOUT_MS`, `ICMP_RETRIES`, `ICMP_DEBOUNCE_COUNT` env vars to docker-compose.yml
+
 ## [Unreleased]
 
 ## [1.11.0] — 2026-05-19
