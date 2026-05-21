@@ -1,18 +1,25 @@
-import time
 import os
+import platform
+import time
 import schedule
 import random
 import sys
 import subprocess
 from datetime import datetime
+from typing import Dict
 
 # Add root and backend to python path to verify imports work
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../backend'))
 
+import logging
+
 from neo4j import GraphDatabase
+
+logger = logging.getLogger(__name__)
 from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 from postgres_db import SessionLocal
+from config import get_icmp_settings
 
 # SNMP Support
 try:
@@ -48,22 +55,47 @@ def verify_connection():
             time.sleep(2)
     raise Exception("Could not connect to Neo4j after multiple retries")
 
-def fetch_icmp_ping(ip):
-    """Perform a real ICMP ping."""
-    try:
-        ping_flag = "-n" if os.name == "nt" else "-c"
-        # Run ping with 1 packet, 1s timeout
-        result = subprocess.run(
-            ["ping", ping_flag, "1", "-w", "1000", ip],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        if result.returncode == 0:
-            return 1.0
-        return 0.0
-    except Exception:
-        return 0.0
+# Module-level consecutive failure counter for ICMP debounce (keyed by node_id)
+# NOTE: This dict grows unbounded. If a node is deleted from Neo4j, its entry remains.
+# For production, consider persisting this to Neo4j or using a bounded cache (e.g. LRU).
+_consecutive_failures: Dict[str, int] = {}
+
+
+def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2) -> float:
+    """Perform ICMP ping with configurable timeout and retry.
+
+    Args:
+        ip: Target IP address.
+        timeout_ms: Timeout per ping attempt in milliseconds.
+        retries: Number of additional attempts after initial failure.
+
+    Returns:
+        1.0 if any ping attempt succeeds, 0.0 if all attempts fail.
+    """
+    attempts = retries + 1
+    system = platform.system().lower()
+
+    for attempt in range(attempts):
+        try:
+            if system == 'windows':
+                cmd = ['ping', '-n', '1', '-w', str(timeout_ms), ip]
+            else:
+                timeout_sec = max(1, timeout_ms // 1000)
+                cmd = ['ping', '-c', '1', '-W', str(timeout_sec), ip]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if result.returncode == 0:
+                return 1.0
+        except OSError as e:
+            logger.warning(f"Ping failed for {ip}: {e}")
+            return 0.0
+        except subprocess.TimeoutExpired:
+            return 0.0
+    return 0.0
 
 def fetch_snmp_value(ip, community, oid, port=161):
     """Perform a real SNMP GET."""
@@ -92,9 +124,6 @@ def fetch_snmp_value(ip, community, oid, port=161):
     except Exception:
         return None
 
-from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
-
-# ... (resto de funciones fetch_icmp_ping, fetch_snmp_value, etc.)
 
 def poll_snmp():
     start_time = time.time()
@@ -132,26 +161,39 @@ def poll_snmp():
                     continue
 
                 val = None
-                if protocol == "ICMP" or "ping" in mid.lower():
-                    val = fetch_icmp_ping(ip)
+                icmp_settings = get_icmp_settings()
+                if protocol.upper() == "ICMP":
+                    val = fetch_icmp_ping(ip, timeout_ms=icmp_settings.timeout_ms, retries=icmp_settings.retries)
+                    # Debounce logic: track consecutive failures per node
+                    if val == 0:
+                        _consecutive_failures[node_id] = _consecutive_failures.get(node_id, 0) + 1
+                        if _consecutive_failures[node_id] >= icmp_settings.debounce_count:
+                            # DOWN event: store CRITICAL status and reset counter
+                            session.run(
+                                "MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()",
+                                id=node_id, status="CRITICAL"
+                            )
+                            _consecutive_failures[node_id] = 0
+                            # Don't record metric for this cycle (debounce suppressed it)
+                            val = None
+                        else:
+                            # Below threshold: suppress metric recording until threshold
+                            val = None
+                    else:
+                        # Success: reset counter and proceed normally
+                        _consecutive_failures[node_id] = 0
                 elif protocol == "SNMP" and record["oid"]:
                     val = fetch_snmp_value(ip, record["community"], record["oid"], int(record["port"]))
                 
                 if val is not None:
-                    # Add to batch
                     metrics_to_save.append({
                         "node_id": node_id,
                         "metric_id": mid,
                         "value": val,
                         "time": datetime.utcnow()
                     })
-                    
-                    if mid == 'status_code' or 'ping' in mid.lower():
-                        status = 'OK' if val > 0 else 'CRITICAL'
-                        session.run("MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()", 
-                                   id=node_id, status=status)
-                    
-                    # Success: Update last_polled to respect the interval
+
+                    # Update last_polled to respect the interval
                     session.run("""
                         MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
                         SET r.last_polled = datetime()
