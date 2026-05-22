@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from models.user import TokenData, User, UserRole, UserPermission, UserInDB
@@ -123,8 +123,24 @@ def revoke_all_user_refresh_tokens(user_id: int, db: Session) -> int:
 # ── User Auth ────────────────────────────────────────────────────────────────
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_pg_db)
+    request: Request, db: Session = Depends(get_pg_db)
 ):
+    # Try Authorization header first (standard Bearer token)
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        # Fallback: read access_token from HttpOnly cookie
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
