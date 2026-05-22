@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.5] — 2026-05-21
+
+### Fixed
+- **Auth token security refactor** (PR #112):
+  - Tokens stored in HTTP-only cookies (XSS protection) instead of localStorage
+  - Refresh token rotation with 7-day TTL and one-time use
+  - JWT_SECRET_KEY mandatory — fails startup if env var missing
+  - Login rate limiting: 3 failed attempts → 15 min lockout (429 with Retry-After)
+  - SSE 401 resilience: bulk operations survive token expiry with refresh retry queue
+  - Cypher injection in seed_admin fixed via parameterized queries
+  - RBAC enum vs string comparison bug fixed in check_permission
+  - Admin credentials loaded from env vars or generated randomly on first start
+  - Added 34 unit tests for auth service, rate limiting, and router
+
 ## [1.11.0] — 2026-05-19
 
 ### Added
