@@ -12,98 +12,17 @@ export class ApiError extends Error {
 }
 
 /**
- * Custom error for token expiry (distinct from generic 401)
- */
-export class TokenExpiredError extends ApiError {
-    constructor() {
-        super('Token expired', 401);
-    }
-}
-
-/**
- * Read access token from document.cookie.
- * Cookie format: access_token=<token>; HttpOnly (inaccessible to JS by spec,
- * but frontend reads it via the Set-Cookie from the server).
- */
-const getToken = (): string | null => {
-    const match = document.cookie.match(/(?:^|;\s*)access_token=([^;]*)/);
-    return match ? match[1] : null;
-};
-
-/**
  * SSE stream marker — set by SSE clients so we know to queue retries
  * instead of forcing logout.
  */
 export const SSE_STREAM_HEADER = 'x-sse-stream';
 
 /**
- * Global refresh state for coordinating concurrent 401 retries.
- */
-let isRefreshing = false;
-let refreshPromise: Promise<string | null> | null = null;
-
-/**
- * Attempt to refresh the access token using the refresh token from cookie.
- * Returns the new access token, or null if refresh failed.
- */
-const attemptRefresh = async (): Promise<string | null> => {
-    // Read refresh token from HTTP-only cookie (set by backend on /auth/refresh)
-    const refreshToken = document.cookie.match(/(?:^|;\s*)refresh_token=([^;]*)/)?.[1];
-    if (!refreshToken) return null;
-
-    try {
-        const res = await fetch(`${API_BASE}/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-            credentials: 'include',
-        });
-
-        if (!res.ok) return null;
-
-        const data = await res.json();
-        return data.access_token ?? null;
-    } catch {
-        return null;
-    }
-};
-
-/**
- * Get a new access token, or return existing if refresh fails.
- * Coordinates concurrent requests to avoid redundant refresh calls.
- */
-const getNewToken = async (): Promise<string | null> => {
-    if (!isRefreshing) {
-        isRefreshing = true;
-        refreshPromise = attemptRefresh()
-            .finally(() => {
-                isRefreshing = false;
-                refreshPromise = null;
-            });
-    }
-    return refreshPromise;
-};
-
-/**
- * Helper to get headers with Auth token from cookie.
- */
-const getHeaders = (isJson = true) => {
-    const headers: HeadersInit = {};
-    const token = getToken();
-
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    if (isJson) {
-        headers['Content-Type'] = 'application/json';
-    }
-
-    return headers;
-};
-
-/**
  * Generic fetch wrapper to handle Auth and Errors
+ *
+ * Auth model: HttpOnly cookie is sent AUTOMATICALLY by the browser via
+ * credentials: 'include'. No Authorization: Bearer header needed.
+ * 401 retry: the browser re-sends the cookie automatically; we just retry once.
  */
 async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
     const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
@@ -114,11 +33,6 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     const callerHeaders = config.headers as Record<string, string> || {};
     const headers: Record<string, string> = { ...callerHeaders };
 
-    const token = getToken();
-    if (token && !headers['Authorization']) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-
     // Default to JSON if no body or if body is not FormData and no Content-Type set
     if (!(config.body instanceof FormData) && !headers['Content-Type']) {
         headers['Content-Type'] = 'application/json';
@@ -127,52 +41,49 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     const response = await fetch(url, {
         ...config,
         headers,
+        credentials: 'include',
     });
 
-    // Handle 401 Unauthorized
+    // Handle 401 Unauthorized — call /auth/refresh to rotate tokens, then retry
     if (response.status === 401) {
-        if (isSSE) {
-            // SSE: set refreshing flag and queue retry
-            const newToken = await getNewToken();
-            if (newToken) {
-                // Retry with new token
-                headers['Authorization'] = `Bearer ${newToken}`;
-                const retryResponse = await fetch(url, { ...config, headers });
-                if (retryResponse.ok) {
-                    if (responseType === 'blob') {
-                        return retryResponse.blob() as unknown as T;
-                    }
-                    const contentType = retryResponse.headers.get("content-type");
-                    if (contentType && contentType.indexOf("application/json") !== -1) {
-                        return retryResponse.json();
-                    }
-                    return retryResponse.text() as unknown as T;
-                }
+        // Step 1: POST to /auth/refresh — browser sends refresh_token cookie automatically
+        const refreshResponse = await fetch(`${API_BASE}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include', // Required to send the refresh_token cookie
+        });
+
+        // If refresh fails, the refresh cookie is expired — force logout
+        if (!refreshResponse.ok) {
+            if (!isSSE) {
+                window.location.href = '/login';
             }
-            // Refresh failed or returned no token — don't logout for SSE, just let it fail
-            throw new TokenExpiredError();
-        } else {
-            // Non-SSE: attempt single refresh, then retry
-            const newToken = await getNewToken();
-            if (newToken) {
-                // Retry with new token
-                headers['Authorization'] = `Bearer ${newToken}`;
-                const retryResponse = await fetch(url, { ...config, headers });
-                if (retryResponse.ok) {
-                    if (responseType === 'blob') {
-                        return retryResponse.blob() as unknown as T;
-                    }
-                    const contentType = retryResponse.headers.get("content-type");
-                    if (contentType && contentType.indexOf("application/json") !== -1) {
-                        return retryResponse.json();
-                    }
-                    return retryResponse.text() as unknown as T;
-                }
-            }
-            // Refresh failed — force logout
-            window.location.href = '/login';
-            throw new ApiError('Unauthorized', 401);
+            throw new ApiError('Session expired', 401);
         }
+
+        // Step 2: Refresh succeeded — new access_token cookie is set on the response
+        // Retry the original request; browser sends the new access_token cookie automatically
+        const retryResponse = await fetch(url, {
+            ...config,
+            headers,
+            credentials: 'include',
+        });
+
+        if (retryResponse.ok) {
+            if (responseType === 'blob') {
+                return retryResponse.blob() as unknown as T;
+            }
+            const contentType = retryResponse.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                return retryResponse.json();
+            }
+            return retryResponse.text() as unknown as T;
+        }
+
+        // Retry still failed — refresh cookie may have expired during the retry window
+        if (!isSSE) {
+            window.location.href = '/login';
+        }
+        throw new ApiError('Unauthorized', 401);
     }
 
     // Handle other errors
@@ -232,7 +143,7 @@ export const api = {
         request<T>(endpoint, { ...config, method: 'GET', isSSE: true } as RequestInit),
     // Download a file with authentication (returns blob URL for download)
     download: (endpoint: string) => {
-        return request<Blob>(endpoint, { responseType: 'blob', method: 'GET' })
+        return request<Blob>(endpoint, { responseType: 'blob', method: 'GET', credentials: 'include' })
             .then(blob => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');

@@ -24,10 +24,10 @@ import MetricAnalytics from './components/MetricAnalytics';
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
-  const { isAuthenticated, token, user } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const location = useLocation();
 
-  if (!isAuthenticated && !token) {
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 

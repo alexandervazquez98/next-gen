@@ -35,7 +35,6 @@ class RefreshTokenCreate(BaseModel):
 class RefreshTokenResponse(BaseModel):
     """Response schema for token refresh endpoint."""
     access_token: str
-    refresh_token: str  # the opaque token (not hash)
     token_type: str = "bearer"
 
 

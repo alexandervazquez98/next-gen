@@ -25,24 +25,19 @@ const LoginPage: React.FC = () => {
                 body: formData
             });
 
-            const token = data.access_token;
-
-            // Temporarily set token for the next request
-            localStorage.setItem('token', token);
-
-            // Fetch user details
+            // Backend already set access_token as HttpOnly cookie on /auth/token
+            // No JS needs to read or store the token — browser sends it automatically
             const user = await api.get<any>('/auth/users/me');
 
-            login(token, user);
+            login(user);
             navigate('/');
         } catch (err: any) {
             setError(err.message || 'Login failed');
-            localStorage.removeItem('token');
         }
     };
 
     return (
-        <div className="h-screen w-screen flex items-center justify-center bg-surface-950 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]">
+        <div className="h-screen w-screen flex items-center justify-center bg-surface-950 bg-[url('/images/noise.svg')]">
             <div className="glass p-10 rounded-3xl w-full max-w-md border border-white/10 shadow-2xl relative overflow-hidden">
                 {/* Decorative Glow */}
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand-500 via-accent-cyan to-brand-500 animate-pulse"></div>

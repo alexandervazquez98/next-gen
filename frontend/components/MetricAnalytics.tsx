@@ -47,11 +47,7 @@ const MetricAnalytics: React.FC = () => {
 
     // Fetch Nodes on Mount (original behavior)
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        fetch('/api/nodes', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-            .then(res => res.json())
+        api.get<GraphNode[]>('/nodes')
             .then(data => {
                 if (Array.isArray(data)) {
                     setNodes(data);

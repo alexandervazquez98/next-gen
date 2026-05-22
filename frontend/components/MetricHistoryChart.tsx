@@ -39,9 +39,8 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({ nodeId, metricI
 
     const fetchData = () => {
         setLoading(true);
-        const token = localStorage.getItem('token');
 
-        let url = `/api/metrics/${nodeId}/${metricId}/history?limit=1000`;
+        let url = `/metrics/${nodeId}/${metricId}/history?limit=1000`;
         if (customRange) {
             url += `&start_time=${customRange.start}&end_time=${customRange.end}`;
         } else {
@@ -50,13 +49,7 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({ nodeId, metricI
 
         console.log(`[MetricHistoryChart] Fetching: ${url}`);
 
-        fetch(url, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                return res.json();
-            })
+        api.get<any[]>(url)
             .then(jsonData => {
                 if (!Array.isArray(jsonData)) {
                     console.warn("[MetricHistoryChart] Received non-array data:", jsonData);

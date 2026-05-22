@@ -1,5 +1,5 @@
 from datetime import timedelta
-from fastapi import APIRouter, Body, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from services.auth_service import (
@@ -59,10 +59,13 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
 def _clear_refresh_cookie(response: Response) -> None:
     """Clear the refresh token cookie."""
     response.delete_cookie(key="refresh_token", path="/api")
+
+
+@router.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_pg_db),
-    response: Response = None,
+    response: Response,
 ):
     # Check rate limit before processing
     check_rate_limit(form_data.username)
@@ -104,15 +107,22 @@ async def login_for_access_token(
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
 async def refresh_tokens(
-    refresh_token: str = Body(...),
+    request: Request,
     db: Session = Depends(get_pg_db),
-    response: Response = None,
+    response: Response,
 ):
     """
-    Accept a refresh token in the request body, verify it, rotate tokens.
+    Accept refresh token from HttpOnly cookie, verify it, rotate tokens.
     Revokes the old refresh token and issues a new access token cookie
-    plus a new refresh token returned in the body.
+    plus a new refresh token cookie (single-use rotation).
     """
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token cookie",
+        )
+
     # Verify refresh token
     user_id = verify_refresh_token(refresh_token, db)
     if user_id is None:
@@ -143,20 +153,17 @@ async def refresh_tokens(
     # Set new access token cookie
     _set_access_cookie(response, access_token)
 
-    # Set refresh token in HTTP-only cookie
+    # Set refresh token in HTTP-only cookie (rotation)
     _set_refresh_cookie(response, new_refresh_token)
 
-    return RefreshTokenResponse(
-        access_token=access_token,
-        refresh_token=new_refresh_token,
-    )
+    return RefreshTokenResponse(access_token=access_token)
 
 
 @router.post("/logout")
 async def logout(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db),
-    response: Response = None,
+    response: Response,
 ):
     """
     Revoke all refresh tokens for the current user and clear the access cookie.

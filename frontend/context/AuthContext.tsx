@@ -12,8 +12,7 @@ interface User {
 
 interface AuthContextType {
     user: User | null;
-    token: string | null;
-    login: (accessToken: string, refreshToken: string, user: User) => void;
+    login: (user: User) => void;
     logout: () => void;
     hasPermission: (perm: string) => boolean;
     isAuthenticated: boolean;
@@ -21,36 +20,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/**
- * Read access token from document.cookie.
- */
-const getCookieToken = (): string | null => {
-    const match = document.cookie.match(/(?:^|;\s*)access_token=([^;]*)/);
-    return match ? match[1] : null;
-};
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
-    const [token, setToken] = useState<string | null>(null);
 
     useEffect(() => {
-        // Hydrate from cookie on mount
-        const cookieToken = getCookieToken();
-        if (cookieToken) {
-            setToken(cookieToken);
-            api.get<User>('/auth/users/me')
-                .then(userData => setUser(userData))
-                .catch(() => {
-                    setToken(null);
-                    setUser(null);
-                });
-        }
+        // Hydrate user from cookie-authenticated endpoint on mount
+        api.get<User>('/auth/users/me')
+            .then(userData => setUser(userData))
+            .catch(() => {
+                setUser(null);
+            });
     }, []);
 
-    const login = useCallback((accessToken: string, refreshToken: string, newUser: User) => {
-        // Refresh token is now set by the backend via HTTP-only cookie on /auth/refresh
-        // No need to store it in localStorage
-        setToken(accessToken);
+    const login = useCallback((newUser: User) => {
         setUser(newUser);
     }, []);
 
@@ -60,7 +42,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch {
             // Best effort — still clear local state
         } finally {
-            setToken(null);
             setUser(null);
         }
     }, []);
@@ -74,7 +55,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return (
         <AuthContext.Provider value={{
             user,
-            token,
             login,
             logout,
             hasPermission,

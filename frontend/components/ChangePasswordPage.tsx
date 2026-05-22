@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 const ChangePasswordPage: React.FC = () => {
-    const { token, logout, user } = useAuth();
+    const { logout, user } = useAuth();
     const navigate = useNavigate();
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -25,9 +25,9 @@ const ChangePasswordPage: React.FC = () => {
             const res = await fetch('/api/auth/change-password', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Content-Type': 'application/json'
                 },
+                credentials: 'include',
                 body: JSON.stringify({
                     old_password: oldPassword,
                     new_password: newPassword
