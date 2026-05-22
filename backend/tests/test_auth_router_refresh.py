@@ -1,5 +1,6 @@
 """Integration tests for auth router cookie and refresh token flow."""
 
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
