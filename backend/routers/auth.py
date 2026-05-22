@@ -63,9 +63,9 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_pg_db),
-    response: Response,
 ):
     # Check rate limit before processing
     check_rate_limit(form_data.username)
@@ -108,8 +108,8 @@ async def login_for_access_token(
 @router.post("/refresh", response_model=RefreshTokenResponse)
 async def refresh_tokens(
     request: Request,
-    db: Session = Depends(get_pg_db),
     response: Response,
+    db: Session = Depends(get_pg_db),
 ):
     """
     Accept refresh token from HttpOnly cookie, verify it, rotate tokens.
@@ -161,9 +161,9 @@ async def refresh_tokens(
 
 @router.post("/logout")
 async def logout(
+    response: Response,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db),
-    response: Response,
 ):
     """
     Revoke all refresh tokens for the current user and clear the access cookie.
