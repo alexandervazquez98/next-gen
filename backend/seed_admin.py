@@ -1,4 +1,6 @@
 import asyncio
+import os
+import secrets
 from database import get_db, close_db
 from postgres_db import SessionLocal
 from models.sql_models import User
@@ -7,21 +9,31 @@ from utils.security import get_password_hash
 
 
 async def seed_admin():
-    print("Seeding Default Admin User...")
+    # Read admin credentials from environment
+    admin_username = os.environ.get("ADMIN_DEFAULT_USERNAME", "admin")
+    admin_password = os.environ.get("ADMIN_DEFAULT_PASSWORD")
+
+    if not admin_password:
+        admin_password = secrets.token_urlsafe(24)
+        print(f"[SEED_ADMIN] No ADMIN_DEFAULT_PASSWORD env var set — generated random password:")
+        print(f"[SEED_ADMIN] username: {admin_username}")
+        print(f"[SEED_ADMIN] password: {admin_password}")
+        print("[SEED_ADMIN] Save this password! It will not be shown again.")
+    else:
+        print(f"[SEED_ADMIN] Using credentials from environment for admin user.")
 
     # 1. Seed in Postgres (Primary Auth Store)
     db = SessionLocal()
     try:
-        admin_user_pg = db.query(User).filter(User.username == "admin").first()
+        admin_user_pg = db.query(User).filter(User.username == admin_username).first()
         if admin_user_pg:
-            print("Admin user already exists in Postgres.")
+            print(f"Admin user '{admin_username}' already exists in Postgres.")
         else:
-            password = "admin"  # Default password
-            hashed = get_password_hash(password)
+            hashed = get_password_hash(admin_password)
             all_perms = [p.value for p in UserPermission]
 
             new_admin = User(
-                username="admin",
+                username=admin_username,
                 hashed_password=hashed,
                 role=UserRole.ADMIN.value,
                 tier="T3",
@@ -34,7 +46,7 @@ async def seed_admin():
             db.add(new_admin)
             db.commit()
             print(
-                "Admin user created in Postgres: admin / admin (Force password change: True)"
+                f"Admin user '{admin_username}' created in Postgres (force_password_change=True)"
             )
     finally:
         db.close()
@@ -42,19 +54,19 @@ async def seed_admin():
     # 2. Seed in Neo4j (Graph Store)
     try:
         driver = get_db()
-        check_query = "MATCH (u:User {username: 'admin'}) RETURN u"
-        results, _, _ = driver.execute_query(check_query)
+        check_query = "MATCH (u:User {username: $username}) RETURN u"
+        results, _, _ = driver.execute_query(check_query, username=admin_username)
 
         if results:
-            print("Admin user already exists in Neo4j.")
+            print(f"Admin user '{admin_username}' already exists in Neo4j.")
         else:
-            password = "admin"  # Default password
+            password = admin_password
             hashed = get_password_hash(password)
             all_perms = [p.value for p in UserPermission]
 
             create_query = """
             CREATE (u:User {
-                username: 'admin',
+                username: $username,
                 password: $password,
                 role: $role,
                 tier: 'T3',
@@ -68,11 +80,12 @@ async def seed_admin():
 
             driver.execute_query(
                 create_query,
+                username=admin_username,
                 password=hashed,
                 role=UserRole.ADMIN.value,
                 permissions=all_perms,
             )
-            print("Admin user created in Neo4j: admin / admin")
+            print(f"Admin user '{admin_username}' created in Neo4j.")
     except Exception as e:
         print(
             f"Warning: Could not seed admin in Neo4j (might not be ready or needed): {e}"

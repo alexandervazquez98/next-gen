@@ -1,6 +1,9 @@
 import os
+import secrets
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
+
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -11,25 +14,113 @@ from typing import Optional, Dict, Any
 from postgres_db import get_pg_db
 from repositories import user_repo
 from utils.security import verify_password, get_password_hash
+from models.refresh_token import RefreshToken, hash_token, generate_opaque_token, REFRESH_TOKEN_EXPIRE_DAYS
 
-# SECRET CONFIG
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key-change-me-in-production")
+# ── Secret Configuration ─────────────────────────────────────────────────────
+
+# JWT_SECRET_KEY is MANDATORY — fail fast if not set
+_jwt_secret = os.environ.get("JWT_SECRET_KEY")
+if _jwt_secret is None:
+    raise EnvironmentError("JWT_SECRET_KEY must be set")
+
+SECRET_KEY = _jwt_secret
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 Hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Short TTL for security
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create a signed JWT access token."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+
+# ── Refresh Token Functions ───────────────────────────────────────────────────
+
+def create_refresh_token(user_id: int, db: Session) -> str:
+    """
+    Create an opaque refresh token, store its SHA-256 hash in DB.
+    Returns the raw opaque token (to be sent to client).
+    """
+    opaque = generate_opaque_token()
+    token_hash = hash_token(opaque)
+    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+    rt = RefreshToken(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+    )
+    db.add(rt)
+    db.commit()
+    return opaque
+
+
+def verify_refresh_token(token: str, db: Session) -> Optional[int]:
+    """
+    Verify a refresh token.
+    Returns user_id if valid and not revoked/expired.
+    Returns None if invalid, revoked, or expired.
+    """
+    token_hash = hash_token(token)
+    rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+
+    if rt is None:
+        return None
+
+    if rt.revoked_at is not None:
+        return None
+
+    if rt.expires_at < datetime.utcnow():
+        return None
+
+    return rt.user_id
+
+
+def revoke_refresh_token(token: str, db: Session) -> bool:
+    """
+    Revoke a refresh token by setting revoked_at.
+    Returns True if token was revoked, False if not found.
+    """
+    token_hash = hash_token(token)
+    rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+
+    if rt is None:
+        return False
+
+    rt.revoked_at = datetime.utcnow()
+    db.commit()
+    return True
+
+
+def revoke_all_user_refresh_tokens(user_id: int, db: Session) -> int:
+    """
+    Revoke all refresh tokens for a user.
+    Returns count of revoked tokens.
+    """
+    rts = db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        RefreshToken.revoked_at.is_(None)
+    ).all()
+
+    now = datetime.utcnow()
+    count = 0
+    for rt in rts:
+        rt.revoked_at = now
+        count += 1
+
+    db.commit()
+    return count
+
+
+# ── User Auth ────────────────────────────────────────────────────────────────
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_pg_db)
@@ -78,9 +169,9 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
 
 def check_permission(permission: UserPermission, user: User):
     # Admins have all permissions
-    if user.role == UserRole.ADMIN or user.role == "ADMIN":
+    if user.role == UserRole.ADMIN.value or user.role == "ADMIN":
         return True
-    if permission in user.permissions:
+    if permission.value in user.permissions:
         return True
     return False
 
