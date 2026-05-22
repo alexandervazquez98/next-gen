@@ -1,4 +1,7 @@
+import os
 from datetime import timedelta
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -18,6 +21,34 @@ from models.user import Token, User, PasswordChangeRequest
 from models.refresh_token import RefreshTokenResponse
 from middleware.rate_limit import check_rate_limit, clear_attempts
 
+# ── Cookie domain and security (parsed once at import) ─────────────────────────
+
+def _get_cookie_domain_and_secure() -> tuple[str | None, bool]:
+    """
+    Parse FRONTEND_ORIGIN for hostname and scheme.
+    Returns (domain, secure) tuple where:
+    - domain: hostname from FRONTEND_ORIGIN, or COOKIE_DOMAIN override
+    - secure: True only when FRONTEND_ORIGIN uses https scheme
+    """
+    explicit = os.environ.get("COOKIE_DOMAIN")
+    if explicit:
+        domain = None if explicit == "none" else explicit
+        # If domain is explicitly set, derive secure from FRONTEND_ORIGIN scheme
+        origin = os.environ.get("FRONTEND_ORIGIN", "")
+        secure = urlparse(origin).scheme == "https" if origin else False
+        return domain, secure
+
+    origin = os.environ.get("FRONTEND_ORIGIN", "")
+    if not origin:
+        return None, False
+
+    parsed = urlparse(origin)
+    return parsed.hostname, parsed.scheme == "https"
+
+
+_COOKIE_DOMAIN, _COOKIE_SECURE = _get_cookie_domain_and_secure()
+
+
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"],
@@ -25,40 +56,42 @@ router = APIRouter(
 )
 
 
-def _set_access_cookie(response: Response, token: str) -> None:
-    """Set HttpOnly cookie for access token — works over HTTP in dev."""
+def _set_access_cookie(response: Response, token: str, domain: str | None = None) -> None:
+    """Set HttpOnly cookie for access token."""
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
-        secure=False,  # HTTP dev — set True for HTTPS production
+        secure=_COOKIE_SECURE,
         samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        domain=domain,
     )
 
 
-def _clear_access_cookie(response: Response) -> None:
+def _clear_access_cookie(response: Response, domain: str | None = None) -> None:
     """Clear the access token cookie."""
-    response.delete_cookie(key="access_token", path="/api")
+    response.delete_cookie(key="access_token", path="/api", domain=domain)
 
 
-def _set_refresh_cookie(response: Response, token: str) -> None:
-    """Set HttpOnly cookie for refresh token — works over HTTP in dev."""
+def _set_refresh_cookie(response: Response, token: str, domain: str | None = None) -> None:
+    """Set HttpOnly cookie for refresh token."""
     response.set_cookie(
         key="refresh_token",
         value=token,
         httponly=True,
-        secure=False,  # HTTP dev — set True for HTTPS production
+        secure=_COOKIE_SECURE,
         samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
         max_age=7 * 24 * 60 * 60,  # 7 days
+        domain=domain,
     )
 
 
-def _clear_refresh_cookie(response: Response) -> None:
+def _clear_refresh_cookie(response: Response, domain: str | None = None) -> None:
     """Clear the refresh token cookie."""
-    response.delete_cookie(key="refresh_token", path="/api")
+    response.delete_cookie(key="refresh_token", path="/api", domain=domain)
 
 
 @router.post("/token", response_model=Token)
@@ -100,7 +133,7 @@ async def login_for_access_token(
     )
 
     # Set HttpOnly cookie
-    _set_access_cookie(response, access_token)
+    _set_access_cookie(response, access_token, domain=_COOKIE_DOMAIN)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -151,10 +184,10 @@ async def refresh_tokens(
     new_refresh_token = create_refresh_token(db_user.id, db)
 
     # Set new access token cookie
-    _set_access_cookie(response, access_token)
+    _set_access_cookie(response, access_token, domain=_COOKIE_DOMAIN)
 
     # Set refresh token in HTTP-only cookie (rotation)
-    _set_refresh_cookie(response, new_refresh_token)
+    _set_refresh_cookie(response, new_refresh_token, domain=_COOKIE_DOMAIN)
 
     return RefreshTokenResponse(access_token=access_token)
 
@@ -172,8 +205,8 @@ async def logout(
     db_user = user_repo.get_user_by_username(db, current_user.username)
     if db_user is not None:
         revoke_all_user_refresh_tokens(db_user.id, db)
-    _clear_access_cookie(response)
-    _clear_refresh_cookie(response)
+    _clear_access_cookie(response, domain=_COOKIE_DOMAIN)
+    _clear_refresh_cookie(response, domain=_COOKIE_DOMAIN)
     return {"status": "success", "message": "Logged out"}
 
 
