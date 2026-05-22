@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 import asyncio
 import os
@@ -13,6 +14,7 @@ STARTUP_TIME = datetime.now().isoformat()
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
+from middleware.rate_limit import RateLimitMiddleware
 
 # APScheduler for backup scheduling
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -65,6 +67,9 @@ app = FastAPI(
     description="API for CMDB, Monitoring, and AIOps Platform",
     redirect_slashes=False,
 )
+
+# Register rate limiting middleware
+app.add_middleware(RateLimitMiddleware)
 
 """
 ROUTING ARCHITECTURE CONVENTIONS:

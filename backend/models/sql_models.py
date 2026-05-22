@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, ARRAY
+from sqlalchemy import Column, Integer, String, Boolean, ARRAY, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
 from postgres_db import Base
 
 
@@ -20,3 +21,6 @@ class User(Base):
     permissions = Column(ARRAY(String), default=[])
     allowed_locations = Column(ARRAY(String), default=[])
     allowed_ci_types = Column(ARRAY(String), nullable=True)
+
+    # Refresh tokens (one-to-many)
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")

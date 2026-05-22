@@ -22,6 +22,9 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
+# Set test JWT secret BEFORE importing auth_service modules
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-for-unit-tests"
+
 # ── Stub psycopg2 so postgres_db.py can be imported without a real Postgres ──
 psycopg2_stub = MagicMock()
 psycopg2_stub.extensions = MagicMock()
