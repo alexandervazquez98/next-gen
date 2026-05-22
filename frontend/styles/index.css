@@ -1,3 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: rgb(240, 244, 255);
+  --color-brand-100: rgb(224, 233, 254);
+  --color-brand-200: rgb(193, 211, 254);
+  --color-brand-300: rgb(145, 177, 253);
+  --color-brand-400: rgb(90, 134, 249);
+  --color-brand-500: rgb(52, 91, 242);
+  --color-brand-600: rgb(34, 62, 230);
+  --color-brand-700: rgb(28, 49, 204);
+  --color-brand-800: rgb(29, 44, 165);
+  --color-brand-900: rgb(29, 42, 132);
+  --color-brand-950: rgb(17, 23, 79);
+  --color-accent-cyan: rgb(0, 242, 255);
+  --color-accent-neon: rgb(57, 255, 20);
+  --color-accent-purple: rgb(188, 19, 254);
+  --color-surface-50: rgb(250, 250, 250);
+  --color-surface-100: rgb(245, 245, 245);
+  --color-surface-200: rgb(238, 238, 238);
+  --color-surface-300: rgb(224, 224, 224);
+  --color-surface-800: rgb(26, 26, 26);
+  --color-surface-900: rgb(18, 18, 18);
+  --color-surface-950: rgb(10, 10, 10);
+  --font-family-sans: 'Inter', sans-serif;
+  --font-family-mono: 'JetBrains Mono', monospace;
+}
+
 /* Global Styles */
 
 body {

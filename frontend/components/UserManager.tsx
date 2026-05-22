@@ -27,7 +27,7 @@ const ALL_PERMISSIONS = [
 ];
 
 const UserManager: React.FC = () => {
-    const { token, hasPermission } = useAuth();
+    const { hasPermission } = useAuth();
     const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
     const [users, setUsers] = useState<User[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
@@ -45,11 +45,9 @@ const UserManager: React.FC = () => {
     const [showPerms, setShowPerms] = useState(false);
 
     useEffect(() => {
-        if (token) {
-            fetchUsers();
-            fetchRoles();
-        }
-    }, [token, activeTab]); // Refresh when tab changes
+        fetchUsers();
+        fetchRoles();
+    }, [activeTab]); // Refresh when tab changes
 
     const fetchUsers = async () => {
         try {
@@ -115,8 +113,6 @@ const UserManager: React.FC = () => {
     };
 
     const handleCreateOrUpdate = async () => {
-        if (!token) return;
-
         // Update handling
         if (editingUser) {
             try {

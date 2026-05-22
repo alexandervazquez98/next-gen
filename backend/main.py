@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
@@ -66,6 +67,16 @@ app = FastAPI(
     version="1.4.0",
     description="API for CMDB, Monitoring, and AIOps Platform",
     redirect_slashes=False,
+)
+
+# CORS middleware — must come before route registration
+_frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[_frontend_origin],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Requested-With"],
 )
 
 # Register rate limiting middleware

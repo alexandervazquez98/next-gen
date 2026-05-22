@@ -19,7 +19,7 @@ const ALL_PERMISSIONS = [
 ];
 
 const RoleManager: React.FC = () => {
-    const { token, hasPermission } = useAuth();
+    const { hasPermission } = useAuth();
     const [roles, setRoles] = useState<Role[]>([]);
     const [view, setView] = useState<'list' | 'edit'>('list');
     const [currentRole, setCurrentRole] = useState<Role>({
@@ -32,7 +32,6 @@ const RoleManager: React.FC = () => {
     }, []);
 
     const fetchRoles = async () => {
-        if (!token) return;
         try {
             const data = await api.get<Role[]>('/roles/');
             setRoles(data);
@@ -54,7 +53,6 @@ const RoleManager: React.FC = () => {
     };
 
     const handleSave = async () => {
-        if (!token) return;
         const url = isNew ? '/roles/' : `/roles/${currentRole.name}`;
 
         try {
