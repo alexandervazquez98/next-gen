@@ -180,3 +180,122 @@ class TestAuthLogout:
 
         app.dependency_overrides.pop(get_pg_db, None)
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+class TestCookieDomainAndSecure:
+    """
+    Unit tests for _get_cookie_domain_and_secure() and cookie header behavior.
+
+    Tests different FRONTEND_ORIGIN scenarios to verify:
+    - domain is correctly extracted from the origin hostname
+    - secure flag is True ONLY when scheme is https
+    """
+
+    def test_get_cookie_domain_and_secure_http_ip_origin(self):
+        """HTTP origin with IP address: domain=IP, secure=False."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "10.53.1.22"
+        assert secure is False
+
+    def test_get_cookie_domain_and_secure_https_hostname(self):
+        """HTTPS origin with hostname: domain=hostname, secure=True."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"FRONTEND_ORIGIN": "https://app.example.com"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "app.example.com"
+        assert secure is True
+
+    def test_get_cookie_domain_and_secure_localhost(self):
+        """Localhost origin: domain=localhost, secure=False."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://localhost:5173"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "localhost"
+        assert secure is False
+
+    def test_get_cookie_domain_and_secure_missing_origin(self):
+        """Missing FRONTEND_ORIGIN: domain=None, secure=False."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FRONTEND_ORIGIN", None)
+            with patch.dict(os.environ, {"FRONTEND_ORIGIN": ""}):
+                domain, secure = _get_cookie_domain_and_secure()
+        assert domain is None
+        assert secure is False
+
+    def test_get_cookie_domain_and_secure_cookie_domain_override(self):
+        """COOKIE_DOMAIN override takes precedence and respects FRONTEND_ORIGIN scheme."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {
+            "COOKIE_DOMAIN": "custom.example.com",
+            "FRONTEND_ORIGIN": "https://secure.example.com",
+        }):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "custom.example.com"
+        assert secure is True  # derived from FRONTEND_ORIGIN scheme
+
+    def test_get_cookie_domain_and_secure_cookie_domain_none(self):
+        """COOKIE_DOMAIN=none disables domain."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"COOKIE_DOMAIN": "none", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain is None
+        assert secure is False
+
+    def test_login_cookie_has_domain_for_http_ip_origin(self):
+        """Login response Set-Cookie header contains correct domain for HTTP IP origin."""
+        mock_user = _make_mock_pg_user(username="testuser", role="OPERATOR")
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+            with patch("routers.auth._get_cookie_domain_and_secure", return_value=("10.53.1.22", False)):
+                with patch("routers.auth._COOKIE_DOMAIN", "10.53.1.22"):
+                    with patch("routers.auth._COOKIE_SECURE", False):
+                        with patch("routers.auth.verify_password", return_value=True):
+                            response = client.post(
+                                "/api/auth/token",
+                                data={"username": "testuser", "password": "correct_password"},
+                            )
+
+        assert response.status_code == 200
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "10.53.1.22" in set_cookie
+        # Secure=False for HTTP — no Secure flag in cookie
+        assert "secure" not in set_cookie.lower() or "Secure" not in set_cookie
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_cookie_has_secure_flag_for_https_origin(self):
+        """Login response Set-Cookie header contains Secure flag for HTTPS origin."""
+        mock_user = _make_mock_pg_user(username="testuser", role="OPERATOR")
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.auth._COOKIE_DOMAIN", "app.example.com"):
+            with patch("routers.auth._COOKIE_SECURE", True):
+                with patch("routers.auth.verify_password", return_value=True):
+                    response = client.post(
+                        "/api/auth/token",
+                        data={"username": "testuser", "password": "correct_password"},
+                    )
+
+        assert response.status_code == 200
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "app.example.com" in set_cookie
+        # Secure=True should appear in cookie header
+        assert "Secure" in set_cookie
+
+        app.dependency_overrides.pop(get_pg_db, None)
