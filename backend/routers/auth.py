@@ -26,13 +26,13 @@ router = APIRouter(
 
 
 def _set_access_cookie(response: Response, token: str) -> None:
-    """Set HttpOnly, Secure, SameSite=Strict cookie on the response."""
+    """Set HttpOnly cookie for access token — works over HTTP in dev."""
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=False,  # HTTP dev — set True for HTTPS production
+        samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -44,13 +44,13 @@ def _clear_access_cookie(response: Response) -> None:
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
-    """Set HttpOnly, Secure, SameSite=Strict cookie for refresh token."""
+    """Set HttpOnly cookie for refresh token — works over HTTP in dev."""
     response.set_cookie(
         key="refresh_token",
         value=token,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=False,  # HTTP dev — set True for HTTPS production
+        samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
         max_age=7 * 24 * 60 * 60,  # 7 days
     )
