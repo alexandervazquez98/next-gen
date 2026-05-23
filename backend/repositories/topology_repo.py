@@ -108,9 +108,8 @@ def get_template_data():
 def get_links(allowed_locations=None, is_admin=False):
     driver = get_db()
     query = """
-        MATCH (a)-[r]->(b)
+        MATCH (a)-[r:CONNECTS_TO|DEPENDS_ON|RUNS_ON|HAS_METRIC]->(b)
         WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef)
-          AND NOT type(r) IN ['CATEGORIZED_AS', 'OWNED_BY', 'IS_MODEL']
           AND a.id IS NOT NULL AND b.id IS NOT NULL
     """
     params = {}
