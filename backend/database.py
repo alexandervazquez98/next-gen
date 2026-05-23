@@ -34,10 +34,7 @@ def close_db():
     if driver:
         driver.close()
 
-def verify_connection():
-    max_retries = 30
-    retry_delay = 2
-    
+def verify_connection(max_retries: int = 30, retry_delay: float = 2.0) -> None:
     for i in range(max_retries):
         try:
             driver.verify_connectivity()
@@ -45,7 +42,8 @@ def verify_connection():
             return
         except Exception as e:
             print(f"Neo4j Connection Failed (Attempt {i+1}/{max_retries}): {e}")
-            time.sleep(retry_delay)
+            if i < max_retries - 1 and retry_delay > 0:
+                time.sleep(retry_delay)
     
     print("Neo4j Connection Failed after max retries")
     raise Exception("Could not connect to Neo4j Database")

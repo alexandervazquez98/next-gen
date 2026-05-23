@@ -66,6 +66,7 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
+      - DISABLE_BACKEND_COLLECTOR=true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s

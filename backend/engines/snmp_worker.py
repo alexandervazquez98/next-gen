@@ -201,6 +201,19 @@ def poll_snmp():
                 else:
                     failed_count += 1
 
+            # Update collector status in Neo4j
+            duration_current = time.time() - start_time
+            session.run("""
+                MERGE (c:CollectorStatus {id: 'main'})
+                SET c.last_run = datetime(),
+                    c.status = 'RUNNING',
+                    c.cis_monitored = $cis,
+                    c.metrics_collected = $collected,
+                    c.metrics_failed = $failed,
+                    c.cycle_duration = $duration,
+                    c.jobs_per_min = $jobs_per_min
+            """, cis=metrics_count, collected=len(metrics_to_save), failed=failed_count, duration=round(duration_current, 2), jobs_per_min=round((len(metrics_to_save) / duration_current) * 60, 1) if duration_current > 0 else 0.0)
+
             # Perform Bulk Insert at the end of the cycle
             if metrics_to_save:
                 bulk_insert_metrics(db, metrics_to_save)

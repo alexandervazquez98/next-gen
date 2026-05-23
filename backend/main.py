@@ -176,7 +176,12 @@ async def startup_event():
         logger.error(f"Failed to seed roles: {e}")
 
     # Start Background SNMP Collector
-    asyncio.create_task(snmp_collector_loop())
+    disable_collector = os.getenv("DISABLE_BACKEND_COLLECTOR", "false").lower() in ("true", "1", "yes", "on")
+    if not disable_collector:
+        asyncio.create_task(snmp_collector_loop())
+        logger.info("Background SNMP Collector started in backend process")
+    else:
+        logger.info("Background SNMP Collector in backend process is disabled (DISABLE_BACKEND_COLLECTOR=true)")
 
     # Start Backup Scheduler
     schedule_daily_backup()
@@ -244,7 +249,7 @@ def get_system_status():
     # 2. Service Status
     neo4j_status = "UNKNOWN"
     try:
-        verify_connection()
+        verify_connection(max_retries=1, retry_delay=0)
         neo4j_status = "CONNECTED"
     except:
         neo4j_status = "DISCONNECTED"
