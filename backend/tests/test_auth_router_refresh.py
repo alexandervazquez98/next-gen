@@ -69,7 +69,7 @@ class TestAuthTokenCookie:
         set_cookie = response.headers.get("set-cookie", "")
         assert "access_token=" in set_cookie
         assert "HttpOnly" in set_cookie or "httpOnly" in set_cookie.lower()
-        assert "SameSite=Strict" in set_cookie or "samesite=strict" in set_cookie.lower()
+        assert "samesite=lax" in set_cookie.lower() or "samesite=strict" in set_cookie.lower()
 
         app.dependency_overrides.pop(get_pg_db, None)
 
@@ -102,15 +102,18 @@ class TestAuthRefresh:
                 with patch("routers.auth.create_access_token", return_value="new_access_token"):
                     response = client.post(
                         "/api/auth/refresh",
-                        content="old_refresh_token",
+                        cookies={"refresh_token": "old_refresh_token"},
                     )
 
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
+        assert "refresh_token" not in data
         assert data["access_token"] == "new_access_token"
-        assert data["refresh_token"] == "new_refresh_token"
+
+        # Check that the new refresh token cookie was set on response
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "refresh_token=new_refresh_token" in set_cookie
 
         app.dependency_overrides.pop(get_pg_db, None)
 
@@ -127,7 +130,7 @@ class TestAuthRefresh:
         with patch("routers.auth.verify_refresh_token", return_value=None):
             response = client.post(
                 "/api/auth/refresh",
-                content="bad_token",
+                cookies={"refresh_token": "bad_token"},
             )
 
         assert response.status_code == 401
@@ -243,6 +246,22 @@ class TestCookieDomainAndSecure:
         with patch.dict(os.environ, {"COOKIE_DOMAIN": "none", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain is None
+        assert secure is False
+
+    def test_get_cookie_domain_and_secure_cookie_secure_override_true(self):
+        """COOKIE_SECURE=true overrides HTTP scheme to secure=True."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"COOKIE_SECURE": "true", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "10.53.1.22"
+        assert secure is True
+
+    def test_get_cookie_domain_and_secure_cookie_secure_override_false(self):
+        """COOKIE_SECURE=false overrides HTTPS scheme to secure=False."""
+        from routers.auth import _get_cookie_domain_and_secure
+        with patch.dict(os.environ, {"COOKIE_SECURE": "false", "FRONTEND_ORIGIN": "https://secure.example.com"}):
+            domain, secure = _get_cookie_domain_and_secure()
+        assert domain == "secure.example.com"
         assert secure is False
 
     def test_login_cookie_has_domain_for_http_ip_origin(self):

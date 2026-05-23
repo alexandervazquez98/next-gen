@@ -63,6 +63,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
     healthcheck:

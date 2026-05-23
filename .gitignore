@@ -139,6 +139,6 @@ frontend/coverage/
 # Docker local overrides
 docker-compose.override.yml
 .artifacts/
-.atl
+.atl/
 .engram/
 skills/worktree-manager/

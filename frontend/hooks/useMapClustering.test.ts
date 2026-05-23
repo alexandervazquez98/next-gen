@@ -230,12 +230,12 @@ describe('useMapClustering hook', () => {
   const events: Event[] = [];
 
   beforeEach(() => {
-    localStorage.removeItem('geoview-clustering::enabled');
+    localStorage.removeItem('geoview-clustering::enabled:v2');
   });
 
   describe('toggleClustering', () => {
     it('should toggle enabled from true to false', () => {
-      localStorage.setItem('geoview-clustering::enabled', 'true');
+      localStorage.setItem('geoview-clustering::enabled:v2', 'true');
       const { result } = renderHook(() => useMapClustering(nodes, events));
       expect(result.current.enabled).toBe(true);
 
@@ -247,7 +247,7 @@ describe('useMapClustering hook', () => {
     });
 
     it('should toggle enabled from false to true', () => {
-      localStorage.setItem('geoview-clustering::enabled', 'false');
+      localStorage.setItem('geoview-clustering::enabled:v2', 'false');
       const { result } = renderHook(() => useMapClustering(nodes, events));
       expect(result.current.enabled).toBe(false);
 
@@ -327,7 +327,7 @@ describe('useMapClustering hook', () => {
     });
 
     it('should return false when clustering is disabled', () => {
-      localStorage.setItem('geoview-clustering::enabled', 'false');
+      localStorage.setItem('geoview-clustering::enabled:v2', 'false');
       const { result } = renderHook(() => useMapClustering(nodes, events));
       expect(result.current.enabled).toBe(false);
       expect(result.current.isClustered).toBe(false);

@@ -112,7 +112,7 @@ export function getWorstSeverity(
 export function computeProximityClusters(
   members: ClusterMember[],
   thresholdMeters: number,
-  idCounter: { next: number }
+  idCounter: { next: number } = { next: 1 }
 ): Cluster[] {
   if (members.length === 0) return [];
 

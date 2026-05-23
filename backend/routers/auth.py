@@ -1,6 +1,9 @@
 import os
 from datetime import timedelta
 from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -25,25 +28,31 @@ from middleware.rate_limit import check_rate_limit, clear_attempts
 
 def _get_cookie_domain_and_secure() -> tuple[str | None, bool]:
     """
-    Parse FRONTEND_ORIGIN for hostname and scheme.
+    Parse FRONTEND_ORIGIN for hostname and scheme, or use COOKIE_SECURE override.
     Returns (domain, secure) tuple where:
     - domain: hostname from FRONTEND_ORIGIN, or COOKIE_DOMAIN override
-    - secure: True only when FRONTEND_ORIGIN uses https scheme
+    - secure: True only when FRONTEND_ORIGIN uses https scheme, or overridden by COOKIE_SECURE env var
     """
+    # 1. Determine secure: check COOKIE_SECURE first, fallback to FRONTEND_ORIGIN scheme
+    cookie_secure_env = os.environ.get("COOKIE_SECURE")
+    if cookie_secure_env is not None:
+        secure = cookie_secure_env.lower() in ("true", "1", "yes", "on")
+    else:
+        origin = os.environ.get("FRONTEND_ORIGIN", "")
+        secure = urlparse(origin).scheme == "https" if origin else False
+
+    # 2. Determine domain: check COOKIE_DOMAIN first, fallback to FRONTEND_ORIGIN hostname
     explicit = os.environ.get("COOKIE_DOMAIN")
     if explicit:
         domain = None if explicit == "none" else explicit
-        # If domain is explicitly set, derive secure from FRONTEND_ORIGIN scheme
-        origin = os.environ.get("FRONTEND_ORIGIN", "")
-        secure = urlparse(origin).scheme == "https" if origin else False
         return domain, secure
 
     origin = os.environ.get("FRONTEND_ORIGIN", "")
     if not origin:
-        return None, False
+        return None, secure
 
     parsed = urlparse(origin)
-    return parsed.hostname, parsed.scheme == "https"
+    return parsed.hostname, secure
 
 
 _COOKIE_DOMAIN, _COOKIE_SECURE = _get_cookie_domain_and_secure()
@@ -150,6 +159,24 @@ async def refresh_tokens(
     plus a new refresh token cookie (single-use rotation).
     """
     refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        # Fallback: check if passed in raw request body (e.g. from tests or non-browser clients)
+        try:
+            body = await request.body()
+            if body:
+                refresh_token = body.decode("utf-8").strip()
+                # If body is JSON, extract refresh_token key if present
+                if refresh_token.startswith("{"):
+                    import json
+                    try:
+                        data = json.loads(refresh_token)
+                        if isinstance(data, dict):
+                            refresh_token = data.get("refresh_token", refresh_token)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

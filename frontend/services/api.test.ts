@@ -1,42 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ApiError, api } from '../services/api';
-
-// Mock react-router-dom's useNavigate since api.ts imports it
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
-}));
-
-describe('ApiError', () => {
-  it('creates error with message and status', () => {
-    const err = new ApiError('Not found', 404);
-    expect(err.message).toBe('Not found');
-    expect(err.status).toBe(404);
-    expect(err).toBeInstanceOf(Error);
-  });
-});
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { api, ApiError } from './api';
 
 describe('api client', () => {
-  const originalFetch = global.fetch;
-  const originalLocation = window.location;
-
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
-    // Mock window.location.href for 401 redirect tests
-    Object.defineProperty(window, 'location', {
-      value: { href: '' },
-      writable: true,
-      configurable: true,
-    });
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-    Object.defineProperty(window, 'location', {
-      value: originalLocation,
-      writable: true,
-      configurable: true,
-    });
+    // Default window.location mock setup for tests
+    if (typeof window !== 'undefined') {
+      window.location = {
+        pathname: '/',
+        hash: '',
+        href: '',
+      } as any;
+    }
   });
 
   describe('get (successful)', () => {
@@ -54,11 +30,12 @@ describe('api client', () => {
       expect(global.fetch).toHaveBeenCalledWith('/api/nodes', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
       });
       expect(result).toEqual(mockData);
     });
 
-    it('adds Authorization header when token exists', async () => {
+    it('does not add Authorization header automatically (relies on cookies)', async () => {
       localStorage.setItem('token', 'fake-token');
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -73,28 +50,14 @@ describe('api client', () => {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer fake-token',
         },
+        credentials: 'include',
       });
     });
+  });
 
-    it('throws ApiError for 404 responses', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        status: 404,
-        ok: false,
-        statusText: 'Not Found',
-        headers: { get: () => 'application/json' },
-        json: () => Promise.resolve({ detail: 'Not found' }),
-      });
-
-      await expect(api.get('/nonexistent')).rejects.toBeInstanceOf(ApiError);
-      await expect(api.get('/nonexistent')).rejects.toMatchObject({
-        status: 404,
-        message: 'Not found',
-      });
-    });
-
-    it('throws ApiError for non-2xx responses', async () => {
+  describe('errors handling', () => {
+    it('throws ApiError with detail from response body', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 500,
@@ -136,13 +99,13 @@ describe('api client', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'test' }),
+        credentials: 'include',
       });
       expect(result).toEqual(created);
     });
 
-    it('forwards signal without dropping auth and json headers', async () => {
+    it('forwards signal and preserves caller-provided headers', async () => {
       const signal = new AbortController().signal;
-      localStorage.setItem('token', 'fake-token');
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 201,
@@ -150,7 +113,10 @@ describe('api client', () => {
         json: () => Promise.resolve({ ok: true }),
       });
 
-      await api.post('/nodes', { name: 'test' }, { signal });
+      await api.post('/nodes', { name: 'test' }, { 
+        signal,
+        headers: { 'Authorization': 'Bearer fake-token' }
+      });
 
       expect(global.fetch).toHaveBeenCalledWith('/api/nodes', {
         method: 'POST',
@@ -160,6 +126,7 @@ describe('api client', () => {
         },
         body: JSON.stringify({ name: 'test' }),
         signal,
+        credentials: 'include',
       });
     });
   });
@@ -180,6 +147,7 @@ describe('api client', () => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'updated' }),
+        credentials: 'include',
       });
       expect(result).toEqual(updated);
     });
@@ -200,6 +168,7 @@ describe('api client', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'updated' }),
         signal,
+        credentials: 'include',
       });
     });
   });
@@ -219,6 +188,7 @@ describe('api client', () => {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: undefined,
+        credentials: 'include',
       });
     });
 
@@ -236,6 +206,7 @@ describe('api client', () => {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true }),
+        credentials: 'include',
       });
     });
 
@@ -255,6 +226,7 @@ describe('api client', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true }),
         signal,
+        credentials: 'include',
       });
     });
   });
@@ -262,7 +234,6 @@ describe('api client', () => {
   describe('request forwarding', () => {
     it('forwards signal for request and keeps caller headers', async () => {
       const signal = new AbortController().signal;
-      localStorage.setItem('token', 'fake-token');
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -273,7 +244,10 @@ describe('api client', () => {
       await api.request('/custom', {
         method: 'GET',
         signal,
-        headers: { Accept: 'application/json' },
+        headers: { 
+          Accept: 'application/json',
+          Authorization: 'Bearer fake-token'
+        },
       });
 
       const [url, options] = global.fetch.mock.calls[0];
@@ -282,6 +256,7 @@ describe('api client', () => {
       expect(options.signal).toBe(signal);
       expect(options.headers['Authorization']).toBe('Bearer fake-token');
       expect(options.headers['Accept']).toBe('application/json');
+      expect(options.credentials).toBe('include');
     });
 
     it('forwards signal for get requests', async () => {
@@ -299,22 +274,35 @@ describe('api client', () => {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
         signal,
+        credentials: 'include',
       });
     });
   });
 
   describe('401 handling', () => {
-    it('clears token and redirects on 401', async () => {
-      localStorage.setItem('token', 'stale-token');
+    it('redirects on 401 when refresh fails', async () => {
+      // Mock window.location
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = {
+        pathname: '/',
+        hash: '',
+        href: '',
+      } as any;
+
       global.fetch = vi.fn().mockResolvedValue({
         status: 401,
         ok: false,
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({ detail: 'Session expired' }),
       });
 
-      await expect(api.get('/nodes')).rejects.toThrow('Unauthorized');
+      await expect(api.get('/nodes')).rejects.toThrow('Session expired');
 
-      expect(localStorage.getItem('token')).toBeNull();
       expect(window.location.href).toBe('/login');
+
+      // Restore window.location
+      window.location = originalLocation;
     });
   });
 

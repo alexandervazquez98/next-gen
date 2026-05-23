@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act, render, screen, waitFor } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 
@@ -10,7 +10,7 @@ vi.mock('react-router-dom', () => ({
 
 // Mock the api module - use vi.hoisted to avoid hoisting issues
 const mocks = vi.hoisted(() => ({
-  api: { get: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn() },
 }));
 vi.mock('../services/api', () => ({
   api: mocks.api,
@@ -24,28 +24,23 @@ describe('AuthContext', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    mocks.api.get.mockReset();
+    mocks.api.post.mockReset();
     // Default: resolve with null user so hydration doesn't crash
     mocks.api.get.mockResolvedValue(null);
   });
 
   describe('initial state', () => {
-    it('starts unauthenticated with no user or token', () => {
+    it('starts loading and unauthenticated with no user', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
       expect(result.current.isAuthenticated).toBe(false);
       expect(result.current.user).toBeNull();
-      expect(result.current.token).toBeNull();
-    });
-
-    it('reads token from localStorage on mount', () => {
-      localStorage.setItem('token', 'stored-token');
-      const { result } = renderHook(() => useAuth(), { wrapper });
-      expect(result.current.token).toBe('stored-token');
+      expect(result.current.loading).toBe(true);
     });
   });
 
   describe('token hydration', () => {
-    it('fetches user from /auth/users/me when token exists', async () => {
-      localStorage.setItem('token', 'valid-token');
+    it('fetches user from /auth/users/me on mount', async () => {
       const mockUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
       mocks.api.get.mockResolvedValue(mockUser);
 
@@ -53,63 +48,62 @@ describe('AuthContext', () => {
 
       expect(mocks.api.get).toHaveBeenCalledWith('/auth/users/me');
       await waitFor(() => {
+        expect(result.current.loading).toBe(false);
         expect(result.current.user).toEqual(mockUser);
+        expect(result.current.isAuthenticated).toBe(true);
       });
     });
 
-    it('logs out if user fetch fails (invalid token)', async () => {
-      localStorage.setItem('token', 'expired-token');
+    it('sets user to null and loading to false if fetch fails', async () => {
       mocks.api.get.mockRejectedValue(new Error('Unauthorized'));
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       await waitFor(() => {
+        expect(result.current.loading).toBe(false);
         expect(result.current.user).toBeNull();
-        expect(result.current.token).toBeNull();
+        expect(result.current.isAuthenticated).toBe(false);
       });
-      expect(localStorage.getItem('token')).toBeNull();
     });
   });
 
   describe('login', () => {
-    it('stores token and user in state and localStorage', () => {
+    it('stores user in state and sets loading to false', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
       const user = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
 
       act(() => {
-        result.current.login('new-token', user);
+        result.current.login(user);
       });
 
-      expect(result.current.token).toBe('new-token');
       expect(result.current.user).toEqual(user);
       expect(result.current.isAuthenticated).toBe(true);
-      expect(localStorage.getItem('token')).toBe('new-token');
+      expect(result.current.loading).toBe(false);
     });
   });
 
   describe('logout', () => {
-    it('clears token, user, and localStorage', () => {
+    it('calls api logout endpoint and clears user state', async () => {
+      mocks.api.post.mockResolvedValue({ status: 'success' });
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       act(() => {
-        result.current.login('token', { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' });
+        result.current.login({ username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' });
       });
       expect(result.current.isAuthenticated).toBe(true);
 
-      act(() => {
-        result.current.logout();
+      await act(async () => {
+        await result.current.logout();
       });
 
-      expect(result.current.token).toBeNull();
+      expect(mocks.api.post).toHaveBeenCalledWith('/auth/logout', {});
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
-      expect(localStorage.getItem('token')).toBeNull();
     });
   });
 
   describe('tier propagation', () => {
     it('stores tier from /auth/users/me response', async () => {
-      localStorage.setItem('token', 'valid-token');
       const mockUser = { username: 'op', role: 'OPERATOR', permissions: [], allowed_locations: [], tier: 'T2' };
       mocks.api.get.mockResolvedValue(mockUser);
 
@@ -121,8 +115,7 @@ describe('AuthContext', () => {
     });
 
     it('defaults tier to T1 when absent from /auth/users/me response', async () => {
-      localStorage.setItem('token', 'valid-token');
-      // Response without tier field — should default to 'T1'
+      // Response without tier field
       const mockUser = { username: 'op', role: 'OPERATOR', permissions: [], allowed_locations: [] };
       mocks.api.get.mockResolvedValue(mockUser);
 
@@ -131,7 +124,6 @@ describe('AuthContext', () => {
       await waitFor(() => {
         expect(result.current.user).not.toBeNull();
       });
-      // tier should be 'T1' as the default in the User interface
       expect(result.current.user?.tier ?? 'T1').toBe('T1');
     });
   });
@@ -147,7 +139,7 @@ describe('AuthContext', () => {
       const adminUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
 
       act(() => {
-        result.current.login('t', adminUser);
+        result.current.login(adminUser);
       });
 
       expect(result.current.hasPermission('ANYTHING')).toBe(true);
@@ -165,7 +157,7 @@ describe('AuthContext', () => {
       };
 
       act(() => {
-        result.current.login('t', viewerUser);
+        result.current.login(viewerUser);
       });
 
       expect(result.current.hasPermission('METRICS_VIEW')).toBe(true);
