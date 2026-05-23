@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — 2026-05-23
+
+### Changed
+- **System Status and SNMP Collector Optimizations**:
+  - Implemented fast-fail Neo4j connectivity check (`verify_connection`) on the status endpoint to prevent API thread starvation on database startup/downtime.
+  - Decoupled the SNMP collector worker from the main backend container by introducing `DISABLE_BACKEND_COLLECTOR=true`, preventing duplicate background workers.
+  - Persisted independent collector state in Neo4j `:CollectorStatus` node under `snmp_worker.py` and modified `snmp_service.py` to retrieve it with memory fallback.
+  - Eager-loaded CIs in the React UI layout (`App.tsx`) using the `useNodesQuery` hook, ensuring instantaneous populating of node count badges and metrics caching on login.
+
 ## [1.9.1] — 2026-05-11
 
 ### Fixed
