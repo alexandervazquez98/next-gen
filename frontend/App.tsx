@@ -6,6 +6,7 @@ import { GraphNode } from './types';
 import { api } from './services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from './services/queryKeys';
+import { useNodesQuery } from './hooks/queries/useNodesQuery';
 
 // Components
 import GraphCMDB from './components/GraphCMDB';
@@ -52,7 +53,7 @@ const MainLayout: React.FC = () => {
   const { user, logout, hasPermission } = useAuth();
   const queryClient = useQueryClient();
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const cachedNodes = queryClient.getQueryData<GraphNode[]>(queryKeys.nodes()) ?? [];
+  const { data: nodes = [] } = useNodesQuery();
 
   const [isEditing, setIsEditing] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -161,7 +162,7 @@ const MainLayout: React.FC = () => {
             <h1 className="text-lg font-bold text-white tracking-tight uppercase tracking-widest">Platform Engine v3.2</h1>
             <div className="hidden md:flex items-center gap-2 bg-neutral-900 border border-white/5 px-3 py-1 rounded-full text-[10px] font-black text-accent-cyan">
               <span className="w-2 h-2 bg-accent-cyan rounded-full animate-pulse"></span>
-              SNMP Polling: ACTIVE ({cachedNodes.length} Nodes)
+              SNMP Polling: ACTIVE ({nodes.length} Nodes)
             </div>
           </div>
 

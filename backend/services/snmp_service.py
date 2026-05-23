@@ -44,6 +44,36 @@ GLOBAL_STATS = {
 
 
 def get_collector_status():
+    driver = get_db()
+    try:
+        with driver.session() as session:
+            record = session.run("""
+                MATCH (c:CollectorStatus {id: 'main'})
+                RETURN c.last_run AS last_run,
+                       c.status AS status,
+                       c.cis_monitored AS cis_monitored,
+                       c.metrics_collected AS metrics_collected,
+                       c.metrics_failed AS metrics_failed,
+                       c.cycle_duration AS cycle_duration,
+                       c.jobs_per_min AS jobs_per_min
+            """).single()
+            if record:
+                last_run_val = record.get("last_run")
+                last_run_str = last_run_val.isoformat() if hasattr(last_run_val, "isoformat") else str(last_run_val) if last_run_val else None
+                return {
+                    "last_run": last_run_str,
+                    "status": record.get("status") or "UNKNOWN",
+                    "stats": {
+                        "cis_monitored": record.get("cis_monitored") or 0,
+                        "metrics_collected": record.get("metrics_collected") or 0,
+                        "metrics_failed": record.get("metrics_failed") or 0,
+                        "cycle_duration": record.get("cycle_duration") or 0.0,
+                        "jobs_per_min": record.get("jobs_per_min") or 0.0,
+                    }
+                }
+    except Exception as e:
+        logger.error("Failed to read collector status from Neo4j: %s", e)
+
     return {
         "last_run": LAST_COLLECTION_TIME,
         "status": COLLECTOR_STATUS,
