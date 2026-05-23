@@ -16,12 +16,14 @@ interface AuthContextType {
     logout: () => void;
     hasPermission: (perm: string) => boolean;
     isAuthenticated: boolean;
+    loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         // Hydrate user from cookie-authenticated endpoint on mount
@@ -29,11 +31,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .then(userData => setUser(userData))
             .catch(() => {
                 setUser(null);
+            })
+            .finally(() => {
+                setLoading(false);
             });
     }, []);
 
     const login = useCallback((newUser: User) => {
         setUser(newUser);
+        setLoading(false);
     }, []);
 
     const logout = useCallback(async () => {
@@ -58,7 +64,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             login,
             logout,
             hasPermission,
-            isAuthenticated: !!user
+            isAuthenticated: !!user,
+            loading
         }}>
             {children}
         </AuthContext.Provider>

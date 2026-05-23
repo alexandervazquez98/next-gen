@@ -23,10 +23,14 @@ vi.mock('../services/api', () => ({
 
 // --- Replicate the ProtectedRoute logic from App.tsx for isolated testing ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
-  const { isAuthenticated, token, user } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const location = useLocation();
 
-  if (!isAuthenticated && !token) {
+  if (loading) {
+    return <span>Loading...</span>;
+  }
+
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
@@ -35,12 +39,6 @@ const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
   }
 
   return children;
-};
-
-// Helper to capture current location
-const LocationSpy = () => {
-  const location = useLocation();
-  return <span data-testid="location">{location.pathname}</span>;
 };
 
 describe('ProtectedRoute', () => {
@@ -53,7 +51,7 @@ describe('ProtectedRoute', () => {
   });
 
   describe('unauthenticated access', () => {
-    it('redirects to /login when no token and no user', async () => {
+    it('redirects to /login when no user', async () => {
       render(
         <MemoryRouter initialEntries={['/dashboard']}>
           <AuthProvider>
@@ -69,14 +67,19 @@ describe('ProtectedRoute', () => {
         </MemoryRouter>
       );
 
+      // Initially shows Loading
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+
+      // After hydration resolves to null, redirects to login page
       await waitFor(() => {
         expect(screen.getByText('Login Page')).toBeInTheDocument();
       });
       expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
     });
 
-    it('renders protected content when token exists (even without user yet)', async () => {
-      localStorage.setItem('token', 'some-token');
+    it('renders protected content when hydration succeeds', async () => {
+      const mockUser = { username: 'admin', role: 'ADMIN', permissions: [], allowed_locations: [], tier: 'T3' };
+      mocks.api.get.mockResolvedValue(mockUser);
 
       render(
         <MemoryRouter initialEntries={['/dashboard']}>
@@ -93,25 +96,29 @@ describe('ProtectedRoute', () => {
         </MemoryRouter>
       );
 
-      // With a token in localStorage, ProtectedRoute should render children
-      // (the user may still be loading from the hydration effect)
-      expect(screen.getByText('Protected Content')).toBeInTheDocument();
+      // Initially shows Loading
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+
+      // Resolves to protected content once user is fetched
+      await waitFor(() => {
+        expect(screen.getByText('Protected Content')).toBeInTheDocument();
+      });
       expect(screen.queryByText('Login Page')).not.toBeInTheDocument();
     });
   });
 
   describe('force password change', () => {
     it('redirects to /change-password when force_password_change is true', async () => {
-      // Setup: login with a user that has force_password_change
       const TestLogin = () => {
         const { login } = useAuth();
         React.useEffect(() => {
-          login('token', {
+          login({
             username: 'admin',
             role: 'USER',
             permissions: [],
             allowed_locations: [],
             force_password_change: true,
+            tier: 'T1',
           });
         }, []);
         return null;
@@ -140,18 +147,16 @@ describe('ProtectedRoute', () => {
     });
 
     it('allows access to /change-password when force_password_change is true', async () => {
-      // Pre-set token so ProtectedRoute doesn't immediately redirect to /login
-      localStorage.setItem('token', 'token');
-
       const TestLogin = () => {
         const { login } = useAuth();
         React.useEffect(() => {
-          login('token', {
+          login({
             username: 'admin',
             role: 'USER',
             permissions: [],
             allowed_locations: [],
             force_password_change: true,
+            tier: 'T1',
           });
         }, []);
         return null;

@@ -55,7 +55,14 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
         // If refresh fails, the refresh cookie is expired — force logout
         if (!refreshResponse.ok) {
             if (!isSSE) {
-                window.location.href = '/login';
+                const isLoginPage = window.location.pathname === '/login' || window.location.hash.startsWith('#/login');
+                if (!isLoginPage) {
+                    if (window.location.hash) {
+                        window.location.hash = '#/login';
+                    } else {
+                        window.location.href = '/login';
+                    }
+                }
             }
             throw new ApiError('Session expired', 401);
         }
@@ -81,7 +88,14 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
 
         // Retry still failed — refresh cookie may have expired during the retry window
         if (!isSSE) {
-            window.location.href = '/login';
+            const isLoginPage = window.location.pathname === '/login' || window.location.hash.startsWith('#/login');
+            if (!isLoginPage) {
+                if (window.location.hash) {
+                    window.location.hash = '#/login';
+                } else {
+                    window.location.href = '/login';
+                }
+            }
         }
         throw new ApiError('Unauthorized', 401);
     }

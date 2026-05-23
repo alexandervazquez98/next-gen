@@ -28,7 +28,7 @@ describe('fetchNodesSearch', () => {
 
     await fetchNodesSearch({ q: 'router' });
 
-    expect(mockApiGet).toHaveBeenCalledWith('/nodes/search', expect.objectContaining({ q: 'router' }));
+    expect(mockApiGet).toHaveBeenCalledWith('/nodes/search?q=router', { signal: undefined });
   });
 
   it('forwards abort signal', async () => {
@@ -37,7 +37,7 @@ describe('fetchNodesSearch', () => {
 
     await fetchNodesSearch({ q: 'server', signal });
 
-    expect(mockApiGet).toHaveBeenCalledWith('/nodes/search', expect.objectContaining({ signal }));
+    expect(mockApiGet).toHaveBeenCalledWith('/nodes/search?q=server', { signal });
   });
 
   it('returns array of nodes on success', async () => {
