@@ -56,7 +56,18 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 
 PostgreSQL dentro de Docker siempre debe usar `POSTGRES_HOST=postgres` y `POSTGRES_INTERNAL_PORT=5432`. Si necesitas exponer PostgreSQL en otro puerto del host, configura `POSTGRES_EXTERNAL_PORT=5433`; no uses `POSTGRES_PORT=5433` para servicios internos porque el contenedor PostgreSQL escucha en `5432` dentro de la red Docker.
 
-Backups PostgreSQL/Neo4j y rebuild seguro: despues de actualizar codigo, ejecuta `sh scripts/safe-rebuild.sh`. Ese flujo valida `.env` sin crear secretos, resuelve `BACKUP_DIR` desde el entorno de shell, luego `.env`, y si no existe usa `.docker/backups`; rechaza rutas peligrosas como `/` o `/tmp`, crea el directorio, aplica mounts con `docker compose up -d --no-build postgres neo4j backend`, verifica `/backups` dentro de los contenedores, ejecuta `scripts/pre-rebuild-backup.sh`, reconstruye y muestra `docker compose ps`. Para inspeccion sin cambios usa `sh scripts/safe-rebuild.sh --dry-run`. Ejecuta los scripts desde Linux/macOS/Git Bash/WSL, no desde PowerShell. No uses `docker compose down -v` en rebuilds porque elimina volumenes. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore, fallback manual y limitaciones de Neo4j Community.
+Backups PostgreSQL/Neo4j y rebuild seguro: Docker Compose no ejecuta automaticamente los scripts de seguridad. Antes de usar `docker compose build` o `docker compose up -d` directamente, el operador debe validar `.env` y crear un backup manualmente.
+
+Flujo recomendado:
+
+1. Actualiza codigo: `git pull origin main`.
+2. Revisa y actualiza `.env` usando `.env.example` como referencia.
+3. Para rebuild completo seguro, ejecuta `sh scripts/safe-rebuild.sh`; este flujo ya valida `.env`, prepara `BACKUP_DIR`, ejecuta backup, reconstruye y muestra estado.
+4. Para backup-only antes de Compose directo, ejecuta `sh scripts/validate-env.sh --check-backup-dir` y luego `sh scripts/pre-rebuild-backup.sh`.
+5. Solo si validacion y backup terminaron bien, ejecuta `docker compose build && docker compose up -d`.
+6. Verifica con `docker compose ps` y `docker compose logs --tail=100 backend`.
+
+Comandos check-only: `sh scripts/safe-rebuild.sh --dry-run`, `sh -n scripts/*.sh` y `docker compose config --quiet`. Ejecuta los scripts desde Linux/macOS/Git Bash/WSL, no desde PowerShell. No uses `docker compose down -v` en rebuilds porque elimina volumenes. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore, fallback manual y limitaciones de Neo4j Community.
 
 ## Tests focalizados
 

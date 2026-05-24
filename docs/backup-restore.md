@@ -1,17 +1,63 @@
 # Backup And Restore Runbook
 
-Use this runbook before Docker rebuilds or releases. The safe path validates `.env`, bootstraps `.docker/backups`, applies backup mounts, creates a PostgreSQL dump, and attempts a Neo4j online export without deleting volumes or data directories.
+Use this runbook before Docker rebuilds or releases. Docker Compose commands do not auto-run the safety scripts. Operators must run the validation and backup scripts manually before any direct rebuild or deploy command.
 
 ## Quick Path
 
-1. Update code on the deploy host: `git pull` or checkout the intended release branch/tag.
-2. Run the one-command safe flow: `sh scripts/safe-rebuild.sh`.
-3. Verify services: `docker compose ps` and check the frontend/backend health in the browser or API.
-4. Confirm backup files exist under `BACKUP_DIR`, default `.docker/backups`.
+1. Update code on the deploy host: `git pull origin main` or checkout the intended release branch/tag.
+2. Review `.env` against `.env.example` and add any new required values.
+3. Run `sh scripts/safe-rebuild.sh` for the full safe rebuild flow.
+4. Verify services with `docker compose ps` and logs or health checks.
+5. Confirm backup files exist under `BACKUP_DIR`, default `.docker/backups`.
 
 Do not run `docker compose down -v` as part of rebuilds. That deletes named volumes and can destroy database state.
 
 Run the scripts from Linux/macOS/Git Bash/WSL, not PowerShell. On Windows PowerShell, use Git Bash or WSL for the safe rebuild command.
+
+## Manual Deploy Flow
+
+Choose one of these paths after pulling code. Do not skip validation and backup when you run Docker Compose directly.
+
+### Full Safe Rebuild
+
+Use this path when you want the script to validate `.env`, create the backup directory when safe, run backups, rebuild, restart, and show service status.
+
+```sh
+git pull origin main
+# Review/update .env from .env.example before continuing.
+sh scripts/safe-rebuild.sh
+docker compose ps
+docker compose logs --tail=100 backend
+```
+
+`safe-rebuild.sh` already handles the backup directory checks that `sh scripts/validate-env.sh --check-backup-dir` performs in the manual backup-only flow.
+
+### Backup-Only Then Direct Compose
+
+Use this path only when you need to run Docker Compose commands yourself.
+
+```sh
+git pull origin main
+# Review/update .env from .env.example before continuing.
+sh scripts/validate-env.sh --check-backup-dir
+sh scripts/pre-rebuild-backup.sh
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs --tail=100 backend
+```
+
+Run `docker compose build` and `docker compose up -d` only after validation and backup succeed. Docker Compose does not call `validate-env.sh`, `pre-rebuild-backup.sh`, or `safe-rebuild.sh` for you.
+
+## Check-Only Commands
+
+Use these before a deploy when you want to inspect the scripts and Compose config without changing containers:
+
+```sh
+sh scripts/safe-rebuild.sh --dry-run
+sh -n scripts/*.sh
+docker compose config --quiet
+```
 
 ## Environment Gate
 
@@ -36,7 +82,7 @@ The validator does not create directories or secrets. If it fails, update `.env`
 
 ## Safe Rebuild Flow
 
-Run this after updating code on the deploy host:
+Run this manually after updating code on the deploy host. Docker Compose direct commands do not trigger it automatically:
 
 ```sh
 sh scripts/safe-rebuild.sh
@@ -57,7 +103,7 @@ Use `sh scripts/safe-rebuild.sh --dry-run` to print the flow without creating di
 
 ## Manual Fallback
 
-Use this only when you need to run each step by hand. Unlike `safe-rebuild.sh`, `pre-rebuild-backup.sh` stays strict and expects `BACKUP_DIR` to already exist.
+Use this only when you need to run each step by hand. Unlike `safe-rebuild.sh`, `pre-rebuild-backup.sh` stays strict and expects `BACKUP_DIR` to already exist. Docker Compose direct commands do not auto-run these safety checks.
 
 ```sh
 sh scripts/validate-env.sh --print-backup-dir
