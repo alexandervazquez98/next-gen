@@ -82,7 +82,7 @@ id_rsa.pub
 docker/neo4j/data/
 docker/neo4j/logs/
 docker/postgres/data/
-docker/backups/
+.docker/backups/
 
 # Directorios de datos genéricos
 data/
