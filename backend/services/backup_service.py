@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "scheduled_time": "06:00",
     "enabled": True,
     "retention_days": 7,
-    "storage_path": "/backups",
+    "storage_path": os.getenv("BACKUP_STORAGE_PATH", "/backups").strip("'\""),
 }
 
 
@@ -191,15 +191,26 @@ def _run_pg_dump(output_path: str, db_name: str = "nexgen_auth") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"backup_{timestamp}.dump"
     filepath = os.path.join(output_path, filename)
+    postgres_user = os.getenv("POSTGRES_USER", "nexgen_admin").strip("'\"")
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "nexgen_password").strip("'\"")
+    postgres_host = os.getenv("POSTGRES_HOST", "postgres").strip("'\"")
+    postgres_port = os.getenv("POSTGRES_PORT", "5432").strip("'\"")
+    postgres_db = os.getenv("POSTGRES_DB", db_name).strip("'\"")
+    pg_dump_env = os.environ.copy()
+    pg_dump_env["PGPASSWORD"] = postgres_password
 
     result = subprocess.run(
         [
             "pg_dump",
             "-Fc",
             "-f", filepath,
-            "-d", f"postgresql://nexgen_admin:nexgen_password@postgres:5432/{db_name}",
+            "-h", postgres_host,
+            "-p", postgres_port,
+            "-U", postgres_user,
+            "-d", postgres_db,
         ],
         capture_output=True,
+        env=pg_dump_env,
     )
 
     if result.returncode != 0:

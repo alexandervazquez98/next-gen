@@ -34,7 +34,7 @@ services:
     volumes:
       - ./docker/postgres/data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexgen_admin -d nexgen_auth"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -62,12 +62,16 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - BACKUP_STORAGE_PATH=${BACKUP_STORAGE_PATH:-/backups}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
       - DISABLE_BACKEND_COLLECTOR=true
       - COOKIE_DOMAIN=${COOKIE_DOMAIN}
+    volumes:
+      - ${BACKUP_DIR:-./docker/backups}:/backups
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s
