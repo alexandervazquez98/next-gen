@@ -31,6 +31,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 
 - [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) - manual del operador: login, consola, eventos, metricas, troubleshooting.
 - [`docs/AI_AGENT_GUIDE.md`](docs/AI_AGENT_GUIDE.md) - guia para agentes IA que operan via REST API: permisos, operaciones permitidas, guards y campos restringidos.
+- [`docs/backup-restore.md`](docs/backup-restore.md) - runbook de backups pre-rebuild, restore PostgreSQL y limitaciones seguras de Neo4j.
 - [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
 - [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
 - [`docs/reference/modelo_entidad_relacion.md`](docs/reference/modelo_entidad_relacion.md) - referencia tecnica de entidades, relaciones y payloads relevantes.
@@ -53,7 +54,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 4. Backend docs: `http://localhost:8000/docs`.
 5. Neo4j Browser: `http://localhost:7474`.
 
-Backups PostgreSQL: `BACKUP_DIR` define la ruta del host (`./docker/backups` si no se configura otro valor). Dentro del contenedor la ruta persistente es fija: `/backups`. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor.
+Backups PostgreSQL/Neo4j: `BACKUP_DIR` define la ruta del host; se resuelve desde el entorno de shell, luego `.env`, y si no existe usa `./docker/backups`. Dentro de los contenedores la ruta persistente es fija: `/backups`. Antes de reconstruir Docker, crea el directorio y ejecuta `sh scripts/pre-rebuild-backup.sh` desde Linux/macOS/Git Bash/WSL; luego usa `docker compose build && docker compose up -d`. No uses `docker compose down -v` en rebuilds porque elimina volumenes. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore y limitaciones de Neo4j Community.
 
 ## Tests focalizados
 
