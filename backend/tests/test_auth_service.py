@@ -1,14 +1,18 @@
 """Unit tests for services/auth_service.py — pure logic functions (no DB)."""
 
+import pytest
 from datetime import timedelta
+from fastapi import HTTPException
 from jose import jwt, JWTError
 from services.auth_service import (
     create_access_token,
     check_permission,
+    get_current_ai_agent,
+    AIAgentInfo,
     SECRET_KEY,
     ALGORITHM,
 )
-from models.user import UserPermission, User
+from models.user import UserPermission, User, AIPermission
 
 
 class TestCreateAccessToken:
@@ -100,3 +104,118 @@ class TestCheckPermission:
         assert check_permission(UserPermission.EVENT_ACK, user) is True
         assert check_permission(UserPermission.CI_VIEW, user) is True
         assert check_permission(UserPermission.CI_DELETE, user) is False
+
+
+class TestGetCurrentAiAgent:
+    """Tests for get_current_ai_agent permission claim hardening."""
+
+    @staticmethod
+    def _make_ai_token(extra_claims: dict):
+        """Build a minimal AI-agent token with required claims."""
+        base_payload = {
+            "sub": "agent-1",
+            "type": "ai_agent",
+            "role": "AI_OPERATOR",
+        }
+        base_payload.update(extra_claims)
+        return create_access_token(base_payload)
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_missing_permissions_authenticates_with_empty_permissions(self):
+        """Missing permissions claim must authenticate with an empty permission list."""
+        token = self._make_ai_token({})
+        result = await get_current_ai_agent(token=token, db=None)
+
+        assert isinstance(result, AIAgentInfo)
+        assert result.ai_agent_id == "agent-1"
+        assert result.persona == "AI_OPERATOR"
+        assert result.permissions == []
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_valid_permissions_authenticates(self):
+        """Valid AIPermission values are accepted and returned unchanged."""
+        token = self._make_ai_token(
+            {
+                "permissions": [
+                    AIPermission.AI_VIEW_ALL.value,
+                    AIPermission.AI_RUN_DIAGNOSTIC.value,
+                ]
+            }
+        )
+        result = await get_current_ai_agent(token=token, db=None)
+
+        assert result.permissions == [
+            AIPermission.AI_VIEW_ALL.value,
+            AIPermission.AI_RUN_DIAGNOSTIC.value,
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_permissions",
+        [
+            ["ADMIN"],
+            ["USER_MANAGE"],
+            ["BOGUS"],
+            ["AI_VIEW_ALL", 123],
+            "AI_VIEW_ALL",
+            {"permission": "AI_VIEW_ALL"},
+            None,
+        ],
+    )
+    async def test_ai_agent_permissions_are_strictly_validated(self, bad_permissions):
+        """Malformed or unauthorized permissions fail closed with HTTP 403."""
+        token = self._make_ai_token({"permissions": bad_permissions})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_ai_agent(token=token, db=None)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_wrong_token_type_is_rejected(self):
+        """AI agent auth must reject tokens whose `type` is not `ai_agent`."""
+        token = self._make_ai_token({"type": "human"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_ai_agent(token=token, db=None)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_missing_persona_is_rejected(self):
+        """AI agent auth must reject tokens without a persona/role claim."""
+        payload = {
+            "sub": "agent-1",
+            "type": "ai_agent",
+        }
+        token = create_access_token(payload)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_ai_agent(token=token, db=None)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_unsupported_persona_is_rejected(self):
+        """AI agent auth must reject persona values outside the allow-list."""
+        token = self._make_ai_token({"role": "HUMAN_OPERATOR"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_ai_agent(token=token, db=None)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_ai_agent_with_missing_subject_is_rejected(self):
+        """AI agent auth must reject tokens missing a `sub` claim."""
+        payload = {
+            "type": "ai_agent",
+            "role": "AI_OPERATOR",
+            "permissions": [AIPermission.AI_VIEW_ALL.value],
+        }
+        token = create_access_token(payload)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_ai_agent(token=token, db=None)
+
+        assert exc_info.value.status_code == 401
