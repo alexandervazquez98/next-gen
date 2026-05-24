@@ -2,13 +2,11 @@ import os
 import secrets
 import hashlib
 from datetime import datetime, timedelta
-from typing import Optional
-
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from models.user import TokenData, User, UserRole, UserPermission, UserInDB
+from models.user import TokenData, User, UserRole, UserPermission, UserInDB, AIPermission
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from postgres_db import get_pg_db
@@ -195,6 +193,7 @@ def check_permission(permission: UserPermission, user: User):
 # ── AI Agent Detection ─────────────────────────────────────────────────────────
 
 AI_PERSONAS = {"AI_DIAGNOSTIC", "AI_OPERATOR", "AI_ADMIN"}
+ALLOWED_AI_PERMISSIONS = {permission.value for permission in AIPermission}
 
 
 class AIAgentInfo(BaseModel):
@@ -209,8 +208,14 @@ async def get_current_ai_agent(
 ) -> AIAgentInfo:
     """FastAPI dependency that extracts AI agent info from JWT.
 
-    Returns AIAgentInfo dict with {ai_agent_id, persona, permissions}.
-    Raises 401 if not a valid AI agent token.
+    The function enforces a strict allow-list for `permissions`:
+    - missing claim => empty list
+    - claim must be a list when provided
+    - each item must be a non-empty string in `AIPermission`
+
+    Fail-closed behavior:
+    - unknown/invalid/human permissions and malformed claims return HTTP 403
+    - token decode/subject failures return HTTP 401
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -234,7 +239,7 @@ async def get_current_ai_agent(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Invalid AI persona: {persona}",
             )
-        permissions = payload.get("permissions", [])
+        permissions = _normalize_ai_agent_permissions(payload)
         return AIAgentInfo(
             ai_agent_id=ai_agent_id,
             persona=persona,
@@ -242,3 +247,38 @@ async def get_current_ai_agent(
         )
     except JWTError:
         raise credentials_exception
+
+
+def _normalize_ai_agent_permissions(payload: dict) -> list[str]:
+    """Normalize and validate AI-agent `permissions` claim values.
+
+    Returns:
+        list[str]: A validated permission list.
+
+    Raises:
+        HTTPException(403): For non-list payloads, non-string items, or values
+            not present in the `AIPermission` enum.
+    """
+    if "permissions" not in payload:
+        return []
+
+    raw_permissions = payload.get("permissions")
+    if not isinstance(raw_permissions, list):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI permissions claim must be a list when provided",
+        )
+
+    for permission in raw_permissions:
+        if not isinstance(permission, str) or not permission:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="AI permissions claim must contain non-empty string values",
+            )
+        if permission not in ALLOWED_AI_PERMISSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Invalid AI permission: {permission}",
+            )
+
+    return raw_permissions
