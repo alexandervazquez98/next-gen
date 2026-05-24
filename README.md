@@ -53,11 +53,13 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 4. Backend docs: `http://localhost:8000/docs`.
 5. Neo4j Browser: `http://localhost:7474`.
 
+Backups PostgreSQL: `BACKUP_DIR` define la ruta del host (`./docker/backups` si no se configura otro valor). Dentro del contenedor la ruta persistente es fija: `/backups`. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor.
+
 ## Tests focalizados
 
 - Desde la raiz del repo:
   - Backend: `python -m pytest backend/tests/test_event_service_smoke.py backend/tests/test_routers_metrics_events.py backend/tests/test_snmp_service_snapshots.py`
-  - Frontend: `npm --prefix frontend run test:run -- hooks/queries/resourceQueries.test.tsx components/__tests__/EventDetailModal.acceptance.test.tsx`
+  - Frontend: `pnpm --dir frontend run test:run -- hooks/queries/resourceQueries.test.tsx components/__tests__/EventDetailModal.acceptance.test.tsx`
 
 ## Estado actual
 

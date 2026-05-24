@@ -81,7 +81,7 @@ class TestBackupConfigOperations:
             "scheduled_time": "03:30",
             "enabled": False,
             "retention_days": 14,
-            "storage_path": "/custom/backups",
+            "storage_path": "/backups/custom",
             "updated_by": "admin",
         }
 
@@ -92,7 +92,41 @@ class TestBackupConfigOperations:
         assert config["scheduled_time"] == "03:30"
         assert config["enabled"] is False
         assert config["retention_days"] == 14
-        assert config["storage_path"] == "/custom/backups"
+        assert config["storage_path"] == "/backups/custom"
+
+    def test_get_backup_config_normalizes_unmounted_stored_path(self, mock_neo4j_session):
+        """Stored paths outside /backups fall back to persisted storage."""
+        backup_service = _load_backup_service_module()
+        stored = {
+            "schedule_type": "daily",
+            "scheduled_time": "03:30",
+            "enabled": False,
+            "retention_days": 14,
+            "storage_path": "/custom/backups",
+            "updated_by": "admin",
+        }
+
+        with patch.object(backup_service, "_get_config_from_db", return_value=stored):
+            config = backup_service.get_backup_config()
+
+        assert config["storage_path"] == "/backups"
+
+    def test_get_backup_config_allows_subpath_under_backups(self, mock_neo4j_session):
+        """Subpaths under /backups remain inside the persisted mount."""
+        backup_service = _load_backup_service_module()
+        stored = {
+            "schedule_type": "daily",
+            "scheduled_time": "03:30",
+            "enabled": False,
+            "retention_days": 14,
+            "storage_path": "/backups/team-a",
+            "updated_by": "admin",
+        }
+
+        with patch.object(backup_service, "_get_config_from_db", return_value=stored):
+            config = backup_service.get_backup_config()
+
+        assert config["storage_path"] == "/backups/team-a"
 
     def test_update_backup_config_saves_to_db(self, mock_neo4j_session):
         """update_backup_config persists the new configuration."""
@@ -114,6 +148,7 @@ class TestBackupConfigOperations:
         assert saved_config["schedule_type"] == "manual"
         assert saved_config["scheduled_time"] == "04:00"
         assert saved_config["retention_days"] == 30
+        assert saved_config["storage_path"] == "/backups"
         assert saved_config["updated_by"] == "admin"
 
     def test_update_backup_config_returns_updated_config(self, mock_neo4j_session):
@@ -125,7 +160,7 @@ class TestBackupConfigOperations:
             "scheduled_time": "02:00",
             "enabled": True,
             "retention_days": 5,
-            "storage_path": "/fast/backups",
+            "storage_path": "/backups/fast",
             "updated_by": "admin",
         }
 
@@ -136,7 +171,7 @@ class TestBackupConfigOperations:
                     scheduled_time="02:00",
                     enabled=True,
                     retention_days=5,
-                    storage_path="/fast/backups",
+                    storage_path="/backups/fast",
                     updated_by="admin",
                 )
 
@@ -297,12 +332,63 @@ class TestPgDump:
         result_normalized = result.replace("\\", "/")
         assert "/backups/backup_" in result_normalized
         assert result.endswith(".dump")
-        # Verify pg_dump was called with the database in the connection string
+        # Verify pg_dump preserves custom format and output file behavior.
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
-        conn_string = " ".join(str(a) for a in call_args)
-        assert "nexgen_auth" in conn_string
-        assert "pg_dump" in conn_string
+        assert call_args[0] == "pg_dump"
+        assert "-Fc" in call_args
+        assert "-f" in call_args
+        assert any(str(arg).replace("\\", "/").startswith("/backups/backup_") for arg in call_args)
+        assert ["-d", "nexgen_auth"] == call_args[-2:]
+
+    def test_run_pg_dump_uses_postgres_env_vars(self):
+        """_run_pg_dump passes Compose-compatible env vars as pg_dump args."""
+        backup_service = _load_backup_service_module()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "POSTGRES_USER": "custom_user",
+                "POSTGRES_PASSWORD": "custom_password",
+                "POSTGRES_HOST": "custom_postgres",
+                "POSTGRES_PORT": "15432",
+                "POSTGRES_DB": "custom_db",
+            },
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                backup_service._run_pg_dump(output_path="/backups")
+
+        call_args = mock_run.call_args[0][0]
+        assert "postgresql://" not in " ".join(str(a) for a in call_args)
+        assert ["-h", "custom_postgres"] == call_args[4:6]
+        assert ["-p", "15432"] == call_args[6:8]
+        assert ["-U", "custom_user"] == call_args[8:10]
+        assert ["-d", "custom_db"] == call_args[10:12]
+
+    def test_run_pg_dump_keeps_special_character_password_out_of_args(self):
+        """_run_pg_dump sends passwords through PGPASSWORD, not argv."""
+        backup_service = _load_backup_service_module()
+        password = "p@ss:word/with?special&chars='\"$"
+
+        with patch.dict(
+            "os.environ",
+            {
+                "POSTGRES_USER": "custom_user",
+                "POSTGRES_PASSWORD": password,
+                "POSTGRES_HOST": "custom_postgres",
+                "POSTGRES_PORT": "15432",
+                "POSTGRES_DB": "custom_db",
+            },
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                backup_service._run_pg_dump(output_path="/backups")
+
+        call_args = mock_run.call_args[0][0]
+        call_kwargs = mock_run.call_args.kwargs
+        assert password not in " ".join(str(a) for a in call_args)
+        assert call_kwargs["env"]["PGPASSWORD"] == password
 
     def test_run_pg_dump_raises_on_failure(self):
         """_run_pg_dump raises RuntimeError when pg_dump fails."""
