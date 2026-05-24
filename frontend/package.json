@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.12.1",
   "type": "module",
   "scripts": {
+    "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.includes('pnpm/')) { console.error('Use pnpm via Corepack: corepack pnpm install --frozen-lockfile'); process.exit(1); }\"",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
