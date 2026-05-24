@@ -31,6 +31,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 
 - [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) - manual del operador: login, consola, eventos, metricas, troubleshooting.
 - [`docs/AI_AGENT_GUIDE.md`](docs/AI_AGENT_GUIDE.md) - guia para agentes IA que operan via REST API: permisos, operaciones permitidas, guards y campos restringidos.
+- [`docs/backup-restore.md`](docs/backup-restore.md) - runbook de backups pre-rebuild, restore PostgreSQL y limitaciones seguras de Neo4j.
 - [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
 - [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
 - [`docs/reference/modelo_entidad_relacion.md`](docs/reference/modelo_entidad_relacion.md) - referencia tecnica de entidades, relaciones y payloads relevantes.
@@ -53,7 +54,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 4. Backend docs: `http://localhost:8000/docs`.
 5. Neo4j Browser: `http://localhost:7474`.
 
-Backups PostgreSQL: `BACKUP_DIR` define la ruta del host (`./docker/backups` si no se configura otro valor). Dentro del contenedor la ruta persistente es fija: `/backups`. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor.
+Backups PostgreSQL/Neo4j y rebuild seguro: despues de actualizar codigo, ejecuta `sh scripts/validate-env.sh --check-backup-dir` para confirmar que `.env` contiene todas las variables de `.env.example`, que los secretos sensibles no estan vacios/default, y que `BACKUP_DIR` existe y es escribible. Luego ejecuta `sh scripts/pre-rebuild-backup.sh`, reconstruye con `docker compose build && docker compose up -d`, y verifica con `docker compose ps`. `BACKUP_DIR` se resuelve desde el entorno de shell, luego `.env`, y si no existe usa `./docker/backups`; el validador no crea el directorio, asi que usa `mkdir -p ./docker/backups` o PowerShell `New-Item -ItemType Directory -Force -Path .\docker\backups` antes de correrlo. Ejecuta los scripts desde Linux/macOS/Git Bash/WSL, no desde PowerShell. No uses `docker compose down -v` en rebuilds porque elimina volumenes. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore y limitaciones de Neo4j Community.
 
 ## Tests focalizados
 
