@@ -1,0 +1,11 @@
+packages:
+  - .
+
+strictDepBuilds: true
+
+onlyBuiltDependencies:
+  - esbuild
+
+ignoredBuiltDependencies:
+  - '@google/genai'
+  - protobufjs
