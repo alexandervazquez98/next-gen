@@ -175,7 +175,7 @@ resolve_backup_dir() {
         if [ "$BACKUP_DIR" ]; then
             printf '%s\n' "$BACKUP_DIR"
         else
-            printf '%s\n' './docker/backups'
+            printf '%s\n' '.docker/backups'
         fi
         return
     fi
@@ -189,7 +189,7 @@ resolve_backup_dir() {
         fi
     fi
 
-    printf '%s\n' './docker/backups'
+    printf '%s\n' '.docker/backups'
 }
 
 validate_backup_dir() {

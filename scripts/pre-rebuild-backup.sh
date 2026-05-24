@@ -122,5 +122,5 @@ else
 fi
 
 printf '\nPre-rebuild backup completed. Files are under: %s\n' "$backup_dir"
-printf 'Safe rebuild command: docker compose build && docker compose up -d\n'
+printf 'Safe rebuild command: sh scripts/safe-rebuild.sh\n'
 printf 'Avoid destructive volume deletion commands such as: docker compose down -v\n'

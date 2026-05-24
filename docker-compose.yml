@@ -11,7 +11,7 @@ services:
     volumes:
       - ./docker/neo4j/data:/data
       - ./docker/neo4j/logs:/logs
-      - ${BACKUP_DIR:-./docker/backups}:/backups
+      - ${BACKUP_DIR:-.docker/backups}:/backups
       - ./docker/neo4j/entrypoint.sh:/entrypoint.sh
     entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
     healthcheck:
@@ -34,7 +34,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
     volumes:
       - ./docker/postgres/data:/var/lib/postgresql/data
-      - ${BACKUP_DIR:-./docker/backups}:/backups
+      - ${BACKUP_DIR:-.docker/backups}:/backups
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -72,7 +72,7 @@ services:
       - DISABLE_BACKEND_COLLECTOR=true
       - COOKIE_DOMAIN=${COOKIE_DOMAIN}
     volumes:
-      - ${BACKUP_DIR:-./docker/backups}:/backups
+      - ${BACKUP_DIR:-.docker/backups}:/backups
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s
