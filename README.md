@@ -53,7 +53,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 4. Backend docs: `http://localhost:8000/docs`.
 5. Neo4j Browser: `http://localhost:7474`.
 
-Backups PostgreSQL: el backend escribe por defecto en `/backups`, montado desde `BACKUP_DIR` en el host (`./docker/backups` si no se configura otro valor).
+Backups PostgreSQL: `BACKUP_DIR` define la ruta del host (`./docker/backups` si no se configura otro valor). Dentro del contenedor la ruta persistente es fija: `/backups`. La configuracion guardada de backups solo puede usar `/backups` o subrutas como `/backups/daily`; cualquier ruta fuera de ese mount se normaliza a `/backups` para no escribir en almacenamiento efimero del contenedor.
 
 ## Tests focalizados
 

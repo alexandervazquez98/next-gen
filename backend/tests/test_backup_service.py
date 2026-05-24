@@ -81,7 +81,7 @@ class TestBackupConfigOperations:
             "scheduled_time": "03:30",
             "enabled": False,
             "retention_days": 14,
-            "storage_path": "/custom/backups",
+            "storage_path": "/backups/custom",
             "updated_by": "admin",
         }
 
@@ -92,7 +92,41 @@ class TestBackupConfigOperations:
         assert config["scheduled_time"] == "03:30"
         assert config["enabled"] is False
         assert config["retention_days"] == 14
-        assert config["storage_path"] == "/custom/backups"
+        assert config["storage_path"] == "/backups/custom"
+
+    def test_get_backup_config_normalizes_unmounted_stored_path(self, mock_neo4j_session):
+        """Stored paths outside /backups fall back to persisted storage."""
+        backup_service = _load_backup_service_module()
+        stored = {
+            "schedule_type": "daily",
+            "scheduled_time": "03:30",
+            "enabled": False,
+            "retention_days": 14,
+            "storage_path": "/custom/backups",
+            "updated_by": "admin",
+        }
+
+        with patch.object(backup_service, "_get_config_from_db", return_value=stored):
+            config = backup_service.get_backup_config()
+
+        assert config["storage_path"] == "/backups"
+
+    def test_get_backup_config_allows_subpath_under_backups(self, mock_neo4j_session):
+        """Subpaths under /backups remain inside the persisted mount."""
+        backup_service = _load_backup_service_module()
+        stored = {
+            "schedule_type": "daily",
+            "scheduled_time": "03:30",
+            "enabled": False,
+            "retention_days": 14,
+            "storage_path": "/backups/team-a",
+            "updated_by": "admin",
+        }
+
+        with patch.object(backup_service, "_get_config_from_db", return_value=stored):
+            config = backup_service.get_backup_config()
+
+        assert config["storage_path"] == "/backups/team-a"
 
     def test_update_backup_config_saves_to_db(self, mock_neo4j_session):
         """update_backup_config persists the new configuration."""
@@ -114,6 +148,7 @@ class TestBackupConfigOperations:
         assert saved_config["schedule_type"] == "manual"
         assert saved_config["scheduled_time"] == "04:00"
         assert saved_config["retention_days"] == 30
+        assert saved_config["storage_path"] == "/backups"
         assert saved_config["updated_by"] == "admin"
 
     def test_update_backup_config_returns_updated_config(self, mock_neo4j_session):
@@ -125,7 +160,7 @@ class TestBackupConfigOperations:
             "scheduled_time": "02:00",
             "enabled": True,
             "retention_days": 5,
-            "storage_path": "/fast/backups",
+            "storage_path": "/backups/fast",
             "updated_by": "admin",
         }
 
@@ -136,7 +171,7 @@ class TestBackupConfigOperations:
                     scheduled_time="02:00",
                     enabled=True,
                     retention_days=5,
-                    storage_path="/fast/backups",
+                    storage_path="/backups/fast",
                     updated_by="admin",
                 )
 

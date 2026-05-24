@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import posixpath
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -15,12 +17,32 @@ from postgres_db import SessionLocal
 
 # --- Config defaults ---
 
+PERSISTENT_BACKUP_ROOT = "/backups"
+logger = logging.getLogger(__name__)
+
+
+def _normalize_storage_path(storage_path: Optional[str]) -> str:
+    """Keep backup storage inside the persisted container mount."""
+    if not storage_path:
+        return PERSISTENT_BACKUP_ROOT
+
+    normalized = posixpath.normpath(str(storage_path).strip().strip("'\""))
+    if normalized == PERSISTENT_BACKUP_ROOT or normalized.startswith(f"{PERSISTENT_BACKUP_ROOT}/"):
+        return normalized
+
+    logger.warning(
+        "Ignoring non-persistent backup storage_path %r; using %s",
+        storage_path,
+        PERSISTENT_BACKUP_ROOT,
+    )
+    return PERSISTENT_BACKUP_ROOT
+
 DEFAULT_CONFIG = {
     "schedule_type": "daily",
     "scheduled_time": "06:00",
     "enabled": True,
     "retention_days": 7,
-    "storage_path": os.getenv("BACKUP_STORAGE_PATH", "/backups").strip("'\""),
+    "storage_path": PERSISTENT_BACKUP_ROOT,
 }
 
 
@@ -161,6 +183,7 @@ def get_backup_config() -> Dict[str, Any]:
     stored = _get_config_from_db()
     if stored is None:
         return DEFAULT_CONFIG.copy()
+    stored["storage_path"] = _normalize_storage_path(stored.get("storage_path"))
     return stored
 
 
@@ -180,7 +203,7 @@ def update_backup_config(
         scheduled_time=scheduled_time if scheduled_time is not None else current["scheduled_time"],
         enabled=enabled if enabled is not None else current["enabled"],
         retention_days=retention_days if retention_days is not None else current["retention_days"],
-        storage_path=storage_path if storage_path is not None else current["storage_path"],
+        storage_path=_normalize_storage_path(storage_path if storage_path is not None else current["storage_path"]),
         updated_by=updated_by,
     )
 

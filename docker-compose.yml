@@ -63,7 +63,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - BACKUP_STORAGE_PATH=${BACKUP_STORAGE_PATH:-/backups}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - PYTHONPATH=/app
