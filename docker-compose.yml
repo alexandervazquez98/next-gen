@@ -64,7 +64,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_PORT=${POSTGRES_INTERNAL_PORT:-5432}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - PYTHONPATH=/app
@@ -120,6 +120,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_INTERNAL_PORT:-5432}
       # ICMP polling: timeout in ms (default 3000), retries (default 2), debounce_count (default 3)
       - ICMP_TIMEOUT_MS=${ICMP_TIMEOUT_MS:-3000}
       - ICMP_RETRIES=${ICMP_RETRIES:-2}
