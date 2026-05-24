@@ -52,70 +52,6 @@ require_running_service() {
     fi
 }
 
-validate_backup_dir() {
-    backup_dir=$1
-
-    if [ ! -d "$backup_dir" ]; then
-        printf 'BACKUP_DIR does not exist: %s\n' "$backup_dir" >&2
-        printf 'Create it first, then rerun this script.\n' >&2
-        exit 1
-    fi
-
-    if [ ! -w "$backup_dir" ]; then
-        printf 'BACKUP_DIR is not writable: %s\n' "$backup_dir" >&2
-        exit 1
-    fi
-
-    test_file="$backup_dir/.pre-rebuild-backup-write-test"
-    if ! : > "$test_file"; then
-        printf 'Could not write to BACKUP_DIR: %s\n' "$backup_dir" >&2
-        exit 1
-    fi
-    rm -f "$test_file"
-}
-
-resolve_backup_dir() {
-    if [ "${BACKUP_DIR+x}" ]; then
-        if [ "$BACKUP_DIR" ]; then
-            printf '%s\n' "$BACKUP_DIR"
-        else
-            printf '%s\n' './docker/backups'
-        fi
-        return
-    fi
-
-    if [ -f .env ]; then
-        env_backup_dir=$(awk '
-            /^[[:space:]]*(#|$)/ { next }
-            {
-                sub(/\r$/, "")
-                if ($0 ~ /^[[:space:]]*BACKUP_DIR[[:space:]]*=/) {
-                    line = $0
-                    sub(/^[[:space:]]*BACKUP_DIR[[:space:]]*=/, "", line)
-                    sub(/^[[:space:]]+/, "", line)
-                    sub(/[[:space:]]+$/, "", line)
-                    if (line ~ /^".*"$/) {
-                        sub(/^"/, "", line)
-                        sub(/"$/, "", line)
-                    } else if (line ~ /^'\''.*'\''$/) {
-                        sub(/^'\''/, "", line)
-                        sub(/'\''$/, "", line)
-                    }
-                    print line
-                    exit
-                }
-            }
-        ' .env)
-
-        if [ "$env_backup_dir" ]; then
-            printf '%s\n' "$env_backup_dir"
-            return
-        fi
-    fi
-
-    printf '%s\n' './docker/backups'
-}
-
 write_neo4j_limitation_note() {
     note_path=$1
     cat > "$note_path" <<'NOTE'
@@ -135,7 +71,8 @@ NOTE
 
 require_command docker
 
-backup_dir=$(resolve_backup_dir)
+printf 'Validating .env and BACKUP_DIR before backup...\n'
+backup_dir=$(sh scripts/validate-env.sh --check-backup-dir --print-backup-dir)
 timestamp=$(date -u '+%Y%m%d_%H%M%S')
 postgres_file="postgres_${timestamp}.dump"
 neo4j_file="neo4j_${timestamp}.cypher"
@@ -143,9 +80,7 @@ neo4j_note="neo4j_${timestamp}_offline-dump-required.txt"
 
 printf 'Validating Docker Compose configuration...\n'
 compose config >/dev/null
-
-printf 'Validating BACKUP_DIR: %s\n' "$backup_dir"
-validate_backup_dir "$backup_dir"
+printf 'Validated BACKUP_DIR: %s\n' "$backup_dir"
 
 require_running_service postgres
 

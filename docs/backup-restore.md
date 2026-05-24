@@ -1,23 +1,46 @@
 # Backup And Restore Runbook
 
-Use this runbook before Docker rebuilds or releases. The safe path creates a PostgreSQL dump and attempts a Neo4j online export without deleting containers, volumes, or data directories.
+Use this runbook before Docker rebuilds or releases. The safe path validates `.env`, verifies the backup directory, creates a PostgreSQL dump, and attempts a Neo4j online export without deleting containers, volumes, or data directories.
 
 ## Quick Path
 
-1. Set `BACKUP_DIR` in the shell, set it in `.env`, or use the default `./docker/backups`.
-2. Create the host directory if it does not exist: `mkdir -p ./docker/backups`.
-3. Run `sh scripts/pre-rebuild-backup.sh` from a POSIX shell such as Linux, macOS, Git Bash, or WSL.
-4. Rebuild with `docker compose build && docker compose up -d`.
+1. Update code on the deploy host: `git pull` or checkout the intended release branch/tag.
+2. Compare and validate env: `sh scripts/validate-env.sh --check-backup-dir`.
+3. If validation says `BACKUP_DIR` is missing, create the host directory, for example: `mkdir -p ./docker/backups`.
+4. Run the safety backup: `sh scripts/pre-rebuild-backup.sh`.
+5. Rebuild and restart safely: `docker compose build && docker compose up -d`.
+6. Verify services: `docker compose ps` and check the frontend/backend health in the browser or API.
 
 Do not run `docker compose down -v` as part of rebuilds. That deletes named volumes and can destroy database state.
 
-On Windows PowerShell, create the default backup directory with `New-Item -ItemType Directory -Force -Path .\docker\backups`, then run the script from Git Bash or WSL. The script expects POSIX shell syntax; PowerShell is only shown here for directory creation.
+On Windows PowerShell, create the default backup directory with `New-Item -ItemType Directory -Force -Path .\docker\backups`, then run validation and backup from Git Bash or WSL. The scripts expect POSIX shell syntax; PowerShell is only shown here for directory creation.
+
+## Environment Gate
+
+Run this before every deploy/rebuild:
+
+```sh
+sh scripts/validate-env.sh --check-backup-dir
+```
+
+The validator is intentionally conservative for production-sensitive values:
+
+| Check | Behavior |
+| --- | --- |
+| `.env.example` vs `.env` | Fails when `.env` is missing any variable declared in `.env.example`, which catches stale deploy env files after new config is added. |
+| Safe parsing | Reads assignments as text and never sources `.env` or `.env.example`, so arbitrary shell code is not executed. |
+| Sensitive values | Fails empty or obvious placeholder/default values for secrets and passwords such as `JWT_SECRET_KEY`, `POSTGRES_PASSWORD`, and `NEO4J_PASSWORD`. |
+| Dev-only values | Warns, rather than fails, for empty non-sensitive values to avoid making local/dev config brittle. |
+| `BACKUP_DIR` | Resolves shell env first, then `.env`, then `./docker/backups`; with `--check-backup-dir`, fails if the directory does not exist or is not writable. |
+
+The validator does not create directories or secrets. If it fails, update `.env` from `.env.example`, replace placeholder secrets with real values, or create the backup directory explicitly.
 
 ## What The Script Does
 
 | Area | Behavior |
 | --- | --- |
 | `BACKUP_DIR` | Resolves shell env first, then `.env`, then `./docker/backups`; validates that the resolved host directory exists and is writable before dumping. |
+| Env validation | Calls `scripts/validate-env.sh --check-backup-dir` before Docker Compose checks or dumps. |
 | PostgreSQL | Runs `pg_dump -Fc` inside the `postgres` service using the container environment. |
 | Neo4j | Attempts an online APOC Cypher export when `apoc.export.cypher.all` is available. |
 | Neo4j fallback | Writes an operator note explaining the offline dump command when online export is unavailable. |
@@ -80,6 +103,7 @@ Do not delete `docker/neo4j/data` unless you have an explicit, tested restore pl
 ## Pre-Release Checklist
 
 - [ ] `BACKUP_DIR` exists on the host and is writable.
+- [ ] `sh scripts/validate-env.sh --check-backup-dir` passes after updating code.
 - [ ] `sh scripts/pre-rebuild-backup.sh` completed successfully from a POSIX shell.
 - [ ] PostgreSQL dump exists in `BACKUP_DIR`.
 - [ ] Neo4j has either an APOC export file or an offline-dump-required note.
