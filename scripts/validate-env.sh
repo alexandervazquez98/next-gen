@@ -213,6 +213,30 @@ validate_backup_dir() {
     rm -f "$test_file"
 }
 
+validate_postgres_ports() {
+    [ -f .env ] || return
+
+    postgres_host=$(env_value .env POSTGRES_HOST)
+    postgres_host=$(trim_value "$postgres_host")
+    [ "$postgres_host" ] || postgres_host=postgres
+
+    postgres_internal_port=$(env_value .env POSTGRES_INTERNAL_PORT)
+    postgres_internal_port=$(trim_value "$postgres_internal_port")
+    [ "$postgres_internal_port" ] || postgres_internal_port=5432
+
+    if [ "$postgres_host" = "postgres" ] && [ "$postgres_internal_port" != "5432" ]; then
+        fail "POSTGRES_INTERNAL_PORT must be 5432 when POSTGRES_HOST=postgres; use POSTGRES_EXTERNAL_PORT for the host published port."
+    fi
+
+    if has_env_name .env POSTGRES_PORT; then
+        postgres_port=$(env_value .env POSTGRES_PORT)
+        postgres_port=$(trim_value "$postgres_port")
+        if [ "$postgres_host" = "postgres" ] && [ "$postgres_port" ] && [ "$postgres_port" != "5432" ]; then
+            fail "POSTGRES_PORT=$postgres_port looks like a host/external port, but POSTGRES_HOST=postgres requires internal port 5432. Use POSTGRES_EXTERNAL_PORT=$postgres_port instead."
+        fi
+    fi
+}
+
 if [ ! -f .env.example ]; then
     fail '.env.example is missing; cannot validate the environment contract.'
 fi
@@ -258,6 +282,7 @@ if [ -f .env.example ] && [ -f .env ]; then
 fi
 
 backup_dir=$(resolve_backup_dir)
+validate_postgres_ports
 if [ "$check_backup_dir" -eq 1 ]; then
     validate_backup_dir "$backup_dir"
 fi

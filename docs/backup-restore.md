@@ -30,6 +30,7 @@ The validator is intentionally conservative for production-sensitive values:
 | `.env.example` vs `.env` | Fails when `.env` is missing any variable declared in `.env.example`, which catches stale deploy env files after new config is added. |
 | Safe parsing | Reads assignments as text and never sources `.env` or `.env.example`, so arbitrary shell code is not executed. |
 | Sensitive values | Fails empty or obvious placeholder/default values for secrets and passwords such as `JWT_SECRET_KEY`, `POSTGRES_PASSWORD`, and `NEO4J_PASSWORD`. |
+| PostgreSQL ports | Fails when `POSTGRES_HOST=postgres` is paired with an internal port other than `5432`; host exposure belongs in `POSTGRES_EXTERNAL_PORT`. |
 | Dev-only values | Warns, rather than fails, for empty non-sensitive values to avoid making local/dev config brittle. |
 | `BACKUP_DIR` | Resolves shell env first, then `.env`, then `./docker/backups`; with `--check-backup-dir`, fails if the directory does not exist or is not writable. |
 
