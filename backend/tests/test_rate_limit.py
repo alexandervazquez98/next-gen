@@ -223,3 +223,11 @@ class TestCheckRateLimit:
             check_rate_limit("lockeduser")
         retry_after = int(exc_info.value.headers["Retry-After"])
         assert retry_after >= 800
+
+    def test_retry_after_header_minimum_one_second(self, rate_limit_db, monkeypatch):
+        monkeypatch.setattr(rate_limit, "is_locked", lambda *_args, **_kwargs: (True, 0))
+
+        with pytest.raises(HTTPException) as exc_info:
+            check_rate_limit("lockeduser")
+
+        assert exc_info.value.headers["Retry-After"] == "1"

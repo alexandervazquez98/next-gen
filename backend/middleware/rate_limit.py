@@ -270,8 +270,9 @@ def check_rate_limit(identity_key: str, identity_type: str = "username") -> None
     """
     locked, retry_after = is_locked(identity_key, identity_type=identity_type)
     if locked:
+        retry_after_seconds = max(1, retry_after or 1)
         raise HTTPException(
             status_code=429,
             detail="Too many failed login attempts. Account temporarily locked.",
-            headers={"Retry-After": str(retry_after)}
+            headers={"Retry-After": str(retry_after_seconds)},
         )
