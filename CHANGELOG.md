@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.4] — 2026-05-25
+
+### Fixed
+- **Metric deletion UI and event cleanup semantics** (PR #161, issue #160):
+  - Clarifies global metric definition deletion versus per-CI metric exclusion in the Admin Metrics UI.
+  - Marks active collection-failure events as `RECOVERED` in the same Neo4j transaction that deletes the `MetricDef`.
+  - Keeps historical Timescale metric samples retained by default and reports that policy in the delete response.
+  - Adds regression coverage for frontend delete/exclusion behavior, idempotent backend deletion, and rollback on delete failure.
+
 ## [1.12.3] — 2026-05-25
 
 ### Fixed
