@@ -118,6 +118,23 @@ CREATE INDEX IF NOT EXISTS idx_poll_result_lease_expired ON poll_result_queue (l
     WHERE status = 'leased';
 CREATE INDEX IF NOT EXISTS idx_poll_result_ci_metric_observed ON poll_result_queue
     (ci_id, metric_id, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS metric_sample_receipts (
+    idempotency_key TEXT PRIMARY KEY,
+    result_id UUID NOT NULL,
+    cycle_id UUID NOT NULL,
+    ci_id TEXT NOT NULL,
+    metric_id TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    source TEXT,
+    observed_at TIMESTAMPTZ NOT NULL,
+    value_status TEXT NOT NULL,
+    written_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_metric_sample_receipts_cycle
+    ON metric_sample_receipts (cycle_id, protocol, value_status);
+CREATE INDEX IF NOT EXISTS idx_metric_sample_receipts_ci_metric_observed
+    ON metric_sample_receipts (ci_id, metric_id, observed_at DESC);
 """,
 )
 

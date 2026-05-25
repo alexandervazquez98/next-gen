@@ -152,8 +152,15 @@ class PollingPipelineSettings(BaseModel):
     task_batch_size: int = Field(default=100, ge=1)
     result_batch_size: int = Field(default=500, ge=1)
 
+    # PR6 policy defaults: conservative throttling with ICMP protected first.
+    backpressure_max_task_queue_depth: int = Field(default=100000, ge=1)
+    backpressure_max_writer_lag_seconds: int = Field(default=120, ge=1)
+    backpressure_retry_max_attempts: int = Field(default=5, ge=1)
+    metadata_cache_ttl_seconds: int = Field(default=300, ge=1)
+
     benchmark_ci_count: int = Field(default=8000, ge=1)
     benchmark_metrics_per_ci: int = Field(default=35, ge=1)
+    benchmark_duration_seconds: int = Field(default=0, ge=0)
     benchmark_protocol_mix: str = "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05"
     benchmark_sink: str = "synthetic"
 
@@ -172,8 +179,13 @@ class PollingPipelineSettings(BaseModel):
             db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),
             task_batch_size=int(os.getenv("POLLING_TASK_BATCH_SIZE", "100")),
             result_batch_size=int(os.getenv("POLLING_RESULT_BATCH_SIZE", "500")),
+            backpressure_max_task_queue_depth=int(os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")),
+            backpressure_max_writer_lag_seconds=int(os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")),
+            backpressure_retry_max_attempts=int(os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")),
+            metadata_cache_ttl_seconds=int(os.getenv("POLLING_METADATA_CACHE_TTL_SECONDS", "300")),
             benchmark_ci_count=int(os.getenv("POLLING_BENCHMARK_CI_COUNT", "8000")),
             benchmark_metrics_per_ci=int(os.getenv("POLLING_BENCHMARK_METRICS_PER_CI", "35")),
+            benchmark_duration_seconds=int(os.getenv("POLLING_BENCHMARK_DURATION_SECONDS", "0")),
             benchmark_protocol_mix=os.getenv(
                 "POLLING_BENCHMARK_PROTOCOL_MIX",
                 "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05",
