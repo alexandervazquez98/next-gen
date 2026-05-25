@@ -19,7 +19,7 @@ from neo4j import GraphDatabase
 logger = logging.getLogger(__name__)
 from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 from postgres_db import SessionLocal
-from config import get_icmp_settings
+from config import get_icmp_settings, get_polling_pipeline_settings
 
 # SNMP Support
 try:
@@ -125,8 +125,28 @@ def fetch_snmp_value(ip, community, oid, port=161):
         return None
 
 
+def _log_observe_only_cycle(settings, metrics_count, collected_count, failed_count, duration, jobs_per_min):
+    """Emit PR1 baseline telemetry without changing polling behavior."""
+    if not settings.pipeline_observe_only:
+        return
+    logger.info(
+        "polling_observe_cycle",
+        extra={
+            "polling": {
+                "metrics_processed": metrics_count,
+                "metrics_collected": collected_count,
+                "metrics_failed": failed_count,
+                "cycle_duration": round(duration, 2),
+                "jobs_per_min": jobs_per_min,
+                "pipeline_observe_only": True,
+            }
+        },
+    )
+
+
 def poll_snmp():
     start_time = time.time()
+    polling_settings = get_polling_pipeline_settings()
     print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
     db = SessionLocal()
     metrics_to_save = []
@@ -203,6 +223,7 @@ def poll_snmp():
 
             # Update collector status in Neo4j
             duration_current = time.time() - start_time
+            jobs_per_min = round((len(metrics_to_save) / duration_current) * 60, 1) if duration_current > 0 else 0.0
             session.run("""
                 MERGE (c:CollectorStatus {id: 'main'})
                 SET c.last_run = datetime(),
@@ -212,7 +233,15 @@ def poll_snmp():
                     c.metrics_failed = $failed,
                     c.cycle_duration = $duration,
                     c.jobs_per_min = $jobs_per_min
-            """, cis=metrics_count, collected=len(metrics_to_save), failed=failed_count, duration=round(duration_current, 2), jobs_per_min=round((len(metrics_to_save) / duration_current) * 60, 1) if duration_current > 0 else 0.0)
+            """, cis=metrics_count, collected=len(metrics_to_save), failed=failed_count, duration=round(duration_current, 2), jobs_per_min=jobs_per_min)
+            _log_observe_only_cycle(
+                polling_settings,
+                metrics_count,
+                len(metrics_to_save),
+                failed_count,
+                duration_current,
+                jobs_per_min,
+            )
 
             # Perform Bulk Insert at the end of the cycle
             if metrics_to_save:
@@ -230,6 +259,16 @@ def poll_snmp():
 
 def job():
     try:
+        polling_settings = get_polling_pipeline_settings()
+        if polling_settings.snmp_leased_worker_enabled:
+            from polling.snmp_worker import run_leased_snmp_worker_once
+
+            db = SessionLocal()
+            try:
+                run_leased_snmp_worker_once(db, settings=polling_settings)
+            finally:
+                db.close()
+            return
         poll_snmp()
     except Exception as e:
         print(f"Error in polling job: {e}")
