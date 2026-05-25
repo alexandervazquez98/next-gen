@@ -95,11 +95,11 @@ class TestFetchICMPPing:
         assert mock_run.call_count == 1
 
     @patch("engines.snmp_worker.subprocess.run")
-    def test_fetch_icmp_ping_exception_fails_attempt(self, mock_run):
-        """Exception during ping attempt fails that attempt, retry continues."""
+    def test_fetch_icmp_ping_os_error_fails_attempt(self, mock_run):
+        """Expected OS/subprocess failures fail that attempt, retry continues."""
         mock_run.side_effect = [
-            Exception("network error"),  # first attempt throws
-            MagicMock(returncode=0),      # retry succeeds
+            OSError("network error"),  # first attempt throws
+            MagicMock(returncode=0),    # retry succeeds
         ]
         from engines.snmp_worker import fetch_icmp_ping
         result = fetch_icmp_ping("192.168.1.1", timeout_ms=3000, retries=2)
@@ -185,6 +185,15 @@ class TestSNMPWorkerObservability:
         assert saved_metrics[0]["node_id"] == "ci-001"
         assert saved_metrics[0]["metric_id"] == "CPU"
         assert saved_metrics[0]["value"] == 42.0
+
+        latest_update_calls = [
+            call for call in mock_session.queries
+            if "r.last_value" in call["query"] and call["params"].get("nid") == "ci-001"
+        ]
+        assert latest_update_calls
+        assert latest_update_calls[0]["params"]["mid"] == "CPU"
+        assert latest_update_calls[0]["params"]["val"] == 42.0
+        assert latest_update_calls[0]["params"]["status"] == "OK"
 
         observe_calls = [
             call for call in mock_logger.info.call_args_list
