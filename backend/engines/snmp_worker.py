@@ -259,6 +259,16 @@ def poll_snmp():
 
 def job():
     try:
+        polling_settings = get_polling_pipeline_settings()
+        if polling_settings.snmp_leased_worker_enabled:
+            from polling.snmp_worker import run_leased_snmp_worker_once
+
+            db = SessionLocal()
+            try:
+                run_leased_snmp_worker_once(db, settings=polling_settings)
+            finally:
+                db.close()
+            return
         poll_snmp()
     except Exception as e:
         print(f"Error in polling job: {e}")
