@@ -24,7 +24,9 @@ Strategy:
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # Patch Neo4j driver BEFORE importing anything that touches database.py
 # The driver is created at module import time and tries to connect immediately
@@ -45,9 +47,11 @@ from models.user import (
     Role,
     RoleCreate,
 )
-from postgres_db import get_pg_db
+from postgres_db import Base, get_pg_db
 from services.auth_service import get_current_active_user
 from repositories import user_repo
+from middleware import rate_limit
+from models.rate_limit_attempt import RateLimitAttempt
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -125,6 +129,21 @@ def _make_mock_pg_user(
 # ---------------------------------------------------------------------------
 # Fixtures — mock DB session
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def rate_limit_db(monkeypatch):
+    """Use an isolated DB for auth rate-limit helpers in router tests."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine, tables=[RateLimitAttempt.__table__])
+    monkeypatch.setattr(rate_limit, "SessionLocal", TestingSessionLocal)
+    yield TestingSessionLocal
+    Base.metadata.drop_all(bind=engine, tables=[RateLimitAttempt.__table__])
 
 
 @pytest.fixture
@@ -218,6 +237,36 @@ class TestAuthToken:
         )
 
         assert response.status_code == 401
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_rate_limits_on_threshold_crossing_failure(self, mock_db):
+        """Fourth failed login attempt should lock immediately with HTTP 429."""
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.auth.verify_password", return_value=False) as mock_verify:
+            responses = [
+                client.post(
+                    "/api/auth/token",
+                    data={"username": "testuser", "password": "wrong_password"},
+                )
+                for _ in range(4)
+            ]
+
+        assert [response.status_code for response in responses[:3]] == [401, 401, 401]
+        assert responses[3].status_code == 429
+        assert "Retry-After" in responses[3].headers
+        assert mock_verify.call_count == 4
 
         app.dependency_overrides.pop(get_pg_db, None)
 

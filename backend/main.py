@@ -138,8 +138,9 @@ async def startup_event():
         from postgres_db import SessionLocal, engine, Base
         from repositories.metric_repo import create_hypertable
         from models.timescale_models import MetricValue  # Import to register model
+        from models.rate_limit_attempt import RateLimitAttempt  # Import to register model
 
-        # Create Tables (includes backup_config and backup_history)
+        # Create Tables (includes backup_config, backup_history, and rate_limit_attempts)
         Base.metadata.create_all(bind=engine)
 
         # Inline migration: add 'tier' column if it doesn't exist (safe for existing DBs)

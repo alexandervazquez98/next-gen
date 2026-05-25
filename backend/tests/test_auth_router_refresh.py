@@ -1,12 +1,18 @@
 """Integration tests for auth router cookie and refresh token flow."""
 
+import hashlib
 import os
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from middleware.rate_limit import MAX_ATTEMPTS, RATE_LIMIT_STORE, increment_attempts
+from middleware import rate_limit
+from middleware.rate_limit import MAX_ATTEMPTS, increment_attempts, refresh_token_rate_limit_key
+from models.rate_limit_attempt import RateLimitAttempt
+from postgres_db import Base
 
 # Patch Neo4j driver BEFORE importing anything
 _mock_neo4j_driver = MagicMock()
@@ -21,11 +27,18 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _clear_rate_limit_store():
+def rate_limit_db(monkeypatch):
     """Ensure rate-limit state is isolated between tests."""
-    RATE_LIMIT_STORE.clear()
-    yield
-    RATE_LIMIT_STORE.clear()
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine, tables=[RateLimitAttempt.__table__])
+    monkeypatch.setattr(rate_limit, "SessionLocal", TestingSessionLocal)
+    yield TestingSessionLocal
+    Base.metadata.drop_all(bind=engine, tables=[RateLimitAttempt.__table__])
 
 
 def _make_mock_pg_user(
@@ -159,25 +172,58 @@ class TestAuthRefresh:
 
         with patch("routers.auth.verify_refresh_token", return_value=None) as mock_verify:
             responses = []
-            for _ in range(MAX_ATTEMPTS + 2):  # 4th fail then lock checked on 5th attempt
+            for _ in range(MAX_ATTEMPTS + 1):  # 4th failure locks immediately
                 response = client.post(
                     "/api/auth/refresh",
                     cookies={"refresh_token": "bad_refresh_token"},
                 )
                 responses.append(response)
 
-        assert [r.status_code for r in responses[: MAX_ATTEMPTS + 1]] == [401] * (MAX_ATTEMPTS + 1)
-        assert responses[MAX_ATTEMPTS + 1].status_code == 429
-        assert "Retry-After" in responses[MAX_ATTEMPTS + 1].headers
+        assert [r.status_code for r in responses[:MAX_ATTEMPTS]] == [401] * MAX_ATTEMPTS
+        assert responses[MAX_ATTEMPTS].status_code == 429
+        assert "Retry-After" in responses[MAX_ATTEMPTS].headers
         assert mock_verify.call_count == MAX_ATTEMPTS + 1
 
         app.dependency_overrides.pop(get_pg_db, None)
 
-    def test_refresh_success_clears_rate_limit_counter(self):
+    def test_refresh_rate_limit_persists_hashed_token_key(self, rate_limit_db):
+        """Refresh rate limiting should persist a token hash, never the raw token."""
+        raw_token = "bad_refresh_token"
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.auth.verify_refresh_token", return_value=None):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": raw_token},
+            )
+
+        assert response.status_code == 401
+
+        session = rate_limit_db()
+        try:
+            attempts = session.query(RateLimitAttempt).all()
+        finally:
+            session.close()
+
+        assert len(attempts) == 1
+        assert attempts[0].identity_key == f"refresh:{hashlib.sha256(raw_token.encode()).hexdigest()}"
+        assert attempts[0].identity_key != raw_token
+        assert attempts[0].identity_type == "refresh_token"
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_success_clears_rate_limit_counter(self, rate_limit_db):
         """Successful refresh should reset rate-limit state for that token."""
         refresh_token = "old_refresh_token"
-        increment_attempts(refresh_token)
-        increment_attempts(refresh_token)
+        rate_limit_key = refresh_token_rate_limit_key(refresh_token)
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
 
         mock_user = _make_mock_pg_user(
             username="testuser",
@@ -205,7 +251,12 @@ class TestAuthRefresh:
                     )
 
         assert response.status_code == 200
-        assert refresh_token not in RATE_LIMIT_STORE
+
+        session = rate_limit_db()
+        try:
+            assert session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).first() is None
+        finally:
+            session.close()
 
         app.dependency_overrides.pop(get_pg_db, None)
 
