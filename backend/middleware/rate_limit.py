@@ -1,89 +1,236 @@
 """
 Login rate limiting middleware.
 
-In-memory store tracking failed login attempts per username.
-After 3 consecutive failed attempts, account is locked for 15 minutes.
+Persistent store tracking failed auth attempts in Postgres so lockouts are
+shared across uvicorn worker processes. After 3 consecutive failed attempts,
+the identity is locked for 15 minutes.
 """
+import hashlib
 from datetime import datetime, timedelta
-from typing import Dict, NamedTuple
+from typing import NamedTuple
 
 from fastapi import Request, HTTPException
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+from models.rate_limit_attempt import RateLimitAttempt
+from postgres_db import SessionLocal
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MAX_ATTEMPTS = 3
 LOCKOUT_DURATION = timedelta(minutes=15)
-
-# In-memory store: {username: AttemptInfo}
-RATE_LIMIT_STORE: Dict[str, "AttemptInfo"] = {}
+ATTEMPT_RETENTION = timedelta(days=1)
 
 
 class AttemptInfo(NamedTuple):
-    """Tracks failed login attempts for a username."""
+    """Tracks failed auth attempts for an identity."""
+
     count: int
     locked_until: datetime | None
 
 
-def get_attempt_info(username: str) -> AttemptInfo:
-    """Get current attempt info for a username."""
-    return RATE_LIMIT_STORE.get(username, AttemptInfo(count=0, locked_until=None))
+def refresh_token_rate_limit_key(refresh_token: str) -> str:
+    """Return a non-sensitive, namespaced rate-limit key for a refresh token."""
+    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+    return f"refresh:{token_hash}"
 
 
-def increment_attempts(username: str) -> AttemptInfo:
-    """Increment failed attempts. Returns updated AttemptInfo."""
-    info = get_attempt_info(username)
-    now = datetime.utcnow()
-
-    # Clear expired lock before incrementing
-    if info.locked_until and info.locked_until < now:
-        del RATE_LIMIT_STORE[username]
-        info = AttemptInfo(count=0, locked_until=None)
-
-    # If currently locked, return existing lock info
-    if info.locked_until and info.locked_until > now:
-        return info
-
-    new_count = info.count + 1
-
-    # Lockout is triggered AFTER 3 consecutive failures.
-    # 3 failed attempts → count=3, no lock yet.
-    # 4th attempt → count=4 > MAX_ATTEMPTS(3) → lockout begins.
-    if new_count > MAX_ATTEMPTS:
-        new_locked_until = now + LOCKOUT_DURATION
-        RATE_LIMIT_STORE[username] = AttemptInfo(count=new_count, locked_until=new_locked_until)
-    else:
-        RATE_LIMIT_STORE[username] = AttemptInfo(count=new_count, locked_until=None)
-
-    return RATE_LIMIT_STORE[username]
+def _stored_identity_key(identity_key: str, identity_type: str) -> str:
+    """Namespace persisted keys so identity domains cannot collide."""
+    if identity_type == "refresh_token":
+        return identity_key if identity_key.startswith("refresh:") else f"refresh:{identity_key}"
+    if identity_type == "username":
+        return f"user:{identity_key}"
+    return f"{identity_type}:{identity_key}"
 
 
-def clear_attempts(username: str) -> None:
-    """Clear failed attempts on successful login."""
-    if username in RATE_LIMIT_STORE:
-        del RATE_LIMIT_STORE[username]
+def _utcnow() -> datetime:
+    return datetime.utcnow()
 
 
-def is_locked(username: str) -> tuple[bool, int | None]:
+def _prune_expired_attempts(db: Session, now: datetime) -> None:
+    """Remove expired locks and stale unlocked counters opportunistically."""
+    stale_cutoff = now - ATTEMPT_RETENTION
+    db.query(RateLimitAttempt).filter(
+        (RateLimitAttempt.locked_until <= now)
+        | (
+            (RateLimitAttempt.locked_until.is_(None))
+            & (RateLimitAttempt.updated_at < stale_cutoff)
+        )
+    ).delete(synchronize_session=False)
+
+
+def _get_locked_attempt(
+    db: Session,
+    identity_key: str,
+    identity_type: str,
+) -> RateLimitAttempt | None:
+    """Load an attempt row with a row lock where the database supports it."""
+    return (
+        db.query(RateLimitAttempt)
+        .filter(
+            RateLimitAttempt.identity_key == identity_key,
+            RateLimitAttempt.identity_type == identity_type,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+
+
+def _create_locked_attempt(
+    db: Session,
+    identity_key: str,
+    identity_type: str,
+    now: datetime,
+) -> RateLimitAttempt:
     """
-    Check if username is currently locked.
+    Create an attempt row, handling a concurrent first insert by re-reading it.
+
+    The unique identity_key constraint prevents duplicate counters across
+    workers. Existing rows are re-selected with FOR UPDATE before mutation.
+    """
+    attempt = RateLimitAttempt(
+        identity_key=identity_key,
+        identity_type=identity_type,
+        attempt_count=0,
+        locked_until=None,
+        updated_at=now,
+    )
+    db.add(attempt)
+    try:
+        db.flush()
+        return attempt
+    except IntegrityError:
+        db.rollback()
+        attempt = _get_locked_attempt(db, identity_key, identity_type)
+        if attempt is None:
+            raise
+        return attempt
+
+
+def get_attempt_info(identity_key: str, identity_type: str = "username") -> AttemptInfo:
+    """Get current attempt info for an identity."""
+    db = SessionLocal()
+    try:
+        now = _utcnow()
+        _prune_expired_attempts(db, now)
+        stored_key = _stored_identity_key(identity_key, identity_type)
+        attempt = _get_locked_attempt(db, stored_key, identity_type)
+        if attempt is None:
+            db.commit()
+            return AttemptInfo(count=0, locked_until=None)
+
+        info = AttemptInfo(
+            count=attempt.attempt_count,
+            locked_until=attempt.locked_until,
+        )
+        db.commit()
+        return info
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def increment_attempts(identity_key: str, identity_type: str = "username") -> AttemptInfo:
+    """Increment failed attempts. Returns updated AttemptInfo."""
+    db = SessionLocal()
+    try:
+        now = _utcnow()
+        _prune_expired_attempts(db, now)
+        stored_key = _stored_identity_key(identity_key, identity_type)
+        attempt = _get_locked_attempt(db, stored_key, identity_type)
+        if attempt is None:
+            attempt = _create_locked_attempt(db, stored_key, identity_type, now)
+
+        # If currently locked, return existing lock info without extending it.
+        if attempt.locked_until and attempt.locked_until > now:
+            info = AttemptInfo(
+                count=attempt.attempt_count,
+                locked_until=attempt.locked_until,
+            )
+            db.commit()
+            return info
+
+        # Clear expired lock before incrementing. Expired rows are normally
+        # pruned above; this preserves behavior if pruning races or is skipped.
+        if attempt.locked_until and attempt.locked_until <= now:
+            attempt.attempt_count = 0
+            attempt.locked_until = None
+
+        new_count = attempt.attempt_count + 1
+        attempt.attempt_count = new_count
+        attempt.identity_type = identity_type
+        attempt.last_failed_at = now
+        attempt.updated_at = now
+
+        # Lockout is triggered AFTER 3 consecutive failures.
+        # 3 failed attempts → count=3, no lock yet.
+        # 4th attempt → count=4 > MAX_ATTEMPTS(3) → lockout begins.
+        if new_count > MAX_ATTEMPTS:
+            attempt.locked_until = now + LOCKOUT_DURATION
+        else:
+            attempt.locked_until = None
+
+        info = AttemptInfo(count=attempt.attempt_count, locked_until=attempt.locked_until)
+        db.commit()
+        return info
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def clear_attempts(identity_key: str, identity_type: str = "username") -> None:
+    """Clear failed attempts on successful auth."""
+    db = SessionLocal()
+    try:
+        stored_key = _stored_identity_key(identity_key, identity_type)
+        db.query(RateLimitAttempt).filter(
+            RateLimitAttempt.identity_key == stored_key,
+            RateLimitAttempt.identity_type == identity_type,
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def is_locked(identity_key: str, identity_type: str = "username") -> tuple[bool, int | None]:
+    """
+    Check if identity is currently locked.
     Returns (is_locked, retry_after_seconds).
     """
-    info = get_attempt_info(username)
-    if info.locked_until is None:
-        return False, None
+    db = SessionLocal()
+    try:
+        now = _utcnow()
+        _prune_expired_attempts(db, now)
+        stored_key = _stored_identity_key(identity_key, identity_type)
+        attempt = _get_locked_attempt(db, stored_key, identity_type)
+        if attempt is None or attempt.locked_until is None:
+            db.commit()
+            return False, None
 
-    now = datetime.utcnow()
-    if info.locked_until <= now:
-        # Lock expired, clear it
-        if username in RATE_LIMIT_STORE:
-            del RATE_LIMIT_STORE[username]
-        return False, None
+        if attempt.locked_until <= now:
+            db.delete(attempt)
+            db.commit()
+            return False, None
 
-    # Still locked
-    retry_after = int((info.locked_until - now).total_seconds())
-    return True, retry_after
+        retry_after = int((attempt.locked_until - now).total_seconds())
+        db.commit()
+        return True, retry_after
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -105,13 +252,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def check_rate_limit(username: str) -> None:
-    """
-    Check if username is rate limited. Raises HTTPException 429 if locked.
+def raise_rate_limit_locked(locked_until: datetime) -> None:
+    """Raise HTTP 429 for an active lock using the remaining lock duration."""
+    retry_after = max(1, int((locked_until - _utcnow()).total_seconds()))
+    raise HTTPException(
+        status_code=429,
+        detail="Too many failed login attempts. Account temporarily locked.",
+        headers={"Retry-After": str(retry_after)},
+    )
 
-    Call this from the auth router before processing login.
+
+def check_rate_limit(identity_key: str, identity_type: str = "username") -> None:
     """
-    locked, retry_after = is_locked(username)
+    Check if identity is rate limited. Raises HTTPException 429 if locked.
+
+    Call this from the auth router before processing login/refresh.
+    """
+    locked, retry_after = is_locked(identity_key, identity_type=identity_type)
     if locked:
         raise HTTPException(
             status_code=429,

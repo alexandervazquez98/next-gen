@@ -22,7 +22,13 @@ from postgres_db import get_pg_db
 from repositories import user_repo
 from models.user import Token, User, PasswordChangeRequest
 from models.refresh_token import RefreshTokenResponse
-from middleware.rate_limit import check_rate_limit, clear_attempts, increment_attempts
+from middleware.rate_limit import (
+    check_rate_limit,
+    clear_attempts,
+    increment_attempts,
+    raise_rate_limit_locked,
+    refresh_token_rate_limit_key,
+)
 
 # ── Cookie domain and security (parsed once at import) ─────────────────────────
 
@@ -116,9 +122,10 @@ async def login_for_access_token(
     user = user_repo.get_user_by_username(db, form_data.username)
 
     if not user or not verify_password(form_data.password, user.hashed_password):
-        # Increment failed attempts
-        from middleware.rate_limit import increment_attempts
-        increment_attempts(form_data.username)
+        # Increment failed attempts and return 429 as soon as this failure locks the identity.
+        attempt_info = increment_attempts(form_data.username)
+        if attempt_info.locked_until:
+            raise_rate_limit_locked(attempt_info.locked_until)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -183,13 +190,16 @@ async def refresh_tokens(
             detail="Missing refresh token cookie",
         )
 
-    # Track failed attempts (for existing token identifier) before token verification.
-    check_rate_limit(refresh_token)
+    # Track failed attempts by hashed token identifier before token verification.
+    rate_limit_key = refresh_token_rate_limit_key(refresh_token)
+    check_rate_limit(rate_limit_key, identity_type="refresh_token")
 
     # Verify refresh token
     user_id = verify_refresh_token(refresh_token, db)
     if user_id is None:
-        increment_attempts(refresh_token)
+        attempt_info = increment_attempts(rate_limit_key, identity_type="refresh_token")
+        if attempt_info.locked_until:
+            raise_rate_limit_locked(attempt_info.locked_until)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
@@ -201,11 +211,13 @@ async def refresh_tokens(
     # Get user by ID
     db_user = user_repo.get_user_by_id(db, user_id)
     if db_user is None or not db_user.is_active:
-        increment_attempts(refresh_token)
+        attempt_info = increment_attempts(rate_limit_key, identity_type="refresh_token")
+        if attempt_info.locked_until:
+            raise_rate_limit_locked(attempt_info.locked_until)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
     # Successful refresh — clear failed attempts for this token
-    clear_attempts(refresh_token)
+    clear_attempts(rate_limit_key, identity_type="refresh_token")
 
     # Create new access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
