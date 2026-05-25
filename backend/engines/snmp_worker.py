@@ -91,10 +91,11 @@ def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2) -> float:
             if result.returncode == 0:
                 return 1.0
         except OSError as e:
-            logger.warning(f"Ping failed for {ip}: {e}")
-            return 0.0
-        except subprocess.TimeoutExpired:
-            return 0.0
+            logger.warning(f"Ping attempt {attempt + 1}/{attempts} failed for {ip}: {e}")
+            continue
+        except subprocess.TimeoutExpired as e:
+            logger.warning(f"Ping attempt {attempt + 1}/{attempts} timed out for {ip}: {e}")
+            continue
     return 0.0
 
 def fetch_snmp_value(ip, community, oid, port=161):
@@ -150,6 +151,7 @@ def poll_snmp():
     print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
     db = SessionLocal()
     metrics_to_save = []
+    latest_updates = []
     metrics_count = 0
     failed_count = 0
     try:
@@ -213,11 +215,12 @@ def poll_snmp():
                         "time": datetime.utcnow()
                     })
 
-                    # Update last_polled to respect the interval
-                    session.run("""
-                        MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
-                        SET r.last_polled = datetime()
-                    """, nid=node_id, mid=mid)
+                    latest_updates.append({
+                        "node_id": node_id,
+                        "metric_id": mid,
+                        "value": val,
+                        "protocol": protocol,
+                    })
                 else:
                     failed_count += 1
 
@@ -243,9 +246,26 @@ def poll_snmp():
                 jobs_per_min,
             )
 
-            # Perform Bulk Insert at the end of the cycle
+            # Perform Bulk Insert at the end of the cycle. Only publish latest
+            # values to Neo4j after Timescale persistence succeeds, so the UI
+            # does not advertise samples that failed durable storage.
             if metrics_to_save:
                 bulk_insert_metrics(db, metrics_to_save)
+                for update in latest_updates:
+                    if update["protocol"].upper() == "ICMP" and update["value"] == 1.0:
+                        session.run(
+                            "MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()",
+                            id=update["node_id"],
+                            status="OK",
+                        )
+                    session.run("""
+                        MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
+                        SET r.last_polled = datetime(),
+                            r.last_value = $val,
+                            r.last_updated = datetime(),
+                            r.status = $status,
+                            r.last_message = $msg
+                    """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status="OK", msg="Latest sample collected by legacy SNMP worker")
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
 
         duration = time.time() - start_time
