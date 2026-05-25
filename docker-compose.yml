@@ -13,9 +13,18 @@ services:
       - ./docker/neo4j/logs:/logs
       - ${BACKUP_DIR:-.docker/backups}:/backups
       - ./docker/neo4j/entrypoint.sh:/entrypoint.sh
-    entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER}", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      test:
+        [
+          "CMD",
+          "cypher-shell",
+          "-u",
+          "${NEO4J_USER}",
+          "-p",
+          "${NEO4J_PASSWORD}",
+          "RETURN 1",
+        ]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -74,7 +83,13 @@ services:
     volumes:
       - ${BACKUP_DIR:-.docker/backups}:/backups
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -125,4 +140,20 @@ services:
       - ICMP_TIMEOUT_MS=${ICMP_TIMEOUT_MS:-3000}
       - ICMP_RETRIES=${ICMP_RETRIES:-2}
       - ICMP_DEBOUNCE_COUNT=${ICMP_DEBOUNCE_COUNT:-3}
+      # Scalable polling pipeline PR1 flags/defaults (behavior-changing flags remain off)
+      - POLLING_PIPELINE_OBSERVE_ONLY=${POLLING_PIPELINE_OBSERVE_ONLY:-false}
+      - POLLING_PG_QUEUE_ENABLED=${POLLING_PG_QUEUE_ENABLED:-false}
+      - POLLING_SNMP_LEASED_WORKER=${POLLING_SNMP_LEASED_WORKER:-false}
+      - POLLING_DB_WRITER_ENABLED=${POLLING_DB_WRITER_ENABLED:-false}
+      - POLLING_BACKPRESSURE_ENABLED=${POLLING_BACKPRESSURE_ENABLED:-false}
+      - POLLING_METADATA_CACHE_ENABLED=${POLLING_METADATA_CACHE_ENABLED:-false}
+      - POLLING_TARGET_CYCLE_SECONDS=${POLLING_TARGET_CYCLE_SECONDS:-900}
+      - POLLING_WORKERS=${POLLING_WORKERS:-8}
+      - POLLING_DB_WRITERS=${POLLING_DB_WRITERS:-1}
+      - POLLING_TASK_BATCH_SIZE=${POLLING_TASK_BATCH_SIZE:-100}
+      - POLLING_RESULT_BATCH_SIZE=${POLLING_RESULT_BATCH_SIZE:-500}
+      - POLLING_BENCHMARK_CI_COUNT=${POLLING_BENCHMARK_CI_COUNT:-8000}
+      - POLLING_BENCHMARK_METRICS_PER_CI=${POLLING_BENCHMARK_METRICS_PER_CI:-35}
+      - POLLING_BENCHMARK_PROTOCOL_MIX=${POLLING_BENCHMARK_PROTOCOL_MIX:-ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05}
+      - POLLING_BENCHMARK_SINK=${POLLING_BENCHMARK_SINK:-synthetic}
     restart: unless-stopped
