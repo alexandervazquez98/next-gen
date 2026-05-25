@@ -13,6 +13,8 @@ def test_polling_migration_defines_schema_migrations_and_queue_tables():
     assert "idx_poll_task_claim" in sql
     assert "idx_poll_result_claim" in sql
     assert "uq_poll_result_idempotency_key" in sql
+    assert "CREATE TABLE IF NOT EXISTS metric_sample_receipts" in sql
+    assert "idempotency_key TEXT PRIMARY KEY" in sql
 
 
 class FakeConnection:
