@@ -257,6 +257,158 @@ class TestSNMPWorkerObservability:
         db.close.assert_called_once()
 
 
+class TestSNMPCollectionFailures:
+    """Regression tests for SNMP no-response collection-failure lifecycle."""
+
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_snmp_no_response_creates_warning_collection_failure(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp
+    ):
+        mock_fetch_snmp.return_value = None
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [{
+            "node_id": "ci-001",
+            "metric_id": "ifInOctets",
+            "protocol": "SNMP",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": "1.3.6.1.2.1.2.2.1.10.1",
+            "port": 161,
+        }])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        mock_bulk_insert.assert_not_called()
+        queries = "\n".join(q["query"] for q in mock_session.queries)
+        failure_batches = [q["params"].get("failures", []) for q in mock_session.queries]
+        assert "COLLECTION_FAILURE" in queries
+        assert "SNMP_NO_RESPONSE" in queries
+        assert any(item.get("severity") == "WARNING" for batch in failure_batches for item in batch)
+
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_valid_snmp_sample_recovers_matching_collection_failure(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp
+    ):
+        mock_fetch_snmp.return_value = 42.0
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [{
+            "node_id": "ci-001",
+            "metric_id": "ifInOctets",
+            "protocol": "SNMP",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": "1.3.6.1.2.1.2.2.1.10.1",
+            "port": 161,
+        }])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        queries = "\n".join(q["query"] for q in mock_session.queries)
+        assert "RECOVERED" in queries
+        assert "COLLECTION_FAILURE" in queries
+        assert "Metric Collection Failed:" in queries
+        assert "PROPAGATED" in queries
+        assert "coalesce(m.can_propagate, true) = true" in queries
+
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_snmp_no_response_failures_are_deduplicated_before_event_write(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp
+    ):
+        mock_fetch_snmp.return_value = None
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [
+            {
+                "node_id": "ci-001",
+                "metric_id": "ifInOctets",
+                "protocol": "SNMP",
+                "ip": "192.168.1.1",
+                "community": "public",
+                "oid": "1.3.6.1.2.1.2.2.1.10.1",
+                "port": 161,
+            },
+            {
+                "node_id": "ci-001",
+                "metric_id": "ifInOctets",
+                "protocol": "SNMP",
+                "ip": "192.168.1.1",
+                "community": "public",
+                "oid": "1.3.6.1.2.1.2.2.1.10.1",
+                "port": 161,
+            },
+        ])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        failure_batches = [q["params"].get("failures", []) for q in mock_session.queries]
+        assert any(len(batch) == 1 for batch in failure_batches)
+
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_generic_snmp_error_does_not_create_no_response_collection_failure(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp
+    ):
+        mock_fetch_snmp.return_value = (None, "ERROR", "noSuchName at 1.2.3")
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [{
+            "node_id": "ci-001",
+            "metric_id": "ifInOctets",
+            "protocol": "SNMP",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": "1.3.6.1.2.1.2.2.1.10.1",
+            "port": 161,
+        }])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        failure_batches = [q["params"].get("failures", []) for q in mock_session.queries]
+        assert not any(batch for batch in failure_batches)
+        mock_bulk_insert.assert_not_called()
+
+
 class TestICMPDebounce:
     """Tests for ICMP debounce counter in poll_snmp."""
 

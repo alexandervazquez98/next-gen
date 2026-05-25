@@ -16,8 +16,9 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from polling.contracts import PollResultEnvelope, PollingProtocol, PollingResultStatus
 from polling.idempotency import generate_idempotency_key
+from services.polling_event_lifecycle import is_snmp_no_response_failure
 
-Fetcher = Callable[..., float | None]
+Fetcher = Callable[..., Any]
 
 
 def _utc_now() -> datetime:
@@ -48,10 +49,16 @@ def _default_icmp_fetcher(**kwargs) -> float:
     return fetch_icmp_ping(kwargs["ip"], timeout_ms=kwargs.get("timeout_ms", 3000), retries=kwargs.get("retries", 2))
 
 
-def _default_snmp_fetcher(**kwargs) -> float | None:
+def _default_snmp_fetcher(**kwargs) -> Any:
     from engines.snmp_worker import fetch_snmp_value
 
-    return fetch_snmp_value(kwargs["ip"], kwargs.get("community", "public"), kwargs["oid"], int(kwargs.get("port", 161)))
+    return fetch_snmp_value(
+        kwargs["ip"],
+        kwargs.get("community", "public"),
+        kwargs["oid"],
+        int(kwargs.get("port", 161)),
+        include_status=True,
+    )
 
 
 def _result_id(task_id: Any, observed_at: datetime, status: PollingResultStatus) -> Any:
@@ -97,7 +104,35 @@ def execute_poll_task(
                 oid=payload.get("oid"),
                 port=int(payload.get("port") or 161),
             )
-            if raw is None:
+            if isinstance(raw, tuple) and len(raw) == 3:
+                raw_value, raw_status, raw_error = raw
+                normalized_status = str(raw_status or "ERROR").upper()
+                if normalized_status == "OK" and raw_value is not None:
+                    status = PollingResultStatus.OK
+                    value = {"numeric": float(raw_value), "text": None, "raw": raw_value}
+                    error = {"code": None, "message": None, "retryable": False}
+                elif normalized_status == "TIMEOUT":
+                    status = PollingResultStatus.TIMEOUT
+                    error = {"code": "timeout", "message": raw_error or "SNMP request timed out", "retryable": True}
+                elif normalized_status == "NO_DATA":
+                    status = PollingResultStatus.NO_DATA
+                    error = {"code": "no_data", "message": raw_error or "SNMP returned no data", "retryable": True}
+                elif normalized_status == "ERROR" and is_snmp_no_response_failure(
+                    PollingProtocol.SNMP,
+                    normalized_status,
+                    {"message": raw_error},
+                ):
+                    message = raw_error or "SNMP request timed out"
+                    if "no data" in str(message).lower():
+                        status = PollingResultStatus.NO_DATA
+                        error = {"code": "no_data", "message": message, "retryable": True}
+                    else:
+                        status = PollingResultStatus.TIMEOUT
+                        error = {"code": "timeout", "message": message, "retryable": True}
+                else:
+                    status = PollingResultStatus.ERROR
+                    error = {"code": "snmp_error", "message": raw_error or "SNMP collection failed", "retryable": True}
+            elif raw is None:
                 status = PollingResultStatus.NO_DATA
                 error = {"code": "no_data", "message": "SNMP returned no data", "retryable": True}
             else:
