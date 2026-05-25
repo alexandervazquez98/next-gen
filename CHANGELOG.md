@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.3] — 2026-05-25
+
+### Fixed
+- **SNMP no-response event severity normalization** (PR #159, issue #152):
+  - Treats SNMP no-response, timeout, and no-data collection failures as `WARNING` events regardless of configured metric criticality.
+  - Adds event lifecycle discriminators for collection failures, threshold breaches, and availability events to avoid conflating recovery paths.
+  - Refreshes/reuses matching collection-failure events and recovers them when later valid samples arrive, while preserving threshold and availability lifecycles.
+  - Preserves structured SNMP polling status through the leased executor/writer path and adds regression coverage for legacy worker, service helper, and leased writer behavior.
+  - Defers broader legacy event discriminator normalization to issue #155 and stale event review reminders to issue #154.
+
 ## [1.12.2] — 2026-05-25
 
 ### Fixed
