@@ -211,14 +211,66 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
             _reconcile_metric_assignments(metric.id, metric.applicable_to)
             return {"message": "Metric defined"}
 
-def delete_metric(metric_id: str) -> Dict[str, str]:
-    """Delete a Metric Definition."""
+def delete_metric(metric_id: str) -> Dict[str, Any]:
+    """Delete a Metric Definition and retire active collection failures.
+
+    Historical Timescale samples are intentionally retained. Metric deletion is
+    about stopping future collection and removing graph applicability, not
+    purging telemetry history.
+    """
     with metric_operation_guard(metric_id):
         with timed_operation(logger, "metric.delete", metric_id=metric_id):
             driver = get_db()
             with driver.session() as session:
-                session.run("MATCH (m:MetricDef {id: $id}) DETACH DELETE m", id=metric_id)
-            return {"message": "Metric deleted"}
+                with session.begin_transaction() as tx:
+                    event_result = tx.run(
+                        """
+                        MATCH (e:Event)
+                        WHERE e.status IN ['OPEN', 'ACK']
+                          AND (
+                            e.metric_id = $id
+                            OR EXISTS {
+                              MATCH (e)-[:TRIGGERED_BY]->(:MetricDef {id: $id})
+                            }
+                          )
+                          AND (
+                            e.event_type = 'COLLECTION_FAILURE'
+                            OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+                          )
+                        SET e.status = 'RECOVERED',
+                            e.recovered_at = datetime(),
+                            e.last_seen = datetime(),
+                            e.message = 'Metric collection retired because metric definition was deleted',
+                            e.ack = false
+                        RETURN count(DISTINCT e) AS events_recovered
+                        """,
+                        id=metric_id,
+                    )
+                    event_record = event_result.single()
+                    raw_events_recovered = event_record.get("events_recovered", 0) if event_record else 0
+                    events_recovered = raw_events_recovered if isinstance(raw_events_recovered, int) else 0
+
+                    delete_result = tx.run(
+                        """
+                        MATCH (m:MetricDef {id: $id})
+                        WITH collect(m) AS metrics
+                        FOREACH (metric IN metrics | DETACH DELETE metric)
+                        RETURN size(metrics) AS deleted
+                        """,
+                        id=metric_id,
+                    )
+                    delete_record = delete_result.single()
+                    raw_deleted_count = delete_record.get("deleted", 0) if delete_record else 0
+                    deleted_count = raw_deleted_count if isinstance(raw_deleted_count, int) else 1
+
+            deleted = deleted_count > 0
+            return {
+                "message": "Metric deleted" if deleted else "Metric not found",
+                "metric_id": metric_id,
+                "deleted": deleted,
+                "events_recovered": events_recovered,
+                "history_retained": True,
+            }
 
 def get_metric_usage(metric_id: str) -> Dict[str, Any]:
     """

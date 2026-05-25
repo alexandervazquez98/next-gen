@@ -130,7 +130,7 @@ const clickSaveMetric = () => {
 };
 
 const clickDeleteMetric = () => {
-  const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+  const deleteButtons = screen.getAllByRole('button', { name: /delete metric/i });
   fireEvent.click(deleteButtons[deleteButtons.length - 1]);
 };
 
@@ -462,7 +462,7 @@ describe('MetricsManager', () => {
   });
 
   describe('delete and association removal', () => {
-    it('deletes a metric when the user confirms the action', async () => {
+    it('deletes a metric definition globally when the user confirms the action', async () => {
       await openEditForm();
       vi.mocked(window.confirm).mockReturnValueOnce(true);
       mocks.apiGet.mockClear();
@@ -472,7 +472,8 @@ describe('MetricsManager', () => {
       await waitFor(() => {
         expect(mocks.apiGet).toHaveBeenCalledWith('/metrics/cpu.load/usage');
       });
-      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("This action cannot be undone."));
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("delete metric definition 'cpu.load' globally"));
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Historical metric samples will be retained"));
 
       await waitFor(() => {
         expect(mocks.apiDelete).toHaveBeenCalledWith('/metrics/cpu.load');
@@ -498,8 +499,8 @@ describe('MetricsManager', () => {
 
       clickDeleteMetric();
 
-      expect(await screen.findByText(/checking metric usage before deletion/i)).toBeInTheDocument();
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      expect(await screen.findByText(/checking metric usage before global deletion/i)).toBeInTheDocument();
+      const deleteButtons = screen.getAllByRole('button', { name: /delete metric/i });
       const deleteButton = deleteButtons[deleteButtons.length - 1];
       expect(deleteButton).toBeDisabled();
       fireEvent.click(deleteButton);
@@ -507,7 +508,7 @@ describe('MetricsManager', () => {
       expect(mocks.apiDelete).not.toHaveBeenCalled();
 
       usageDeferred.resolve(usageData);
-      expect(await screen.findByText(/deleting metric and removing assignments/i)).toBeInTheDocument();
+      expect(await screen.findByText(/deleting metric definition globally/i)).toBeInTheDocument();
       expect(mocks.apiDelete).toHaveBeenCalledTimes(1);
 
       deleteDeferred.resolve({ ok: true });
@@ -525,12 +526,12 @@ describe('MetricsManager', () => {
       vi.mocked(window.confirm).mockReturnValueOnce(true);
 
       clickDeleteMetric();
-      expect(await screen.findByText(/deleting metric and removing assignments/i)).toBeInTheDocument();
+      expect(await screen.findByText(/deleting metric definition globally/i)).toBeInTheDocument();
 
       deleteDeferred.reject(new Error('delete failed'));
 
       await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Error deleting metric'));
-      expect(screen.queryByText(/deleting metric and removing assignments/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/deleting metric definition globally/i)).not.toBeInTheDocument();
       expect(screen.getByText('Edit Metric')).toBeInTheDocument();
       expect(screen.getByDisplayValue('cpu.load')).toBeInTheDocument();
     });
@@ -546,8 +547,8 @@ describe('MetricsManager', () => {
         expect(mocks.apiGet).toHaveBeenCalledWith('/metrics/cpu.load/usage');
       });
       expect(mocks.apiDelete).not.toHaveBeenCalled();
-      await waitFor(() => expect(screen.queryByText(/checking metric usage before deletion/i)).not.toBeInTheDocument());
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      await waitFor(() => expect(screen.queryByText(/checking metric usage before global deletion/i)).not.toBeInTheDocument());
+      const deleteButtons = screen.getAllByRole('button', { name: /delete metric/i });
       expect(deleteButtons[deleteButtons.length - 1]).not.toBeDisabled();
     });
 
@@ -566,28 +567,30 @@ describe('MetricsManager', () => {
       await waitFor(() => {
         expect(window.alert).toHaveBeenCalledWith('Error checking metric usage');
       });
-      await waitFor(() => expect(screen.queryByText(/checking metric usage before deletion/i)).not.toBeInTheDocument());
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      await waitFor(() => expect(screen.queryByText(/checking metric usage before global deletion/i)).not.toBeInTheDocument());
+      const deleteButtons = screen.getAllByRole('button', { name: /delete metric/i });
       expect(deleteButtons[deleteButtons.length - 1]).not.toBeDisabled();
     });
 
-    it('does not remove an associated CI when confirm returns false', async () => {
+    it('does not exclude an associated CI when confirm returns false', async () => {
       await openEditForm();
       vi.mocked(window.confirm).mockReturnValueOnce(false);
       mocks.apiPost.mockClear();
 
-      const deleteButtons = await screen.findAllByTitle('Remove specific association');
-      fireEvent.click(deleteButtons[0]);
+      const excludeButtons = await screen.findAllByTitle('Exclude this CI from the metric');
+      fireEvent.click(excludeButtons[0]);
 
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("exclude 'router-01' from this metric"));
       expect(mocks.apiPost).not.toHaveBeenCalled();
+      expect(mocks.apiDelete).not.toHaveBeenCalled();
     });
 
-    it('removes an associated CI and persists excluded names when confirm returns true', async () => {
+    it('excludes an associated CI and persists excluded names without deleting the metric', async () => {
       await openEditForm();
       vi.mocked(window.confirm).mockReturnValueOnce(true);
 
-      const deleteButtons = await screen.findAllByTitle('Remove specific association');
-      fireEvent.click(deleteButtons[0]);
+      const excludeButtons = await screen.findAllByTitle('Exclude this CI from the metric');
+      fireEvent.click(excludeButtons[0]);
 
       await waitFor(() => {
         expect(mocks.apiPost).toHaveBeenCalledWith('/metrics', expect.objectContaining({
@@ -602,6 +605,7 @@ describe('MetricsManager', () => {
         }));
       });
 
+      expect(mocks.apiDelete).not.toHaveBeenCalled();
       expect(window.alert).not.toHaveBeenCalledWith('Metric Saved');
       expect(screen.getByText('Edit Metric')).toBeInTheDocument();
     });
@@ -622,8 +626,8 @@ describe('MetricsManager', () => {
       });
       fireEvent.change(getInputByLabel(/quick add model/i), { target: { value: 'R750' } });
 
-      const deleteButtons = await screen.findAllByTitle('Remove specific association');
-      fireEvent.click(deleteButtons[0]);
+      const excludeButtons = await screen.findAllByTitle('Exclude this CI from the metric');
+      fireEvent.click(excludeButtons[0]);
 
       await waitFor(() => {
         expect(mocks.apiPost).toHaveBeenCalledWith('/metrics', expect.objectContaining({
