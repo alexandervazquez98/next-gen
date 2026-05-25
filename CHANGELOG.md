@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.10] — 2026-05-24
+
+### Fixed
+- **Monitoring console ownership feedback** (PR #135, issue #31):
+  - Surfaces failed “Tomar caso” ownership attempts inline instead of failing silently.
+  - Disables the ownership action while the mutation is in flight and resets transient state across modal transitions.
+- **Related alarms query cache hygiene** (PR #136, issue #32):
+  - Prevents `RelatedAlarmsPanel` from mounting its related-events query without a valid `ciId`.
+  - Removes the `['events', 'related', 'unknown']` fallback query key that polluted TanStack Query cache.
+- **Refresh endpoint rate limiting** (PR #137, issue #109):
+  - Applies existing rate-limit checks to `POST /api/auth/refresh`.
+  - Tracks invalid refresh attempts and clears the counter after successful refresh.
+  - Adds focused refresh rate-limit regression tests.
+
 ## [1.11.9] — 2026-05-24
 
 ### Fixed
