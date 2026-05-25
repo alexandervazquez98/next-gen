@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — 2026-05-25
+
+### Added
+- **Scalable metric polling architecture** (PRs #140-#149, issue #139):
+  - Adds default-off polling pipeline flags and side-effect-free contracts for staged rollout.
+  - Adds PostgreSQL-backed polling cycles, task/result queues, leases, retries, dead-letter handling, and explicit migration runner.
+  - Adds deterministic scheduler task expansion with idempotency keys and protocol payload contracts for SNMP, ICMP, CLI, REST, and `MQTT_STUB`.
+  - Adds leased SNMP/ICMP worker path that claims queue tasks and emits result envelopes instead of writing directly to Timescale/Neo4j.
+  - Adds result writer pool with `metric_sample_receipts`, atomic sample/receipt persistence, Neo4j event batching, and replay-aware idempotency.
+  - Adds queue-admission backpressure policies, metadata cache TTL/version checks, recursive secret scrubbing, simulator/benchmark commands, rollout runbooks, and runtime operator commands.
+- **SNMP engine architecture guide**:
+  - Adds `docs/snmp-scalable-engine.md` with a Mermaid diagram, happy path, flags, rollback model, and current caveats for the new leased SNMP engine.
+
+### Changed
+- Documents the scalable polling rollout path in `README.md`, `docs/polling-pipeline-runbook.md`, and `docs/polling-pipeline-tuning.md`.
+
+### Notes
+- Backpressure and metadata cache are currently queue-admission controls, not a deep adaptive control loop inside every worker.
+- The scalable path is default-off and should be enabled progressively in staging before production rollout.
+
 ## [1.11.10] — 2026-05-24
 
 ### Fixed

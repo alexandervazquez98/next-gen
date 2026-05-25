@@ -34,6 +34,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 - [`docs/backup-restore.md`](docs/backup-restore.md) - runbook de backups pre-rebuild, restore PostgreSQL y limitaciones seguras de Neo4j.
 - [`docs/polling-pipeline-runbook.md`](docs/polling-pipeline-runbook.md) - runbook operativo para habilitar, observar, hacer rollback y replay del pipeline escalable de polling.
 - [`docs/polling-pipeline-tuning.md`](docs/polling-pipeline-tuning.md) - guia de tuning para workers, leases, batching, cache, DBs y benchmarks del polling pipeline.
+- [`docs/snmp-scalable-engine.md`](docs/snmp-scalable-engine.md) - explicacion visual del nuevo motor SNMP escalable, con flujo de leases, result writer y diagrama Mermaid.
 - [`docs/supply-chain.md`](docs/supply-chain.md) - politica de dependencias frontend: pnpm/Corepack, lockfile congelado y aprobacion explicita de build scripts.
 - [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
 - [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
