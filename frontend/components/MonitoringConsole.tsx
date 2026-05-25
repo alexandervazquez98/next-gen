@@ -806,6 +806,8 @@ const MonitoringConsole: React.FC = () => {
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [commentText, setCommentText] = useState("");
     const [isDiagnosing, setIsDiagnosing] = useState(false);
+    const [takeCaseError, setTakeCaseError] = useState<string | null>(null);
+    const [isTakingCase, setIsTakingCase] = useState(false);
     const selectedEvent = selectedEventId ? events.find(e => e.id === selectedEventId) ?? null : null;
 
     // M5: Close flow state
@@ -839,6 +841,8 @@ const MonitoringConsole: React.FC = () => {
         setCloseForcedMode(false);
         setCloseForcedReason('');
         setCloseError(null);
+        setTakeCaseError(null);
+        setIsTakingCase(false);
         setIsDiagnosing(false);
     };
 
@@ -851,6 +855,8 @@ const MonitoringConsole: React.FC = () => {
         setCloseForcedMode(false);
         setCloseForcedReason('');
         setCloseError(null);
+        setTakeCaseError(null);
+        setIsTakingCase(false);
         setCommentModalOpen(true);
     };
 
@@ -865,10 +871,21 @@ const MonitoringConsole: React.FC = () => {
 
     // M2: Take ownership
     const handleTakeCase = async (id: string) => {
-        await eventMutations.takeEvent(id, {
-            user: CURRENT_USER,
-            tier: CURRENT_TIER,
-        });
+        setTakeCaseError(null);
+        setIsTakingCase(true);
+
+        try {
+            await eventMutations.takeEvent(id, {
+                user: CURRENT_USER,
+                tier: CURRENT_TIER,
+            });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Error desconocido';
+            setTakeCaseError(msg);
+            console.error('Error taking case:', err);
+        } finally {
+            setIsTakingCase(false);
+        }
     };
 
     // M5: Structured close
@@ -1518,10 +1535,19 @@ const MonitoringConsole: React.FC = () => {
                                         <span className="flex items-center gap-2">
                                             <span className="text-red-400 font-bold animate-pulse">Sin asignar</span>
                                             {canAckEvent && (
-                                            <button
-                                                onClick={() => handleTakeCase(displayEvent.id)}
-                                                className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold uppercase tracking-wide transition-colors"
-                                            >Tomar caso</button>
+                                                <button
+                                                    onClick={() => void handleTakeCase(displayEvent.id)}
+                                                    disabled={isTakingCase}
+                                                    className={`px-2 py-0.5 rounded font-bold uppercase tracking-wide transition-colors ${isTakingCase
+                                                        ? 'bg-emerald-900 text-white/70 cursor-wait'
+                                                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                                    }`}
+                                                >{isTakingCase ? 'Tomando...' : 'Tomar caso'}</button>
+                                            )}
+                                            {takeCaseError && (
+                                                <div className="text-[10px] text-red-400 font-bold bg-red-950/30 border border-red-500/20 rounded px-2 py-1">
+                                                    Error: {takeCaseError}
+                                                </div>
                                             )}
                                         </span>
                                     )}
