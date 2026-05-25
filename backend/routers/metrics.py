@@ -8,8 +8,10 @@ from services.auth_service import get_current_active_user, check_permission
 from models.user import User, UserPermission
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from postgres_db import get_pg_db
 from repositories import metric_repo
+from services.metric_operation_guard import MetricOperationInProgress
 
 router = APIRouter(
     prefix="/metrics",
@@ -60,7 +62,16 @@ async def create_metric(
     """
     if not check_permission(UserPermission.CI_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to create metrics")
-    return metric_service.create_metric(metric)
+    try:
+        return await run_in_threadpool(metric_service.create_metric, metric)
+    except MetricOperationInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Metric operation already in progress",
+                "metric_id": exc.metric_id,
+            },
+        ) from exc
 
 
 @router.delete("/{metric_id}")
@@ -71,7 +82,16 @@ async def delete_metric(
     """Delete a Metric Definition. Requires authentication and CI_EDIT permission."""
     if not check_permission(UserPermission.CI_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to delete metrics")
-    return metric_service.delete_metric(metric_id)
+    try:
+        return await run_in_threadpool(metric_service.delete_metric, metric_id)
+    except MetricOperationInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Metric operation already in progress",
+                "metric_id": exc.metric_id,
+            },
+        ) from exc
 
 
 @router.get("/{metric_id}/usage")

@@ -254,7 +254,10 @@ describe('MetricsManager', () => {
 
       expect(window.alert).toHaveBeenCalledWith('Metric Saved');
       await waitFor(() => {
-        expect(mocks.apiGet).toHaveBeenCalledTimes(4);
+        expect(mocks.apiGet).toHaveBeenCalledWith('/metrics');
+      });
+      await waitFor(() => {
+        expect(mocks.apiGet).toHaveBeenCalledWith('/nodes');
       });
       expect(screen.getByText(/select a metric to edit/i)).toBeInTheDocument();
     });
@@ -287,6 +290,47 @@ describe('MetricsManager', () => {
         expect(window.alert).toHaveBeenCalledWith('Error saving metric');
       });
       expect(screen.getByText('New Metric')).toBeInTheDocument();
+    });
+
+    it('shows save pending state, guards duplicate submission, and refetches metrics and nodes', async () => {
+      const saveDeferred = createDeferred<{ ok: boolean }>();
+      mocks.apiPost.mockReturnValueOnce(saveDeferred.promise);
+      await openCreateForm();
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/nodes'));
+      mocks.apiGet.mockClear();
+
+      fireEvent.change(getInputByLabel(/metric id/i), { target: { value: 'temp.sensor' } });
+      clickSaveMetric();
+
+      expect(await screen.findByText(/saving metric and reconciling affected cis/i)).toBeInTheDocument();
+      const saveButton = screen.getByRole('button', { name: /save metric/i });
+      expect(saveButton).toBeDisabled();
+
+      fireEvent.click(saveButton);
+      expect(mocks.apiPost).toHaveBeenCalledTimes(1);
+
+      saveDeferred.resolve({ ok: true });
+
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/metrics'));
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/nodes'));
+      expect(screen.getByText(/select a metric to edit/i)).toBeInTheDocument();
+    });
+
+    it('handles duplicate save responses with a clear message and refreshes metrics and nodes', async () => {
+      mocks.apiPost.mockRejectedValueOnce({
+        status: 409,
+        message: { message: 'Metric operation already in progress', metric_id: 'temp.sensor' },
+      });
+      await openCreateForm();
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/nodes'));
+      mocks.apiGet.mockClear();
+
+      fireEvent.change(getInputByLabel(/metric id/i), { target: { value: 'temp.sensor' } });
+      clickSaveMetric();
+
+      expect(await screen.findByText(/metric operation already in progress/i)).toBeInTheDocument();
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/metrics'));
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/nodes'));
     });
   });
 
@@ -435,6 +479,62 @@ describe('MetricsManager', () => {
       });
     });
 
+    it('shows delete pending state, guards duplicate deletion, clears stale selection, and refetches metrics and nodes', async () => {
+      const usageDeferred = createDeferred<any>();
+      const deleteDeferred = createDeferred<{ ok: boolean }>();
+      mocks.apiGet.mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/metrics') return [metricA, metricB];
+        if (endpoint === '/metrics/cpu.load') return metricADetail;
+        if (endpoint === '/hardware') return hardwareModels;
+        if (endpoint === '/metrics/cpu.load/usage') return usageDeferred.promise;
+        if (endpoint === '/metrics/mem.usage/usage') return { count: 0, cis: [] };
+        if (endpoint === '/nodes') return [];
+        throw new Error(`Unhandled GET ${endpoint}`);
+      });
+      mocks.apiDelete.mockReturnValueOnce(deleteDeferred.promise);
+      await openEditForm();
+      vi.mocked(window.confirm).mockReturnValueOnce(true);
+      mocks.apiGet.mockClear();
+
+      clickDeleteMetric();
+
+      expect(await screen.findByText(/checking metric usage before deletion/i)).toBeInTheDocument();
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      const deleteButton = deleteButtons[deleteButtons.length - 1];
+      expect(deleteButton).toBeDisabled();
+      fireEvent.click(deleteButton);
+      expect(mocks.apiGet).toHaveBeenCalledTimes(1);
+      expect(mocks.apiDelete).not.toHaveBeenCalled();
+
+      usageDeferred.resolve(usageData);
+      expect(await screen.findByText(/deleting metric and removing assignments/i)).toBeInTheDocument();
+      expect(mocks.apiDelete).toHaveBeenCalledTimes(1);
+
+      deleteDeferred.resolve({ ok: true });
+
+      await waitFor(() => expect(screen.getByText(/select a metric to edit/i)).toBeInTheDocument());
+      expect(screen.queryByText('Edit Metric')).not.toBeInTheDocument();
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/metrics'));
+      await waitFor(() => expect(mocks.apiGet).toHaveBeenCalledWith('/nodes'));
+    });
+
+    it('clears delete pending state but keeps the selected metric when delete fails', async () => {
+      const deleteDeferred = createDeferred<never>();
+      mocks.apiDelete.mockReturnValueOnce(deleteDeferred.promise);
+      await openEditForm();
+      vi.mocked(window.confirm).mockReturnValueOnce(true);
+
+      clickDeleteMetric();
+      expect(await screen.findByText(/deleting metric and removing assignments/i)).toBeInTheDocument();
+
+      deleteDeferred.reject(new Error('delete failed'));
+
+      await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Error deleting metric'));
+      expect(screen.queryByText(/deleting metric and removing assignments/i)).not.toBeInTheDocument();
+      expect(screen.getByText('Edit Metric')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('cpu.load')).toBeInTheDocument();
+    });
+
     it('does not delete a metric when the user cancels the confirmation', async () => {
       await openEditForm();
       vi.mocked(window.confirm).mockReturnValueOnce(false);
@@ -446,6 +546,9 @@ describe('MetricsManager', () => {
         expect(mocks.apiGet).toHaveBeenCalledWith('/metrics/cpu.load/usage');
       });
       expect(mocks.apiDelete).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByText(/checking metric usage before deletion/i)).not.toBeInTheDocument());
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      expect(deleteButtons[deleteButtons.length - 1]).not.toBeDisabled();
     });
 
     it('shows an alert when checking metric usage for delete fails', async () => {
@@ -463,6 +566,9 @@ describe('MetricsManager', () => {
       await waitFor(() => {
         expect(window.alert).toHaveBeenCalledWith('Error checking metric usage');
       });
+      await waitFor(() => expect(screen.queryByText(/checking metric usage before deletion/i)).not.toBeInTheDocument());
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      expect(deleteButtons[deleteButtons.length - 1]).not.toBeDisabled();
     });
 
     it('does not remove an associated CI when confirm returns false', async () => {

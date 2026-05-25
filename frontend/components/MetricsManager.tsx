@@ -1,16 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { MetricDef } from '../types';
+import type React from 'react';
+import { useState, useEffect } from 'react';
+import type { MetricDef } from '../types';
 import { api } from '../services/api';
 
 interface MetricsManagerProps {
     onClose?: () => void;
 }
 
-const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
+const MetricsManager: React.FC<MetricsManagerProps> = () => {
     const [metrics, setMetrics] = useState<MetricDef[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedMetric, setSelectedMetric] = useState<MetricDef | null>(null);
     const [isEditing, setIsEditing] = useState(false);
+    const [savingMetric, setSavingMetric] = useState(false);
+    const [deletingMetricId, setDeletingMetricId] = useState<string | null>(null);
+    const [operationMessage, setOperationMessage] = useState<string | null>(null);
+    const [operationError, setOperationError] = useState<string | null>(null);
 
     // Form State
     const [formData, setFormData] = useState<Partial<MetricDef>>({});
@@ -112,6 +117,8 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     };
 
     const handleEdit = async (metric: MetricDef) => {
+        setOperationMessage(null);
+        setOperationError(null);
         try {
             await loadMetricDetail(metric.id);
         } catch (e) {
@@ -121,6 +128,8 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
     };
 
     const handleCreate = () => {
+        setOperationMessage(null);
+        setOperationError(null);
         setSelectedMetric(null);
         setFormData({ protocol: 'SNMP', dataType: 'INTEGER', operator: '>=', criticality: 1, applicable_to: {} });
         setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
@@ -128,7 +137,30 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
         setTestResult(null);
     };
 
+    const resetMetricForm = () => {
+        setFormData({});
+        setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
+    };
+
+    const getOperationErrorMessage = (error: any) => {
+        const rawMessage = error?.message;
+        const nestedMessage = typeof rawMessage === 'object' ? rawMessage?.message : undefined;
+        if (error?.status === 409) {
+            return nestedMessage || (typeof rawMessage === 'string' && rawMessage !== '[object Object]' ? rawMessage : 'Metric operation already in progress');
+        }
+        return undefined;
+    };
+
+    const refreshMetricViews = async () => {
+        await Promise.all([fetchMetrics(), fetchNodes()]);
+    };
+
     const handleSave = async (overrideCriteria?: any) => {
+        if (savingMetric) return;
+        setSavingMetric(true);
+        setOperationMessage('Saving metric and reconciling affected CIs…');
+        setOperationError(null);
+
         // Prepare applicable_to
         const crit = overrideCriteria && typeof overrideCriteria === 'object' && 'brands' in overrideCriteria
             ? overrideCriteria
@@ -153,21 +185,72 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
             await api.post('/metrics', payload);
             alert('Metric Saved');
             setIsEditing(false);
-            setFormData({});
-            setCriteria({ brands: '', models: '', layers: '', names: '', excluded_names: '' });
-            fetchMetrics();
-        } catch (e) {
-            alert('Error saving metric');
+            resetMetricForm();
+            await refreshMetricViews();
+        } catch (e: any) {
+            const duplicateMessage = getOperationErrorMessage(e);
+            if (duplicateMessage) {
+                setOperationError(duplicateMessage);
+                await refreshMetricViews();
+            } else {
+                alert('Error saving metric');
+            }
+        } finally {
+            setSavingMetric(false);
+            setOperationMessage(null);
         }
     };
 
-    const buildCriteriaStrings = (applicableTo?: MetricDef['applicable_to']) => ({
-        brands: (applicableTo?.brands || []).join(', '),
-        models: (applicableTo?.models || []).join(', '),
-        layers: (applicableTo?.layers || []).join(', '),
-        names: (applicableTo?.names || []).join(', '),
-        excluded_names: (applicableTo?.excluded_names || []).join(', ')
-    });
+    const handleDeleteSelectedMetric = async () => {
+        if (!selectedMetric || deletingMetricId) return;
+
+        const metricId = selectedMetric.id;
+        setDeletingMetricId(metricId);
+        setOperationMessage('Checking metric usage before deletion…');
+        setOperationError(null);
+
+        try {
+            const usage = await api.get<any>(`/metrics/${metricId}/usage`);
+            const count = usage.count || 0;
+            const msg = `Are you sure you want to delete metric '${metricId}'?\n\n` +
+                `This metric is currently applicable to ${count} devices.\n` +
+                `Deleting it will stop monitoring this data point for all affected devices.\n\n` +
+                `This action cannot be undone.`;
+
+            if (!confirm(msg)) {
+                setDeletingMetricId(null);
+                setOperationMessage(null);
+                return;
+            }
+        } catch (e) {
+            alert('Error checking metric usage');
+            setDeletingMetricId(null);
+            setOperationMessage(null);
+            return;
+        }
+
+        setOperationMessage('Deleting metric and removing assignments…');
+
+        try {
+            await api.delete(`/metrics/${metricId}`);
+            setSelectedMetric(null);
+            setUsageData(null);
+            setIsEditing(false);
+            resetMetricForm();
+            await refreshMetricViews();
+        } catch (e: any) {
+            const duplicateMessage = getOperationErrorMessage(e);
+            if (duplicateMessage) {
+                setOperationError(duplicateMessage);
+                await refreshMetricViews();
+            } else {
+                alert('Error deleting metric');
+            }
+        } finally {
+            setDeletingMetricId(null);
+            setOperationMessage(null);
+        }
+    };
 
     const buildMetricPayload = (applicableTo: MetricDef['applicable_to']) => ({
         ...formData,
@@ -315,6 +398,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                     </button>
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                    {loading && <div className="p-3 text-xs text-neutral-500">Loading metrics…</div>}
                     {metrics.map((m, i) => (
                         <div key={i} onClick={() => handleEdit(m)}
                             className={`p-3 rounded-lg border border-white/5 cursor-pointer hover:bg-white/5 transition-colors ${selectedMetric?.id === m.id ? 'bg-brand-500/10 border-brand-500/50' : 'bg-transparent'}`}>
@@ -781,30 +865,26 @@ const MetricsManager: React.FC<MetricsManagerProps> = ({ onClose }) => {
                             </div>
                         </div>
 
+                        {(operationMessage || operationError) && (
+                            <div className={`rounded-lg border p-3 text-sm ${operationError ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-200' : 'border-brand-500/40 bg-brand-500/10 text-brand-200'}`}>
+                                {operationError || operationMessage}
+                            </div>
+                        )}
+
                         <div className="flex gap-4 pt-4">
-                            <button onClick={() => handleSave()} className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition-colors">
+                            <button
+                                onClick={() => handleSave()}
+                                disabled={savingMetric}
+                                className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:bg-neutral-600 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition-colors"
+                            >
                                 SAVE METRIC
                             </button>
                             {selectedMetric && (
-                                <button onClick={async () => {
-                                    // 1. Check Usage
-                                    try {
-                                        const usage = await api.get<any>(`/metrics/${selectedMetric.id}/usage`);
-                                        const count = usage.count || 0;
-                                        const msg = `Are you sure you want to delete metric '${selectedMetric.id}'?\n\n` +
-                                            `This metric is currently applicable to ${count} devices.\n` +
-                                            `Deleting it will stop monitoring this data point for all affected devices.\n\n` +
-                                            `This action cannot be undone.`;
-
-                                        if (confirm(msg)) {
-                                            await api.delete(`/metrics/${selectedMetric.id}`);
-                                            setIsEditing(false);
-                                            fetchMetrics();
-                                        }
-                                    } catch (e) {
-                                        alert('Error checking metric usage');
-                                    }
-                                }} className="px-6 bg-red-600/20 hover:bg-red-600/40 text-red-500 font-bold py-3 rounded-xl transition-colors">
+                                <button
+                                    onClick={handleDeleteSelectedMetric}
+                                    disabled={deletingMetricId === selectedMetric.id}
+                                    className="px-6 bg-red-600/20 hover:bg-red-600/40 disabled:bg-neutral-700 disabled:text-neutral-400 disabled:cursor-not-allowed text-red-500 font-bold py-3 rounded-xl transition-colors"
+                                >
                                     DELETE
                                 </button>
                             )}
