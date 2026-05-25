@@ -103,7 +103,11 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     // Handle other errors
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new ApiError(errorData.detail || response.statusText, response.status);
+        const detail = errorData.detail;
+        const message = typeof detail === 'string'
+            ? detail
+            : detail?.message || response.statusText;
+        throw new ApiError(message, response.status);
     }
 
     if (responseType === 'blob') {

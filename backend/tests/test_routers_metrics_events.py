@@ -14,8 +14,10 @@ Strategy:
 - Override get_current_active_user for auth-protected event endpoints
 """
 
+import asyncio
 import pytest
 import sys
+import threading
 import types
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -273,6 +275,77 @@ class TestMetricsList:
 class TestMetricsCreate:
     """Tests for POST /api/metrics — create/update metric definition."""
 
+    @pytest.mark.asyncio
+    async def test_create_metric_offloads_sync_service_work(self):
+        """The async route should not block unrelated coroutine startup."""
+        from routers import metrics as metrics_router
+        from models.core import MetricDef
+
+        fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_create(metric):
+            started.set()
+            release.wait(timeout=2)
+            return {"message": "Metric defined"}
+
+        async def unrelated(marker: asyncio.Event):
+            marker.set()
+
+        with (
+            patch("routers.metrics.check_permission", return_value=True),
+            patch.object(metrics_router.metric_service, "create_metric", side_effect=blocking_create),
+        ):
+            metric = MetricDef(id="slow-metric", protocol="SNMP")
+            route_task = asyncio.create_task(metrics_router.create_metric(metric, fake_user))
+            timer = threading.Timer(1.0, release.set)
+            timer.start()
+            try:
+                await asyncio.sleep(0)
+                assert not route_task.done()
+                assert await asyncio.to_thread(started.wait, 1)
+
+                marker = asyncio.Event()
+                marker_task = asyncio.create_task(unrelated(marker))
+                await asyncio.wait_for(marker.wait(), timeout=0.1)
+
+                release.set()
+                result = await route_task
+            finally:
+                release.set()
+                timer.cancel()
+                await asyncio.gather(route_task, return_exceptions=True)
+                if 'marker_task' in locals():
+                    await asyncio.gather(marker_task, return_exceptions=True)
+
+        assert result == {"message": "Metric defined"}
+
+    @pytest.mark.asyncio
+    async def test_create_metric_duplicate_operation_maps_to_409(self):
+        from routers import metrics as metrics_router
+        from models.core import MetricDef
+        from services.metric_operation_guard import MetricOperationInProgress
+
+        fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+
+        with (
+            patch("routers.metrics.check_permission", return_value=True),
+            patch.object(
+                metrics_router.metric_service,
+                "create_metric",
+                side_effect=MetricOperationInProgress("slow-metric"),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await metrics_router.create_metric(MetricDef(id="slow-metric", protocol="SNMP"), fake_user)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == {
+            "message": "Metric operation already in progress",
+            "metric_id": "slow-metric",
+        }
+
     def test_create_metric_success(self, mock_neo4j_driver):
         """Should create a metric definition."""
         fake_user = _make_pydantic_user(
@@ -366,6 +439,74 @@ class TestMetricsCreate:
 
 class TestMetricsDelete:
     """Tests for DELETE /api/metrics/{metric_id} — delete metric definition."""
+
+    @pytest.mark.asyncio
+    async def test_delete_metric_offloads_sync_service_work(self):
+        """The async route should not block unrelated coroutine startup."""
+        from routers import metrics as metrics_router
+
+        fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_delete(metric_id):
+            started.set()
+            release.wait(timeout=2)
+            return {"message": "Metric deleted"}
+
+        async def unrelated(marker: asyncio.Event):
+            marker.set()
+
+        with (
+            patch("routers.metrics.check_permission", return_value=True),
+            patch.object(metrics_router.metric_service, "delete_metric", side_effect=blocking_delete),
+        ):
+            route_task = asyncio.create_task(metrics_router.delete_metric("slow-metric", fake_user))
+            timer = threading.Timer(1.0, release.set)
+            timer.start()
+            try:
+                await asyncio.sleep(0)
+                assert not route_task.done()
+                assert await asyncio.to_thread(started.wait, 1)
+
+                marker = asyncio.Event()
+                marker_task = asyncio.create_task(unrelated(marker))
+                await asyncio.wait_for(marker.wait(), timeout=0.1)
+
+                release.set()
+                result = await route_task
+            finally:
+                release.set()
+                timer.cancel()
+                await asyncio.gather(route_task, return_exceptions=True)
+                if 'marker_task' in locals():
+                    await asyncio.gather(marker_task, return_exceptions=True)
+
+        assert result == {"message": "Metric deleted"}
+
+    @pytest.mark.asyncio
+    async def test_delete_metric_duplicate_operation_maps_to_409(self):
+        from routers import metrics as metrics_router
+        from services.metric_operation_guard import MetricOperationInProgress
+
+        fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+
+        with (
+            patch("routers.metrics.check_permission", return_value=True),
+            patch.object(
+                metrics_router.metric_service,
+                "delete_metric",
+                side_effect=MetricOperationInProgress("slow-metric"),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await metrics_router.delete_metric("slow-metric", fake_user)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == {
+            "message": "Metric operation already in progress",
+            "metric_id": "slow-metric",
+        }
 
     def test_delete_metric_success(self, mock_neo4j_driver):
         """Should delete a metric definition."""
