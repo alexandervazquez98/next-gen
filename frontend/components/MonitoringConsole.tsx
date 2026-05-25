@@ -1890,9 +1890,13 @@ const StatCard = ({ label, value, icon, color, bg, animate, active, onClick }: a
  * Useful for spotting correlated issues (e.g. CPU High + Latency High).
  */
 const RelatedAlarmsPanel = ({ ciId, currentEventId, enabled }: { ciId?: string, currentEventId?: string | null, enabled: boolean }) => {
-    const { data: related = [] } = useRelatedEventsQuery(ciId, enabled);
+    if (!enabled || !ciId) return null;
 
-    if (!enabled) return null;
+    return <RelatedAlarmsPanelWithQuery ciId={ciId} currentEventId={currentEventId} />;
+};
+
+const RelatedAlarmsPanelWithQuery = ({ ciId, currentEventId }: { ciId: string, currentEventId?: string | null }) => {
+    const { data: related = [] } = useRelatedEventsQuery(ciId, true);
 
     // Filter out current event
     const displayed = related.filter(e => e.id !== currentEventId);
