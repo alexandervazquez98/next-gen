@@ -4,16 +4,38 @@ Operational runbook for the scalable metric polling pipeline. The legacy serial 
 
 ## Enablement order
 
-Enable one layer at a time and keep the system observable between steps:
+Enable one layer at a time and keep the system observable between steps. All behavior-changing flags are default-off; do not enable the next step until the current command and metrics are understood.
 
 1. Set `POLLING_PIPELINE_OBSERVE_ONLY=true`; confirm current cycle duration and failure baseline.
-2. Apply PostgreSQL queue migrations; then set `POLLING_PG_QUEUE_ENABLED=true`.
-3. Run a synthetic benchmark with `backend/scripts/polling_host_benchmark.py` or `backend/scripts/polling_load_simulator.py` and attach the JSON report to the rollout notes.
-4. Set `POLLING_SNMP_LEASED_WORKER=true` with low `POLLING_WORKERS` and small `POLLING_TASK_BATCH_SIZE`.
-5. Set `POLLING_DB_WRITER_ENABLED=true` with `POLLING_DB_WRITERS=1` and conservative `POLLING_RESULT_BATCH_SIZE`.
-6. Set `POLLING_BACKPRESSURE_ENABLED=true`.
-7. Set `POLLING_METADATA_CACHE_ENABLED=true` after confirming cache TTL/version mismatch behavior in logs.
-8. Raise workers/batches only after simulator evidence and live observability show headroom.
+2. Apply PostgreSQL queue migrations explicitly; migrations are not auto-run on startup:
+
+   ```bash
+   python backend/scripts/run_polling_migrations.py --dry-run
+   python backend/scripts/run_polling_migrations.py
+   ```
+
+3. Set `POLLING_PG_QUEUE_ENABLED=true`, then enqueue a controlled test cycle from an approved JSON record export:
+
+   ```bash
+   python backend/scripts/polling_enqueue_cycle.py \
+     --records-file /path/to/polling-records.json \
+     --scheduled-for 2026-05-25T12:00:00Z \
+     --config-version rollout-v1
+   ```
+
+   When `POLLING_METADATA_CACHE_ENABLED=true`, pass `--current-metadata-version` or use `--config-version` so stale exported records are rejected before enqueue. When `POLLING_BACKPRESSURE_ENABLED=true`, the command refuses cycles larger than `POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH`.
+
+4. Run a synthetic benchmark with `backend/scripts/polling_host_benchmark.py` or `backend/scripts/polling_load_simulator.py` and attach the JSON report to the rollout notes.
+5. Set `POLLING_SNMP_LEASED_WORKER=true` with low `POLLING_WORKERS` and small `POLLING_TASK_BATCH_SIZE`.
+6. Set `POLLING_DB_WRITER_ENABLED=true` with `POLLING_DB_WRITERS=1` and conservative `POLLING_RESULT_BATCH_SIZE`, then run the result writer under a supervisor:
+
+   ```bash
+   python backend/scripts/polling_result_writer.py --worker-id writer-1
+   ```
+
+7. Set `POLLING_BACKPRESSURE_ENABLED=true`; verify oversized cycle rejection with `backend/scripts/polling_enqueue_cycle.py --dry-run` before larger enqueues.
+8. Set `POLLING_METADATA_CACHE_ENABLED=true` after confirming cache TTL/version mismatch behavior through `backend/scripts/polling_enqueue_cycle.py --current-metadata-version`.
+9. Raise workers/batches only after simulator evidence and live observability show headroom.
 
 ## Evidence required before increasing concurrency
 
@@ -43,9 +65,9 @@ Rollback in reverse enablement order:
 
 1. Disable `POLLING_METADATA_CACHE_ENABLED`.
 2. Disable `POLLING_BACKPRESSURE_ENABLED` only if the queue is stable; otherwise leave it enabled while reducing concurrency.
-3. Disable `POLLING_DB_WRITER_ENABLED` and stop writer consumers.
+3. Disable `POLLING_DB_WRITER_ENABLED` and stop `backend/scripts/polling_result_writer.py` consumers.
 4. Disable `POLLING_SNMP_LEASED_WORKER`.
-5. Leave `POLLING_PG_QUEUE_ENABLED` data intact for replay/audit unless a maintainer approves cleanup.
+5. Disable `POLLING_PG_QUEUE_ENABLED` after queue consumers are stopped; leave queue data intact for replay/audit unless a maintainer approves cleanup.
 6. Disable `POLLING_PIPELINE_OBSERVE_ONLY` last if legacy behavior is fully restored.
 
 ## Queue replay guidance

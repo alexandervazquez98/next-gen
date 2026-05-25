@@ -38,9 +38,10 @@ Do not use DB-backed mode on production without a maintenance window and rollbac
 Start with low `POLLING_WORKERS` and raise gradually:
 
 1. Run synthetic benchmark.
-2. Enable leased worker with `POLLING_SNMP_LEASED_WORKER=true`.
-3. Observe worker p95/p99, timeout rate, device CPU/link health, and queue depth.
-4. Raise workers only if queue depth drains and target safety limits are not frequently denying work.
+2. Apply migrations with `backend/scripts/run_polling_migrations.py` and enqueue only a controlled cycle with `backend/scripts/polling_enqueue_cycle.py` after `POLLING_PG_QUEUE_ENABLED=true`.
+3. Enable leased worker with `POLLING_SNMP_LEASED_WORKER=true`.
+4. Observe worker p95/p99, timeout rate, device CPU/link health, and queue depth.
+5. Raise workers only if queue depth drains and target safety limits are not frequently denying work.
 
 Suggested first production setting: `POLLING_WORKERS=4` to `8`, then tune by evidence.
 
@@ -56,12 +57,14 @@ Lease TTL should exceed normal p99 protocol latency plus batch overhead. Too sho
 
 - `POLLING_TASK_BATCH_SIZE`: start small, e.g. `100`; raise when workers are underutilized and queue claim overhead dominates.
 - `POLLING_RESULT_BATCH_SIZE`: start at `500`; tune against DB latency and writer lag.
+- Run `backend/scripts/polling_result_writer.py --worker-id writer-1` under a supervisor only after `POLLING_DB_WRITER_ENABLED=true`.
 - Keep DB writer transactions short enough to retry safely.
 - If DB latency rises, reduce result batch size before adding more writers.
 
 ## Retry/backoff/dead-letter
 
 - `POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS` defaults to a capped value; do not raise it to hide credential/OID problems.
+- Use `backend/scripts/polling_enqueue_cycle.py --dry-run` to validate that `POLLING_BACKPRESSURE_ENABLED=true` rejects enqueues above `POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH`.
 - Repeated SNMP/CLI/REST failures should enter cooldown or dead-letter with reason.
 - Under pressure, ICMP remains first; lower-priority work is delayed, not silently lost.
 
@@ -69,6 +72,7 @@ Lease TTL should exceed normal p99 protocol latency plus batch overhead. Too sho
 
 - `POLLING_METADATA_CACHE_TTL_SECONDS` defaults to 300 seconds.
 - Lower TTL when CI/metric definitions change frequently.
+- With `POLLING_METADATA_CACHE_ENABLED=true`, pass `--current-metadata-version` to `backend/scripts/polling_enqueue_cycle.py` so stale metadata is rejected before queue insertion.
 - Stale metadata must refresh or defer; it must not drive polling beyond the freshness window.
 - Cache only safe credential refs/session metadata. Do not cache secrets.
 
