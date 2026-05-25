@@ -160,6 +160,7 @@ class PollingPipelineSettings(BaseModel):
 
     benchmark_ci_count: int = Field(default=8000, ge=1)
     benchmark_metrics_per_ci: int = Field(default=35, ge=1)
+    benchmark_duration_seconds: int = Field(default=0, ge=0)
     benchmark_protocol_mix: str = "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05"
     benchmark_sink: str = "synthetic"
 
@@ -184,6 +185,7 @@ class PollingPipelineSettings(BaseModel):
             metadata_cache_ttl_seconds=int(os.getenv("POLLING_METADATA_CACHE_TTL_SECONDS", "300")),
             benchmark_ci_count=int(os.getenv("POLLING_BENCHMARK_CI_COUNT", "8000")),
             benchmark_metrics_per_ci=int(os.getenv("POLLING_BENCHMARK_METRICS_PER_CI", "35")),
+            benchmark_duration_seconds=int(os.getenv("POLLING_BENCHMARK_DURATION_SECONDS", "0")),
             benchmark_protocol_mix=os.getenv(
                 "POLLING_BENCHMARK_PROTOCOL_MIX",
                 "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05",

@@ -30,6 +30,7 @@ class TestPollingPipelineSettings:
         assert settings.metadata_cache_ttl_seconds == 300
         assert settings.benchmark_ci_count == 8000
         assert settings.benchmark_metrics_per_ci == 35
+        assert settings.benchmark_duration_seconds == 0
         assert settings.benchmark_sink == "synthetic"
 
     def test_polling_pipeline_settings_from_env_overrides(self):
@@ -53,6 +54,7 @@ class TestPollingPipelineSettings:
             "POLLING_METADATA_CACHE_TTL_SECONDS": "600",
             "POLLING_BENCHMARK_CI_COUNT": "1200",
             "POLLING_BENCHMARK_METRICS_PER_CI": "12",
+            "POLLING_BENCHMARK_DURATION_SECONDS": "120",
             "POLLING_BENCHMARK_PROTOCOL_MIX": "ICMP:0.2,SNMP:0.8",
             "POLLING_BENCHMARK_SINK": "db",
         }, clear=True):
@@ -75,6 +77,7 @@ class TestPollingPipelineSettings:
         assert settings.metadata_cache_ttl_seconds == 600
         assert settings.benchmark_ci_count == 1200
         assert settings.benchmark_metrics_per_ci == 12
+        assert settings.benchmark_duration_seconds == 120
         assert settings.benchmark_protocol_mix == "ICMP:0.2,SNMP:0.8"
         assert settings.benchmark_sink == "db"
 
