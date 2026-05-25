@@ -92,14 +92,103 @@ class TestMetricServiceSmoke:
         assert "merge" in mock_neo4j_session.queries[0]["query"].lower()
         mock_reconcile.assert_called_once_with("test-metric", None)
 
-    def test_delete_metric_calls_detach_delete(self, mock_neo4j_session):
-        """delete_metric should execute a DETACH DELETE query."""
+    def test_delete_metric_recovers_active_collection_failures_before_detach_delete(self, mock_neo4j_session):
+        """delete_metric should make active collection failures stale before deleting the definition."""
         from services.metric_service import delete_metric
 
-        delete_metric("test-metric")
+        mock_neo4j_session.set_response("RETURN count(DISTINCT e) AS events_recovered", [{"events_recovered": 3}])
+        mock_neo4j_session.set_response("RETURN size(metrics) AS deleted", [{"deleted": 1}])
 
-        assert len(mock_neo4j_session.queries) >= 1
-        assert "detach delete" in mock_neo4j_session.queries[0]["query"].lower()
+        result = delete_metric("test-metric")
+
+        assert result == {
+            "message": "Metric deleted",
+            "metric_id": "test-metric",
+            "deleted": True,
+            "events_recovered": 3,
+            "history_retained": True,
+        }
+        assert len(mock_neo4j_session.queries) >= 2
+        first_query = mock_neo4j_session.queries[0]["query"].lower()
+        second_query = mock_neo4j_session.queries[1]["query"].lower()
+        assert "match (e:event)" in first_query
+        assert "collection_failure" in first_query
+        assert "recovered" in first_query
+        assert "detach delete" in second_query
+
+    def test_delete_metric_is_idempotent_when_definition_missing(self, mock_neo4j_session):
+        """delete_metric should return a deterministic response when the MetricDef is absent."""
+        from services.metric_service import delete_metric
+
+        mock_neo4j_session.set_response("RETURN count(DISTINCT e) AS events_recovered", [{"events_recovered": 0}])
+        mock_neo4j_session.set_response("RETURN size(metrics) AS deleted", [{"deleted": 0}])
+
+        result = delete_metric("missing-metric")
+
+        assert result["message"] == "Metric not found"
+        assert result["metric_id"] == "missing-metric"
+        assert result["deleted"] is False
+        assert result["events_recovered"] == 0
+        assert result["history_retained"] is True
+
+    def test_delete_metric_rolls_back_event_recovery_when_delete_fails(self):
+        """Event recovery and MetricDef deletion should be one atomic transaction."""
+        from services.metric_service import delete_metric
+
+        class Result:
+            def __init__(self, record):
+                self.record = record
+
+            def single(self):
+                return self.record
+
+        class FailingTransaction:
+            def __init__(self):
+                self.rolled_back = False
+                self.committed = False
+                self.calls = 0
+
+            def run(self, query, **params):
+                self.calls += 1
+                if self.calls == 1:
+                    return Result({"events_recovered": 2})
+                raise RuntimeError("delete failed")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self.rolled_back = exc_type is not None
+                self.committed = exc_type is None
+                return False
+
+        class Session:
+            def __init__(self, tx):
+                self.tx = tx
+
+            def begin_transaction(self):
+                return self.tx
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class Driver:
+            def __init__(self, tx):
+                self.tx = tx
+
+            def session(self):
+                return Session(self.tx)
+
+        tx = FailingTransaction()
+        with patch("services.metric_service.get_db", return_value=Driver(tx)):
+            with pytest.raises(RuntimeError, match="delete failed"):
+                delete_metric("test-metric")
+
+        assert tx.rolled_back is True
+        assert tx.committed is False
 
 
 class TestMetricMatching:

@@ -206,15 +206,17 @@ const MetricsManager: React.FC<MetricsManagerProps> = () => {
 
         const metricId = selectedMetric.id;
         setDeletingMetricId(metricId);
-        setOperationMessage('Checking metric usage before deletion…');
+        setOperationMessage('Checking metric usage before global deletion…');
         setOperationError(null);
 
         try {
             const usage = await api.get<any>(`/metrics/${metricId}/usage`);
             const count = usage.count || 0;
-            const msg = `Are you sure you want to delete metric '${metricId}'?\n\n` +
+            const msg = `Are you sure you want to delete metric definition '${metricId}' globally?\n\n` +
                 `This metric is currently applicable to ${count} devices.\n` +
-                `Deleting it will stop monitoring this data point for all affected devices.\n\n` +
+                `Deleting it will stop future monitoring of this data point for all affected devices.\n` +
+                `Active collection-failure events for this metric will be marked recovered.\n` +
+                `Historical metric samples will be retained.\n\n` +
                 `This action cannot be undone.`;
 
             if (!confirm(msg)) {
@@ -229,7 +231,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = () => {
             return;
         }
 
-        setOperationMessage('Deleting metric and removing assignments…');
+        setOperationMessage('Deleting metric definition globally…');
 
         try {
             await api.delete(`/metrics/${metricId}`);
@@ -843,14 +845,14 @@ const MetricsManager: React.FC<MetricsManagerProps> = () => {
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                if (confirm(`Are you sure you want to remove '${ci.name}' from this metric's applicability list?`)) {
+                                                                if (confirm(`Are you sure you want to exclude '${ci.name}' from this metric?\n\nThis only removes this CI association by updating the metric applicability exclusions. It does not delete the metric definition.`)) {
                                                                     handleExcludeAssociatedCI(ci);
                                                                 }
                                                             }}
                                                             className="text-neutral-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                            title="Remove specific association"
+                                                            title="Exclude this CI from the metric"
                                                         >
-                                                            <span className="material-symbols-outlined text-sm">delete</span>
+                                                            <span className="material-symbols-outlined text-sm">block</span>
                                                         </button>
                                                     </td>
                                                 </tr>
@@ -885,7 +887,7 @@ const MetricsManager: React.FC<MetricsManagerProps> = () => {
                                     disabled={deletingMetricId === selectedMetric.id}
                                     className="px-6 bg-red-600/20 hover:bg-red-600/40 disabled:bg-neutral-700 disabled:text-neutral-400 disabled:cursor-not-allowed text-red-500 font-bold py-3 rounded-xl transition-colors"
                                 >
-                                    DELETE
+                                    DELETE METRIC
                                 </button>
                             )}
                             <button onClick={() => setIsEditing(false)} className="px-6 bg-white/10 hover:bg-white/20 text-white font-bold py-3 rounded-xl transition-colors">
