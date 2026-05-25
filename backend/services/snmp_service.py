@@ -13,6 +13,15 @@ from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
 from services.metric_service import metric_matches_ci
+from services.polling_event_lifecycle import (
+    EVENT_TYPE_AVAILABILITY,
+    EVENT_TYPE_COLLECTION_FAILURE,
+    EVENT_TYPE_THRESHOLD_BREACH,
+    FAILURE_FAMILY_SNMP_NO_RESPONSE,
+    SOURCE_PROTOCOL_SNMP,
+    is_snmp_no_response_failure,
+    normalized_protocol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +301,13 @@ def poll_metric(ci, metric_def, snmp_conf):
             )
 
             if error_indication:
-                return None, "TIMEOUT", str(error_indication)
+                error_message = str(error_indication)
+                status = (
+                    "TIMEOUT"
+                    if is_snmp_no_response_failure(SOURCE_PROTOCOL_SNMP, "ERROR", {"message": error_message})
+                    else "ERROR"
+                )
+                return None, status, error_message
             if error_status:
                 error = f"{error_status.prettyPrint()} at {error_index and var_binds[int(error_index) - 1][0] or '?'}"
                 return None, "ERROR", error
@@ -315,13 +330,23 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
     status = "OK"
     severity = "INFO"
     is_breach = False
+    event_type = None
+    failure_family = None
+    source_protocol = normalized_protocol(metric_def.get("protocol")) or None
     message = f"Metric {metric_def.get('name', metric_def['id'])} is OK. Value: {val}"
     numeric_value = None
 
     if poll_status != "OK":
-        status = "CRITICAL"
-        severity = base_severity
+        is_snmp_no_response = is_snmp_no_response_failure(
+            source_protocol,
+            poll_status,
+            {"message": err_msg},
+        )
+        status = "WARNING" if is_snmp_no_response else base_severity
+        severity = "WARNING" if is_snmp_no_response else base_severity
         is_breach = True
+        event_type = EVENT_TYPE_COLLECTION_FAILURE
+        failure_family = FAILURE_FAMILY_SNMP_NO_RESPONSE if is_snmp_no_response else None
         message = f"Metric Collection Failed: {err_msg or 'Timeout'}"
         val = "N/A"
     elif val is not None:
@@ -329,7 +354,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             num_val = float(val)
             numeric_value = num_val
             is_availability_metric = (
-                metric_def.get("protocol") == "ICMP"
+                source_protocol == "ICMP"
                 or metric_def.get("name") == "mariadb-GS"
             )
 
@@ -353,6 +378,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     status = "CRITICAL"
                     severity = "CRITICAL"
                     is_breach = True
+                    event_type = EVENT_TYPE_THRESHOLD_BREACH
                     message = f"Critical Threshold Breached: {val} {operator} {metric_def['critical']}"
                 elif metric_def.get("warning") is not None and check_op(
                     num_val, float(metric_def["warning"]), operator
@@ -360,12 +386,14 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     status = "WARNING"
                     severity = "WARNING"
                     is_breach = True
+                    event_type = EVENT_TYPE_THRESHOLD_BREACH
                     message = f"Warning Threshold Breached: {val} {operator} {metric_def['warning']}"
 
             if is_availability_metric and float(val) == 0:
                 status = "CRITICAL"
                 severity = base_severity
                 is_breach = True
+                event_type = EVENT_TYPE_AVAILABILITY
                 message = f"Service/Host Down: {metric_def.get('name')}"
         except ValueError:
             pass
@@ -407,35 +435,87 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
             msg=message,
         )
 
+        if numeric_value is not None:
+            session.run(
+                """
+                MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
+                WHERE e.status IN ['OPEN', 'ACK']
+                  AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+                  AND (
+                    e.event_type = 'COLLECTION_FAILURE'
+                    OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+                  )
+                  AND ($source_protocol IS NULL OR e.source_protocol IS NULL OR toUpper(e.source_protocol) = $source_protocol)
+                  AND (
+                    $source_protocol <> 'SNMP'
+                    OR e.failure_family = 'SNMP_NO_RESPONSE'
+                    OR e.failure_family IS NULL
+                  )
+                SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
+                WITH e
+                CALL {
+                    WITH e
+                    MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+                    WHERE pe.root_cause_ci_id = e.ci_id
+                      AND pe.correlation_type = 'PROPAGATED'
+                      AND pe.status IN ['OPEN', 'ACK']
+                      AND coalesce(m.can_propagate, true) = true
+                    SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                    RETURN count(pe) AS propagated_recovered
+                }
+                RETURN e
+            """,
+                nid=ci.get("id"),
+                mid=metric_def["id"],
+                source_protocol=source_protocol,
+                msg=f"Metric collection recovered. Value: {val}",
+            )
+
         if is_breach:
             existing = session.run(
                 """
                 MATCH (existing:Event)
                 WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK', 'RECOVERED']
-                RETURN existing
+                  AND (
+                    existing.event_type = $event_type
+                    OR ($event_type = 'COLLECTION_FAILURE' AND existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
+                  )
+                  AND (
+                    ($failure_family IS NOT NULL AND (existing.failure_family = $failure_family OR existing.failure_family IS NULL))
+                    OR ($failure_family IS NULL AND existing.failure_family IS NULL)
+                  )
+                  AND ($source_protocol IS NULL OR existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = $source_protocol)
+                RETURN elementId(existing) AS existing_element_id, existing.status AS existing_status
                 LIMIT 1
             """,
                 nid=ci.get("id"),
                 mid=metric_def["id"],
+                event_type=event_type,
+                failure_family=failure_family,
+                source_protocol=source_protocol,
             ).single()
 
             if existing:
-                existing_status = existing["existing"].get("status")
+                existing_element_id = existing.get("existing_element_id")
                 session.run(
                     """
                     MATCH (existing:Event)
-                    WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status = $old_status
+                    WHERE elementId(existing) = $existing_element_id
                     SET existing.status = 'OPEN',
                         existing.last_seen = datetime(),
                         existing.message = $msg,
                         existing.severity = $sev,
-                        existing.recovered_at = NULL
+                        existing.recovered_at = NULL,
+                        existing.event_type = $event_type,
+                        existing.failure_family = $failure_family,
+                        existing.source_protocol = $source_protocol
                 """,
-                    nid=ci.get("id"),
-                    mid=metric_def["id"],
-                    old_status=existing_status,
+                    existing_element_id=existing_element_id,
                     msg=message,
                     sev=severity,
+                    event_type=event_type,
+                    failure_family=failure_family,
+                    source_protocol=source_protocol,
                 )
             else:
                 snapshot = resolve_event_snapshot(session, ci.get("id"))
@@ -469,6 +549,9 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         status: 'OPEN',
                         severity: $sev,
                         message: $msg,
+                        event_type: $event_type,
+                        failure_family: $failure_family,
+                        source_protocol: $source_protocol,
                         created_at: datetime(),
                         last_seen: datetime(),
                         ack: false,
@@ -495,18 +578,24 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     mid=metric_def["id"],
                     sev=severity,
                     msg=message,
+                    event_type=event_type,
+                    failure_family=failure_family,
+                    source_protocol=source_protocol,
                     propagated_from=propagated_from,
                     correlation_type=correlation_type,
                     root_cause_ci_id=root_cause_ci_id,
                     **snapshot,
                 )
         else:
-            # Recovery path - check if ROOT event to trigger propagation
+            # Recovery path for threshold/availability events; SNMP collection failures
+            # are recovered independently above so threshold lifecycles stay separate.
             session.run(
                 """
                 MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
                 WHERE e.status IN ['OPEN', 'ACK']
-                  AND e.correlation_type = 'ROOT'
+                  AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+                  AND (e.event_type IS NULL OR e.event_type <> 'COLLECTION_FAILURE')
+                  AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
                 SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
                 WITH e
                 CALL {
@@ -515,7 +604,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     WHERE pe.root_cause_ci_id = e.ci_id
                       AND pe.correlation_type = 'PROPAGATED'
                       AND pe.status IN ['OPEN', 'ACK']
-                      AND m.can_propagate = true
+                      AND coalesce(m.can_propagate, true) = true
                     SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
                     RETURN count(pe) AS propagated_recovered
                 }
@@ -528,7 +617,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
 
 
 def run_diagnostic(ci, metric):
-    protocol = metric.get("protocol")
+    protocol = normalized_protocol(metric.get("protocol"))
     if protocol == "ICMP":
         try:
             ping_flag = "-n" if subprocess.os.name == "nt" else "-c"

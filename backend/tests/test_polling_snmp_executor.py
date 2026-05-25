@@ -51,6 +51,27 @@ def test_snmp_executor_maps_no_data_and_errors_to_retryable_results():
     assert no_data.error["code"] == "no_data"
     assert no_data.error["retryable"] is True
 
+    structured_error = execute_poll_task(_task(), snmp_fetcher=lambda **kwargs: (None, "ERROR", "noSuchName at 1.2.3"))
+    assert structured_error.status == PollingResultStatus.ERROR
+    assert structured_error.error["code"] == "snmp_error"
+    assert structured_error.error["message"] == "noSuchName at 1.2.3"
+
+    structured_timeout = execute_poll_task(
+        _task(),
+        snmp_fetcher=lambda **kwargs: (None, "TIMEOUT", "No SNMP response received before timeout"),
+    )
+    assert structured_timeout.status == PollingResultStatus.TIMEOUT
+    assert structured_timeout.error["code"] == "timeout"
+    assert structured_timeout.error["retryable"] is True
+
+    explicit_timeout_error = execute_poll_task(
+        _task(),
+        snmp_fetcher=lambda **kwargs: (None, "ERROR", "No SNMP response received before timeout"),
+    )
+    assert explicit_timeout_error.status == PollingResultStatus.TIMEOUT
+    assert explicit_timeout_error.error["code"] == "timeout"
+    assert explicit_timeout_error.error["retryable"] is True
+
     def boom(**kwargs):
         raise RuntimeError("snmp exploded")
 
