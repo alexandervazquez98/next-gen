@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] — 2026-05-25
+
+### Fixed
+- **Legacy SNMP latest readings refresh** (PR #151, issue #150):
+  - Refreshes Neo4j `HAS_METRIC.last_value` and `HAS_METRIC.last_updated` after successful Timescale bulk persistence.
+  - Keeps the UI/topology latest readings aligned with fresh `metric_values` rows while the scalable polling path remains disabled.
+  - Preserves ICMP debounce/recovery behavior and avoids publishing latest values when Timescale persistence fails.
+
 ## [1.12.0] — 2026-05-25
 
 ### Added
