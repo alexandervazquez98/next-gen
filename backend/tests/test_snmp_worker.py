@@ -227,6 +227,26 @@ class TestSNMPWorkerObservability:
             for call in mock_logger.info.call_args_list
         )
 
+    @patch("polling.snmp_worker.run_leased_snmp_worker_once")
+    @patch("engines.snmp_worker.poll_snmp")
+    @patch("engines.snmp_worker.SessionLocal")
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    def test_job_dispatches_to_leased_worker_only_when_flag_enabled(
+        self, mock_get_settings, mock_session_local, mock_poll_snmp, mock_leased_once
+    ):
+        from config import PollingPipelineSettings
+        from engines.snmp_worker import job
+
+        db = MagicMock()
+        mock_session_local.return_value = db
+        mock_get_settings.return_value = PollingPipelineSettings(snmp_leased_worker_enabled=True)
+
+        job()
+
+        mock_poll_snmp.assert_not_called()
+        mock_leased_once.assert_called_once_with(db, settings=mock_get_settings.return_value)
+        db.close.assert_called_once()
+
 
 class TestICMPDebounce:
     """Tests for ICMP debounce counter in poll_snmp."""
