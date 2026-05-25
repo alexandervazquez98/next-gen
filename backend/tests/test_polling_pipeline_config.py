@@ -24,6 +24,10 @@ class TestPollingPipelineSettings:
         assert settings.db_writer_count == 1
         assert settings.task_batch_size == 100
         assert settings.result_batch_size == 500
+        assert settings.backpressure_max_task_queue_depth == 100000
+        assert settings.backpressure_max_writer_lag_seconds == 120
+        assert settings.backpressure_retry_max_attempts == 5
+        assert settings.metadata_cache_ttl_seconds == 300
         assert settings.benchmark_ci_count == 8000
         assert settings.benchmark_metrics_per_ci == 35
         assert settings.benchmark_sink == "synthetic"
@@ -43,6 +47,10 @@ class TestPollingPipelineSettings:
             "POLLING_DB_WRITERS": "3",
             "POLLING_TASK_BATCH_SIZE": "250",
             "POLLING_RESULT_BATCH_SIZE": "750",
+            "POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH": "5000",
+            "POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS": "45",
+            "POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS": "7",
+            "POLLING_METADATA_CACHE_TTL_SECONDS": "600",
             "POLLING_BENCHMARK_CI_COUNT": "1200",
             "POLLING_BENCHMARK_METRICS_PER_CI": "12",
             "POLLING_BENCHMARK_PROTOCOL_MIX": "ICMP:0.2,SNMP:0.8",
@@ -61,6 +69,10 @@ class TestPollingPipelineSettings:
         assert settings.db_writer_count == 3
         assert settings.task_batch_size == 250
         assert settings.result_batch_size == 750
+        assert settings.backpressure_max_task_queue_depth == 5000
+        assert settings.backpressure_max_writer_lag_seconds == 45
+        assert settings.backpressure_retry_max_attempts == 7
+        assert settings.metadata_cache_ttl_seconds == 600
         assert settings.benchmark_ci_count == 1200
         assert settings.benchmark_metrics_per_ci == 12
         assert settings.benchmark_protocol_mix == "ICMP:0.2,SNMP:0.8"
