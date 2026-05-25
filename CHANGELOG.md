@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.2] — 2026-05-25
+
+### Fixed
+- **Bulk metric operation freeze mitigation** (PRs #156-#158, issue #153):
+  - Offloads heavy metric create/delete backend work from the FastAPI event loop.
+  - Adds a process-local same-metric mutation guard with controlled duplicate-operation responses.
+  - Adds backend timing instrumentation for metric mutation/reconciliation hot paths.
+  - Shows MetricsManager pending save/delete state, prevents duplicate local submissions, refreshes metrics/nodes after mutations, and clears stale deleted-metric UI state.
+  - Adds focused backend and frontend regression coverage for the mitigation.
+
 ## [1.12.1] — 2026-05-25
 
 ### Fixed
