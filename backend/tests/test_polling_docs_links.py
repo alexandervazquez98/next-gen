@@ -18,6 +18,9 @@ def test_polling_docs_are_linked_from_readme_and_reference_existing_scripts():
     for path in [
         "backend/scripts/polling_host_benchmark.py",
         "backend/scripts/polling_load_simulator.py",
+        "backend/scripts/run_polling_migrations.py",
+        "backend/scripts/polling_enqueue_cycle.py",
+        "backend/scripts/polling_result_writer.py",
     ]:
         assert (REPO_ROOT / path).exists()
         assert path in combined
