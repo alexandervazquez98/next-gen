@@ -142,5 +142,8 @@ docker-compose.override.yml
 .artifacts/
 .atl/
 .engram/
-.pi/settings.json
+.pi/
+.worktrees/
+context.md
+progress.md
 skills/worktree-manager/
