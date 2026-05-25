@@ -66,6 +66,19 @@ id, label, type, brand, model, serialNumber, firmwareVersion, ip, snmp, location
 
 ---
 
+## Session lifecycle
+
+Authentication uses HTTP-only cookies. If an API request fails because the access token expired, the client should attempt `POST /api/auth/refresh` and then retry the original request once.
+
+Refresh attempts are rate-limited. Repeated invalid refresh tokens return:
+
+```http
+429 Too Many Requests
+Retry-After: <seconds>
+```
+
+When you receive `429` from `/api/auth/refresh`, stop retrying and wait for `Retry-After`. Do not loop refresh calls; repeated retries extend lockout pressure and may hide the real authentication failure.
+
 ## What Blocks You
 
 ### Cooldowns (per CI, not global)

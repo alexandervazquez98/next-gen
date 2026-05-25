@@ -170,6 +170,8 @@ Muestra quién tiene el caso:
 | **Tier del evento** | Nivel de soporte esperado (T1, T2, T3) |
 | **Estado** | Nuevo / En atención / Cerrado |
 
+Cuando hacés click en **Tomar caso**, el botón queda temporalmente bloqueado mientras se procesa la asignación. Si la operación falla por red, permisos o estado del evento, la consola muestra un error inline en la misma barra de ownership para que no parezca que el click fue ignorado.
+
 ### 3.4 Contexto ITSM
 
 Muestra información de gestión de incidentes:

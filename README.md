@@ -40,6 +40,14 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 
 ## API relevante
 
+### Auth y sesion
+
+- `POST /api/auth/token` - login y emision de cookies de sesion.
+- `POST /api/auth/refresh` - rotacion de access/refresh token. Puede devolver `429 Too Many Requests` con header `Retry-After` despues de intentos invalidos repetidos.
+- `POST /api/auth/logout` - revoca refresh token y limpia cookies.
+
+### Eventos
+
 - `GET /api/events?status=ACTIVE` - resumen para polling del stream.
 - `GET /api/events/{event_id}` - detalle enriquecido para el modal.
 - `POST /api/events/{event_id}/ack` - reconocimiento.
