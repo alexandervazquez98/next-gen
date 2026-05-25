@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from middleware.rate_limit import MAX_ATTEMPTS, RATE_LIMIT_STORE, increment_attempts
+
 # Patch Neo4j driver BEFORE importing anything
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
@@ -16,6 +18,14 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_rate_limit_store():
+    """Ensure rate-limit state is isolated between tests."""
+    RATE_LIMIT_STORE.clear()
+    yield
+    RATE_LIMIT_STORE.clear()
 
 
 def _make_mock_pg_user(
@@ -134,6 +144,68 @@ class TestAuthRefresh:
             )
 
         assert response.status_code == 401
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_token_rate_limits_after_repeated_failures(self):
+        """Too many invalid refresh token attempts should eventually return 429."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.auth.verify_refresh_token", return_value=None) as mock_verify:
+            responses = []
+            for _ in range(MAX_ATTEMPTS + 2):  # 4th fail then lock checked on 5th attempt
+                response = client.post(
+                    "/api/auth/refresh",
+                    cookies={"refresh_token": "bad_refresh_token"},
+                )
+                responses.append(response)
+
+        assert [r.status_code for r in responses[: MAX_ATTEMPTS + 1]] == [401] * (MAX_ATTEMPTS + 1)
+        assert responses[MAX_ATTEMPTS + 1].status_code == 429
+        assert "Retry-After" in responses[MAX_ATTEMPTS + 1].headers
+        assert mock_verify.call_count == MAX_ATTEMPTS + 1
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_success_clears_rate_limit_counter(self):
+        """Successful refresh should reset rate-limit state for that token."""
+        refresh_token = "old_refresh_token"
+        increment_attempts(refresh_token)
+        increment_attempts(refresh_token)
+
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            user_id=42,
+        )
+
+        # Mock the refresh token verification to return the user_id
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.auth.verify_refresh_token", return_value=42):
+            with patch("routers.auth.create_refresh_token", return_value="new_refresh_token"):
+                with patch("routers.auth.create_access_token", return_value="new_access_token"):
+                    response = client.post(
+                        "/api/auth/refresh",
+                        cookies={"refresh_token": refresh_token},
+                    )
+
+        assert response.status_code == 200
+        assert refresh_token not in RATE_LIMIT_STORE
 
         app.dependency_overrides.pop(get_pg_db, None)
 
