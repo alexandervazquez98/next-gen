@@ -107,6 +107,147 @@ class TestFetchICMPPing:
         assert mock_run.call_count == 2
 
 
+class TestSNMPWorkerObservability:
+    """Regression tests for observe-only instrumentation in poll_snmp."""
+
+    @patch("engines.snmp_worker.logger")
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_observe_only_logs_structured_cycle_summary_without_saving_metrics(
+        self, mock_session_local, mock_bulk_insert, mock_get_settings, mock_logger
+    ):
+        from config import PollingPipelineSettings
+
+        mock_get_settings.return_value = PollingPipelineSettings(pipeline_observe_only=True)
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        mock_bulk_insert.assert_not_called()
+        observe_calls = [
+            call for call in mock_logger.info.call_args_list
+            if call.args and call.args[0] == "polling_observe_cycle"
+        ]
+        assert observe_calls
+        observe_fields = observe_calls[0].kwargs["extra"]["polling"]
+        assert observe_fields["metrics_processed"] == 0
+        assert observe_fields["metrics_collected"] == 0
+        assert observe_fields["metrics_failed"] == 0
+        assert observe_fields["pipeline_observe_only"] is True
+
+    @patch("engines.snmp_worker.logger")
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_observe_only_logs_non_empty_cycle_without_changing_persistence(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp, mock_get_settings, mock_logger
+    ):
+        from config import PollingPipelineSettings
+
+        mock_get_settings.return_value = PollingPipelineSettings(pipeline_observe_only=True)
+        mock_fetch_snmp.return_value = 42.0
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [{
+            "node_id": "ci-001",
+            "metric_id": "CPU",
+            "protocol": "SNMP",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": "1.3.6.1.2.1.25.3.3.1.2",
+            "port": 161,
+        }])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        mock_bulk_insert.assert_called_once()
+        saved_metrics = mock_bulk_insert.call_args.args[1]
+        assert saved_metrics[0]["node_id"] == "ci-001"
+        assert saved_metrics[0]["metric_id"] == "CPU"
+        assert saved_metrics[0]["value"] == 42.0
+
+        observe_calls = [
+            call for call in mock_logger.info.call_args_list
+            if call.args and call.args[0] == "polling_observe_cycle"
+        ]
+        assert observe_calls
+        observe_fields = observe_calls[0].kwargs["extra"]["polling"]
+        assert observe_fields["metrics_processed"] == 1
+        assert observe_fields["metrics_collected"] == 1
+        assert observe_fields["metrics_failed"] == 0
+        assert observe_fields["pipeline_observe_only"] is True
+
+    @patch("engines.snmp_worker.logger")
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_observe_only_logging_is_disabled_by_default(
+        self, mock_session_local, mock_bulk_insert, mock_get_settings, mock_logger
+    ):
+        from config import PollingPipelineSettings
+
+        mock_get_settings.return_value = PollingPipelineSettings()
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        mock_bulk_insert.assert_not_called()
+        assert not any(
+            call.args and call.args[0] == "polling_observe_cycle"
+            for call in mock_logger.info.call_args_list
+        )
+
+    @patch("polling.snmp_worker.run_leased_snmp_worker_once")
+    @patch("engines.snmp_worker.poll_snmp")
+    @patch("engines.snmp_worker.SessionLocal")
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    def test_job_dispatches_to_leased_worker_only_when_flag_enabled(
+        self, mock_get_settings, mock_session_local, mock_poll_snmp, mock_leased_once
+    ):
+        from config import PollingPipelineSettings
+        from engines.snmp_worker import job
+
+        db = MagicMock()
+        mock_session_local.return_value = db
+        mock_get_settings.return_value = PollingPipelineSettings(snmp_leased_worker_enabled=True)
+
+        job()
+
+        mock_poll_snmp.assert_not_called()
+        mock_leased_once.assert_called_once_with(db, settings=mock_get_settings.return_value)
+        db.close.assert_called_once()
+
+
 class TestICMPDebounce:
     """Tests for ICMP debounce counter in poll_snmp."""
 

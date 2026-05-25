@@ -12,6 +12,14 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable with conservative defaults."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # Event Batch Pruner Settings
 # ---------------------------------------------------------------------------
@@ -116,6 +124,85 @@ def get_cli_credentials_settings() -> CLICredentialsSettings:
     if _cli_credentials_settings is None:
         _cli_credentials_settings = CLICredentialsSettings.from_env()
     return _cli_credentials_settings
+
+
+# ---------------------------------------------------------------------------
+# Polling Pipeline Settings
+# ---------------------------------------------------------------------------
+
+
+class PollingPipelineSettings(BaseModel):
+    """Feature flags and safe defaults for the scalable polling pipeline.
+
+    PR 1 only introduces observe-only/configuration contracts. Runtime behavior
+    remains legacy unless later slices explicitly enable queue, leased worker,
+    writer, backpressure, or cache flags.
+    """
+
+    pipeline_observe_only: bool = False
+    pg_queue_enabled: bool = False
+    snmp_leased_worker_enabled: bool = False
+    db_writer_enabled: bool = False
+    backpressure_enabled: bool = False
+    metadata_cache_enabled: bool = False
+
+    target_cycle_seconds: int = Field(default=900, ge=1)
+    worker_count: int = Field(default=8, ge=1)
+    db_writer_count: int = Field(default=1, ge=1)
+    task_batch_size: int = Field(default=100, ge=1)
+    result_batch_size: int = Field(default=500, ge=1)
+
+    # PR6 policy defaults: conservative throttling with ICMP protected first.
+    backpressure_max_task_queue_depth: int = Field(default=100000, ge=1)
+    backpressure_max_writer_lag_seconds: int = Field(default=120, ge=1)
+    backpressure_retry_max_attempts: int = Field(default=5, ge=1)
+    metadata_cache_ttl_seconds: int = Field(default=300, ge=1)
+
+    benchmark_ci_count: int = Field(default=8000, ge=1)
+    benchmark_metrics_per_ci: int = Field(default=35, ge=1)
+    benchmark_duration_seconds: int = Field(default=0, ge=0)
+    benchmark_protocol_mix: str = "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05"
+    benchmark_sink: str = "synthetic"
+
+    @classmethod
+    def from_env(cls) -> "PollingPipelineSettings":
+        """Load polling pipeline settings from environment variables."""
+        return cls(
+            pipeline_observe_only=_env_bool("POLLING_PIPELINE_OBSERVE_ONLY"),
+            pg_queue_enabled=_env_bool("POLLING_PG_QUEUE_ENABLED"),
+            snmp_leased_worker_enabled=_env_bool("POLLING_SNMP_LEASED_WORKER"),
+            db_writer_enabled=_env_bool("POLLING_DB_WRITER_ENABLED"),
+            backpressure_enabled=_env_bool("POLLING_BACKPRESSURE_ENABLED"),
+            metadata_cache_enabled=_env_bool("POLLING_METADATA_CACHE_ENABLED"),
+            target_cycle_seconds=int(os.getenv("POLLING_TARGET_CYCLE_SECONDS", "900")),
+            worker_count=int(os.getenv("POLLING_WORKERS", "8")),
+            db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),
+            task_batch_size=int(os.getenv("POLLING_TASK_BATCH_SIZE", "100")),
+            result_batch_size=int(os.getenv("POLLING_RESULT_BATCH_SIZE", "500")),
+            backpressure_max_task_queue_depth=int(os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")),
+            backpressure_max_writer_lag_seconds=int(os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")),
+            backpressure_retry_max_attempts=int(os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")),
+            metadata_cache_ttl_seconds=int(os.getenv("POLLING_METADATA_CACHE_TTL_SECONDS", "300")),
+            benchmark_ci_count=int(os.getenv("POLLING_BENCHMARK_CI_COUNT", "8000")),
+            benchmark_metrics_per_ci=int(os.getenv("POLLING_BENCHMARK_METRICS_PER_CI", "35")),
+            benchmark_duration_seconds=int(os.getenv("POLLING_BENCHMARK_DURATION_SECONDS", "0")),
+            benchmark_protocol_mix=os.getenv(
+                "POLLING_BENCHMARK_PROTOCOL_MIX",
+                "ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05",
+            ),
+            benchmark_sink=os.getenv("POLLING_BENCHMARK_SINK", "synthetic"),
+        )
+
+
+_polling_pipeline_settings: Optional[PollingPipelineSettings] = None
+
+
+def get_polling_pipeline_settings() -> PollingPipelineSettings:
+    """Return cached polling pipeline settings (singleton)."""
+    global _polling_pipeline_settings
+    if _polling_pipeline_settings is None:
+        _polling_pipeline_settings = PollingPipelineSettings.from_env()
+    return _polling_pipeline_settings
 
 
 # ---------------------------------------------------------------------------
