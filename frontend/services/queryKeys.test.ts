@@ -7,7 +7,7 @@ describe('queryKeys', () => {
     expect(queryKeys.nodes()).toEqual(['nodes']);
     expect(queryKeys.links()).toEqual(['links']);
     expect(queryKeys.categories()).toEqual(['categories']);
-    expect(queryKeys.activeEvents()).toEqual(['events', 'ACTIVE']);
+    expect(queryKeys.activeEvents()).toEqual(['events', 'CONSOLE']);
     expect(queryKeys.graphTopology()).toEqual(['graph-topology']);
   });
 

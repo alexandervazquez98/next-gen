@@ -72,14 +72,33 @@ class MockNeo4jSession:
     def __init__(self):
         self.queries = []
         self._response_map = {}
+        self._response_sequences = {}
+        self._close_results = None
         self._default_response = []
 
     def set_response(self, query_key: str, records):
         self._response_map[query_key.lower()] = records
 
+    def set_sequence_response(self, query_key: str, record_batches):
+        self._response_sequences[query_key.lower()] = list(record_batches)
+
+    def set_close_results(self, record_batches):
+        self._close_results = list(record_batches)
+
     def run(self, query: str, **params):
         self.queries.append({"query": query, "params": params})
         query_lower = query.lower()
+        if "return e.id as closed_id" in query_lower:
+            if self._close_results is not None:
+                if self._close_results:
+                    return MockNeo4jResult(self._close_results.pop(0))
+                return MockNeo4jResult([])
+            return MockNeo4jResult([{"closed_id": params.get("eid")}])
+        for key, batches in self._response_sequences.items():
+            if key in query_lower:
+                if batches:
+                    return MockNeo4jResult(batches.pop(0))
+                return MockNeo4jResult([])
         for key, records in self._response_map.items():
             if key in query_lower:
                 return MockNeo4jResult(records)
@@ -211,17 +230,13 @@ class TestEventBatchPrunerChunkCounting:
         session = mock_driver.session()
 
         session.set_response("return count(e) as total", [{"total": 1200}])
-        session.set_response(
-            "return e.id as event_id, e.status offset 0",
-            [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(500)],
-        )
-        session.set_response(
-            "return e.id as event_id, e.status offset 500",
-            [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(500, 1000)],
-        )
-        session.set_response(
-            "return e.id as event_id, e.status offset 1000",
-            [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(1000, 1200)],
+        session.set_sequence_response(
+            "return e.id as event_id, e.status",
+            [
+                [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(500)],
+                [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(500, 1000)],
+                [{"event_id": f"evt-{j}", "status": "RECOVERED"} for j in range(1000, 1200)],
+            ],
         )
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
@@ -331,6 +346,83 @@ class TestEventBatchPrunerTimeout:
             for p in result:
                 assert "total" in p
                 assert "batch" in p
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
+class TestEventBatchPrunerSafetyGuards:
+    """Verify streaming prune preserves ACK/comment safeguards at close time."""
+
+    def test_close_query_rechecks_ack_and_comments_after_selection(self, mock_driver):
+        """Events ACKed or commented after selection must not be closed by prune."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+        session.set_response("return count(e) as total", [{"total": 1}])
+        session.set_response(
+            "return e.id as event_id, e.status",
+            [{"event_id": "evt-1", "status": "RECOVERED"}],
+        )
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            async def consume():
+                async for _ in event_service.event_batch_pruner(
+                    user="system", batch_delay_ms=0
+                ):
+                    pass
+            _run_async(consume())
+
+            close_queries = [
+                q["query"]
+                for q in session.queries
+                if "RETURN e.id AS closed_id" in q["query"]
+            ]
+            assert close_queries, "Expected guarded close query to run"
+            close_query = close_queries[0]
+            assert "WHERE e.status = 'RECOVERED'" in close_query
+            assert "AND (e.ack IS NULL OR e.ack = false)" in close_query
+            assert "AND (e.comments IS NULL OR size(e.comments) = 0)" in close_query
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+    def test_full_page_with_protected_event_continues_to_next_page(self, mock_driver):
+        """A skipped close in a full page must not stop pagination early."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+        session.set_response("return count(e) as total", [{"total": 3}])
+        session.set_sequence_response(
+            "return e.id as event_id, e.status",
+            [
+                [
+                    {"event_id": "evt-1", "status": "RECOVERED"},
+                    {"event_id": "evt-2", "status": "RECOVERED"},
+                ],
+                [{"event_id": "evt-3", "status": "RECOVERED"}],
+            ],
+        )
+        session.set_close_results([
+            [{"closed_id": "first-page-close"}],
+            [],
+            [{"closed_id": "evt-3"}],
+        ])
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            progress_list = []
+            async def consume():
+                async for p in event_service.event_batch_pruner(
+                    user="system", batch_size=2, batch_delay_ms=0
+                ):
+                    progress_list.append(p)
+            _run_async(consume())
+
+            assert [p["batch"] for p in progress_list] == [0, 1, 2]
+            close_attempt_ids = [
+                q["params"].get("eid")
+                for q in session.queries
+                if "RETURN e.id AS closed_id" in q["query"]
+            ]
+            assert "evt-3" in close_attempt_ids
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
 

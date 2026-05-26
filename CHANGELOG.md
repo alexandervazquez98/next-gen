@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Recovered event console visibility** (issue #173):
+  - Adds a console-specific event feed that preserves `ACTIVE` as unresolved `OPEN`/`ACK` while keeping `RECOVERED` events visible in the Monitoring Console.
+  - Protects ACKed/commented recovered events during streaming cleanup by rechecking prune eligibility at close time.
+  - Adds backend and frontend regression coverage for recovered visibility, query routing, and prune pagination safety.
+
 - **Metric Analytics heterogeneous CI comparison follow-up** (extends PR #165):
   - Fixes `MetricHistoryChart` single-CI history loading by routing through the shared `fetchNodeMetricHistory()` API helper instead of an undefined `api` reference.
   - Allows primary and secondary multi-CI comparisons to choose metrics per selected CI, so different hardware models/brands can be compared before metric homologation.

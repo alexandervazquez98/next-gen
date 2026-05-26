@@ -34,7 +34,7 @@ async def get_events(status: Optional[str] = None):
     """
     Fetch system events filtered by status.
     Args:
-        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', or 'ACTIVE' (Open/Ack).
+        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
     """
     return event_service.get_events(status)
 
