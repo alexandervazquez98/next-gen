@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.6] — 2026-05-26
+
 ### Fixed
-- **Recovered event console visibility** (issue #173):
+- **Recovered event console visibility** (PR #174, issue #173):
   - Adds a console-specific event feed that preserves `ACTIVE` as unresolved `OPEN`/`ACK` while keeping `RECOVERED` events visible in the Monitoring Console.
   - Protects ACKed/commented recovered events during streaming cleanup by rechecking prune eligibility at close time.
   - Adds backend and frontend regression coverage for recovered visibility, query routing, and prune pagination safety.
