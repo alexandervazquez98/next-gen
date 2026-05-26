@@ -21,6 +21,7 @@ export interface MetricValue {
   protocol: string;
   oid: string;
   value: string | null;
+  unit?: string;
   status: string | null; // CRITICAL, WARNING, OK
   last_updated: string | null;
 }
