@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Metric Analytics heterogeneous CI comparison follow-up** (extends PR #165):
+  - Fixes `MetricHistoryChart` single-CI history loading by routing through the shared `fetchNodeMetricHistory()` API helper instead of an undefined `api` reference.
+  - Allows primary and secondary multi-CI comparisons to choose metrics per selected CI, so different hardware models/brands can be compared before metric homologation.
+  - Synchronizes multi-chart brush/zoom by timestamp range instead of shared point indices to avoid misleading windows across metrics with different sampling cadence.
+  - Adds focused coverage for single-node metric history URL construction, heterogeneous multi-CI defaults, and timestamp-based chart brush ranges.
+
 ## [1.12.4] — 2026-05-25
 
 ### Fixed
@@ -130,8 +139,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added Pydantic Field validation to prevent invalid configs (0 timeout, -1 retries, 0 debounce)
   - Added 12 unit tests covering ICMPSettings, fetch_icmp_ping retry, and debounce counter
   - Added `ICMP_TIMEOUT_MS`, `ICMP_RETRIES`, `ICMP_DEBOUNCE_COUNT` env vars to docker-compose.yml
-
-## [Unreleased]
 
 ## [1.11.5] — 2026-05-21
 
