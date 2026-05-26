@@ -131,7 +131,7 @@ describe('MonitoringConsole smoke tests', () => {
             }
             if (url === '/links') return Promise.resolve([]);
             if (url === '/categories') return Promise.resolve([{ name: 'NETWORK' }]);
-            if (url === '/events?status=ACTIVE') {
+            if (url === '/events?status=CONSOLE') {
                 activeEventsCalls += 1;
                 return Promise.resolve(activeEventsCalls === 1
                     ? [{
@@ -201,7 +201,58 @@ describe('MonitoringConsole smoke tests', () => {
         expect(endpointCalls['/nodes']).toBe(1);
         expect(endpointCalls['/links']).toBe(1);
         expect(endpointCalls['/categories']).toBe(1);
-        expect(endpointCalls['/events?status=ACTIVE']).toBe(2);
+        expect(endpointCalls['/events?status=CONSOLE']).toBe(2);
+    });
+
+    it('GIVEN recovered events WHEN console feed loads THEN they stay visible without ACK action and are cleanable', async () => {
+        const { default: MonitoringConsole } = await import('../MonitoringConsole');
+
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/nodes') {
+                return Promise.resolve([
+                    {
+                        id: 'ci-1',
+                        label: 'Router-01',
+                        type: 'INFRASTRUCTURE',
+                        status: 'OK',
+                        metadata: {},
+                        category: 'NETWORK',
+                        ip: '10.0.0.1',
+                        location: { lat: 40.4, long: -3.7 },
+                        location_name: 'Madrid HQ',
+                    },
+                ]);
+            }
+            if (url === '/links') return Promise.resolve([]);
+            if (url === '/categories') return Promise.resolve([{ name: 'NETWORK' }]);
+            if (url === '/events?status=CONSOLE') {
+                return Promise.resolve([
+                    {
+                        id: 'evt-recovered',
+                        ci_id: 'ci-1',
+                        ci_name: 'Router-01',
+                        metric_id: 'metric-ping',
+                        metric_name: 'Ping availability',
+                        metric_protocol: 'ICMP',
+                        status: 'RECOVERED',
+                        severity: 'CRITICAL',
+                        message: 'Host recovered',
+                        created_at: '2026-04-04T20:00:00.000Z',
+                        last_seen: '2026-04-04T20:05:00.000Z',
+                        ack: false,
+                        comments: [],
+                    },
+                ]);
+            }
+            return Promise.resolve([]);
+        });
+
+        renderWithQueryClient(<MonitoringConsole />);
+
+        expect(await screen.findByText('Host recovered')).toBeInTheDocument();
+        expect(screen.getByText('RECOVERED')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Ack' })).toBeNull();
+        expect(screen.getByRole('button', { name: /Clean recovered \(1\)/i })).toBeInTheDocument();
     });
 
     it('GIVEN the module WHEN imported THEN has no reference to leaflet-ant-path', async () => {
@@ -257,7 +308,7 @@ describe('MonitoringConsole smoke tests', () => {
             }
             if (url === '/links') return Promise.resolve([]);
             if (url === '/categories') return Promise.resolve([{ name: 'NETWORK' }]);
-            if (url === '/events?status=ACTIVE') {
+            if (url === '/events?status=CONSOLE') {
                 return Promise.resolve([
                     {
                         id: 'evt-older-warning',

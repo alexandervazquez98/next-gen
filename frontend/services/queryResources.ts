@@ -45,7 +45,7 @@ export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<CategoryRecord[]>('/categories', { signal });
 
 export const fetchActiveEvents = ({ signal }: { signal?: AbortSignal } = {}) =>
-  api.get<EventSummary[]>('/events?status=ACTIVE', { signal });
+  api.get<EventSummary[]>('/events?status=CONSOLE', { signal });
 
 export const fetchEventDetail = (eventId: string, { signal }: { signal?: AbortSignal } = {}) =>
   api.get<EventDetail>(`/events/${eventId}`, { signal });

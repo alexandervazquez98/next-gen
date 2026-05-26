@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fetchNodeMetricHistory, fetchNodesSearch } from "./queryResources";
+import { fetchActiveEvents, fetchNodeMetricHistory, fetchNodesSearch } from "./queryResources";
 
 const { mockApiGet } = vi.hoisted(() => ({
 	mockApiGet: vi.fn(),
@@ -10,6 +10,23 @@ vi.mock("./api", () => ({
 		get: mockApiGet,
 	},
 }));
+
+describe("fetchActiveEvents", () => {
+	beforeEach(() => {
+		mockApiGet.mockReset();
+	});
+
+	it("calls the console event feed so recovered events remain visible", async () => {
+		mockApiGet.mockResolvedValue([]);
+		const signal = new AbortController().signal;
+
+		await fetchActiveEvents({ signal });
+
+		expect(mockApiGet).toHaveBeenCalledWith("/events?status=CONSOLE", {
+			signal,
+		});
+	});
+});
 
 describe("fetchNodesSearch", () => {
 	beforeEach(() => {

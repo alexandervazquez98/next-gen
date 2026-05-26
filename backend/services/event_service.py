@@ -410,7 +410,12 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
             """
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
             WITH e, ci
-            WHERE ($status IS NULL OR ($status <> 'ACTIVE' AND e.status = $status) OR ($status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK']))
+            WHERE (
+                $status IS NULL
+                OR ($status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK'])
+                OR ($status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED'])
+                OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
+            )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
@@ -831,16 +836,21 @@ async def event_batch_pruner(
                         continue
                     try:
                         with session.begin_transaction() as tx:
-                            tx.run(
+                            close_result = tx.run(
                                 """
                                 MATCH (e:Event {id: $eid})
+                                WHERE e.status = 'RECOVERED'
+                                  AND (e.ack IS NULL OR e.ack = false)
+                                  AND (e.comments IS NULL OR size(e.comments) = 0)
                                 SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+                                RETURN e.id AS closed_id
                                 """,
                                 eid=event_id,
                                 user=user,
-                            )
+                            ).single()
                             tx.commit()
-                        processed_in_chunk += 1
+                        if close_result:
+                            processed_in_chunk += 1
                     except Exception:
                         # Chunk timeout or other error — log and continue
                         continue
@@ -858,8 +868,11 @@ async def event_batch_pruner(
                     "batch": batch,
                 }
 
-                # If we processed fewer than batch_size, we're done
-                if processed_in_chunk < batch_size:
+                # If the selected page was smaller than batch_size, there are no later
+                # eligible rows. Use selected count instead of closed count because an
+                # event can become ACKed/commented after selection and be skipped by
+                # the guarded close recheck without meaning pagination is exhausted.
+                if len(event_ids) < batch_size:
                     break
 
             except Exception as e:

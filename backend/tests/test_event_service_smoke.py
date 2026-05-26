@@ -66,9 +66,19 @@ class TestEventServiceSmoke:
         get_events(status="ACTIVE")
 
         query = mock_neo4j_session.queries[0]["query"]
-        assert "e.status IN ['OPEN', 'ACK']" in query
-        assert "'RECOVERED'" not in query
-        assert query.index("WHERE ($status IS NULL") < query.index("OPTIONAL MATCH")
+        assert "$status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK']" in query
+        assert "$status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
+        assert "$status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status" in query
+        assert query.index("WHERE (\n                $status IS NULL") < query.index("OPTIONAL MATCH")
+
+    def test_get_events_console_filter_includes_recovered(self, mock_neo4j_session):
+        """CONSOLE feed should keep recovered events visible until close/prune logic runs."""
+        get_events = _load_event_service_module().get_events
+
+        get_events(status="CONSOLE")
+
+        query = mock_neo4j_session.queries[0]["query"]
+        assert "$status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
 
     def test_get_events_uses_optional_metric_match(self, mock_neo4j_session):
         """Legacy active events without TRIGGERED_BY should not be filtered out."""

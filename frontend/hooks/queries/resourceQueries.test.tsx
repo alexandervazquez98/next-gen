@@ -90,7 +90,7 @@ describe('resource query hooks', () => {
     ['nodes', '/nodes', 5000, [{ id: 'node-1' }]],
     ['categories', '/categories', 5000, [{ name: 'Network' }]],
     ['links', '/links', 10000, [{ id: 'link-1' }]],
-    ['events', '/events?status=ACTIVE', 10000, [{ id: 'evt-1' }]],
+    ['events', '/events?status=CONSOLE', 10000, [{ id: 'evt-1' }]],
     ['topology', '/graph/full', 30000, { nodes: [], links: [] }],
   ] as const)('polls %s with its shared cadence', async (resource, endpoint, intervalMs, payload) => {
     mockApiGet.mockResolvedValue(payload);
