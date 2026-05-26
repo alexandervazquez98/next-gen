@@ -3,7 +3,7 @@ import { GraphNode, MetricValue, NodeMetricData } from '../types';
 import MetricHistoryChart from './MetricHistoryChart';
 import MultiSelectCIs from './MultiSelectCIs';
 import MultiMetricChart from './MultiMetricChart';
-import { fetchNodesSearch, fetchMetricsHistory } from '../services/queryResources';
+import { fetchNodes, fetchNodesSearch, fetchMetricsHistory } from '../services/queryResources';
 
 interface BrushRange {
   startIndex?: number;
@@ -47,7 +47,7 @@ const MetricAnalytics: React.FC = () => {
 
     // Fetch Nodes on Mount (original behavior)
     useEffect(() => {
-        api.get<GraphNode[]>('/nodes')
+        fetchNodes()
             .then(data => {
                 if (Array.isArray(data)) {
                     setNodes(data);

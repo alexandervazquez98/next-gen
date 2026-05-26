@@ -5,12 +5,16 @@ import MetricAnalytics from './MetricAnalytics';
 import { fetchNodesSearch } from '../services/queryResources';
 import { GraphNode } from '../types';
 
-const { mockFetchNodesSearch } = vi.hoisted(() => ({
+const { mockFetchNodes, mockFetchNodesSearch, mockFetchMetricsHistory } = vi.hoisted(() => ({
+  mockFetchNodes: vi.fn(),
   mockFetchNodesSearch: vi.fn(),
+  mockFetchMetricsHistory: vi.fn(),
 }));
 
 vi.mock('../services/queryResources', () => ({
+  fetchNodes: mockFetchNodes,
   fetchNodesSearch: mockFetchNodesSearch,
+  fetchMetricsHistory: mockFetchMetricsHistory,
 }));
 
 // Mock global fetch for initial node loading
@@ -28,6 +32,7 @@ describe('MetricAnalytics', () => {
       label: 'Core Router',
       type: 'INFRASTRUCTURE',
       status: 'OK',
+      metadata: {},
       ip: '192.168.1.1',
       brand: 'Cisco',
       model: 'ASR-1000',
@@ -41,6 +46,7 @@ describe('MetricAnalytics', () => {
       label: 'Backup Router',
       type: 'INFRASTRUCTURE',
       status: 'ACTIVE',
+      metadata: {},
       ip: '192.168.1.2',
       brand: 'Juniper',
       model: 'MX204',
@@ -50,7 +56,9 @@ describe('MetricAnalytics', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    mockFetchNodes.mockReset();
     mockFetchNodesSearch.mockReset();
+    mockFetchMetricsHistory.mockReset();
     // Mock localStorage for MetricAnalytics component
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -61,13 +69,8 @@ describe('MetricAnalytics', () => {
       },
       writable: true,
     });
-    // Mock fetch for initial node loading
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: { get: () => 'application/json' },
-      json: () => Promise.resolve([]),
-    } as Response);
+    mockFetchNodes.mockResolvedValue([]);
+    mockFetchMetricsHistory.mockResolvedValue({ nodes: [] });
   });
 
   afterEach(() => {
