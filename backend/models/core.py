@@ -108,11 +108,11 @@ class CIRef(BaseModel):
 class EventFeedSummary(BaseModel):
     id: str
     ci_id: str
-    metric_id: str
+    metric_id: Optional[str] = None
     status: Literal["OPEN", "ACK", "CLOSED", "RECOVERED"]
     severity: Literal["CRITICAL", "WARNING", "INFO"]
     message: str
-    created_at: str
+    created_at: Optional[str] = None
     last_seen: Optional[str] = None
     ack: bool = False
     ack_at: Optional[str] = None
@@ -124,6 +124,8 @@ class EventFeedSummary(BaseModel):
     ci_location_name: Optional[str] = None
     metric_name: Optional[str] = None
     metric_protocol: Optional[str] = None
+    event_type: Optional[str] = None
+    source_protocol: Optional[str] = None
     propagated_from: Optional[str] = None
     correlation_type: Optional[Literal["ROOT", "PROPAGATED"]] = None
     root_cause_ci_id: Optional[str] = None

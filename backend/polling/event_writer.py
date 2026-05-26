@@ -224,7 +224,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             MATCH (n:CI {id: row.ci_id})
             MATCH (m:MetricDef {id: row.metric_id})
             MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})
-            SET e.severity = row.severity,
+            SET e.id = coalesce(e.id, randomUUID()),
+                e.severity = row.severity,
                 e.message = row.message,
                 e.source_protocol = row.source_protocol,
                 e.last_seen = datetime(),
@@ -287,14 +288,25 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             WITH row WHERE row.recover_non_collection_event
             MATCH (:CI {id: row.ci_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
             WHERE e.status IN ['OPEN', 'ACK']
-              AND (e.event_type IS NULL OR e.event_type <> 'COLLECTION_FAILURE')
-              AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+              AND (
+                (
+                  row.source_protocol = 'ICMP'
+                  AND e.event_type = 'AVAILABILITY'
+                  AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
+                )
+                OR (
+                  coalesce(row.source_protocol, '') <> 'ICMP'
+                  AND (e.event_type IS NULL OR e.event_type <> 'COLLECTION_FAILURE')
+                  AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+                )
+              )
             SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = row.message
             WITH e
             CALL {
                 WITH e
                 MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
-                WHERE pe.root_cause_ci_id = e.ci_id
+                WHERE pe.propagated_from = e.id
+                  AND pe.root_cause_ci_id = e.ci_id
                   AND pe.correlation_type = 'PROPAGATED'
                   AND pe.status IN ['OPEN', 'ACK']
                   AND coalesce(m.can_propagate, true) = true

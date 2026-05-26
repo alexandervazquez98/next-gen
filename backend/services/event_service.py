@@ -149,8 +149,18 @@ def _build_event_summary(
     summary["ci_name"] = ci_data.get("name")
     summary["ci_hostname"] = ci_data.get("ip")
     summary["ci_location_name"] = ci_data.get("location_name")
-    summary["metric_name"] = metric_data.get("name") or metric_data.get("id")
-    summary["metric_protocol"] = metric_data.get("protocol")
+    metric_name = (
+        metric_data.get("name")
+        or metric_data.get("id")
+        or event_data.get("metric_name")
+        or event_data.get("metric_id")
+        or event_data.get("event_type")
+    )
+    metric_protocol = metric_data.get("protocol") or event_data.get("source_protocol")
+    if metric_name:
+        summary["metric_name"] = metric_name
+    if metric_protocol:
+        summary["metric_protocol"] = metric_protocol
     return summary
 
 
@@ -177,6 +187,8 @@ def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "propagated_from",
         "correlation_type",
         "root_cause_ci_id",
+        "event_type",
+        "source_protocol",
     }
     result = {
         key: value
@@ -397,8 +409,9 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
         result = session.run(
             """
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
-            MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
-            WHERE ($status IS NULL OR e.status = $status OR ($status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED']))
+            WITH e, ci
+            WHERE ($status IS NULL OR ($status <> 'ACTIVE' AND e.status = $status) OR ($status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK']))
+            OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
         """,

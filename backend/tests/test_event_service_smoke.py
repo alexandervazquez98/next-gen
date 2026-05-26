@@ -59,6 +59,107 @@ class TestEventServiceSmoke:
         query = mock_neo4j_session.queries[0]["query"].lower()
         assert "status" in query
 
+    def test_get_events_active_filter_excludes_recovered(self, mock_neo4j_session):
+        """ACTIVE should mean unresolved alarms only: OPEN/ACK, not RECOVERED."""
+        get_events = _load_event_service_module().get_events
+
+        get_events(status="ACTIVE")
+
+        query = mock_neo4j_session.queries[0]["query"]
+        assert "e.status IN ['OPEN', 'ACK']" in query
+        assert "'RECOVERED'" not in query
+        assert query.index("WHERE ($status IS NULL") < query.index("OPTIONAL MATCH")
+
+    def test_get_events_uses_optional_metric_match(self, mock_neo4j_session):
+        """Legacy active events without TRIGGERED_BY should not be filtered out."""
+        get_events = _load_event_service_module().get_events
+
+        get_events(status="ACTIVE")
+
+        query = mock_neo4j_session.queries[0]["query"].lower()
+        assert "optional match (e)-[:triggered_by]->(m:metricdef)" in query
+
+    def test_get_events_returns_legacy_event_without_metric_relationship(
+        self, mock_neo4j_session
+    ):
+        get_events = _load_event_service_module().get_events
+        now = datetime.now(timezone.utc)
+        mock_neo4j_session.set_response(
+            "return e, ci, m",
+            [
+                {
+                    "e": {
+                        "id": "evt-icmp-down",
+                        "ci_id": "ci-001",
+                        "metric_id": "PING-CHECK",
+                        "metric_name": "Ping availability",
+                        "status": "OPEN",
+                        "severity": "CRITICAL",
+                        "message": "Service/Host Down: Ping availability",
+                        "event_type": "AVAILABILITY",
+                        "source_protocol": "ICMP",
+                        "created_at": now,
+                        "last_seen": now,
+                        "ack": False,
+                    },
+                    "ci": {"id": "ci-001", "name": "Router-01", "ip": "10.0.0.1"},
+                    "m": None,
+                }
+            ],
+        )
+
+        result = get_events(status="ACTIVE")
+
+        assert result == [
+            {
+                "id": "evt-icmp-down",
+                "ci_id": "ci-001",
+                "metric_id": "PING-CHECK",
+                "status": "OPEN",
+                "severity": "CRITICAL",
+                "message": "Service/Host Down: Ping availability",
+                "created_at": now.isoformat(),
+                "last_seen": now.isoformat(),
+                "ack": False,
+                "ci_name": "Router-01",
+                "ci_node_id": "ci-001",
+                "ci_hostname": "10.0.0.1",
+                "metric_name": "Ping availability",
+                "metric_protocol": "ICMP",
+                "event_type": "AVAILABILITY",
+                "source_protocol": "ICMP",
+            }
+        ]
+
+    def test_get_events_returns_sparse_legacy_event_without_fabricated_metric(
+        self, mock_neo4j_session
+    ):
+        get_events = _load_event_service_module().get_events
+        mock_neo4j_session.set_response(
+            "return e, ci, m",
+            [
+                {
+                    "e": {
+                        "id": "evt-sparse",
+                        "ci_id": "ci-002",
+                        "status": "OPEN",
+                        "severity": "WARNING",
+                        "message": "Legacy event",
+                    },
+                    "ci": {"id": "ci-002", "name": "Legacy-CI"},
+                    "m": None,
+                }
+            ],
+        )
+
+        result = get_events(status="ACTIVE")
+
+        assert result[0]["id"] == "evt-sparse"
+        assert result[0]["ci_node_id"] == "ci-002"
+        assert result[0]["status"] == "OPEN"
+        assert "metric_name" not in result[0]
+        assert "metric_protocol" not in result[0]
+
     def test_get_events_strips_audit_heavy_fields_from_public_summary(
         self, mock_neo4j_session
     ):
