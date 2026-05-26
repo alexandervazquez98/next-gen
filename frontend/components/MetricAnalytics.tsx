@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { GraphNode, MetricValue, NodeMetricData } from "../types";
+import type React from "react";
+import { useState, useEffect } from "react";
+import type { GraphNode, MetricValue, NodeMetricData } from "../types";
 import MetricHistoryChart from "./MetricHistoryChart";
 import MultiSelectCIs from "./MultiSelectCIs";
 import MultiMetricChart from "./MultiMetricChart";
@@ -299,24 +300,24 @@ const MetricAnalytics: React.FC = () => {
 		.filter((node): node is GraphNode => Boolean(node));
 
 	return (
-		<div className="flex flex-col h-full bg-surface-950 text-white p-8 overflow-hidden">
-			<header className="mb-8 flex justify-between items-end">
-				<div>
-					<h1 className="text-3xl font-black uppercase tracking-tighter">
+		<div className="flex h-full min-w-0 max-w-full flex-col overflow-x-hidden overflow-y-auto bg-surface-950 p-4 text-white md:p-8">
+			<header className="mb-8 flex min-w-0 items-end justify-between gap-4">
+				<div className="min-w-0">
+					<h1 className="truncate text-3xl font-black uppercase tracking-tighter">
 						Metric Analytics
 					</h1>
-					<p className="text-neutral-500 font-mono text-sm mt-1">
+					<p className="mt-1 truncate font-mono text-sm text-neutral-500">
 						Historical Telemetry Visualization
 					</p>
 				</div>
 			</header>
 
-			<div className="grid grid-cols-12 gap-8 h-full">
+			<div className="grid min-w-0 max-w-full flex-1 grid-cols-12 gap-4 md:gap-8 lg:min-h-0">
 				{/* Controls Sidebar */}
-				<div className="col-span-12 lg:col-span-3 space-y-6 flex flex-col h-full overflow-hidden min-w-0">
+				<div className="col-span-12 flex min-w-0 max-w-full flex-col space-y-6 overflow-x-hidden lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
 					{/* Multi-CI Selector */}
-					<div className="bg-surface-900 border border-white/5 rounded-xl p-5">
-						<label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">
+					<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
+						<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
 							Compare Multiple CIs
 						</label>
 						<MultiSelectCIs
@@ -328,18 +329,18 @@ const MetricAnalytics: React.FC = () => {
 					</div>
 
 					{/* Date Range Selector */}
-					<div className="bg-surface-900 border border-white/5 rounded-xl p-5">
-						<label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2 block">
+					<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
+						<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
 							Custom Time Range
 						</label>
-						<div className="space-y-3">
+						<div className="min-w-0 space-y-3">
 							<div>
 								<label className="text-[10px] text-neutral-400 block mb-1">
 									Start Date
 								</label>
 								<input
 									type="datetime-local"
-									className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-xs text-white outline-none focus:border-brand-500"
+									className="w-full min-w-0 max-w-full rounded-lg border border-white/10 bg-black/40 p-2 text-xs text-white outline-none focus:border-brand-500"
 									value={startDate}
 									onChange={(e) => setStartDate(e.target.value)}
 								/>
@@ -350,7 +351,7 @@ const MetricAnalytics: React.FC = () => {
 								</label>
 								<input
 									type="datetime-local"
-									className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-xs text-white outline-none focus:border-brand-500"
+									className="w-full min-w-0 max-w-full rounded-lg border border-white/10 bg-black/40 p-2 text-xs text-white outline-none focus:border-brand-500"
 									value={endDate}
 									onChange={(e) => setEndDate(e.target.value)}
 								/>
@@ -367,23 +368,23 @@ const MetricAnalytics: React.FC = () => {
 					</div>
 
 					{/* Metric Selector */}
-					<div className="bg-surface-900 border border-white/5 rounded-xl p-5 flex-1 overflow-y-auto min-h-0">
-						<label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3 block">
+					<div className="min-w-0 max-w-full flex-1 overflow-y-auto rounded-xl border border-white/5 bg-surface-900 p-5 lg:min-h-0">
+						<label className="mb-3 block text-xs font-bold uppercase tracking-wider text-neutral-500">
 							{hasMultipleSelected ? "Metric per CI" : "Available Metrics"}
 						</label>
-						<div className="space-y-3">
+						<div className="min-w-0 space-y-3">
 							{hasMultipleSelected ? (
 								selectedNodes.map((node) => {
 									const metrics = node.metrics ?? [];
 									return (
 										<div
 											key={node.id}
-											className="rounded-lg border border-white/10 bg-white/[0.03] p-3"
+											className="min-w-0 max-w-full rounded-lg border border-white/10 bg-white/[0.03] p-3"
 										>
-											<p className="text-xs font-bold uppercase text-white truncate">
+											<p className="truncate text-xs font-bold uppercase text-white">
 												{node.label}
 											</p>
-											<p className="text-[10px] text-neutral-500 font-mono mb-2 truncate">
+											<p className="mb-2 truncate font-mono text-[10px] text-neutral-500">
 												{node.brand || "Unknown brand"} {node.model || ""}
 											</p>
 											{metrics.length > 0 ? (
@@ -399,7 +400,7 @@ const MetricAnalytics: React.FC = () => {
 														setMultiCiData([]);
 														setBrushRange(null);
 													}}
-													className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-brand-500 outline-none transition-colors"
+													className="w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none transition-colors focus:border-brand-500"
 												>
 													{metrics.map((metric) => (
 														<option key={metric.name} value={metric.name}>
@@ -425,20 +426,22 @@ const MetricAnalytics: React.FC = () => {
 												setMultiCiData([]);
 												setBrushRange(null);
 											}}
-											className={`w-full text-left p-3 rounded-lg border transition-all flex items-center justify-between ${
+											className={`flex w-full min-w-0 items-center justify-between rounded-lg border p-3 text-left transition-all ${
 												selectedMetric?.name === m.name
 													? "bg-brand-500/20 border-brand-500/50 text-white"
 													: "bg-white/5 border-transparent text-neutral-400 hover:bg-white/10"
 											}`}
 										>
-											<div>
-												<p className="text-xs font-bold uppercase">{m.name}</p>
-												<p className="text-[10px] opacity-60 font-mono mt-0.5">
+											<div className="min-w-0">
+												<p className="truncate text-xs font-bold uppercase">
+													{m.name}
+												</p>
+												<p className="mt-0.5 truncate font-mono text-[10px] opacity-60">
 													{m.protocol}
 												</p>
 											</div>
 											<span
-												className={`w-2 h-2 rounded-full ${m.status === "OK" ? "bg-emerald-500" : "bg-red-500"}`}
+												className={`h-2 w-2 shrink-0 rounded-full ${m.status === "OK" ? "bg-emerald-500" : "bg-red-500"}`}
 											></span>
 										</button>
 									))}
@@ -455,14 +458,15 @@ const MetricAnalytics: React.FC = () => {
 
 					{/* Secondary Metric Toggle */}
 					{hasMultipleSelected && (
-						<div className="bg-surface-900 border border-white/5 rounded-xl p-5">
-							<div className="flex items-center justify-between mb-3">
-								<label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+						<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
+							<div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+								<label className="truncate text-xs font-bold uppercase tracking-wider text-neutral-500">
 									Secondary Metric
 								</label>
 								<button
+									aria-label="Toggle secondary metric comparison"
 									onClick={() => setShowSecondary(!showSecondary)}
-									className={`w-10 h-5 rounded-full transition-colors ${showSecondary ? "bg-brand-500" : "bg-white/20"}`}
+									className={`h-5 w-10 shrink-0 rounded-full transition-colors ${showSecondary ? "bg-brand-500" : "bg-white/20"}`}
 								>
 									<div
 										className={`w-4 h-4 rounded-full bg-white transition-transform ${showSecondary ? "translate-x-5" : "translate-x-0.5"}`}
@@ -470,15 +474,15 @@ const MetricAnalytics: React.FC = () => {
 								</button>
 							</div>
 							{showSecondary && (
-								<div className="space-y-3">
+								<div className="min-w-0 space-y-3">
 									{selectedNodes.map((node) => {
 										const metrics = node.metrics ?? [];
 										return (
 											<div
 												key={node.id}
-												className="rounded-lg border border-white/10 bg-white/[0.03] p-3"
+												className="min-w-0 max-w-full rounded-lg border border-white/10 bg-white/[0.03] p-3"
 											>
-												<p className="text-xs font-bold uppercase text-white truncate">
+												<p className="truncate text-xs font-bold uppercase text-white">
 													{node.label}
 												</p>
 												{metrics.length > 0 ? (
@@ -496,7 +500,7 @@ const MetricAnalytics: React.FC = () => {
 															setSecondaryMultiCiData([]);
 															setBrushRange(null);
 														}}
-														className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-brand-500 outline-none transition-colors"
+														className="w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none transition-colors focus:border-brand-500"
 													>
 														{metrics.map((metric) => (
 															<option key={metric.name} value={metric.name}>
@@ -519,18 +523,18 @@ const MetricAnalytics: React.FC = () => {
 				</div>
 
 				{/* Main Chart Area */}
-				<div className="col-span-12 lg:col-span-9 flex flex-col gap-6 h-full overflow-hidden pb-8 min-w-0">
+				<div className="col-span-12 flex min-h-[24rem] min-w-0 max-w-full flex-col gap-6 overflow-hidden pb-8 lg:col-span-9 lg:h-full lg:min-h-0">
 					{hasMultipleSelected ? (
 						<>
 							{/* Multi-CI Chart View */}
-							<div className="flex-1 bg-surface-900 border border-white/5 rounded-xl p-8 relative overflow-hidden flex flex-col">
+							<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
 								<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
 									<span className="material-symbols-outlined text-9xl">
 										monitoring
 									</span>
 								</div>
 
-								<div className="relative z-10 flex-1 flex flex-col min-h-0">
+								<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
 									{multiCiLoading ? (
 										<div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
 											LOADING METRICS...
@@ -548,14 +552,14 @@ const MetricAnalytics: React.FC = () => {
 
 							{/* Secondary Metric Section */}
 							{showSecondary && (
-								<div className="flex-1 bg-surface-900 border border-white/5 rounded-xl p-8 relative overflow-hidden flex flex-col">
+								<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
 									<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
 										<span className="material-symbols-outlined text-9xl">
 											analytics
 										</span>
 									</div>
-									<div className="relative z-10 flex-1 flex flex-col min-h-0">
-										<div className="mb-4">
+									<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
+										<div className="mb-4 min-w-0">
 											<h3 className="text-white font-bold uppercase tracking-tight">
 												Secondary Metrics Comparison
 											</h3>
@@ -580,7 +584,7 @@ const MetricAnalytics: React.FC = () => {
 							)}
 						</>
 					) : selectedNode && selectedMetric ? (
-						<div className="flex-1 bg-surface-900 border border-white/5 rounded-xl p-8 relative overflow-hidden flex flex-col">
+						<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
 							{/* Background Pattern */}
 							<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
 								<span className="material-symbols-outlined text-9xl">
@@ -588,7 +592,7 @@ const MetricAnalytics: React.FC = () => {
 								</span>
 							</div>
 
-							<div className="relative z-10 flex-1 flex flex-col min-h-0">
+							<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
 								<MetricHistoryChart
 									nodeId={selectedNode.id}
 									metricId={selectedMetric.name}
@@ -604,7 +608,7 @@ const MetricAnalytics: React.FC = () => {
 									}
 								/>
 
-								<div className="mt-8 grid grid-cols-3 gap-6 flex-shrink-0">
+								<div className="mt-8 grid flex-shrink-0 grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
 									<StatCard
 										label="Current Value"
 										value={selectedMetric.value}
@@ -624,7 +628,7 @@ const MetricAnalytics: React.FC = () => {
 							</div>
 						</div>
 					) : (
-						<div className="flex-1 bg-surface-900 border border-dashed border-white/10 rounded-xl flex items-center justify-center flex-col text-neutral-600">
+						<div className="flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-surface-900 text-neutral-600">
 							<span className="material-symbols-outlined text-6xl mb-4 opacity-20">
 								analytics
 							</span>
@@ -659,13 +663,15 @@ const StatCard: React.FC<{
 	}
 
 	return (
-		<div className="bg-black/20 rounded-lg p-4 border border-white/5">
-			<p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+		<div className="min-w-0 rounded-lg border border-white/5 bg-black/20 p-4">
+			<p className="mb-1 truncate text-[10px] font-bold uppercase tracking-wider text-neutral-500">
 				{label}
 			</p>
-			<p className={`text-2xl font-black tracking-tight ${colorClass}`}>
+			<p
+				className={`truncate text-2xl font-black tracking-tight ${colorClass}`}
+			>
 				{displayValue}{" "}
-				<span className="text-xs text-neutral-500 font-normal">{unit}</span>
+				<span className="text-xs font-normal text-neutral-500">{unit}</span>
 			</p>
 		</div>
 	);

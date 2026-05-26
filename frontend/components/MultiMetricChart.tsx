@@ -1,6 +1,6 @@
-import React from "react";
+import type React from "react";
 import ChartPanel from "./ChartPanel";
-import { NodeMetricData } from "../types";
+import type { NodeMetricData } from "../types";
 
 interface BrushRange {
 	startTime?: string;
@@ -24,7 +24,7 @@ const MultiMetricChart: React.FC<MultiMetricChartProps> = ({
 }) => {
 	if (nodeData.length === 0) {
 		return (
-			<div className="flex-1 bg-surface-900 border border-dashed border-white/10 rounded-xl flex items-center justify-center flex-col text-neutral-600">
+			<div className="flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-surface-900 text-neutral-600">
 				<span className="material-symbols-outlined text-6xl mb-4 opacity-20">
 					analytics
 				</span>
@@ -36,7 +36,7 @@ const MultiMetricChart: React.FC<MultiMetricChartProps> = ({
 	}
 
 	return (
-		<div className="flex flex-col gap-4 h-full overflow-y-auto">
+		<div className="flex h-full min-w-0 max-w-full flex-col gap-4 overflow-y-auto overflow-x-hidden">
 			{nodeData.map((node) => (
 				<ChartPanel
 					key={node.node_id}

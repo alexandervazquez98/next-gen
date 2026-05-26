@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MetricAnalytics from "./MetricAnalytics";
-import { GraphNode } from "../types";
+import type { GraphNode } from "../types";
 
 const {
 	mockFetchNodes,
@@ -289,6 +289,127 @@ describe("MetricAnalytics", () => {
 					}),
 				);
 			});
+		});
+	});
+
+	describe("responsive layout guards", () => {
+		it("renders multi-CI controls with overflow guards for long labels", async () => {
+			vi.useRealTimers();
+			const longNodes: GraphNode[] = [
+				{
+					id: "CI-LONG-001",
+					label:
+						"Core Router With An Extremely Long Human Readable Name That Should Not Force Horizontal Overflow 001",
+					type: "INFRASTRUCTURE",
+					status: "OK",
+					metadata: {},
+					ip: "10.10.10.1",
+					brand: "VeryLongNetworkVendorName",
+					model: "VeryLongModelIdentifier-AAAAAAAAAAAAAAAAAAAAAAAA",
+					metrics: [
+						{
+							name: "primary-throughput-metric-with-a-very-long-name",
+							protocol: "snmp",
+							oid: "1.3.6.1.4.1.1",
+							value: "45",
+							status: "OK",
+							last_updated: "2026-05-11T10:00:00Z",
+						},
+						{
+							name: "secondary-latency-metric-with-a-very-long-name",
+							protocol: "snmp",
+							oid: "1.3.6.1.4.1.2",
+							value: "60",
+							status: "OK",
+							last_updated: "2026-05-11T10:00:00Z",
+						},
+					],
+				},
+				{
+					id: "CI-LONG-002",
+					label:
+						"Backup Router With Another Extremely Long Human Readable Name That Should Truncate 002",
+					type: "INFRASTRUCTURE",
+					status: "OK",
+					metadata: {},
+					ip: "10.10.10.2",
+					brand: "AnotherVeryLongNetworkVendorName",
+					model: "VeryLongModelIdentifier-BBBBBBBBBBBBBBBBBBBBBBBB",
+					metrics: [
+						{
+							name: "primary-packet-loss-metric-with-a-very-long-name",
+							protocol: "snmp",
+							oid: "1.3.6.1.4.1.3",
+							value: "12",
+							status: "OK",
+							last_updated: "2026-05-11T10:00:00Z",
+						},
+						{
+							name: "secondary-cpu-pressure-metric-with-a-very-long-name",
+							protocol: "snmp",
+							oid: "1.3.6.1.4.1.4",
+							value: "18",
+							status: "OK",
+							last_updated: "2026-05-11T10:00:00Z",
+						},
+					],
+				},
+			];
+			mockFetchNodes.mockResolvedValue(longNodes);
+			mockFetchNodeMetricHistory.mockResolvedValue([]);
+
+			const { container } = render(<MetricAnalytics />);
+
+			await waitFor(() =>
+				expect(screen.getByText(longNodes[0].label)).toBeInTheDocument(),
+			);
+
+			await act(async () => {
+				screen.getByText(longNodes[0].label).click();
+			});
+			await act(async () => {
+				screen.getByText(longNodes[1].label).click();
+			});
+
+			await waitFor(() =>
+				expect(screen.getByText("Metric per CI")).toBeInTheDocument(),
+			);
+
+			expect(container.firstElementChild).toHaveClass(
+				"min-w-0",
+				"max-w-full",
+				"overflow-x-hidden",
+				"overflow-y-auto",
+			);
+			expect(
+				screen.getByText("Metric per CI").closest(".col-span-12"),
+			).toHaveClass("min-w-0", "max-w-full", "overflow-x-hidden");
+
+			const selectedChipLabel = screen
+				.getAllByText(longNodes[0].label)
+				.find(
+					(element) =>
+						element.tagName.toLowerCase() === "span" &&
+						element.className.includes("truncate"),
+				);
+			expect(selectedChipLabel).toHaveClass("min-w-0", "truncate");
+
+			await act(async () => {
+				screen
+					.getByRole("button", {
+						name: /toggle secondary metric comparison/i,
+					})
+					.click();
+			});
+
+			expect(
+				screen.getByText("Secondary Metrics Comparison"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole("button", {
+					name: /toggle secondary metric comparison/i,
+				}),
+			).toHaveClass("shrink-0");
 		});
 	});
 

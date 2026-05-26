@@ -94,9 +94,9 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
   const selectedNodesMap = new Map(selectedIds.map(id => [id, availableNodes.find(n => n.id === id)]));
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3">
       {/* Search Input */}
-      <div className="relative">
+      <div className="relative min-w-0 max-w-full">
         <input
           type="text"
           role="searchbox"
@@ -106,7 +106,7 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           maxLength={200}
-          className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
+          className="w-full min-w-0 max-w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-brand-500 outline-none transition-colors placeholder-neutral-500"
           disabled={selectedIds.length >= maxCIs}
         />
         {searchTerm && (
@@ -125,7 +125,7 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
         <p className="text-xs text-neutral-500">Loading...</p>
       )}
       {searchError && (
-        <p className="text-xs text-red-400">{searchError}</p>
+        <p className="text-xs text-red-400 break-words">{searchError}</p>
       )}
       {!isSearching && searchTerm.length >= 2 && searchResults.length === 0 && !searchError && (
         <p className="text-xs text-neutral-500">No results found</p>
@@ -133,17 +133,17 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
 
       {/* Search Results Dropdown */}
       {searchResults.length > 0 && (
-        <div className="max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
+        <div className="max-h-48 min-w-0 max-w-full overflow-y-auto bg-black/20 rounded-lg border border-white/5">
           {displayNodes.map(n => (
             <button
               key={n.id}
               onClick={() => handleAddNode(n.id)}
               disabled={selectedIds.length >= maxCIs}
-              className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="w-full min-w-0 text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <span className={`w-2 h-2 rounded-full ${n.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-              <span className="text-sm text-white">{n.label || n.id}</span>
-              <span className="text-[10px] text-neutral-500 font-mono ml-auto">{n.ip || 'No IP'}</span>
+              <span className="min-w-0 truncate text-sm text-white">{n.label || n.id}</span>
+              <span className="text-[10px] text-neutral-500 font-mono ml-auto shrink-0">{n.ip || 'No IP'}</span>
             </button>
           ))}
         </div>
@@ -151,7 +151,7 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
 
       {/* Available Nodes (when not searching) */}
       {!isSearching && searchResults.length === 0 && availableNodes.length > 0 && (
-        <div className="max-h-48 overflow-y-auto bg-black/20 rounded-lg border border-white/5">
+        <div className="max-h-48 min-w-0 max-w-full overflow-y-auto bg-black/20 rounded-lg border border-white/5">
           {availableNodes
             .filter(n => !selectedIds.includes(n.id))
             .slice(0, 20)
@@ -159,12 +159,12 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
               <button
                 key={n.id}
                 onClick={() => handleAddNode(n.id)}
-                className="w-full text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2"
+                className="w-full min-w-0 text-left p-3 hover:bg-white/5 border-b border-white/5 last:border-b-0 flex items-center gap-2"
                 disabled={selectedIds.length >= maxCIs}
               >
                 <span className={`w-2 h-2 rounded-full ${n.status === 'OK' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                <span className="text-sm text-white">{n.label || n.id}</span>
-                <span className="text-[10px] text-neutral-500 font-mono ml-auto">{n.ip || 'No IP'}</span>
+                <span className="min-w-0 truncate text-sm text-white">{n.label || n.id}</span>
+                <span className="text-[10px] text-neutral-500 font-mono ml-auto shrink-0">{n.ip || 'No IP'}</span>
               </button>
             ))}
         </div>
@@ -172,16 +172,16 @@ const MultiSelectCIs: React.FC<MultiSelectCIsProps> = ({
 
       {/* Selected CIs Chips */}
       {selectedIds.length > 0 && (
-        <div className="flex flex-wrap gap-2 mt-3">
+        <div className="flex min-w-0 flex-wrap gap-2 mt-3">
           {selectedIds.map(id => {
             const node = selectedNodesMap.get(id);
             return (
               <div
                 key={id}
-                className="flex items-center gap-2 bg-brand-500/20 border border-brand-500/40 rounded-full px-3 py-1.5 text-sm"
+                className="flex min-w-0 max-w-full items-center gap-2 bg-brand-500/20 border border-brand-500/40 rounded-full px-3 py-1.5 text-sm"
               >
-                <span className="w-2 h-2 rounded-full bg-brand-500"></span>
-                <span className="text-white font-bold">{node?.label || id}</span>
+                <span className="w-2 h-2 rounded-full bg-brand-500 shrink-0"></span>
+                <span className="min-w-0 truncate text-white font-bold">{node?.label || id}</span>
                 <button
                   onClick={() => handleRemoveNode(id)}
                   className="text-neutral-400 hover:text-white transition-colors ml-1"
