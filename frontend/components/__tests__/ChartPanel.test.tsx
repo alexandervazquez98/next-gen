@@ -75,7 +75,7 @@ describe('ChartPanel', () => {
         nodeId="ci-001"
         label="Router-01"
         data={SAMPLE_DATA}
-        brushRange={{ startIndex: 0, endIndex: 2 }}
+        brushRange={{ startTime: '2026-05-12T10:00:00Z', endTime: '2026-05-12T10:01:00Z' }}
         onBrushChange={vi.fn()}
       />
     );
@@ -89,7 +89,7 @@ describe('ChartPanel', () => {
         nodeId="ci-001"
         label="Router-01"
         data={SAMPLE_DATA}
-        brushRange={{ startIndex: 0, endIndex: 2 }}
+        brushRange={{ startTime: '2026-05-12T10:00:00Z', endTime: '2026-05-12T10:01:00Z' }}
         onBrushChange={vi.fn()}
       />
     );
@@ -104,7 +104,7 @@ describe('ChartPanel', () => {
         nodeId="ci-001"
         label="Router-01"
         data={SAMPLE_DATA}
-        brushRange={{ startIndex: 0, endIndex: 2 }}
+        brushRange={{ startTime: '2026-05-12T10:00:00Z', endTime: '2026-05-12T10:01:00Z' }}
         onBrushChange={onBrushChange}
       />
     );

@@ -188,6 +188,8 @@ export interface DataPoint {
 export interface NodeMetricData {
   node_id: string;
   label: string;
+  metricName?: string;
+  unit?: string;
   data: DataPoint[];
 }
 

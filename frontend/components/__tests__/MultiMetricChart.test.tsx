@@ -81,7 +81,7 @@ describe('MultiMetricChart', () => {
     render(
       <MultiMetricChart
         nodeData={SAMPLE_NODE_DATA}
-        brushRange={{ startIndex: 0, endIndex: 1 }}
+        brushRange={{ startTime: '2026-05-12T10:00:00Z', endTime: '2026-05-12T10:00:30Z' }}
         onBrushChange={onBrushChange}
       />
     );
