@@ -440,7 +440,9 @@ class TestICMPDebounce:
             "ip": "192.168.1.1",
             "community": "public",
             "oid": None,
-            "port": 161
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
         }])
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -460,6 +462,12 @@ class TestICMPDebounce:
             if "set n.status" in q["query"].lower() and q["params"].get("status") == "CRITICAL"
         ]
         assert len(critical_calls) == 0, f"Unexpected CRITICAL calls: {critical_calls}"
+        availability_queries = [
+            q for q in mock_session.queries
+            if "AVAILABILITY" in q["query"] or q["params"].get("availability_events")
+        ]
+        assert availability_queries == []
+        mock_bulk_insert.assert_not_called()
         assert _consecutive_failures.get("ci-001", 0) == 1
 
     @patch("engines.snmp_worker.fetch_icmp_ping")
@@ -482,7 +490,9 @@ class TestICMPDebounce:
             "ip": "192.168.1.1",
             "community": "public",
             "oid": None,
-            "port": 161
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
         }])
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -499,12 +509,25 @@ class TestICMPDebounce:
             for _ in range(3):
                 poll_snmp()
 
-        # After 3rd failure, CRITICAL status should be set
+        # After 3rd failure, CRITICAL status should be set and a 0.0 sample/event is persisted.
         critical_calls = [
             q for q in mock_session.queries
             if "set n.status" in q["query"].lower() and q["params"].get("status") == "CRITICAL"
         ]
         assert len(critical_calls) >= 1, f"Expected at least 1 CRITICAL call, got {len(critical_calls)}: {mock_session.queries}"
+        mock_bulk_insert.assert_called()
+        saved_rows = mock_bulk_insert.call_args.args[1]
+        assert any(row["node_id"] == "ci-001" and row["metric_id"] == "PING-CHECK" and row["value"] == 0.0 for row in saved_rows)
+        availability_queries = [
+            q for q in mock_session.queries
+            if "event_type: row.event_type" in q["query"] and "AVAILABILITY" in q["query"]
+        ]
+        assert availability_queries, mock_session.queries
+        availability_query = "\n".join(q["query"] for q in availability_queries)
+        assert "source_protocol" in availability_query
+        assert "MERGE (created)-[:TRIGGERED_BY]->(m)" in availability_query or "MERGE (existing)-[:TRIGGERED_BY]->(m)" in availability_query
+        availability_batches = [q["params"].get("availability_events", []) for q in availability_queries]
+        assert any(row["event_type"] == "AVAILABILITY" and row["source_protocol"] == "ICMP" for batch in availability_batches for row in batch)
         # Counter resets after event
         assert _consecutive_failures.get("ci-001", 0) == 0
 
@@ -567,7 +590,9 @@ class TestICMPDebounce:
             "ip": "192.168.1.1",
             "community": "public",
             "oid": None,
-            "port": 161
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
         }])
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -587,4 +612,66 @@ class TestICMPDebounce:
             if "set n.status" in q["query"].lower() and q["params"].get("status") == "OK"
         ]
         assert len(ok_calls) == 1, f"Expected 1 OK call, got {len(ok_calls)}: {mock_session.queries}"
+        recovery_queries = [
+            q for q in mock_session.queries
+            if "SET e.status = 'RECOVERED'" in q["query"] and "AVAILABILITY" in q["query"]
+        ]
+        assert recovery_queries, mock_session.queries
+        recovery_query = "\n".join(q["query"] for q in recovery_queries)
+        assert "e.event_type = 'AVAILABILITY'" in recovery_query
+        assert "toUpper(e.source_protocol) = row.protocol" in recovery_query
+        assert "pe.propagated_from = e.id" in recovery_query
+        assert "COLLECTION_FAILURE" not in recovery_query
         assert _consecutive_failures.get("ci-001", 0) == 0
+
+    @patch("engines.snmp_worker.fetch_icmp_ping")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_debounce_threshold_bulk_insert_failure_does_not_write_event(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_icmp
+    ):
+        """ICMP availability events are not written unless durable insert succeeds."""
+        from engines.snmp_worker import _consecutive_failures
+        _consecutive_failures.clear()
+
+        mock_fetch_icmp.return_value = 0.0
+        mock_bulk_insert.side_effect = RuntimeError("timescale unavailable")
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match", [{
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
+        }])
+
+        mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+
+            for _ in range(3):
+                poll_snmp()
+
+        mock_bulk_insert.assert_called_once()
+        critical_calls = [
+            q for q in mock_session.queries
+            if "set n.status" in q["query"].lower() and q["params"].get("status") == "CRITICAL"
+        ]
+        assert critical_calls == []
+        availability_queries = [
+            q for q in mock_session.queries
+            if "event_type: row.event_type" in q["query"] and "AVAILABILITY" in q["query"]
+        ]
+        assert availability_queries == []
+        assert _consecutive_failures.get("ci-001", 0) >= 3

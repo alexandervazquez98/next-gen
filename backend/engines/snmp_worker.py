@@ -21,8 +21,10 @@ from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 from postgres_db import SessionLocal
 from config import get_icmp_settings, get_polling_pipeline_settings
 from services.polling_event_lifecycle import (
+    EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
     FAILURE_FAMILY_SNMP_NO_RESPONSE,
+    SOURCE_PROTOCOL_ICMP,
     SOURCE_PROTOCOL_SNMP,
     is_snmp_no_response_failure,
     normalized_protocol,
@@ -178,6 +180,14 @@ def _log_observe_only_cycle(settings, metrics_count, collected_count, failed_cou
     )
 
 
+def _base_severity_from_criticality(criticality) -> str:
+    try:
+        normalized = int(criticality or 1)
+    except (TypeError, ValueError):
+        normalized = 1
+    return {2: "WARNING", 3: "CRITICAL"}.get(normalized, "INFO")
+
+
 def _dedupe_snmp_collection_failures(failures):
     deduped = {}
     for row in failures:
@@ -226,6 +236,82 @@ def _refresh_snmp_collection_failures(session, failures):
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
     """, failures=failures)
+
+
+def _refresh_icmp_availability_events(session, updates):
+    availability_events = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and float(u.get("value") or 0) == 0.0
+    ]
+    if not availability_events:
+        return
+    session.run("""
+        UNWIND $availability_events AS row
+        WITH row WHERE row.event_type = 'AVAILABILITY' AND row.source_protocol = 'ICMP'
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
+        WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+          AND existing.event_type = 'AVAILABILITY'
+          AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
+        WITH row, n, m, head(collect(existing)) AS existing
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                status: 'OPEN', severity: row.severity, message: row.message,
+                event_type: row.event_type, source_protocol: row.source_protocol,
+                created_at: datetime(), last_seen: datetime(), ack: false,
+                correlation_type: 'ROOT', root_cause_ci_id: row.node_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.status = 'OPEN', existing.severity = row.severity,
+                existing.message = row.message, existing.last_seen = datetime(),
+                existing.recovered_at = NULL, existing.ack = false,
+                existing.event_type = row.event_type,
+                existing.source_protocol = row.source_protocol
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """, availability_events=availability_events)
+
+
+def _recover_icmp_availability_events(session, updates):
+    recoveries = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and float(u.get("value") or 0) == 1.0
+    ]
+    if not recoveries:
+        return
+    session.run("""
+        UNWIND $recoveries AS row
+        MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND e.event_type = 'AVAILABILITY'
+          AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.protocol)
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.message = 'Metric ICMP availability recovered. Latest sample collected by legacy SNMP worker'
+        WITH e
+        CALL {
+            WITH e
+            MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE pe.propagated_from = e.id
+              AND pe.root_cause_ci_id = e.ci_id
+              AND pe.correlation_type = 'PROPAGATED'
+              AND pe.status IN ['OPEN', 'ACK']
+              AND coalesce(m.can_propagate, true) = true
+            SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+            RETURN count(pe) AS propagated_recovered
+        }
+        RETURN e
+    """, recoveries=recoveries)
 
 
 def _recover_snmp_collection_failures(session, updates):
@@ -282,7 +368,8 @@ def poll_snmp():
                 RETURN n.id as node_id, n.ip as ip, 
                        coalesce(n.snmp_community, 'public') as community,
                        coalesce(n.snmp_port, 161) as port,
-                       m.id as metric_id, m.protocol as protocol, m.oid as oid,
+                       m.id as metric_id, m.name as metric_name, m.protocol as protocol,
+                       m.oid as oid, m.criticality as criticality,
                        interval
             """)
             
@@ -306,14 +393,11 @@ def poll_snmp():
                     if val == 0:
                         _consecutive_failures[node_id] = _consecutive_failures.get(node_id, 0) + 1
                         if _consecutive_failures[node_id] >= icmp_settings.debounce_count:
-                            # DOWN event: store CRITICAL status and reset counter
-                            session.run(
-                                "MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()",
-                                id=node_id, status="CRITICAL"
-                            )
-                            _consecutive_failures[node_id] = 0
-                            # Don't record metric for this cycle (debounce suppressed it)
-                            val = None
+                            # DOWN event: allow the debounced 0.0 observation
+                            # to flow to durable metric/event writes. CI status
+                            # and debounce reset happen only after Timescale
+                            # persistence succeeds below.
+                            val = 0.0
                         else:
                             # Below threshold: suppress metric recording until threshold
                             val = None
@@ -341,11 +425,24 @@ def poll_snmp():
                         "time": datetime.utcnow()
                     })
 
+                    metric_name = record["metric_name"] or mid
+                    severity = _base_severity_from_criticality(record["criticality"])
                     latest_updates.append({
                         "node_id": node_id,
                         "metric_id": mid,
                         "value": val,
                         "protocol": protocol,
+                        "metric_name": metric_name,
+                        "criticality": record["criticality"],
+                        "status": severity if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else "OK",
+                        "message": (
+                            f"Service/Host Down: {metric_name}"
+                            if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0
+                            else "Latest sample collected by legacy SNMP worker"
+                        ),
+                        "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else None,
+                        "source_protocol": SOURCE_PROTOCOL_ICMP if protocol == SOURCE_PROTOCOL_ICMP else protocol,
+                        "severity": severity,
                     })
                 else:
                     failed_count += 1
@@ -393,12 +490,13 @@ def poll_snmp():
             if metrics_to_save:
                 bulk_insert_metrics(db, metrics_to_save)
                 for update in latest_updates:
-                    if update["protocol"].upper() == "ICMP" and update["value"] == 1.0:
+                    if update["protocol"].upper() == "ICMP" and update["value"] in (0.0, 1.0):
                         session.run(
                             "MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()",
                             id=update["node_id"],
-                            status="OK",
+                            status="CRITICAL" if update["value"] == 0.0 else "OK",
                         )
+                        _consecutive_failures[update["node_id"]] = 0
                     session.run("""
                         MATCH (n:CI {id: $nid})-[r:HAS_METRIC]->(m:MetricDef {id: $mid})
                         SET r.last_polled = datetime(),
@@ -406,7 +504,9 @@ def poll_snmp():
                             r.last_updated = datetime(),
                             r.status = $status,
                             r.last_message = $msg
-                    """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status="OK", msg="Latest sample collected by legacy SNMP worker")
+                    """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status=update["status"], msg=update["message"])
+                _refresh_icmp_availability_events(session, latest_updates)
+                _recover_icmp_availability_events(session, latest_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
 

@@ -1099,7 +1099,7 @@ class TestEventsList:
         assert call_args[1]["status"] == "OPEN"
 
     def test_list_events_active_filter(self, mock_neo4j_driver):
-        """ACTIVE status should include OPEN, ACK, RECOVERED."""
+        """ACTIVE status should request unresolved OPEN/ACK events from the service."""
         mock_session = MagicMock()
         mock_session.run.return_value = MagicMock(
             __iter__=MagicMock(return_value=iter([]))
@@ -1158,6 +1158,35 @@ class TestEventsList:
         assert "comments" not in data[0]
         assert "ack_by" not in data[0]
         assert "closed_by" not in data[0]
+
+    def test_list_events_allows_sparse_legacy_events_and_exposes_discriminators(self):
+        """Response model should not drop event discriminators or reject missing metric_id."""
+        payload = [
+            {
+                "id": "evt-sparse-icmp",
+                "ci_id": "ci-001",
+                "ci_name": "Router-01",
+                "ci_node_id": "ci-001",
+                "status": "OPEN",
+                "severity": "CRITICAL",
+                "message": "Service/Host Down: ICMP",
+                "ack": False,
+                "event_type": "AVAILABILITY",
+                "source_protocol": "ICMP",
+            }
+        ]
+
+        with patch("routers.events.event_service.get_events", return_value=payload):
+            response = client.get("/api/events?status=ACTIVE")
+
+        assert response.status_code == 200
+        event = response.json()[0]
+        assert event["metric_id"] is None
+        assert event["metric_name"] is None
+        assert event["metric_protocol"] is None
+        assert event["created_at"] is None
+        assert event["event_type"] == "AVAILABILITY"
+        assert event["source_protocol"] == "ICMP"
 
 
 class TestEventsDetail:
