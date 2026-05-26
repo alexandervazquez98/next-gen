@@ -107,7 +107,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-surface-950 font-sans text-neutral-200">
+    <div className="flex h-screen w-full max-w-full overflow-hidden bg-surface-950 font-sans text-neutral-200">
       {/* Sidebar Nav */}
       <nav className="w-20 lg:w-64 border-r border-white/5 flex flex-col glass z-50">
         <div className="p-6 flex items-center gap-3">
@@ -156,7 +156,7 @@ const MainLayout: React.FC = () => {
       </nav>
 
       {/* Main View Area */}
-      <div className="flex-1 flex flex-col relative overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col relative overflow-hidden">
         <header className="h-20 border-b border-white/5 flex items-center justify-between px-8 glass z-40">
           <div className="flex items-center gap-4">
             <h1 className="text-lg font-bold text-white tracking-tight uppercase tracking-widest">Platform Engine v3.2</h1>
@@ -178,8 +178,8 @@ const MainLayout: React.FC = () => {
           </div>
         </header>
 
-        <main className="flex-1 flex overflow-hidden relative">
-          <div className="flex-1 h-full relative overflow-hidden">
+        <main className="flex-1 min-w-0 flex overflow-hidden relative">
+          <div className="flex-1 min-w-0 h-full relative overflow-hidden">
             <Routes>
               <Route index element={<SystemDashboard />} />
               <Route path="monitoring" element={<MonitoringConsole />} />

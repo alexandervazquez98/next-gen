@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import type React from "react";
+import { useMemo } from "react";
 import {
 	AreaChart,
 	Area,
@@ -73,24 +74,24 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 	const hasData = data.length > 0;
 
 	return (
-		<div className="bg-surface-800 rounded-xl p-6 border border-white/5 shadow-inner flex flex-col h-full min-h-[250px]">
-			<div className="flex justify-between items-center mb-4 flex-shrink-0">
-				<div>
-					<h4 className="text-white font-bold uppercase tracking-tight">
+		<div className="flex h-full min-h-[250px] min-w-0 max-w-full flex-col rounded-xl border border-white/5 bg-surface-800 p-4 shadow-inner md:p-6">
+			<div className="mb-4 flex min-w-0 flex-shrink-0 items-center justify-between gap-3">
+				<div className="min-w-0">
+					<h4 className="truncate font-bold uppercase tracking-tight text-white">
 						{label}
 					</h4>
 					{metricName && (
-						<p className="text-[10px] text-brand-300 font-mono uppercase mt-0.5">
+						<p className="mt-0.5 truncate font-mono text-[10px] uppercase text-brand-300">
 							{metricName}
 						</p>
 					)}
-					<p className="text-xs text-neutral-500">
+					<p className="truncate text-xs text-neutral-500">
 						{hasBrushApplied
 							? `${displayData.length} points selected`
 							: `${data.length} data points`}
 					</p>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex shrink-0 items-center gap-2">
 					{hasBrushApplied && (
 						<button
 							onClick={handleResetView}
@@ -114,7 +115,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 				</div>
 			) : (
 				<div
-					className="flex-1 w-full min-h-0 relative"
+					className="relative min-h-0 w-full min-w-0 flex-1"
 					style={{ minWidth: 0, minHeight: 0 }}
 				>
 					<ResponsiveContainer width="99%" height="99%">
