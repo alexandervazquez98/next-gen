@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.8] — 2026-05-27
+
+### Added
+- **Availability MTTR/MTBF reporting** (PR #179, issue #178):
+  - Adds `GET /api/events/availability-report` with a default 30-day window and custom `start` / `end` support.
+  - Calculates MTTR from complete recovered events as `recovered_at - created_at`.
+  - Calculates MTBF by `CI + event_type` from consecutive failure starts, including active `OPEN`/`ACK` starts while excluding active events from MTTR until recovery.
+  - Reports active events and active downtime separately from MTTR/MTBF averages.
+  - Shows availability metrics in the Monitoring Console while preserving existing `/api/events?status=CONSOLE` behavior.
+  - Adds focused backend and frontend coverage for report semantics and UI integration.
+  - Tracks large-history Neo4j/Cypher query optimization separately in issue #176.
+
 ## [1.12.7] — 2026-05-27
 
 ### Added
