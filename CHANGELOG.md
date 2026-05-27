@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.13.0] — 2026-05-27
+## [1.12.7] — 2026-05-27
 
 ### Added
 - **ICMP latency and jitter telemetry** (PR #177, issue #175):
