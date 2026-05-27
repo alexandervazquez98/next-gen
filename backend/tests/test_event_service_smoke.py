@@ -34,6 +34,7 @@ class TestEventServiceImports:
         assert hasattr(event_service, "add_event_comment")
         assert hasattr(event_service, "prune_recovered_events")
         assert hasattr(event_service, "run_event_diagnostic")
+        assert hasattr(event_service, "get_availability_report")
 
 
 class TestEventServiceSmoke:
@@ -88,6 +89,139 @@ class TestEventServiceSmoke:
 
         query = mock_neo4j_session.queries[0]["query"].lower()
         assert "optional match (e)-[:triggered_by]->(m:metricdef)" in query
+
+    def test_get_availability_report_aggregates_mttr_mtbf_and_active_downtime(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-1",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                },
+                {
+                    "e": {
+                        "id": "evt-2",
+                        "ci_id": "ci-1",
+                        "status": "CLOSED",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 2, 20, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                },
+                {
+                    "e": {
+                        "id": "evt-incomplete",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                        "recovered_at": None,
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                },
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-active",
+                        "ci_id": "ci-1",
+                        "status": "OPEN",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                }
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        assert report["window_start"] == start.isoformat()
+        assert report["window_end"] == end.isoformat()
+        assert report["total_groups"] == 1
+        row = report["rows"][0]
+        assert row["ci_id"] == "ci-1"
+        assert row["ci_name"] == "Router-01"
+        assert row["event_type"] == "AVAILABILITY"
+        assert row["recovered_incidents"] == 2
+        assert row["mttr_seconds"] == 900
+        assert row["mtbf_seconds"] == 7200
+        assert row["downtime_seconds"] == 1800
+        assert row["active_events"] == 1
+        assert row["active_downtime_seconds"] == 3600
+        assert row["availability_percentage"] == 70.0
+
+    def test_get_availability_report_includes_active_failure_starts_in_mtbf(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-recovered",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                },
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-active",
+                        "ci_id": "ci-1",
+                        "status": "ACK",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                },
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        row = report["rows"][0]
+        assert row["recovered_incidents"] == 1
+        assert row["mttr_seconds"] == 600
+        assert row["mtbf_seconds"] == 10800
+        assert row["active_events"] == 1
+
+    def test_get_availability_report_defaults_to_last_30_days(self, mock_neo4j_session):
+        get_availability_report = _load_event_service_module().get_availability_report
+        now = datetime(2026, 2, 1, 12, 0, tzinfo=timezone.utc)
+
+        report = get_availability_report(now=now)
+
+        assert report["window_end"] == now.isoformat()
+        assert report["window_start"] == (now - timedelta(days=30)).isoformat()
+        assert report["window_days"] == 30
 
     def test_get_events_returns_legacy_event_without_metric_relationship(
         self, mock_neo4j_session

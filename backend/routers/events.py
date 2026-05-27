@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
@@ -6,7 +8,7 @@ import services.event_service as event_service
 from services.auth_service import get_current_active_user, check_permission, get_current_ai_agent, AIAgentInfo
 from services.ai_guard_service import check_all_guards, record_operation
 from services.escalation_notifier import notify_critical_event_escalation
-from models.core import EventDetailResponse, EventFeedSummary
+from models.core import AvailabilityReportResponse, EventDetailResponse, EventFeedSummary
 from models.user import User, UserPermission
 
 router = APIRouter(
@@ -37,6 +39,15 @@ async def get_events(status: Optional[str] = None):
         status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
     """
     return event_service.get_events(status)
+
+
+@router.get("/availability-report", response_model=AvailabilityReportResponse)
+async def get_availability_report(
+    start: Optional[datetime] = Query(None, description="Inclusive report window start"),
+    end: Optional[datetime] = Query(None, description="Inclusive report window end"),
+):
+    """Fetch additive availability MTTR/MTBF metrics for the event dashboard."""
+    return event_service.get_availability_report(start=start, end=end)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse)

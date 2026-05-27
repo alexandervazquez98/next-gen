@@ -183,6 +183,30 @@ class EventDetailResponse(BaseModel):
     itsm_context: ItsmContext
 
 
+class AvailabilityReportRow(BaseModel):
+    ci_id: str
+    ci_name: Optional[str] = None
+    event_type: str
+    recovered_incidents: int
+    mttr_seconds: Optional[float] = None
+    mtbf_seconds: Optional[float] = None
+    downtime_seconds: float
+    active_events: int = 0
+    active_downtime_seconds: float = 0
+    availability_percentage: Optional[float] = None
+    first_failure_at: Optional[str] = None
+    last_failure_at: Optional[str] = None
+
+
+class AvailabilityReportResponse(BaseModel):
+    window_start: str
+    window_end: str
+    generated_at: str
+    window_days: float
+    total_groups: int
+    rows: List[AvailabilityReportRow]
+
+
 class MetricDictionary(BaseModel):
     """A reusable OID bundle for a specific brand+model combination."""
     id: str
