@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional, Set
 import json
+from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 import re
 from neo4j import Driver
 from database import get_db
@@ -403,6 +404,45 @@ def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str,
         }
 
 
+def ensure_icmp_sidecar_metric_defs(session) -> None:
+    session.run("""
+        MERGE (latency:MetricDef {id: $latency_id})
+        SET latency.name = 'ICMP Latency',
+            latency.protocol = 'ICMP',
+            latency.description = 'ICMP ping round-trip latency in milliseconds',
+            latency.dataType = 'FLOAT',
+            latency.unit = 'ms',
+            latency.operator = '>=',
+            latency.criticality = coalesce(latency.criticality, 1),
+            latency.metric_kind = 'telemetry'
+        MERGE (jitter:MetricDef {id: $jitter_id})
+        SET jitter.name = 'ICMP Jitter',
+            jitter.protocol = 'ICMP',
+            jitter.description = 'Absolute delta between consecutive successful ICMP latency samples',
+            jitter.dataType = 'FLOAT',
+            jitter.unit = 'ms',
+            jitter.operator = '>=',
+            jitter.criticality = coalesce(jitter.criticality, 1),
+            jitter.metric_kind = 'telemetry'
+    """, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID)
+
+
+def migrate_icmp_sidecar_metrics() -> None:
+    """Idempotently link ICMP latency/jitter MetricDefs to CIs with ping availability metrics."""
+    driver = get_db()
+    with driver.session() as session:
+        ensure_icmp_sidecar_metric_defs(session)
+        session.run("""
+            MATCH (n:CI)-[:HAS_METRIC]->(availability:MetricDef)
+            WHERE toUpper(coalesce(availability.protocol, '')) = 'ICMP'
+              AND (availability.id = 'PING-CHECK' OR availability.id STARTS WITH 'PING-' OR coalesce(availability.metric_kind, '') = 'availability')
+            MATCH (latency:MetricDef {id: $latency_id})
+            MATCH (jitter:MetricDef {id: $jitter_id})
+            MERGE (n)-[:HAS_METRIC]->(latency)
+            MERGE (n)-[:HAS_METRIC]->(jitter)
+        """, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID)
+
+
 def create_default_ping_metric(node_id: str, node_label: str) -> None:
     """
     Create a default ICMP PING metric for a CI node when it has an IP address.
@@ -415,15 +455,25 @@ def create_default_ping_metric(node_id: str, node_label: str) -> None:
         session.run("""
             MERGE (m:MetricDef {id: $metric_id})
             SET m.protocol = 'ICMP',
+                m.name = coalesce(m.name, 'ICMP Availability'),
                 m.description = 'ICMP Ping Monitoring',
                 m.applicable_to = $applicable_to,
                 m.operator = '>=',
-                m.criticality = 1
+                m.criticality = 1,
+                m.metric_kind = 'availability'
             WITH m
             MATCH (n:CI {id: $node_id})
             MERGE (n)-[:HAS_METRIC]->(m)
         """, metric_id=metric_id, node_id=node_id,
            applicable_to=json.dumps({"names": [node_label]}))
+        ensure_icmp_sidecar_metric_defs(session)
+        session.run("""
+            MATCH (n:CI {id: $node_id})
+            MATCH (latency:MetricDef {id: $latency_id})
+            MATCH (jitter:MetricDef {id: $jitter_id})
+            MERGE (n)-[:HAS_METRIC]->(latency)
+            MERGE (n)-[:HAS_METRIC]->(jitter)
+        """, node_id=node_id, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID)
 
 
 def update_node_metadata(node_id: str, metadata: dict) -> bool:

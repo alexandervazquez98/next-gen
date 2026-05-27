@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from models.timescale_models import MetricValue
 from polling import event_writer, pg_queue
+from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 
 
 def _utc_now() -> datetime:
@@ -67,6 +68,35 @@ def _sample(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
         "value": numeric,
         "time": _timestamp(envelope["observed_at"]),
     }
+
+
+def previous_metric_value(db, node_id: str, metric_id: str, before: datetime) -> float | None:
+    result = db.execute(
+        text("""
+            SELECT value FROM metric_values
+            WHERE node_id = :node_id AND metric_id = :metric_id AND time < :before
+            ORDER BY time DESC LIMIT 1
+        """),
+        {"node_id": node_id, "metric_id": metric_id, "before": before},
+    )
+    row = result.first() if hasattr(result, "first") else None
+    if not row:
+        return None
+    value = row[0] if not isinstance(row, Mapping) else row.get("value")
+    return None if value is None else float(value)
+
+
+def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
+    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    if "latency_ms" not in icmp:
+        return []
+    observed = _timestamp(envelope["observed_at"])
+    latency = float(icmp["latency_ms"])
+    samples = [{"node_id": envelope["ci_id"], "metric_id": ICMP_LATENCY_METRIC_ID, "value": latency, "time": observed}]
+    previous = previous_metric_value(db, envelope["ci_id"], ICMP_LATENCY_METRIC_ID, observed)
+    if previous is not None:
+        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_JITTER_METRIC_ID, "value": abs(latency - previous), "time": observed})
+    return samples
 
 
 def receipt_exists(db, idempotency_key: str) -> bool:
@@ -184,7 +214,11 @@ def run_writer_once(
         stats["written"] += 1
 
     try:
-        samples = [item["sample"] for item in new_payloads if item["sample"] is not None]
+        samples = []
+        for item in new_payloads:
+            if item["sample"] is not None:
+                samples.append(item["sample"])
+            samples.extend(_sidecar_samples(timescale_db, item["envelope"]))
         persist_samples_and_receipts(timescale_db, new_payloads, samples)
         stats["inserted"] += len(samples)
     except Exception as exc:

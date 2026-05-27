@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from polling.contracts import PollResultEnvelope, PollingProtocol, PollingResultStatus
+from polling.icmp_measurements import coerce_ping_measurement, icmp_metadata, is_icmp_availability_metric, is_icmp_telemetry_metric
 from polling.idempotency import generate_idempotency_key
 from services.polling_event_lifecycle import is_snmp_no_response_failure
 
@@ -43,10 +44,10 @@ def _protocol(task: Mapping[str, Any] | Any) -> PollingProtocol:
     return value if isinstance(value, PollingProtocol) else PollingProtocol(str(value).strip().upper())
 
 
-def _default_icmp_fetcher(**kwargs) -> float:
-    from engines.snmp_worker import fetch_icmp_ping
+def _default_icmp_fetcher(**kwargs) -> Any:
+    from engines.snmp_worker import fetch_icmp_ping_measurement
 
-    return fetch_icmp_ping(kwargs["ip"], timeout_ms=kwargs.get("timeout_ms", 3000), retries=kwargs.get("retries", 2))
+    return fetch_icmp_ping_measurement(kwargs["ip"], timeout_ms=kwargs.get("timeout_ms", 3000), retries=kwargs.get("retries", 2))
 
 
 def _default_snmp_fetcher(**kwargs) -> Any:
@@ -84,18 +85,34 @@ def execute_poll_task(
     status = PollingResultStatus.ERROR
     value: dict[str, Any] = {"numeric": None, "text": None, "raw": None}
     error: dict[str, Any] = {"code": "unsupported_protocol", "message": protocol.value, "retryable": False}
+    measurement = None
+    task_metadata = _get(task, "metadata", {}) or {}
+    if not isinstance(task_metadata, Mapping):
+        task_metadata = {}
+    metric_id = str(_get(task, "metric_id"))
 
     try:
         if protocol == PollingProtocol.ICMP:
-            fetcher = icmp_fetcher or _default_icmp_fetcher
-            numeric = float(fetcher(
-                ip=payload.get("target") or _get(task, "source"),
-                timeout_ms=int(payload.get("timeout_ms") or 3000),
-                retries=int(payload.get("retries") or 2),
-            ) or 0.0)
-            status = PollingResultStatus.OK if numeric > 0 else PollingResultStatus.CRITICAL
-            value = {"numeric": numeric, "text": None, "raw": numeric}
-            error = {"code": None, "message": None, "retryable": False}
+            metric_metadata = {**dict(task_metadata), **({"metric_kind": _get(task, "metric_kind")} if _get(task, "metric_kind") else {})}
+            if not is_icmp_availability_metric(metric_id, metric_metadata):
+                status = PollingResultStatus.OK
+                value = {"numeric": None, "text": None, "raw": None}
+                error = {
+                    "code": "skipped_icmp_telemetry" if is_icmp_telemetry_metric(metric_id, metric_metadata) else "unsupported_icmp_metric",
+                    "message": "ICMP telemetry sidecars are derived from availability polls",
+                    "retryable": False,
+                }
+            else:
+                fetcher = icmp_fetcher or _default_icmp_fetcher
+                measurement = coerce_ping_measurement(fetcher(
+                    ip=payload.get("target") or _get(task, "source"),
+                    timeout_ms=int(payload.get("timeout_ms") or 3000),
+                    retries=int(payload.get("retries") or 2),
+                ))
+                numeric = measurement.availability_value
+                status = PollingResultStatus.OK if numeric > 0 else PollingResultStatus.CRITICAL
+                value = {"numeric": numeric, "text": None, "raw": numeric}
+                error = {"code": None, "message": None, "retryable": False}
         elif protocol == PollingProtocol.SNMP:
             fetcher = snmp_fetcher or _default_snmp_fetcher
             raw = fetcher(
@@ -149,8 +166,13 @@ def execute_poll_task(
     task_id = _get(task, "task_id")
     cycle_id = _get(task, "cycle_id")
     ci_id = str(_get(task, "ci_id"))
-    metric_id = str(_get(task, "metric_id"))
     source = str(_get(task, "source") or payload.get("target") or "")
+    icmp_result_metadata: dict[str, Any] = {}
+    if protocol == PollingProtocol.ICMP:
+        if measurement is not None:
+            icmp_result_metadata = {"metric_kind": "availability", "icmp": icmp_metadata(measurement)}
+        elif is_icmp_telemetry_metric(metric_id, task_metadata):
+            icmp_result_metadata = {"metric_kind": "telemetry"}
     return PollResultEnvelope(
         result_id=_result_id(task_id, observed, status),
         task_id=task_id,
@@ -175,6 +197,7 @@ def execute_poll_task(
         value=value,
         error=error,
         metadata={
+            **icmp_result_metadata,
             "site_id": _get(task, "site_id"),
             "subnet": _get(task, "subnet"),
             "ip_address": _get(task, "ip_address"),

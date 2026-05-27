@@ -54,6 +54,37 @@ def test_writer_skips_duplicate_receipts_and_marks_result_written(monkeypatch):
     assert len(completed) == 1
 
 
+def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monkeypatch):
+    from polling import writer_pool
+
+    persisted = []
+    event_rows = []
+    row = _row(key="icmp-1", numeric=1.0)
+    row.protocol = "ICMP"
+    row.metric_id = "PING-CHECK"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "PING-CHECK",
+        "metadata": {"metric_kind": "availability", "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms"]}},
+    })
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    assert stats["inserted"] == 3
+    assert persisted[0][1] == [
+        {"node_id": "ci-1", "metric_id": "PING-CHECK", "value": 1.0, "time": row.observed_at},
+        {"node_id": "ci-1", "metric_id": "icmp_latency_ms", "value": 20.0, "time": row.observed_at},
+        {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
+    ]
+    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK"]
+
+
 def test_writer_batches_timescale_inserts_receipts_and_neo4j_updates(monkeypatch):
     from polling import writer_pool
 

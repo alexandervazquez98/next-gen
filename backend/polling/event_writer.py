@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Iterable, Mapping
 from uuid import UUID
 
+from polling.icmp_measurements import is_icmp_availability_metric
 from services.polling_event_lifecycle import (
     COLLECTION_FAILURE_PREFIX,
     EVENT_TYPE_AVAILABILITY,
@@ -97,7 +98,7 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
             event_type = EVENT_TYPE_COLLECTION_FAILURE
             message = collection_failure_message(envelope.get("error") or {}, result_status)
         elif numeric is not None:
-            availability = protocol == "ICMP" or metric_name == "mariadb-GS"
+            availability = (protocol == "ICMP" and is_icmp_availability_metric(metric_id, metadata)) or metric_name == "mariadb-GS"
             if availability and numeric == 0:
                 severity = _base_severity(metadata)
                 is_breach = True

@@ -36,6 +36,35 @@ def _records():
     ]
 
 
+def test_scheduler_skips_icmp_latency_and_jitter_sidecar_records():
+    from polling.scheduler import build_cycle, build_tasks_from_records
+
+    cycle = build_cycle(scheduled_for=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc), config_version="v1")
+    records = _records() + [
+        {
+            "node_id": "ci-icmp",
+            "ip": "10.0.0.1",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        },
+        {
+            "node_id": "ci-icmp",
+            "ip": "10.0.0.1",
+            "metric_id": "icmp_jitter_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        },
+    ]
+
+    tasks = build_tasks_from_records(records, cycle)
+
+    assert {task["metric_id"] for task in tasks} == {"PING-CHECK", "CPU", "CLI-CPU"}
+    assert all(task["metric_id"] not in {"icmp_latency_ms", "icmp_jitter_ms"} for task in tasks)
+
+
 def test_scheduler_builds_15_minute_cycle_and_priority_ordered_tasks():
     from polling.contracts import PollingPriority, PollingProtocol
     from polling.scheduler import build_cycle, build_tasks_from_records, group_tasks_by_protocol

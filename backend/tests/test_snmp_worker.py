@@ -65,6 +65,17 @@ class TestFetchICMPPing:
         assert mock_run.call_count == 1
 
     @patch("engines.snmp_worker.subprocess.run")
+    def test_fetch_icmp_ping_measurement_extracts_latency_while_binary_wrapper_stays_compatible(self, mock_run):
+        """Structured ICMP returns latency but legacy wrapper still returns 1.0."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="64 bytes from 192.168.1.1: time=9.75 ms", stderr="")
+        from engines.snmp_worker import fetch_icmp_ping, fetch_icmp_ping_measurement
+
+        measurement = fetch_icmp_ping_measurement("192.168.1.1", timeout_ms=3000, retries=0)
+        assert measurement.available is True
+        assert measurement.latency_ms == 9.75
+        assert fetch_icmp_ping("192.168.1.1", timeout_ms=3000, retries=0) == 1.0
+
+    @patch("engines.snmp_worker.subprocess.run")
     def test_fetch_icmp_ping_success_on_retry(self, mock_run):
         """Returns 1.0 when retry succeeds after first failure."""
         mock_run.side_effect = [
@@ -675,3 +686,71 @@ class TestICMPDebounce:
         ]
         assert availability_queries == []
         assert _consecutive_failures.get("ci-001", 0) >= 3
+
+
+def test_poll_snmp_skips_icmp_sidecar_metrics_as_primary_poll_targets():
+    from engines.snmp_worker import _consecutive_failures
+    from polling.icmp_measurements import PingMeasurement
+
+    _consecutive_failures.clear()
+    mock_db = MagicMock()
+    mock_db.execute.return_value.first.return_value = None
+    mock_session = MockNeo4jSession()
+    mock_session.set_response("match", [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "metric_kind": "availability",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
+        },
+        {
+            "node_id": "ci-001",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "ICMP Latency",
+            "criticality": 1,
+        },
+        {
+            "node_id": "ci-001",
+            "metric_id": "icmp_jitter_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "ICMP Jitter",
+            "criticality": 1,
+        },
+    ])
+    mock_session.set_default_response([])
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+    with patch("engines.snmp_worker.driver", mock_driver), \
+         patch("engines.snmp_worker.SessionLocal", return_value=mock_db), \
+         patch("engines.snmp_worker.bulk_insert_metrics") as mock_bulk_insert, \
+         patch("engines.snmp_worker.fetch_icmp_ping", return_value=PingMeasurement(True, 12.0)) as mock_fetch_icmp:
+        from engines.snmp_worker import poll_snmp
+        poll_snmp()
+
+    mock_fetch_icmp.assert_called_once()
+    mock_bulk_insert.assert_called_once()
+    rows = mock_bulk_insert.call_args.args[1]
+    assert any(row["metric_id"] == "PING-CHECK" and row["value"] == 1.0 for row in rows)
+    assert any(row["metric_id"] == "icmp_latency_ms" and row["value"] == 12.0 for row in rows)
+    assert not any(row["metric_id"] == "icmp_latency_ms" and row["value"] == 1.0 for row in rows)
+    assert not any(row["metric_id"] == "icmp_jitter_ms" and row["value"] in (0.0, 1.0) for row in rows)
