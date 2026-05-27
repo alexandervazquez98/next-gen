@@ -15,6 +15,7 @@ Strategy:
 """
 
 import asyncio
+from datetime import datetime, timezone
 import pytest
 import sys
 import threading
@@ -74,7 +75,7 @@ def _make_pydantic_user(
     return User(
         username=username,
         role=role,
-        permissions=permissions or [],
+        permissions=[permission.value for permission in (permissions or [])],
         allowed_locations=[],
         disabled=disabled,
     )
@@ -298,6 +299,7 @@ class TestMetricsCreate:
             patch.object(metrics_router.metric_service, "create_metric", side_effect=blocking_create),
         ):
             metric = MetricDef(id="slow-metric", protocol="SNMP")
+            marker_task = None
             route_task = asyncio.create_task(metrics_router.create_metric(metric, fake_user))
             timer = threading.Timer(1.0, release.set)
             timer.start()
@@ -316,8 +318,8 @@ class TestMetricsCreate:
                 release.set()
                 timer.cancel()
                 await asyncio.gather(route_task, return_exceptions=True)
-                if 'marker_task' in locals():
-                    await asyncio.gather(marker_task, return_exceptions=True)
+                if marker_task is not None:
+                    await marker_task
 
         assert result == {"message": "Metric defined"}
 
@@ -461,6 +463,7 @@ class TestMetricsDelete:
             patch("routers.metrics.check_permission", return_value=True),
             patch.object(metrics_router.metric_service, "delete_metric", side_effect=blocking_delete),
         ):
+            marker_task = None
             route_task = asyncio.create_task(metrics_router.delete_metric("slow-metric", fake_user))
             timer = threading.Timer(1.0, release.set)
             timer.start()
@@ -479,8 +482,8 @@ class TestMetricsDelete:
                 release.set()
                 timer.cancel()
                 await asyncio.gather(route_task, return_exceptions=True)
-                if 'marker_task' in locals():
-                    await asyncio.gather(marker_task, return_exceptions=True)
+                if marker_task is not None:
+                    await marker_task
 
         assert result == {"message": "Metric deleted"}
 
@@ -1187,6 +1190,47 @@ class TestEventsList:
         assert event["created_at"] is None
         assert event["event_type"] == "AVAILABILITY"
         assert event["source_protocol"] == "ICMP"
+
+    def test_availability_report_endpoint_is_additive_and_accepts_custom_window(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        payload = {
+            "window_start": start.isoformat(),
+            "window_end": end.isoformat(),
+            "generated_at": end.isoformat(),
+            "window_days": 30,
+            "total_groups": 1,
+            "rows": [
+                {
+                    "ci_id": "ci-001",
+                    "ci_name": "Router-01",
+                    "event_type": "AVAILABILITY",
+                    "recovered_incidents": 2,
+                    "mttr_seconds": 900,
+                    "mtbf_seconds": 7200,
+                    "downtime_seconds": 1800,
+                    "active_events": 0,
+                    "active_downtime_seconds": 0,
+                    "availability_percentage": 99.9306,
+                    "first_failure_at": start.isoformat(),
+                    "last_failure_at": end.isoformat(),
+                }
+            ],
+        }
+
+        with patch(
+            "routers.events.event_service.get_availability_report", return_value=payload
+        ) as get_report:
+            response = client.get(
+                "/api/events/availability-report",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == payload
+        get_report.assert_called_once()
+        assert get_report.call_args.kwargs["start"] == start
+        assert get_report.call_args.kwargs["end"] == end
 
 
 class TestEventsDetail:

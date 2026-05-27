@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from database import get_db
@@ -403,6 +403,194 @@ def build_event_detail_response(
     }
 
 
+def _resolve_availability_window(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> tuple[datetime, datetime, datetime]:
+    generated_at = now or datetime.now(timezone.utc)
+    window_end = end or generated_at
+    if window_end.tzinfo is None:
+        window_end = window_end.replace(tzinfo=timezone.utc)
+    window_start = start or (window_end - timedelta(days=30))
+    if window_start.tzinfo is None:
+        window_start = window_start.replace(tzinfo=timezone.utc)
+    if window_start > window_end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+    return window_start, window_end, generated_at
+
+
+def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
+    ci_id = event_data.get("ci_id")
+    event_type = event_data.get("event_type")
+    if not ci_id or not event_type:
+        return None
+    return str(ci_id), str(event_type)
+
+
+def get_availability_report(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Return MTTR/MTBF availability metrics grouped by CI + event type.
+
+    MTTR uses technical recovery (`recovered_at - created_at`). MTBF uses the
+    average interval between consecutive failure starts in the report window,
+    including valid currently open/acknowledged starts. Incomplete legacy events
+    are excluded from MTTR; active events are reported separately as current
+    downtime where possible.
+    """
+    window_start, window_end, generated_at = _resolve_availability_window(
+        start=start,
+        end=end,
+        now=now,
+    )
+    window_seconds = max((window_end - window_start).total_seconds(), 0)
+    groups: Dict[tuple[str, str], Dict[str, Any]] = {}
+
+    def ensure_group(
+        key: tuple[str, str], ci_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        row = groups.setdefault(
+            key,
+            {
+                "ci_id": key[0],
+                "ci_name": ci_name,
+                "event_type": key[1],
+                "failure_starts": [],
+                "repair_seconds": [],
+                "downtime_seconds": 0.0,
+                "active_events": 0,
+                "active_downtime_seconds": 0.0,
+            },
+        )
+        if ci_name and not row.get("ci_name"):
+            row["ci_name"] = ci_name
+        return row
+
+    driver = get_db()
+    with driver.session() as session:
+        recovered_result = session.run(
+            """
+            MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
+            WHERE e.created_at IS NOT NULL
+              AND e.recovered_at IS NOT NULL
+              AND NOT e.status IN ['OPEN', 'ACK']
+            RETURN e, ci
+            ORDER BY e.created_at ASC
+            """,
+        )
+        for record in recovered_result:
+            event_data = _node_to_dict(_record_value(record, "e"))
+            ci_data = _node_to_dict(_record_value(record, "ci"))
+            key = _availability_group_key(event_data)
+            if key is None:
+                continue
+            created_at = _parse_datetime(event_data.get("created_at"))
+            recovered_at = _parse_datetime(event_data.get("recovered_at"))
+            if created_at is None or recovered_at is None:
+                continue
+            if created_at < window_start or created_at > window_end:
+                continue
+            if recovered_at < created_at or recovered_at > window_end:
+                continue
+
+            row = ensure_group(key, ci_data.get("name"))
+            repair_seconds = (recovered_at - created_at).total_seconds()
+            row["failure_starts"].append(created_at)
+            row["repair_seconds"].append(repair_seconds)
+            clipped_start = max(created_at, window_start)
+            clipped_end = min(recovered_at, window_end)
+            row["downtime_seconds"] += max(
+                0.0, (clipped_end - clipped_start).total_seconds()
+            )
+
+        active_result = session.run(
+            """
+            MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
+            WHERE e.status IN ['OPEN', 'ACK']
+              AND e.created_at IS NOT NULL
+            RETURN e, ci
+            ORDER BY e.created_at ASC
+            """,
+        )
+        for record in active_result:
+            event_data = _node_to_dict(_record_value(record, "e"))
+            ci_data = _node_to_dict(_record_value(record, "ci"))
+            key = _availability_group_key(event_data)
+            if key is None:
+                continue
+            created_at = _parse_datetime(event_data.get("created_at"))
+            if created_at is None or created_at > window_end:
+                continue
+            row = ensure_group(key, ci_data.get("name"))
+            row["active_events"] += 1
+            if window_start <= created_at <= window_end:
+                row["failure_starts"].append(created_at)
+            clipped_start = max(created_at, window_start)
+            row["active_downtime_seconds"] += max(
+                0.0, (window_end - clipped_start).total_seconds()
+            )
+
+    rows: List[Dict[str, Any]] = []
+    for row in groups.values():
+        failure_starts = sorted(row["failure_starts"])
+        repair_seconds = row["repair_seconds"]
+        mttr_seconds = (
+            sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
+        )
+        intervals = [
+            (failure_starts[index] - failure_starts[index - 1]).total_seconds()
+            for index in range(1, len(failure_starts))
+        ]
+        mtbf_seconds = sum(intervals) / len(intervals) if intervals else None
+        total_downtime = row["downtime_seconds"] + row["active_downtime_seconds"]
+        availability_percentage = None
+        if window_seconds > 0:
+            availability_percentage = round(
+                max(0.0, (window_seconds - total_downtime) / window_seconds * 100),
+                4,
+            )
+        rows.append(
+            {
+                "ci_id": row["ci_id"],
+                "ci_name": row.get("ci_name"),
+                "event_type": row["event_type"],
+                "recovered_incidents": len(repair_seconds),
+                "mttr_seconds": mttr_seconds,
+                "mtbf_seconds": mtbf_seconds,
+                "downtime_seconds": row["downtime_seconds"],
+                "active_events": row["active_events"],
+                "active_downtime_seconds": row["active_downtime_seconds"],
+                "availability_percentage": availability_percentage,
+                "first_failure_at": failure_starts[0].isoformat()
+                if failure_starts
+                else None,
+                "last_failure_at": failure_starts[-1].isoformat()
+                if failure_starts
+                else None,
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            item["availability_percentage"] if item["availability_percentage"] is not None else 101,
+            -(item["active_events"] or 0),
+            -(item["recovered_incidents"] or 0),
+            item["ci_name"] or item["ci_id"],
+        )
+    )
+    return {
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "generated_at": generated_at.isoformat(),
+        "window_days": round(window_seconds / 86400, 4) if window_seconds else 0,
+        "total_groups": len(rows),
+        "rows": rows,
+    }
+
+
 def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
     driver = get_db()
     with driver.session() as session:
@@ -543,6 +731,7 @@ def close_event(
         
         if not current:
             _raise_event_not_found(event_id)
+        assert current is not None
         
         if current["status"] == "CLOSED":
             raise HTTPException(status_code=400, detail=f"Event {event_id} is already CLOSED")
@@ -741,7 +930,7 @@ async def event_batch_pruner(
     # cross-user contamination (CRITICAL #2 fix). Cache is isolated to this
     # generator's lifetime.
     if _idempotency_cache is None:
-        _idempotency_cache: Dict[str, float] = {}
+        _idempotency_cache = {}
     _CACHE_TTL_S = 300  # 5 minutes — events processed within this window are cached
 
     # Lock ensures atomic cache operations (WARNING #7 fix)
