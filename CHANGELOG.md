@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **ICMP latency and jitter telemetry** (PR #TBD, issue #175):
+- **ICMP latency and jitter telemetry** (PR #177, issue #175):
   - Preserves existing binary ICMP availability metrics for event lifecycle compatibility while adding `icmp_latency_ms` and `icmp_jitter_ms` sidecar telemetry streams.
   - Parses successful ping latency, stores latency only on successful probes, and calculates jitter as the absolute delta between consecutive successful latency samples.
   - Guards legacy and leased polling paths so latency/jitter metrics are never polled or evaluated as availability events.
