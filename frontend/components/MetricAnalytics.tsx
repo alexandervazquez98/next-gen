@@ -5,6 +5,7 @@ import MetricHistoryChart from "./MetricHistoryChart";
 import MultiSelectCIs from "./MultiSelectCIs";
 import MultiMetricChart from "./MultiMetricChart";
 import { fetchNodes, fetchNodeMetricHistory } from "../services/queryResources";
+import { formatMetricValue } from "../utils/metricFormatting";
 
 interface BrushRange {
 	startTime?: string;
@@ -650,7 +651,7 @@ const StatCard: React.FC<{
 	isStatus?: boolean;
 	isDate?: boolean;
 }> = ({ label, value, unit, isStatus, isDate }) => {
-	let displayValue = value ?? "--";
+	let displayValue = formatMetricValue(value, unit);
 	let colorClass = "text-white";
 
 	if (isStatus) {

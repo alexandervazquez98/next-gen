@@ -1,9 +1,11 @@
 
-import React, { useEffect, useMemo, useState } from 'react';
+import type React from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { GraphNode } from '../types';
 import { getStatusClasses } from '../utils/status';
 import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 import { useNodesQuery } from '../hooks/queries/useNodesQuery';
+import { formatMetricValue } from '../utils/metricFormatting';
 
 /**
  * GlobalInventory Component
@@ -132,7 +134,7 @@ const GlobalInventory: React.FC = () => {
                                         </div>
                                         <h4 className="text-center font-black text-sm uppercase opacity-90">{metric.name}</h4>
                                         <div className="text-center py-2">
-                                            <span className="text-2xl font-black tracking-tighter">{metric.value ?? '--'}</span>
+                                            <span className="text-2xl font-black tracking-tighter">{formatMetricValue(metric.value, metric.unit)}</span>
                                         </div>
                                         <div className="text-[10px] font-mono opacity-50 text-right">
                                             Last: {metric.last_updated ? new Date(metric.last_updated).toLocaleTimeString() : 'NEVER'}

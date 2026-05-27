@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
 	AreaChart,
 	Area,
@@ -11,6 +12,7 @@ import {
 	ReferenceArea,
 } from "recharts";
 import { fetchNodeMetricHistory } from "../services/queryResources";
+import { formatMetricValue } from "../utils/metricFormatting";
 
 interface MetricHistoryChartProps {
 	nodeId: string;
@@ -244,7 +246,7 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 							itemStyle={{ color: "#fff" }}
 							labelStyle={{ color: "#a3a3a3", marginBottom: "4px" }}
 							formatter={(value) => [
-								`${value}${unit ? ` ${unit}` : ""}`,
+								`${formatMetricValue(value as string | number, unit)}${unit ? ` ${unit}` : ""}`,
 								metricName,
 							]}
 						/>

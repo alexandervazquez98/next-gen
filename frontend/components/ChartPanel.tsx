@@ -10,6 +10,7 @@ import {
 	ResponsiveContainer,
 	Brush,
 } from "recharts";
+import { formatMetricValue } from "../utils/metricFormatting";
 
 interface BrushRange {
 	startTime?: string;
@@ -170,7 +171,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 								itemStyle={{ color: "#fff" }}
 								labelStyle={{ color: "#a3a3a3", marginBottom: "4px" }}
 								formatter={(value) => [
-									`${value}${unit ? ` ${unit}` : ""}`,
+									`${formatMetricValue(value as string | number, unit)}${unit ? ` ${unit}` : ""}`,
 									metricName ?? "value",
 								]}
 							/>
