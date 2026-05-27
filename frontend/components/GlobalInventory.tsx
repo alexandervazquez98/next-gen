@@ -134,7 +134,7 @@ const GlobalInventory: React.FC = () => {
                                         </div>
                                         <h4 className="text-center font-black text-sm uppercase opacity-90">{metric.name}</h4>
                                         <div className="text-center py-2">
-                                            <span className="text-2xl font-black tracking-tighter">{formatMetricValue(metric.value, metric.unit)}</span>
+                                            <span className="text-2xl font-black tracking-tighter">{formatMetricValue(metric.value, metric.unit, metric.name)}</span>
                                         </div>
                                         <div className="text-[10px] font-mono opacity-50 text-right">
                                             Last: {metric.last_updated ? new Date(metric.last_updated).toLocaleTimeString() : 'NEVER'}
