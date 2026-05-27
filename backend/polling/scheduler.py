@@ -10,6 +10,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from polling.contracts import PollingPriority, PollingProtocol
 from polling.pg_queue import create_cycle, enqueue_tasks
+from polling.icmp_measurements import is_icmp_telemetry_metric
 from polling.protocol_contracts import build_protocol_payload
 
 
@@ -97,6 +98,8 @@ def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCy
         metric_id = str(record.get("metric_id") or record.get("id") or "")
         if not ci_id or not metric_id:
             raise ValueError("Scheduler records require node_id/ci_id and metric_id/id")
+        if protocol == PollingProtocol.ICMP and is_icmp_telemetry_metric(metric_id, dict(record)):
+            continue
         source = _source(record, protocol)
         payload = build_protocol_payload({**dict(record), "protocol": protocol.value, "source": source})
         priority = _priority(record, protocol)
@@ -118,6 +121,7 @@ def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCy
             "source": source,
             "payload": payload,
             "metadata_version": record.get("metadata_version") or cycle.config_version,
+            "metric_kind": record.get("metric_kind"),
         })
     return sorted(tasks, key=lambda task: (int(task["priority"]), task["protocol"].value, task["metric_id"]))
 

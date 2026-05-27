@@ -17,9 +17,19 @@ import logging
 from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
+from sqlalchemy import text
+
 from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 from postgres_db import SessionLocal
 from config import get_icmp_settings, get_polling_pipeline_settings
+from polling.icmp_measurements import (
+    ICMP_LATENCY_METRIC_ID,
+    build_icmp_sidecar_samples,
+    coerce_ping_measurement,
+    is_icmp_availability_metric,
+    PingMeasurement,
+    parse_ping_latency_ms,
+)
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
@@ -70,7 +80,7 @@ def verify_connection():
 _consecutive_failures: Dict[str, int] = {}
 
 
-def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2) -> float:
+def fetch_icmp_ping_measurement(ip: str, timeout_ms: int = 3000, retries: int = 2) -> PingMeasurement:
     """Perform ICMP ping with configurable timeout and retry.
 
     Args:
@@ -79,7 +89,7 @@ def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2) -> float:
         retries: Number of additional attempts after initial failure.
 
     Returns:
-        1.0 if any ping attempt succeeds, 0.0 if all attempts fail.
+        Structured ping availability and latency when parsed.
     """
     attempts = retries + 1
     system = platform.system().lower()
@@ -97,15 +107,22 @@ def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2) -> float:
                 stderr=subprocess.PIPE,
                 text=True
             )
+            output = f"{result.stdout or ''}\n{result.stderr or ''}"
             if result.returncode == 0:
-                return 1.0
+                return PingMeasurement(True, parse_ping_latency_ms(output), raw=output)
         except OSError as e:
             logger.warning(f"Ping attempt {attempt + 1}/{attempts} failed for {ip}: {e}")
             continue
         except subprocess.TimeoutExpired as e:
             logger.warning(f"Ping attempt {attempt + 1}/{attempts} timed out for {ip}: {e}")
             continue
-    return 0.0
+    return PingMeasurement(False, None, raw=None, error="ICMP ping failed")
+
+
+def fetch_icmp_ping(ip: str, timeout_ms: int = 3000, retries: int = 2, include_measurement: bool = False):
+    """Perform ICMP ping and preserve the legacy binary availability contract by default."""
+    measurement = fetch_icmp_ping_measurement(ip, timeout_ms=timeout_ms, retries=retries)
+    return measurement if include_measurement else measurement.availability_value
 
 def fetch_snmp_value(ip, community, oid, port=161, include_status=False):
     """Perform a real SNMP GET.
@@ -186,6 +203,22 @@ def _base_severity_from_criticality(criticality) -> str:
     except (TypeError, ValueError):
         normalized = 1
     return {2: "WARNING", 3: "CRITICAL"}.get(normalized, "INFO")
+
+
+def _previous_latency_ms(db, node_id: str, before: datetime) -> float | None:
+    result = db.execute(
+        text("""
+            SELECT value FROM metric_values
+            WHERE node_id = :node_id AND metric_id = :metric_id AND time < :before
+            ORDER BY time DESC LIMIT 1
+        """),
+        {"node_id": node_id, "metric_id": ICMP_LATENCY_METRIC_ID, "before": before},
+    )
+    row = result.first() if hasattr(result, "first") else None
+    if not row:
+        return None
+    value = row[0] if not isinstance(row, dict) else row.get("value")
+    return None if value is None else float(value)
 
 
 def _dedupe_snmp_collection_failures(failures):
@@ -365,11 +398,16 @@ def poll_snmp():
                      coalesce(m.polling_interval, 60) as interval,
                      coalesce(r.last_polled, datetime({year:1970})) as last_p
                 WHERE duration.between(last_p, datetime()).seconds >= interval
+                  AND NOT (
+                    toUpper(coalesce(m.protocol, '')) = 'ICMP'
+                    AND (m.id IN ['icmp_latency_ms', 'icmp_jitter_ms'] OR coalesce(m.metric_kind, '') = 'telemetry')
+                  )
                 RETURN n.id as node_id, n.ip as ip, 
                        coalesce(n.snmp_community, 'public') as community,
                        coalesce(n.snmp_port, 161) as port,
                        m.id as metric_id, m.name as metric_name, m.protocol as protocol,
                        m.oid as oid, m.criticality as criticality,
+                       m.metric_kind as metric_kind,
                        interval
             """)
             
@@ -386,9 +424,28 @@ def poll_snmp():
                     continue
 
                 val = None
+                sidecar_samples = []
+                metric_metadata = {"metric_kind": record.get("metric_kind")}
                 icmp_settings = get_icmp_settings()
+                if protocol == "ICMP" and not is_icmp_availability_metric(mid, metric_metadata):
+                    continue
                 if protocol == "ICMP":
-                    val = fetch_icmp_ping(ip, timeout_ms=icmp_settings.timeout_ms, retries=icmp_settings.retries)
+                    measurement = coerce_ping_measurement(fetch_icmp_ping(
+                        ip,
+                        timeout_ms=icmp_settings.timeout_ms,
+                        retries=icmp_settings.retries,
+                        include_measurement=True,
+                    ))
+                    val = measurement.availability_value
+                    sample_time = datetime.utcnow()
+                    if measurement.available:
+                        previous_latency = _previous_latency_ms(db, node_id, sample_time)
+                        sidecar_samples = build_icmp_sidecar_samples(
+                            node_id,
+                            measurement,
+                            previous_latency_ms=previous_latency,
+                            observed_at=sample_time,
+                        )
                     # Debounce logic: track consecutive failures per node
                     if val == 0:
                         _consecutive_failures[node_id] = _consecutive_failures.get(node_id, 0) + 1
@@ -401,6 +458,7 @@ def poll_snmp():
                         else:
                             # Below threshold: suppress metric recording until threshold
                             val = None
+                            sidecar_samples = []
                     else:
                         # Success: reset counter and proceed normally
                         _consecutive_failures[node_id] = 0
@@ -418,12 +476,14 @@ def poll_snmp():
                     )
                 
                 if val is not None:
+                    primary_time = datetime.utcnow()
                     metrics_to_save.append({
                         "node_id": node_id,
                         "metric_id": mid,
                         "value": val,
-                        "time": datetime.utcnow()
+                        "time": primary_time
                     })
+                    metrics_to_save.extend(sidecar_samples)
 
                     metric_name = record["metric_name"] or mid
                     severity = _base_severity_from_criticality(record["criticality"])
@@ -443,7 +503,23 @@ def poll_snmp():
                         "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else None,
                         "source_protocol": SOURCE_PROTOCOL_ICMP if protocol == SOURCE_PROTOCOL_ICMP else protocol,
                         "severity": severity,
+                        "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP else "telemetry",
                     })
+                    for sample in sidecar_samples:
+                        latest_updates.append({
+                            "node_id": node_id,
+                            "metric_id": sample["metric_id"],
+                            "value": sample["value"],
+                            "protocol": protocol,
+                            "metric_name": sample["metric_id"],
+                            "criticality": record["criticality"],
+                            "status": "OK",
+                            "message": "Latest ICMP telemetry sample collected by legacy SNMP worker",
+                            "event_type": None,
+                            "source_protocol": SOURCE_PROTOCOL_ICMP,
+                            "severity": "INFO",
+                            "metric_kind": "telemetry",
+                        })
                 else:
                     failed_count += 1
                     if is_snmp_no_response_failure(
@@ -490,7 +566,7 @@ def poll_snmp():
             if metrics_to_save:
                 bulk_insert_metrics(db, metrics_to_save)
                 for update in latest_updates:
-                    if update["protocol"].upper() == "ICMP" and update["value"] in (0.0, 1.0):
+                    if update["protocol"].upper() == "ICMP" and update.get("metric_kind") == "availability" and update["value"] in (0.0, 1.0):
                         session.run(
                             "MATCH (n:CI {id: $id}) SET n.status = $status, n.last_seen = datetime()",
                             id=update["node_id"],
@@ -505,8 +581,9 @@ def poll_snmp():
                             r.status = $status,
                             r.last_message = $msg
                     """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status=update["status"], msg=update["message"])
-                _refresh_icmp_availability_events(session, latest_updates)
-                _recover_icmp_availability_events(session, latest_updates)
+                availability_updates = [u for u in latest_updates if u.get("metric_kind") == "availability"]
+                _refresh_icmp_availability_events(session, availability_updates)
+                _recover_icmp_availability_events(session, availability_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
 

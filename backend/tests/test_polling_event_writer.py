@@ -18,6 +18,25 @@ def _event_row(value: float | None = 97.0, status="OK", metadata=None):
     }
 
 
+def test_event_writer_ignores_icmp_latency_and_jitter_as_availability_events():
+    from polling.event_writer import build_event_rows
+
+    rows = build_event_rows([
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"name": "PING-CHECK", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-router", "metadata": {"name": "PING-router", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_latency_ms", "metadata": {"name": "ICMP Latency", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_jitter_ms", "metadata": {"name": "ICMP Jitter", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_latency_ms", "metadata": {"name": "ICMP Latency", "criticality": 3, "metric_kind": "availability"}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_jitter_ms", "metadata": {"name": "ICMP Jitter", "criticality": 3, "metric_kind": "availability"}},
+    ])
+
+    assert rows[0]["event_type"] == "AVAILABILITY"
+    assert rows[1]["event_type"] == "AVAILABILITY"
+    for row in rows[2:]:
+        assert row["event_type"] is None
+        assert row["is_breach"] is False
+
+
 def test_event_writer_derives_threshold_breach_and_availability_recovery_rows():
     from polling.event_writer import build_event_rows
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **ICMP latency and jitter telemetry** (PR #177, issue #175):
+  - Preserves existing binary ICMP availability metrics for event lifecycle compatibility while adding `icmp_latency_ms` and `icmp_jitter_ms` sidecar telemetry streams.
+  - Parses successful ping latency, stores latency only on successful probes, and calculates jitter as the absolute delta between consecutive successful latency samples.
+  - Guards legacy and leased polling paths so latency/jitter metrics are never polled or evaluated as availability events.
+  - Adds an idempotent migration script for existing CIs with ping metrics: `backend/scripts/migrate_icmp_sidecar_metrics.py`.
+  - Adds focused backend regression coverage for parser semantics, event safety, scheduler/executor guards, writer sidecar persistence, and migration idempotency.
+
 ## [1.12.6] — 2026-05-26
 
 ### Fixed
