@@ -477,9 +477,14 @@ def get_availability_report(
             WHERE e.created_at IS NOT NULL
               AND e.recovered_at IS NOT NULL
               AND NOT e.status IN ['OPEN', 'ACK']
+              AND e.created_at >= $window_start
+              AND e.created_at <= $window_end
+              AND e.recovered_at <= $window_end
             RETURN e, ci
             ORDER BY e.created_at ASC
             """,
+            window_start=window_start,
+            window_end=window_end,
         )
         for record in recovered_result:
             event_data = _node_to_dict(_record_value(record, "e"))
@@ -511,9 +516,11 @@ def get_availability_report(
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
             WHERE e.status IN ['OPEN', 'ACK']
               AND e.created_at IS NOT NULL
+              AND e.created_at <= $window_end
             RETURN e, ci
             ORDER BY e.created_at ASC
             """,
+            window_end=window_end,
         )
         for record in active_result:
             event_data = _node_to_dict(_record_value(record, "e"))

@@ -213,6 +213,71 @@ class TestEventServiceSmoke:
         assert row["mtbf_seconds"] == 10800
         assert row["active_events"] == 1
 
+    def test_get_availability_report_queries_filter_window_in_cypher(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+
+        get_availability_report(start=start, end=end, now=end)
+
+        recovered_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "NOT e.status IN ['OPEN', 'ACK']" in query["query"]
+        )
+        active_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+        )
+
+        assert recovered_query["params"] == {
+            "window_start": start,
+            "window_end": end,
+        }
+        assert "e.created_at >= $window_start" in recovered_query["query"]
+        assert "e.created_at <= $window_end" in recovered_query["query"]
+        assert "e.recovered_at <= $window_end" in recovered_query["query"]
+
+        assert active_query["params"] == {"window_end": end}
+        assert "e.created_at <= $window_end" in active_query["query"]
+        assert "e.created_at >= $window_start" not in active_query["query"]
+
+    def test_get_availability_report_active_before_window_counts_downtime_not_mtbf(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response("not e.status in ['open', 'ack']", [])
+        mock_neo4j_session.set_response(
+            "e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-active-before-window",
+                        "ci_id": "ci-1",
+                        "status": "OPEN",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2025, 12, 31, 23, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01"},
+                }
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        row = report["rows"][0]
+        assert row["active_events"] == 1
+        assert row["active_downtime_seconds"] == 7200
+        assert row["mtbf_seconds"] is None
+        assert row["first_failure_at"] is None
+        assert row["last_failure_at"] is None
+        assert row["availability_percentage"] == 0.0
+
     def test_get_availability_report_defaults_to_last_30_days(self, mock_neo4j_session):
         get_availability_report = _load_event_service_module().get_availability_report
         now = datetime(2026, 2, 1, 12, 0, tzinfo=timezone.utc)
