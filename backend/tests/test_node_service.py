@@ -309,6 +309,36 @@ class TestGetNodes:
 
             assert result[0]["location"] is None
 
+    def test_get_nodes_returns_located_and_unlocated_nodes(self):
+        """Inventory serialization should preserve located and unlocated rows."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        class FakeLocation:
+            def __init__(self):
+                self.latitude = 19.4326
+                self.longitude = -99.1332
+
+        located_props = _make_node_record(node_id="ci-located", name="Located CI")
+        located_props["location"] = FakeLocation()
+        unlocated_props = _make_node_record(
+            node_id="ci-unlocated",
+            name="Unlocated CI",
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [
+                _make_full_record(node_props=located_props),
+                _make_full_record(node_props=unlocated_props),
+            ]
+
+            from services.node_service import get_nodes
+
+            result = get_nodes(admin)
+
+            assert [node["id"] for node in result] == ["ci-located", "ci-unlocated"]
+            assert result[0]["location"] == {"lat": 19.4326, "long": -99.1332}
+            assert result[1]["location"] is None
+
     def test_metadata_excludes_standard_fields(self):
         """Metadata dict should exclude standard fields (id, name, status, etc.)."""
         admin = _make_user(username="admin", role="ADMIN")

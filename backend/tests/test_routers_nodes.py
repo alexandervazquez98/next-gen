@@ -193,6 +193,38 @@ class TestGetNodes:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_list_nodes_admin_includes_unlocated_ci(self):
+        """Admin inventory should include CIs that have no point location."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        node_record = _make_neo4j_node_record(
+            node_id="ci-unlocated",
+            name="Unlocated CI",
+        )
+        node_record["location"] = None
+        full_record = _make_full_record(node_props=node_record, category="router")
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [full_record]
+
+            response = client.get("/api/nodes")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data) == 1
+            assert data[0]["id"] == "ci-unlocated"
+            assert data[0]["location"] is None
+            mock_repo.get_nodes.assert_called_once_with([], True)
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_list_nodes_operator_scoped_by_location(self, mock_neo4j_driver):
         """Non-admin should have results scoped to allowed_locations."""
         fake_user = _make_pydantic_user(
@@ -233,6 +265,44 @@ class TestGetNodes:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_list_nodes_operator_includes_allowed_unlocated_ci(self):
+        """Operator inventory should include unlocated CIs in allowed locations."""
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            allowed_locations=["Site A"],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        node_record = _make_neo4j_node_record(
+            node_id="ci-site-a",
+            name="Site A CI",
+            location_name="Site A",
+        )
+        node_record["location"] = None
+        full_record = _make_full_record(node_props=node_record, category="switch")
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [full_record]
+
+            response = client.get("/api/nodes")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data) == 1
+            assert data[0]["id"] == "ci-site-a"
+            assert data[0]["location_name"] == "Site A"
+            assert data[0]["location"] is None
+            mock_repo.get_nodes.assert_called_once_with(["Site A"], False)
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_list_nodes_operator_no_locations_returns_empty(self):
         """Operator with no allowed_locations should get empty list."""
         fake_user = _make_pydantic_user(
@@ -257,6 +327,7 @@ class TestGetNodes:
             assert response.status_code == 200
             data = response.json()
             assert data == []
+            mock_repo.get_nodes.assert_called_once_with([], False)
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
