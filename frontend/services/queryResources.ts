@@ -18,6 +18,7 @@ export interface SystemStatus {
 		last_run: string | null;
 		stats: {
 			cis_monitored: number;
+			last_cycle_metrics_processed?: number;
 			metrics_collected: number;
 			metrics_failed: number;
 			cycle_duration: number;

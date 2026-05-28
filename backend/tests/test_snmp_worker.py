@@ -268,6 +268,92 @@ class TestSNMPWorkerObservability:
         db.close.assert_called_once()
 
 
+class TestMonitoredCIStatus:
+    """Regression tests for stable monitored CI status semantics."""
+
+    def test_count_monitored_cis_uses_distinct_has_metric_assignments(self):
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("count(distinct n) as cis_monitored", [{"cis_monitored": 2}])
+
+        from engines.snmp_worker import _count_monitored_cis
+
+        assert _count_monitored_cis(mock_session) == 2
+        count_query = mock_session.queries[0]["query"]
+        assert "HAS_METRIC" in count_query
+        assert "count(DISTINCT n)" in count_query
+
+    def test_count_monitored_cis_returns_zero_when_no_record(self):
+        mock_session = MockNeo4jSession()
+        mock_session.set_default_response([])
+
+        from engines.snmp_worker import _count_monitored_cis
+
+        assert _count_monitored_cis(mock_session) == 0
+
+    @patch("engines.snmp_worker.get_polling_pipeline_settings")
+    @patch("engines.snmp_worker.fetch_snmp_value")
+    @patch("engines.snmp_worker.bulk_insert_metrics")
+    @patch("engines.snmp_worker.SessionLocal")
+    def test_poll_snmp_persists_stable_ci_count_and_last_cycle_processed_count(
+        self, mock_session_local, mock_bulk_insert, mock_fetch_snmp, mock_get_settings
+    ):
+        from config import PollingPipelineSettings
+
+        mock_get_settings.return_value = PollingPipelineSettings()
+        mock_fetch_snmp.return_value = 42.0
+        mock_session_local.return_value = MagicMock()
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("count(distinct n) as cis_monitored", [{"cis_monitored": 2}])
+        mock_session.set_response("match (n:ci)-[r:has_metric]->(m:metricdef)", [
+            {
+                "node_id": "ci-001",
+                "metric_id": "cpu",
+                "protocol": "SNMP",
+                "ip": "192.168.1.1",
+                "community": "public",
+                "oid": "1.3.6.1.2.1.25.3.3.1.2",
+                "port": 161,
+            },
+            {
+                "node_id": "ci-001",
+                "metric_id": "memory",
+                "protocol": "SNMP",
+                "ip": "192.168.1.1",
+                "community": "public",
+                "oid": "1.3.6.1.2.1.25.2.3.1.6",
+                "port": 161,
+            },
+            {
+                "node_id": "ci-002",
+                "metric_id": "cpu",
+                "protocol": "SNMP",
+                "ip": "192.168.1.2",
+                "community": "public",
+                "oid": "1.3.6.1.2.1.25.3.3.1.2",
+                "port": 161,
+            },
+        ])
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+        with patch("engines.snmp_worker.driver", mock_driver):
+            from engines.snmp_worker import poll_snmp
+            poll_snmp()
+
+        status_update = next(
+            q for q in mock_session.queries
+            if "MERGE (c:CollectorStatus" in q["query"]
+        )
+        assert status_update["params"]["cis_monitored"] == 2
+        assert status_update["params"]["last_cycle_metrics_processed"] == 3
+        assert "c.last_cycle_metrics_processed" in status_update["query"]
+        assert mock_bulk_insert.call_args.args[1][0]["node_id"] == "ci-001"
+
+
 class TestSNMPCollectionFailures:
     """Regression tests for SNMP no-response collection-failure lifecycle."""
 

@@ -45,11 +45,23 @@ LAST_COLLECTION_TIME = None
 COLLECTOR_STATUS = "STOPPED"
 GLOBAL_STATS = {
     "cis_monitored": 0,
+    "last_cycle_metrics_processed": 0,
     "metrics_collected": 0,
     "metrics_failed": 0,
     "cycle_duration": 0.0,
     "jobs_per_min": 0.0,
 }
+
+
+def _count_monitored_cis(session) -> int:
+    """Return the stable count of distinct CIs with active metric assignments."""
+    record = session.run("""
+        MATCH (n:CI)-[:HAS_METRIC]->(:MetricDef)
+        RETURN count(DISTINCT n) AS cis_monitored
+    """).single()
+    if not record:
+        return 0
+    return int(record.get("cis_monitored") or 0)
 
 
 def get_collector_status():
@@ -61,6 +73,7 @@ def get_collector_status():
                 RETURN c.last_run AS last_run,
                        c.status AS status,
                        c.cis_monitored AS cis_monitored,
+                       c.last_cycle_metrics_processed AS last_cycle_metrics_processed,
                        c.metrics_collected AS metrics_collected,
                        c.metrics_failed AS metrics_failed,
                        c.cycle_duration AS cycle_duration,
@@ -74,6 +87,7 @@ def get_collector_status():
                     "status": record.get("status") or "UNKNOWN",
                     "stats": {
                         "cis_monitored": record.get("cis_monitored") or 0,
+                        "last_cycle_metrics_processed": record.get("last_cycle_metrics_processed") or 0,
                         "metrics_collected": record.get("metrics_collected") or 0,
                         "metrics_failed": record.get("metrics_failed") or 0,
                         "cycle_duration": record.get("cycle_duration") or 0.0,
@@ -165,6 +179,7 @@ async def snmp_collector_loop():
 
             GLOBAL_STATS["cycle_duration"] = round(elapsed, 2)
             GLOBAL_STATS["cis_monitored"] = stats.get("cis", 0)
+            GLOBAL_STATS["last_cycle_metrics_processed"] = stats.get("total", 0)
             GLOBAL_STATS["metrics_collected"] = stats.get("total", 0)
             GLOBAL_STATS["metrics_failed"] = stats.get("errors", 0)
             if elapsed > 0:
@@ -227,7 +242,10 @@ def run_snmp_cycle_sync(driver):
         total_metrics += executed
         total_errors += errors
 
-    return {"cis": len(cis), "total": total_metrics, "errors": total_errors}
+    with driver.session() as session:
+        monitored_cis = _count_monitored_cis(session)
+
+    return {"cis": monitored_cis, "total": total_metrics, "errors": total_errors}
 
 
 def process_ci_metrics(ci, metrics, driver):

@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import SystemDashboard from './SystemDashboard';
@@ -30,6 +29,7 @@ describe('SystemDashboard', () => {
           last_run: '2026-04-04T10:00:00.000Z',
           stats: {
             cis_monitored: 8,
+            last_cycle_metrics_processed: 173,
             metrics_collected: 120,
             metrics_failed: 1,
             cycle_duration: 3,
@@ -47,5 +47,8 @@ describe('SystemDashboard', () => {
     expect(screen.getByText('40%')).toBeInTheDocument();
     expect(screen.getByText('CONNECTED')).toBeInTheDocument();
     expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(screen.getByText('Active Monitored CIs')).toBeInTheDocument();
+    expect(screen.getByText('8')).toBeInTheDocument();
+    expect(screen.queryByText('173')).not.toBeInTheDocument();
   });
 });
