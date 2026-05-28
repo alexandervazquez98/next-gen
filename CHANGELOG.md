@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.11] — 2026-05-28
+
+### Added
+- **Admin CI correlation visibility** (PRs #193 and #195, tracker #191):
+  - Homologates CI relationship types so new writes use `CONNECTS_TO` instead of legacy `CONNECTED_TO`.
+  - Adds scoped `/api/cis/relationships` summaries for Admin relationship visibility while preserving existing location scoping.
+  - Adds read-only audit and guarded dry-run/apply migration scripts for production Neo4j relationship type cleanup.
+  - Shows Admin Inventory correlation indicators for none, incoming, outgoing, and bidirectional relationships.
+  - Displays selected CI correlation details with direction, relationship type, related CI label, and related CI id.
+  - Leaves the static visual correlation modal/create flow for the next chained PR slice.
+
 ## [1.12.10] — 2026-05-27
 
 ### Added
