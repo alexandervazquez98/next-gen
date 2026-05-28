@@ -197,6 +197,17 @@ def _log_observe_only_cycle(settings, metrics_count, collected_count, failed_cou
     )
 
 
+def _count_monitored_cis(session) -> int:
+    """Return the stable count of distinct CIs with active metric assignments."""
+    record = session.run("""
+        MATCH (n:CI)-[:HAS_METRIC]->(:MetricDef)
+        RETURN count(DISTINCT n) AS cis_monitored
+    """).single()
+    if not record:
+        return 0
+    return int(record.get("cis_monitored") or 0)
+
+
 def _base_severity_from_criticality(criticality) -> str:
     try:
         normalized = int(criticality or 1)
@@ -540,16 +551,18 @@ def poll_snmp():
             # Update collector status in Neo4j
             duration_current = time.time() - start_time
             jobs_per_min = round((len(metrics_to_save) / duration_current) * 60, 1) if duration_current > 0 else 0.0
+            monitored_ci_count = _count_monitored_cis(session)
             session.run("""
                 MERGE (c:CollectorStatus {id: 'main'})
                 SET c.last_run = datetime(),
                     c.status = 'RUNNING',
-                    c.cis_monitored = $cis,
+                    c.cis_monitored = $cis_monitored,
+                    c.last_cycle_metrics_processed = $last_cycle_metrics_processed,
                     c.metrics_collected = $collected,
                     c.metrics_failed = $failed,
                     c.cycle_duration = $duration,
                     c.jobs_per_min = $jobs_per_min
-            """, cis=metrics_count, collected=len(metrics_to_save), failed=failed_count, duration=round(duration_current, 2), jobs_per_min=jobs_per_min)
+            """, cis_monitored=monitored_ci_count, last_cycle_metrics_processed=metrics_count, collected=len(metrics_to_save), failed=failed_count, duration=round(duration_current, 2), jobs_per_min=jobs_per_min)
             _log_observe_only_cycle(
                 polling_settings,
                 metrics_count,

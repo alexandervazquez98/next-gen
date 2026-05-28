@@ -8,6 +8,63 @@ def _load_snmp_service_module():
     return importlib.import_module("services.snmp_service")
 
 
+def test_get_collector_status_exposes_last_cycle_metrics_processed(mock_neo4j_session):
+    snmp_service = _load_snmp_service_module()
+    mock_neo4j_session.set_response(
+        "MATCH (c:CollectorStatus",
+        [
+            {
+                "last_run": "2026-05-28T01:00:00Z",
+                "status": "RUNNING",
+                "cis_monitored": 2,
+                "last_cycle_metrics_processed": 5,
+                "metrics_collected": 4,
+                "metrics_failed": 1,
+                "cycle_duration": 1.25,
+                "jobs_per_min": 192.0,
+            }
+        ],
+    )
+
+    status = snmp_service.get_collector_status()
+
+    assert status["stats"]["cis_monitored"] == 2
+    assert status["stats"]["last_cycle_metrics_processed"] == 5
+    assert status["stats"]["metrics_collected"] == 4
+
+
+def test_get_collector_status_tolerates_missing_last_cycle_metrics_processed(mock_neo4j_session):
+    snmp_service = _load_snmp_service_module()
+    mock_neo4j_session.set_response(
+        "MATCH (c:CollectorStatus",
+        [
+            {
+                "last_run": "2026-05-28T01:00:00Z",
+                "status": "RUNNING",
+                "cis_monitored": 2,
+                "metrics_collected": 4,
+                "metrics_failed": 1,
+                "cycle_duration": 1.25,
+                "jobs_per_min": 192.0,
+            }
+        ],
+    )
+
+    status = snmp_service.get_collector_status()
+
+    assert status["stats"]["cis_monitored"] == 2
+    assert status["stats"]["last_cycle_metrics_processed"] == 0
+
+
+def test_get_collector_status_fallback_stats_include_last_cycle_metrics_processed(mock_neo4j_session):
+    snmp_service = _load_snmp_service_module()
+    mock_neo4j_session.set_response("MATCH (c:CollectorStatus", [])
+
+    status = snmp_service.get_collector_status()
+
+    assert status["stats"]["last_cycle_metrics_processed"] == 0
+
+
 def test_resolve_event_snapshot_flattens_business_context(mock_neo4j_session):
     snmp_service = _load_snmp_service_module()
     mock_neo4j_session.set_response(
