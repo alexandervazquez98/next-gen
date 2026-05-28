@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.10] — 2026-05-27
+
+### Added
+- **Availability analytics relocation** (PRs #185 and #187, issue #180):
+  - Enriches `GET /api/events/availability-report` rows with sanitized CI metadata for category filtering and global CI-field search.
+  - Removes the analyst-oriented Availability Metrics report from Monitoring so the console remains focused on `/api/events?status=CONSOLE` triage.
+  - Adds dedicated `METRICS` and `AVAILABILITY` sections to Analytics while preserving the existing graph visualization.
+  - Adds an Availability MTTR/MTBF mini-dashboard with persistent search, category filters, expandable CI details, loading/error/empty states, and filtered CSV export.
+  - Keeps Analytics access aligned with the existing profile/permission model rather than coupling the section to Admin-only access.
+
+### Fixed
+- **Monitored CI dashboard counter** (PR #182, issue #163):
+  - Stabilizes the active monitored CI counter after dashboard filtering updates.
+- **Metric deletion batching** (PR #184, issue #162):
+  - Replaces unsafe large-fanout metric `DETACH DELETE` behavior with bounded relationship cleanup before deleting metric definitions.
+  - Preserves delete API semantics while avoiding long Neo4j transactions for metrics with large historical fan-out.
+
+### Performance
+- **Availability report query optimization** (PR #183, issue #176):
+  - Optimizes availability report query behavior for the MTTR/MTBF reporting path added in the prior release.
+
 ## [1.12.9] — 2026-05-27
 
 ### Fixed
