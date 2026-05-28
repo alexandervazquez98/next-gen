@@ -4,6 +4,7 @@ import type { GraphNode, MetricValue, NodeMetricData } from "../types";
 import MetricHistoryChart from "./MetricHistoryChart";
 import MultiSelectCIs from "./MultiSelectCIs";
 import MultiMetricChart from "./MultiMetricChart";
+import AvailabilityDashboard from "./AvailabilityDashboard";
 import { fetchNodes, fetchNodeMetricHistory } from "../services/queryResources";
 import { formatMetricValue } from "../utils/metricFormatting";
 
@@ -12,7 +13,11 @@ interface BrushRange {
 	endTime?: string;
 }
 
+type AnalyticsSection = "METRICS" | "AVAILABILITY";
+const ANALYTICS_SECTIONS: AnalyticsSection[] = ["METRICS", "AVAILABILITY"];
+
 const MetricAnalytics: React.FC = () => {
+	const [activeSection, setActiveSection] = useState<AnalyticsSection>("METRICS");
 	const [nodes, setNodes] = useState<GraphNode[]>([]);
 	const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
 	const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -302,7 +307,7 @@ const MetricAnalytics: React.FC = () => {
 
 	return (
 		<div className="flex h-full min-w-0 max-w-full flex-col overflow-x-hidden overflow-y-auto bg-surface-950 p-4 text-white md:p-8">
-			<header className="mb-8 flex min-w-0 items-end justify-between gap-4">
+			<header className="mb-8 flex min-w-0 flex-col gap-6 md:flex-row md:items-end md:justify-between">
 				<div className="min-w-0">
 					<h1 className="truncate text-3xl font-black uppercase tracking-tighter">
 						Metric Analytics
@@ -311,8 +316,23 @@ const MetricAnalytics: React.FC = () => {
 						Historical Telemetry Visualization
 					</p>
 				</div>
+				<nav className="flex gap-3 border-b border-white/5 pb-3 md:border-b-0 md:pb-0" aria-label="Analytics sections">
+					{ANALYTICS_SECTIONS.map((section) => (
+						<button
+							key={section}
+							type="button"
+							onClick={() => setActiveSection(section)}
+							className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${activeSection === section ? "bg-brand-600 text-white" : "text-neutral-500 hover:bg-white/5 hover:text-white"}`}
+						>
+							{section}
+						</button>
+					))}
+				</nav>
 			</header>
 
+			{activeSection === "AVAILABILITY" ? (
+				<AvailabilityDashboard />
+			) : (
 			<div className="grid min-w-0 max-w-full flex-1 grid-cols-12 gap-4 md:gap-8 lg:min-h-0">
 				{/* Controls Sidebar */}
 				<div className="col-span-12 flex min-w-0 max-w-full flex-col space-y-6 overflow-x-hidden lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
@@ -640,6 +660,7 @@ const MetricAnalytics: React.FC = () => {
 					)}
 				</div>
 			</div>
+			)}
 		</div>
 	);
 };
