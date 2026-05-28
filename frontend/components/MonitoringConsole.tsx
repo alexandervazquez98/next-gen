@@ -15,7 +15,7 @@ import {
 } from "react-leaflet";
 import { createPortal } from "react-dom";
 import "leaflet/dist/leaflet.css";
-import type { GraphNode, Event, AvailabilityReportRow } from "../types";
+import type { GraphNode, Event } from "../types";
 import { STATUS_COLORS } from "../utils/status";
 import DependencyMiniMap from "./DependencyMiniMap";
 import { useEventCorrelation } from "../hooks/useEventCorrelation";
@@ -73,26 +73,6 @@ function formatOpenAge(event: Event): string {
 	if (days > 0) return `${days}d ${hours}h`;
 	if (hours > 0) return `${hours}h ${minutes}m`;
 	return `${minutes}m`;
-}
-
-function formatDurationSeconds(value?: number | null): string {
-	if (value === null || value === undefined || !Number.isFinite(value))
-		return "—";
-	const totalSeconds = Math.max(0, Math.round(value));
-	const days = Math.floor(totalSeconds / 86400);
-	const hours = Math.floor((totalSeconds % 86400) / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-	if (days > 0) return `${days}d ${hours}h`;
-	if (hours > 0) return `${hours}h ${minutes}m`;
-	if (minutes > 0) return `${minutes}m`;
-	return `${totalSeconds}s`;
-}
-
-function formatAvailability(value?: number | null): string {
-	if (value === null || value === undefined || !Number.isFinite(value))
-		return "—";
-	return `${value.toFixed(2)}%`;
 }
 
 function getOpenAgeTone(event: Event): string {
@@ -921,15 +901,7 @@ const MonitoringConsole: React.FC = () => {
 	const [streamFilter, setStreamFilter] = useState<
 		"ALL" | "CRITICAL" | "WARNING" | "ACK"
 	>("ALL");
-	const {
-		nodes,
-		links,
-		events,
-		categories,
-		availabilityReport,
-		availabilityReportIsLoading,
-		availabilityReportError,
-	} = useMonitoringConsoleData();
+	const { nodes, links, events, categories } = useMonitoringConsoleData();
 	const eventMutations = useEventMutations();
 
 	// --- Actions ---
@@ -1148,39 +1120,6 @@ const MonitoringConsole: React.FC = () => {
 	).length;
 	const kpiWarning = openEvents.filter((e) => e.severity === "WARNING").length;
 	const kpiAck = ackEvents.length;
-	const allAvailabilityRows: AvailabilityReportRow[] = useMemo(() => {
-		const rows =
-			availabilityReport && Array.isArray(availabilityReport.rows)
-				? availabilityReport.rows
-				: [];
-		return [...rows].sort((a, b) => {
-			const aAvailability = a.availability_percentage ?? 101;
-			const bAvailability = b.availability_percentage ?? 101;
-			if (aAvailability !== bAvailability) return aAvailability - bAvailability;
-			return (
-				b.active_events +
-				b.recovered_incidents -
-				(a.active_events + a.recovered_incidents)
-			);
-		});
-	}, [availabilityReport]);
-	const availabilityRows = allAvailabilityRows.slice(0, 5);
-	const reportWindowLabel = availabilityReport?.window_days
-		? `${Math.round(availabilityReport.window_days)}d window`
-		: "Last 30d";
-	const mttrRows = allAvailabilityRows.filter(
-		(row) => row.mttr_seconds !== null && row.mttr_seconds !== undefined,
-	);
-	const averageMttrSeconds =
-		mttrRows.length > 0
-			? mttrRows.reduce((sum, row) => sum + (row.mttr_seconds ?? 0), 0) /
-				mttrRows.length
-			: null;
-	const activeAvailabilityEvents = allAvailabilityRows.reduce(
-		(sum, row) => sum + row.active_events,
-		0,
-	);
-
 	// Helper for Cleanup Button Logic
 	// Note: summary feed doesn't include comments, so count is best-effort.
 	// Backend may skip events with comments during prune.
@@ -1412,111 +1351,6 @@ const MonitoringConsole: React.FC = () => {
 								active={streamFilter === "ALL"}
 								onClick={() => setStreamFilter("ALL")}
 							/>
-						</div>
-
-						{/* Availability Metrics */}
-						<div className="glass p-6 rounded-2xl border border-white/5">
-							<div className="flex items-center justify-between gap-4 mb-5">
-								<div>
-									<h3 className="text-sm font-bold text-neutral-300 uppercase flex items-center gap-2">
-										<span className="material-symbols-outlined text-emerald-400">
-											monitoring
-										</span>
-										Availability Metrics
-									</h3>
-									<p className="text-xs text-neutral-500 mt-1">
-										MTTR/MTBF by CI + event type · {reportWindowLabel}
-									</p>
-								</div>
-								<div className="flex gap-6 text-right">
-									<div>
-										<div className="text-[10px] text-neutral-500 font-bold uppercase">
-											Avg MTTR
-										</div>
-										<div className="text-lg font-black text-white">
-											{formatDurationSeconds(averageMttrSeconds)}
-										</div>
-									</div>
-									<div>
-										<div className="text-[10px] text-neutral-500 font-bold uppercase">
-											Active Down
-										</div>
-										<div className="text-lg font-black text-red-300">
-											{activeAvailabilityEvents}
-										</div>
-									</div>
-								</div>
-							</div>
-							{availabilityReportIsLoading ? (
-								<div className="text-sm text-neutral-500 italic py-3">
-									Loading availability metrics…
-								</div>
-							) : availabilityReportError ? (
-								<div className="text-sm text-red-300 italic py-3">
-									Availability metrics unavailable.
-								</div>
-							) : availabilityRows.length === 0 ? (
-								<div className="text-sm text-neutral-600 italic py-3">
-									No recovered availability incidents in the report window.
-								</div>
-							) : (
-								<div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
-									{availabilityRows.map((row) => (
-										<div
-											key={`${row.ci_id}-${row.event_type}`}
-											className="rounded-xl bg-black/20 border border-white/5 p-4"
-										>
-											<div className="flex items-start justify-between gap-3 mb-3">
-												<div className="min-w-0">
-													<div className="text-sm font-black text-white truncate">
-														{row.ci_name || row.ci_id}
-													</div>
-													<div className="text-[10px] text-neutral-500 font-bold uppercase truncate">
-														{row.event_type}
-													</div>
-												</div>
-												<span className="text-[10px] font-black text-emerald-300 bg-emerald-500/10 px-2 py-1 rounded">
-													{formatAvailability(row.availability_percentage)}
-												</span>
-											</div>
-											<div className="grid grid-cols-2 gap-3 text-xs">
-												<div>
-													<div className="text-neutral-500 uppercase font-bold">
-														MTTR
-													</div>
-													<div className="text-neutral-100 font-black">
-														{formatDurationSeconds(row.mttr_seconds)}
-													</div>
-												</div>
-												<div>
-													<div className="text-neutral-500 uppercase font-bold">
-														MTBF
-													</div>
-													<div className="text-neutral-100 font-black">
-														{formatDurationSeconds(row.mtbf_seconds)}
-													</div>
-												</div>
-												<div>
-													<div className="text-neutral-500 uppercase font-bold">
-														Recovered
-													</div>
-													<div className="text-neutral-100 font-black">
-														{row.recovered_incidents}
-													</div>
-												</div>
-												<div>
-													<div className="text-neutral-500 uppercase font-bold">
-														Active
-													</div>
-													<div className="text-red-300 font-black">
-														{row.active_events}
-													</div>
-												</div>
-											</div>
-										</div>
-									))}
-								</div>
-							)}
 						</div>
 
 						{/* Event Stream Table */}

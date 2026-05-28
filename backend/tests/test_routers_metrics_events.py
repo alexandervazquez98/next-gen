@@ -1223,6 +1223,15 @@ class TestEventsList:
                     "availability_percentage": 99.9306,
                     "first_failure_at": start.isoformat(),
                     "last_failure_at": end.isoformat(),
+                    "ci": {
+                        "id": "ci-001",
+                        "label": "Router-01",
+                        "category": "Routers",
+                        "type": "Routers",
+                        "ip": "10.0.0.1",
+                        "owner": "NOC",
+                        "metadata": {"rack": "R1"},
+                    },
                 }
             ],
         }
@@ -1236,10 +1245,63 @@ class TestEventsList:
             )
 
         assert response.status_code == 200
-        assert response.json() == payload
+        body = response.json()
+        assert body["window_start"] == payload["window_start"]
+        assert body["window_end"] == payload["window_end"]
+        assert body["generated_at"] == payload["generated_at"]
+        assert body["window_days"] == 30.0
+        assert body["total_groups"] == 1
+        row = body["rows"][0]
+        assert row["ci_id"] == "ci-001"
+        assert row["ci_name"] == "Router-01"
+        assert row["mttr_seconds"] == 900
+        assert row["mtbf_seconds"] == 7200
+        assert row["ci"]["id"] == "ci-001"
+        assert row["ci"]["label"] == "Router-01"
+        assert row["ci"]["category"] == "Routers"
+        assert row["ci"]["type"] == "Routers"
+        assert row["ci"]["ip"] == "10.0.0.1"
+        assert row["ci"]["owner"] == "NOC"
+        assert row["ci"]["metadata"] == {"rack": "R1"}
         get_report.assert_called_once()
         assert get_report.call_args.kwargs["start"] == start
         assert get_report.call_args.kwargs["end"] == end
+
+    def test_availability_report_endpoint_keeps_old_rows_valid(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        payload = {
+            "window_start": start.isoformat(),
+            "window_end": start.isoformat(),
+            "generated_at": start.isoformat(),
+            "window_days": 0,
+            "total_groups": 1,
+            "rows": [
+                {
+                    "ci_id": "ci-001",
+                    "ci_name": "Router-01",
+                    "event_type": "AVAILABILITY",
+                    "recovered_incidents": 0,
+                    "mttr_seconds": None,
+                    "mtbf_seconds": None,
+                    "downtime_seconds": 0,
+                    "active_events": 0,
+                    "active_downtime_seconds": 0,
+                    "availability_percentage": None,
+                    "first_failure_at": None,
+                    "last_failure_at": None,
+                }
+            ],
+        }
+
+        with patch(
+            "routers.events.event_service.get_availability_report", return_value=payload
+        ):
+            response = client.get("/api/events/availability-report")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rows"][0]["ci_id"] == "ci-001"
+        assert body["rows"][0].get("ci") in (None, {})
 
 
 class TestEventsDetail:

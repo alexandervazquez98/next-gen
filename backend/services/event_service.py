@@ -420,12 +420,130 @@ def _resolve_availability_window(
     return window_start, window_end, generated_at
 
 
+_CI_CANONICAL_FIELDS = {
+    "id",
+    "name",
+    "label",
+    "category",
+    "layer",
+    "type",
+    "status",
+    "ip",
+    "location_name",
+    "owner",
+    "brand",
+    "model",
+    "serialNumber",
+    "firmwareVersion",
+    "pollingInterval",
+}
+
+_SENSITIVE_CI_KEY_PARTS = (
+    "credential",
+    "password",
+    "passphrase",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "snmp",
+    "community",
+    "auth",
+    "priv",
+    "username",
+    "user_name",
+    "login",
+    "user",
+)
+
+
 def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
     ci_id = event_data.get("ci_id")
     event_type = event_data.get("event_type")
     if not ci_id or not event_type:
         return None
     return str(ci_id), str(event_type)
+
+
+def _is_sensitive_ci_key(key: str) -> bool:
+    normalized = key.lower()
+    return any(part in normalized for part in _SENSITIVE_CI_KEY_PARTS)
+
+
+def _json_safe_ci_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        safe_items = [_json_safe_ci_value(item) for item in value]
+        return [item for item in safe_items if item is not None]
+    if isinstance(value, dict):
+        sanitized = _sanitize_ci_metadata(value)
+        return sanitized or None
+    return None
+
+
+def _sanitize_ci_metadata(ci_data: Dict[str, Any]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for key, value in ci_data.items():
+        if key in _CI_CANONICAL_FIELDS or _is_sensitive_ci_key(key):
+            continue
+        safe_value = _json_safe_ci_value(value)
+        if safe_value is not None:
+            metadata[key] = safe_value
+    return metadata
+
+
+def _build_availability_ci_metadata(
+    ci_data: Dict[str, Any], category: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    if not ci_data:
+        return None
+    ci_type = category or ci_data.get("type") or ci_data.get("layer")
+    metadata = _sanitize_ci_metadata(ci_data)
+    payload = _clean_dict(
+        {
+            "id": ci_data.get("id"),
+            "label": ci_data.get("name") or ci_data.get("label"),
+            "category": category,
+            "type": ci_type,
+            "status": ci_data.get("status"),
+            "ip": ci_data.get("ip"),
+            "location_name": ci_data.get("location_name"),
+            "owner": ci_data.get("owner"),
+            "brand": ci_data.get("brand"),
+            "model": ci_data.get("model"),
+            "serialNumber": ci_data.get("serialNumber"),
+            "firmwareVersion": ci_data.get("firmwareVersion"),
+            "pollingInterval": ci_data.get("pollingInterval"),
+            "metadata": metadata or None,
+        }
+    )
+    return payload or None
+
+
+def _merge_availability_ci_metadata(
+    existing: Optional[Dict[str, Any]], incoming: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    if not existing:
+        return incoming
+    if not incoming:
+        return existing
+    incoming_values = {
+        key: value for key, value in incoming.items() if value is not None
+    }
+    merged = {**existing, **incoming_values}
+    existing_metadata = (
+        existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+    )
+    incoming_metadata = (
+        incoming.get("metadata") if isinstance(incoming.get("metadata"), dict) else {}
+    )
+    metadata = {**existing_metadata, **incoming_metadata}
+    if metadata:
+        merged["metadata"] = metadata
+    return merged
 
 
 def get_availability_report(
@@ -450,7 +568,9 @@ def get_availability_report(
     groups: Dict[tuple[str, str], Dict[str, Any]] = {}
 
     def ensure_group(
-        key: tuple[str, str], ci_name: Optional[str] = None
+        key: tuple[str, str],
+        ci_name: Optional[str] = None,
+        ci_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         row = groups.setdefault(
             key,
@@ -463,10 +583,12 @@ def get_availability_report(
                 "downtime_seconds": 0.0,
                 "active_events": 0,
                 "active_downtime_seconds": 0.0,
+                "ci": ci_metadata,
             },
         )
         if ci_name and not row.get("ci_name"):
             row["ci_name"] = ci_name
+        row["ci"] = _merge_availability_ci_metadata(row.get("ci"), ci_metadata)
         return row
 
     driver = get_db()
@@ -480,7 +602,9 @@ def get_availability_report(
               AND e.created_at >= $window_start
               AND e.created_at <= $window_end
               AND e.recovered_at <= $window_end
-            RETURN e, ci
+            OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
+            WITH e, ci, head(collect(DISTINCT cat.name)) AS category
+            RETURN e, ci, category
             ORDER BY e.created_at ASC
             """,
             window_start=window_start,
@@ -501,7 +625,10 @@ def get_availability_report(
             if recovered_at < created_at or recovered_at > window_end:
                 continue
 
-            row = ensure_group(key, ci_data.get("name"))
+            ci_metadata = _build_availability_ci_metadata(
+                ci_data, _record_value(record, "category")
+            )
+            row = ensure_group(key, ci_data.get("name"), ci_metadata)
             repair_seconds = (recovered_at - created_at).total_seconds()
             row["failure_starts"].append(created_at)
             row["repair_seconds"].append(repair_seconds)
@@ -517,7 +644,9 @@ def get_availability_report(
             WHERE e.status IN ['OPEN', 'ACK']
               AND e.created_at IS NOT NULL
               AND e.created_at <= $window_end
-            RETURN e, ci
+            OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
+            WITH e, ci, head(collect(DISTINCT cat.name)) AS category
+            RETURN e, ci, category
             ORDER BY e.created_at ASC
             """,
             window_end=window_end,
@@ -531,7 +660,10 @@ def get_availability_report(
             created_at = _parse_datetime(event_data.get("created_at"))
             if created_at is None or created_at > window_end:
                 continue
-            row = ensure_group(key, ci_data.get("name"))
+            ci_metadata = _build_availability_ci_metadata(
+                ci_data, _record_value(record, "category")
+            )
+            row = ensure_group(key, ci_data.get("name"), ci_metadata)
             row["active_events"] += 1
             if window_start <= created_at <= window_end:
                 row["failure_starts"].append(created_at)
@@ -577,6 +709,7 @@ def get_availability_report(
                 "last_failure_at": failure_starts[-1].isoformat()
                 if failure_starts
                 else None,
+                "ci": row.get("ci"),
             }
         )
 

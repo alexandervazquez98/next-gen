@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useActiveEventsQuery } from "./useActiveEventsQuery";
-import { useAvailabilityReportQuery } from "./useAvailabilityReportQuery";
 import { useCategoriesQuery } from "./useCategoriesQuery";
 import { useLinksQuery } from "./useLinksQuery";
 import { useNodesQuery } from "./useNodesQuery";
@@ -9,7 +8,6 @@ export const useMonitoringConsoleData = () => {
 	const nodesQuery = useNodesQuery();
 	const linksQuery = useLinksQuery();
 	const eventsQuery = useActiveEventsQuery();
-	const availabilityReportQuery = useAvailabilityReportQuery();
 	const categoriesQuery = useCategoriesQuery();
 
 	const nodes = nodesQuery.data ?? [];
@@ -39,9 +37,6 @@ export const useMonitoringConsoleData = () => {
 		nodes,
 		links: linksQuery.data ?? [],
 		events: eventsQuery.data ?? [],
-		availabilityReport: availabilityReportQuery.data ?? null,
-		availabilityReportIsLoading: availabilityReportQuery.isLoading,
-		availabilityReportError: availabilityReportQuery.error ?? null,
 		categories,
 		isLoading:
 			nodesQuery.isLoading ||

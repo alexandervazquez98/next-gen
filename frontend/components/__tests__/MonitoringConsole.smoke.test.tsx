@@ -15,7 +15,6 @@ import {
 	render,
 	screen,
 	waitFor,
-	within,
 } from "@testing-library/react";
 import type React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -232,12 +231,10 @@ describe("MonitoringConsole smoke tests", () => {
 		expect(endpointCalls["/links"]).toBe(1);
 		expect(endpointCalls["/categories"]).toBe(1);
 		expect(endpointCalls["/events?status=CONSOLE"]).toBe(2);
-		expect(endpointCalls["/events/availability-report"]).toBeGreaterThanOrEqual(
-			1,
-		);
+		expect(endpointCalls["/events/availability-report"]).toBeUndefined();
 	});
 
-	it("GIVEN availability report data WHEN dashboard renders THEN concise MTTR and MTBF metrics are visible", async () => {
+	it("GIVEN monitoring dashboard renders THEN it does not fetch or show the full availability report", async () => {
 		const { default: MonitoringConsole } = await import("../MonitoringConsole");
 
 		mockApiGet.mockImplementation((url: string) => {
@@ -246,71 +243,22 @@ describe("MonitoringConsole smoke tests", () => {
 			if (url === "/categories") return Promise.resolve([]);
 			if (url === "/events?status=CONSOLE") return Promise.resolve([]);
 			if (url === "/events/availability-report") {
-				return Promise.resolve({
-					window_start: "2026-01-01T00:00:00.000Z",
-					window_end: "2026-01-31T00:00:00.000Z",
-					generated_at: "2026-01-31T00:00:00.000Z",
-					window_days: 30,
-					total_groups: 1,
-					rows: [
-						{
-							ci_id: "ci-1",
-							ci_name: "Router-01",
-							event_type: "AVAILABILITY",
-							recovered_incidents: 2,
-							mttr_seconds: 900,
-							mtbf_seconds: 7200,
-							downtime_seconds: 1800,
-							active_events: 1,
-							active_downtime_seconds: 300,
-							availability_percentage: 99.75,
-						},
-						...Array.from({ length: 4 }, (_, index) => ({
-							ci_id: `ci-extra-${index}`,
-							ci_name: `Router-extra-${index}`,
-							event_type: "AVAILABILITY",
-							recovered_incidents: 1,
-							mttr_seconds: 600,
-							mtbf_seconds: null,
-							downtime_seconds: 600,
-							active_events: 0,
-							active_downtime_seconds: 0,
-							availability_percentage: 99.8 + index / 100,
-						})),
-						{
-							ci_id: "ci-hidden",
-							ci_name: "Hidden-Router",
-							event_type: "AVAILABILITY",
-							recovered_incidents: 1,
-							mttr_seconds: 600,
-							mtbf_seconds: null,
-							downtime_seconds: 600,
-							active_events: 9,
-							active_downtime_seconds: 900,
-							availability_percentage: 99.99,
-						},
-					],
-				});
+				throw new Error("Monitoring must not fetch availability analytics");
 			}
 			return Promise.resolve([]);
 		});
 
 		renderWithQueryClient(<MonitoringConsole />);
 
-		expect(await screen.findByText("Availability Metrics")).toBeInTheDocument();
-		expect(await screen.findByText("Router-01")).toBeInTheDocument();
-		expect(screen.getAllByText("AVAILABILITY").length).toBeGreaterThanOrEqual(
-			1,
-		);
-		expect(screen.getAllByText("15m").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("2h 0m")).toBeInTheDocument();
-		expect(screen.getByText("99.75%")).toBeInTheDocument();
-		expect(screen.queryByText("Hidden-Router")).not.toBeInTheDocument();
-		const activeDownCard = screen.getByText("Active Down").parentElement;
-		expect(activeDownCard).not.toBeNull();
+		await waitFor(() => {
+			expect(mockApiGet.mock.calls.some(([url]) => url === "/events?status=CONSOLE")).toBe(true);
+		});
+		expect(screen.queryByText("Availability Metrics")).not.toBeInTheDocument();
+		expect(screen.queryByText("MTTR/MTBF by CI + event type")).not.toBeInTheDocument();
+		expect(screen.queryByText("Active Down")).not.toBeInTheDocument();
 		expect(
-			within(activeDownCard as HTMLElement).getByText("10"),
-		).toBeInTheDocument();
+			mockApiGet.mock.calls.some(([url]) => url === "/events/availability-report"),
+		).toBe(false);
 	});
 
 	it("GIVEN recovered events WHEN console feed loads THEN they stay visible without ACK action and are cleanable", async () => {
