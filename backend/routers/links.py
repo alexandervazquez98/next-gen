@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from models.core import Link
 from models.user import User
@@ -69,9 +69,7 @@ async def get_cis_relationships(payload: CiIdsPayload, current_user: User = Depe
     Batch-fetch relationship summary for a list of CI ids.
     Returns {ci_id: {asSource: [...], asTarget: [...]}}.
     """
-    from repositories import topology_repo
-    result = topology_repo.get_cis_relationship_summary(payload.ci_ids)
-    return result
+    return link_service.get_cis_relationships(payload.ci_ids, current_user)
 
 
 @router.post("/links/mass/simulate")
@@ -132,9 +130,9 @@ async def update_mass_links(payload: MassUpdatePayload, current_user: User = Dep
 
 @router.get("/graph/full")
 async def get_full_graph(
-    layer: str = None,
-    location: str = None,
-    owner: str = None,
+    layer: Optional[str] = None,
+    location: Optional[str] = None,
+    owner: Optional[str] = None,
     current_user: User = Depends(get_current_active_user)
 ):
     """

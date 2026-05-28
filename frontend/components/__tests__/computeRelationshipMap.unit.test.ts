@@ -50,19 +50,19 @@ describe('computeRelationshipMap', () => {
     });
   });
 
-  describe('GIVEN a single CONNECTED_TO link', () => {
-    it('WHEN called THEN correctly partitions asSource/asTarget with CONNECTED_TO type', () => {
-      const links = [link('X', 'Y', 'CONNECTED_TO')];
+  describe('GIVEN a single CONNECTS_TO link', () => {
+    it('WHEN called THEN correctly partitions asSource/asTarget with CONNECTS_TO type', () => {
+      const links = [link('X', 'Y', 'CONNECTS_TO')];
       const map = computeRelationshipMap(links);
 
       const xRels = map.get('X');
       const yRels = map.get('Y');
 
       expect(xRels!.asSource).toHaveLength(1);
-      expect(xRels!.asSource[0].type).toBe('CONNECTED_TO');
+      expect(xRels!.asSource[0].type).toBe('CONNECTS_TO');
       expect(xRels!.asSource[0].otherId).toBe('Y');
       expect(yRels!.asTarget).toHaveLength(1);
-      expect(yRels!.asTarget[0].type).toBe('CONNECTED_TO');
+      expect(yRels!.asTarget[0].type).toBe('CONNECTS_TO');
     });
   });
 
@@ -70,7 +70,7 @@ describe('computeRelationshipMap', () => {
     it('WHEN called THEN CI has multiple asSource entries', () => {
       const links = [
         link('CI1', 'CI2', 'DEPENDS_ON'),
-        link('CI1', 'CI3', 'CONNECTED_TO'),
+        link('CI1', 'CI3', 'CONNECTS_TO'),
         link('CI4', 'CI1', 'DEPENDS_ON'),  // CI1 as target
       ];
       const map = computeRelationshipMap(links);

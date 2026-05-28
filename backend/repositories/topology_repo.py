@@ -1,10 +1,16 @@
 from typing import List, Dict, Any, Optional, Set
+import importlib
 import json
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 import re
 from neo4j import Driver
 from database import get_db
 from models.core import Node, Link
+_relationship_types = importlib.import_module("services.relationship_types")
+LISTABLE_RELATIONSHIP_TYPES = _relationship_types.LISTABLE_RELATIONSHIP_TYPES
+SUPPORTED_CI_RELATIONSHIP_TYPES = _relationship_types.SUPPORTED_CI_RELATIONSHIP_TYPES
+cypher_relationship_union = _relationship_types.cypher_relationship_union
+validate_ci_relationship_type = _relationship_types.validate_ci_relationship_type
 
 def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = False) -> List[Dict[str, Any]]:
     driver = get_db()
@@ -59,7 +65,7 @@ def get_node_usage(node_id: str) -> int:
         res = session.run("MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id).single()
         return res["count"] if res else 0
 
-def get_valid_owners_and_layers() -> (Set[str], Set[str]):
+def get_valid_owners_and_layers() -> tuple[Set[str], Set[str]]:
     driver = get_db()
     with driver.session() as session:
         res_o = session.run("MATCH (o:OwnerGroup) RETURN o.name as name")
@@ -81,14 +87,11 @@ def bulk_insert_node(nid, label, ntype, status, ip, brand, model, serial, firmwa
         lat=lat, long=long, loc_name=metadata.get('location_name'), polling=polling, snmp=snmp_str, metadata=metadata, owner=owner)
 
 # Valid relationship types for injection prevention
-_VALID_RELATIONSHIPS = frozenset({"CONNECTS_TO", "HOSTED_ON", "DEPENDS_ON", "MANAGES", "USES", "PROVIDES"})
+_VALID_RELATIONSHIPS = SUPPORTED_CI_RELATIONSHIP_TYPES
 
 def _validate_relationship(rel: str) -> str:
     """Validate and sanitize relationship type. Raises ValueError if invalid."""
-    clean = rel.upper().replace(" ", "_")
-    if clean not in _VALID_RELATIONSHIPS:
-        raise ValueError(f"Invalid relationship type: {rel}")
-    return clean
+    return validate_ci_relationship_type(rel)
 
 # Valid node labels for injection prevention
 _VALID_NODE_LABELS = frozenset({"CI", "MetricDef", "Category", "OwnerGroup", "HardwareModel", "User"})
@@ -108,8 +111,9 @@ def get_template_data():
 
 def get_links(allowed_locations=None, is_admin=False):
     driver = get_db()
-    query = """
-        MATCH (a)-[r:CONNECTS_TO|DEPENDS_ON|RUNS_ON|HAS_METRIC]->(b)
+    rel_union = cypher_relationship_union(LISTABLE_RELATIONSHIP_TYPES)
+    query = f"""
+        MATCH (a)-[r:{rel_union}]->(b)
         WHERE (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef)
           AND a.id IS NOT NULL AND b.id IS NOT NULL
     """
@@ -327,40 +331,52 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
         return nodes, links
 
 
-def get_cis_relationship_summary(ci_ids: list[str]) -> dict:
+def get_cis_relationship_summary(ci_ids: list[str], allowed_locations=None, is_admin=False) -> dict:
     """
-    Batch-fetch relationship summary for a set of CI ids.
+    Batch-fetch CI relationship summary for a set of CI ids.
     Returns {ci_id: {asSource: [{otherId, otherLabel, type}], asTarget: [...]}}.
-    Filters out system relationships (CATEGORIZED_AS, OWNED_BY, IS_MODEL).
-    Caps at 1000 ids.
+    Applies the same location scoping pattern used by /links and caps at 1000 ids.
     """
     if not ci_ids:
         return {}
     ci_ids = list(ci_ids)[:1000]
+    summary: dict[str, dict] = {cid: {"asSource": [], "asTarget": []} for cid in ci_ids}
+    if not is_admin and not allowed_locations:
+        return summary
 
     driver = get_db()
-    query = """
-        MATCH (a)-[r]->(b)
-        WHERE (a.id IN $ci_ids OR b.id IN $ci_ids)
-          AND (a:CI OR a:MetricDef) AND (b:CI OR b:MetricDef)
-          AND NOT type(r) IN ['CATEGORIZED_AS', 'OWNED_BY', 'IS_MODEL']
-        RETURN a.id AS source_id, COALESCE(a.name, a.id) AS source_label,
-               b.id AS target_id, COALESCE(b.name, b.id) AS target_label,
+    rel_union = cypher_relationship_union(SUPPORTED_CI_RELATIONSHIP_TYPES)
+    query = f"""
+        MATCH (a:CI)-[r:{rel_union}]->(b:CI)
+    """
+    params: dict[str, Any] = {"ci_ids": ci_ids}
+    if is_admin:
+        query += " WHERE (a.id IN $ci_ids OR b.id IN $ci_ids)"
+    else:
+        query += """
+        WHERE ((a.id IN $ci_ids AND a.location_name IN $allowed_locations)
+            OR (b.id IN $ci_ids AND b.location_name IN $allowed_locations))
+        """
+        params["allowed_locations"] = allowed_locations
+    query += """
+        RETURN a.id AS source_id, COALESCE(a.name, a.id) AS source_label, a.location_name AS source_location,
+               b.id AS target_id, COALESCE(b.name, b.id) AS target_label, b.location_name AS target_location,
                type(r) AS rel_type
     """
     with driver.session() as session:
-        results = session.run(query, ci_ids=ci_ids)
+        results = session.run(query, **params)
         records = list(results)  # Consume all records inside the session block
-
-    summary: dict[str, dict] = {cid: {"asSource": [], "asTarget": []} for cid in ci_ids}
+    allowed_set = set(allowed_locations or [])
     for row in records:
         src, tgt, rel = row["source_id"], row["target_id"], row["rel_type"]
         src_label, tgt_label = row["source_label"], row["target_label"]
+        source_visible = is_admin or row.get("source_location") in allowed_set
+        target_visible = is_admin or row.get("target_location") in allowed_set
         # If ci_ids contains source, it appears as "source" in the rel
-        if src in summary:
+        if src in summary and source_visible:
             summary[src]["asSource"].append({"otherId": tgt, "otherLabel": tgt_label, "type": rel})
         # If ci_ids contains target, it appears as "target" in the rel
-        if tgt in summary:
+        if tgt in summary and target_visible:
             summary[tgt]["asTarget"].append({"otherId": src, "otherLabel": src_label, "type": rel})
 
     return summary

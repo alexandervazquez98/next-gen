@@ -3,7 +3,7 @@ from models.core import Link
 from models.user import User
 from repositories import topology_repo
 
-def get_links(current_user: User = None) -> List[Dict[str, Any]]:
+def get_links(current_user: Optional[User] = None) -> List[Dict[str, Any]]:
     """
     Fetch all active relationship links.
     Enforces data scoping based on user allowed locations.
@@ -28,7 +28,18 @@ def delete_link(link: Link) -> Dict[str, str]:
     topology_repo.delete_link(link.source, link.target, link.relationship)
     return {"message": "Link deleted"}
 
-def get_full_graph(current_user: User = None, layer: str = None, location: str = None, owner: str = None) -> Dict[str, List[Dict[str, Any]]]:
+def get_cis_relationships(ci_ids: list[str], current_user: User) -> dict:
+    """
+    Batch-fetch scoped CI relationship summaries for Admin relationship UI.
+    """
+    is_admin = current_user.role == "ADMIN"
+    return topology_repo.get_cis_relationship_summary(
+        ci_ids,
+        allowed_locations=current_user.allowed_locations,
+        is_admin=is_admin,
+    )
+
+def get_full_graph(current_user: Optional[User] = None, layer: Optional[str] = None, location: Optional[str] = None, owner: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Fetch the COMPLETE graph topology for visualization.
     Supports filtering by metadata and data scoping.
@@ -107,7 +118,11 @@ def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: 
     # T8: Enrich with existing relationship info for the simulate response
     src_ids, tgt_ids = _get_filtered_node_ids(source_filter, target_filter, is_admin, current_user.allowed_locations)
     all_ids = list(set(src_ids + tgt_ids))
-    existing_rels = topology_repo.get_cis_relationship_summary(all_ids)
+    existing_rels = topology_repo.get_cis_relationship_summary(
+        all_ids,
+        allowed_locations=current_user.allowed_locations,
+        is_admin=is_admin,
+    )
 
     sources_with_rels = [sid for sid in src_ids if existing_rels.get(sid, {}).get("asSource")]
     targets_with_rels = [tid for tid in tgt_ids if existing_rels.get(tid, {}).get("asTarget")]
@@ -155,7 +170,11 @@ def execute_bulk_links(current_user: User, source_filter: dict, target_filter: d
 
     src_ids, tgt_ids = _get_filtered_node_ids(source_filter, target_filter, is_admin, allowed_locations)
     all_ids = list(set(src_ids + tgt_ids))
-    existing_rels = topology_repo.get_cis_relationship_summary(all_ids)
+    existing_rels = topology_repo.get_cis_relationship_summary(
+        all_ids,
+        allowed_locations=allowed_locations,
+        is_admin=is_admin,
+    )
 
     affected_sources = [
         sid for sid in src_ids
