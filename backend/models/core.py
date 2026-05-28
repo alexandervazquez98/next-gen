@@ -183,6 +183,23 @@ class EventDetailResponse(BaseModel):
     itsm_context: ItsmContext
 
 
+class AvailabilityReportCI(BaseModel):
+    id: Optional[str] = None
+    label: Optional[str] = None
+    category: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    ip: Optional[str] = None
+    location_name: Optional[str] = None
+    owner: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    serialNumber: Optional[str] = None
+    firmwareVersion: Optional[str] = None
+    pollingInterval: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 class AvailabilityReportRow(BaseModel):
     ci_id: str
     ci_name: Optional[str] = None
@@ -196,6 +213,7 @@ class AvailabilityReportRow(BaseModel):
     availability_percentage: Optional[float] = None
     first_failure_at: Optional[str] = None
     last_failure_at: Optional[str] = None
+    ci: Optional[AvailabilityReportCI] = None
 
 
 class AvailabilityReportResponse(BaseModel):

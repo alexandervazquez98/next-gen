@@ -32,6 +32,7 @@ function Probe() {
 
 describe("useMonitoringConsoleData", () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
 		mockUseNodesQuery.mockReturnValue({
 			data: [{ id: "node-1", type: "INFRASTRUCTURE" }],
 			isLoading: false,
@@ -71,39 +72,26 @@ describe("useMonitoringConsoleData", () => {
 		expect(screen.getByTestId("payload")).toHaveTextContent(
 			'"events":[{"id":"evt-1","ci_id":"node-1"}]',
 		);
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReport":{"rows":[{"ci_id":"node-1","event_type":"AVAILABILITY"}]}',
-		);
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReportIsLoading":false',
-		);
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReportError":null',
+		expect(mockUseAvailabilityReportQuery).not.toHaveBeenCalled();
+		expect(screen.getByTestId("payload")).not.toHaveTextContent(
+			"availabilityReport",
 		);
 		expect(screen.getByTestId("payload")).toHaveTextContent(
 			'"categories":["Network"]',
 		);
 	});
 
-	it("surfaces availability report loading and error state separately", () => {
-		mockUseAvailabilityReportQuery.mockReturnValue({
-			data: undefined,
-			isLoading: true,
-			error: "report failed",
+	it("does not let availability report failures affect monitoring", () => {
+		mockUseAvailabilityReportQuery.mockImplementation(() => {
+			throw new Error("availability report should not be queried by monitoring");
 		});
 
 		render(<Probe />);
 
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReport":null',
-		);
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReportIsLoading":true',
-		);
-		expect(screen.getByTestId("payload")).toHaveTextContent(
-			'"availabilityReportError":"report failed"',
-		);
 		expect(screen.getByTestId("payload")).toHaveTextContent('"error":null');
+		expect(screen.getByTestId("payload")).not.toHaveTextContent(
+			"availabilityReport",
+		);
 	});
 
 	it("surfaces node types when category names are missing", () => {

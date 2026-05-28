@@ -64,6 +64,23 @@ export interface GraphLink {
 	relationship: "DEPENDS_ON" | "RUNS_ON" | "PART_OF" | "MANAGED_BY";
 }
 
+export interface AvailabilityReportCI {
+	id?: string | null;
+	label?: string | null;
+	category?: string | null;
+	type?: string | null;
+	status?: string | null;
+	ip?: string | null;
+	location_name?: string | null;
+	owner?: string | null;
+	brand?: string | null;
+	model?: string | null;
+	serialNumber?: string | null;
+	firmwareVersion?: string | null;
+	pollingInterval?: number | null;
+	metadata?: Record<string, unknown> | null;
+}
+
 export interface AvailabilityReportRow {
 	ci_id: string;
 	ci_name?: string | null;
@@ -77,6 +94,7 @@ export interface AvailabilityReportRow {
 	availability_percentage?: number | null;
 	first_failure_at?: string | null;
 	last_failure_at?: string | null;
+	ci?: AvailabilityReportCI | null;
 }
 
 export interface AvailabilityReportResponse {

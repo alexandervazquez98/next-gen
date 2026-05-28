@@ -213,6 +213,119 @@ class TestEventServiceSmoke:
         assert row["mtbf_seconds"] == 10800
         assert row["active_events"] == 1
 
+    def test_get_availability_report_enriches_rows_with_sanitized_ci_metadata(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-1",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc),
+                    },
+                    "ci": {
+                        "id": "ci-1",
+                        "name": "Router-01",
+                        "layer": "NETWORK",
+                        "status": "ONLINE",
+                        "ip": "10.0.0.1",
+                        "location_name": "Madrid HQ",
+                        "owner": "NOC",
+                        "brand": "Cisco",
+                        "model": "ISR4331",
+                        "serialNumber": "FTX1234",
+                        "firmwareVersion": "17.9",
+                        "pollingInterval": 60,
+                        "rack": "R1",
+                        "username": "admin",
+                        "login": "router-admin",
+                        "user": "operator",
+                        "passwd": "legacy-password",
+                        "pwd": "short-password",
+                        "passphrase": "phrase-value",
+                        "support_contact": {"username": "support", "phone": "+34123456789"},
+                        "snmp_community": "public",
+                        "credentials": {"username": "admin", "password": "secret"},
+                        "api_token": "token-value",
+                        "installed_at": datetime(2025, 12, 1, 10, 0, tzinfo=timezone.utc),
+                        "location": object(),
+                    },
+                    "category": "Routers",
+                }
+            ],
+        )
+        mock_neo4j_session.set_response("e.status in ['open', 'ack']", [])
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        row = report["rows"][0]
+        assert row["mttr_seconds"] == 900
+        assert row["downtime_seconds"] == 900
+        assert row["ci"] == {
+            "id": "ci-1",
+            "label": "Router-01",
+            "category": "Routers",
+            "type": "Routers",
+            "status": "ONLINE",
+            "ip": "10.0.0.1",
+            "location_name": "Madrid HQ",
+            "owner": "NOC",
+            "brand": "Cisco",
+            "model": "ISR4331",
+            "serialNumber": "FTX1234",
+            "firmwareVersion": "17.9",
+            "pollingInterval": 60,
+            "metadata": {
+                "rack": "R1",
+                "support_contact": {"phone": "+34123456789"},
+                "installed_at": "2025-12-01T10:00:00+00:00",
+            },
+        }
+        assert "credentials" not in row["ci"]["metadata"]
+        assert "username" not in row["ci"]["metadata"]
+        assert "login" not in row["ci"]["metadata"]
+        assert "user" not in row["ci"]["metadata"]
+        assert "passwd" not in row["ci"]["metadata"]
+        assert "pwd" not in row["ci"]["metadata"]
+        assert "passphrase" not in row["ci"]["metadata"]
+        assert "username" not in row["ci"]["metadata"]["support_contact"]
+        assert "snmp_community" not in row["ci"]["metadata"]
+        assert "api_token" not in row["ci"]["metadata"]
+        assert "location" not in row["ci"]["metadata"]
+
+    def test_get_availability_report_aggregates_categories_before_metric_rows(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+
+        get_availability_report(start=start, end=end, now=end)
+
+        recovered_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "NOT e.status IN ['OPEN', 'ACK']" in query["query"]
+        )["query"]
+        active_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+        )["query"]
+
+        assert "head(collect(DISTINCT cat.name)) AS category" in recovered_query
+        assert "head(collect(DISTINCT cat.name)) AS category" in active_query
+        assert "RETURN e, ci, category" in recovered_query
+        assert "RETURN e, ci, category" in active_query
+
     def test_get_availability_report_queries_filter_window_in_cypher(
         self, mock_neo4j_session
     ):
