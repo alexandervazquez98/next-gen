@@ -6,9 +6,16 @@ import CIEditor from './CIEditor';
 import RelationshipManager from './RelationshipManager';
 import MassLinkEditor from './MassLinkEditor';
 import CatalogManager from './CatalogManager';
-import { GraphNode } from '../types';
+import type { GraphNode } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import {
+    type CiRelationshipSummary,
+    formatCiRelationshipDetails,
+    getCiRelationshipDetails,
+    getCiRelationshipState,
+    getCiRelationshipStateLabel,
+} from '../utils/ciRelationships';
 
 /**
  * AdminPage Component
@@ -32,6 +39,8 @@ const AdminPage: React.FC = () => {
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
     const [inventorySearch, setInventorySearch] = useState('');
+    const [relationshipSummaries, setRelationshipSummaries] = useState<Record<string, CiRelationshipSummary>>({});
+    const [relationshipsLoading, setRelationshipsLoading] = useState(false);
 
     useEffect(() => {
         fetchData();
@@ -143,6 +152,38 @@ const AdminPage: React.FC = () => {
 
         return data.filter((item) => searchableText(item).toLowerCase().includes(query));
     }, [data, inventorySearch]);
+
+    const filteredInventoryIds = useMemo(
+        () => filteredInventory.map((item) => item.id).filter(Boolean),
+        [filteredInventory],
+    );
+    const filteredInventoryIdsKey = filteredInventoryIds.join('|');
+
+    useEffect(() => {
+        if (activeTab !== 'INVENTORY' || filteredInventoryIds.length === 0) {
+            setRelationshipSummaries({});
+            setRelationshipsLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setRelationshipsLoading(true);
+        api.post<Record<string, CiRelationshipSummary>>('/cis/relationships', { ci_ids: filteredInventoryIds })
+            .then((summary) => {
+                if (!cancelled) setRelationshipSummaries(summary || {});
+            })
+            .catch((error) => {
+                console.error(error);
+                if (!cancelled) setRelationshipSummaries({});
+            })
+            .finally(() => {
+                if (!cancelled) setRelationshipsLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [activeTab, filteredInventoryIdsKey]);
 
     return (
         <div className="p-8 h-full overflow-y-auto custom-scrollbar space-y-8">
@@ -278,51 +319,95 @@ const AdminPage: React.FC = () => {
                                             <th className="p-3 uppercase tracking-wider font-bold">Category</th>
                                             <th className="p-3 uppercase tracking-wider font-bold">IP Address</th>
                                             <th className="p-3 uppercase tracking-wider font-bold">Status</th>
+                                            <th className="p-3 uppercase tracking-wider font-bold">Correlations</th>
                                             <th className="p-3 text-right uppercase tracking-wider font-bold">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="text-sm divide-y divide-white/5">
-                                        {filteredInventory.map((item: any) => (
-                                            <tr
-                                                key={item.id}
-                                                className={`hover:bg-brand-500/5 transition-colors cursor-pointer ${selectedNode?.id === item.id ? 'bg-brand-500/10' : ''}`}
-                                                onClick={() => setSelectedNode(item)}
-                                            >
-                                                <td className="p-3">
-                                                    <div className="font-bold text-white">{item.label}</div>
-                                                    <div className="text-[10px] text-neutral-500 font-mono">{item.id}</div>
-                                                </td>
-                                                <td className="p-3 text-neutral-300">
-                                                    <span className="px-2 py-1 rounded bg-white/5 text-xs border border-white/5">
-                                                        {item.type || 'Uncategorized'}
-                                                    </span>
-                                                </td>
-                                                <td className="p-3 font-mono text-neutral-400 text-xs">
-                                                    {item.ip || '-'}
-                                                </td>
-                                                <td className="p-3">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${item.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' :
-                                                        item.status === 'MAINTENANCE' ? 'bg-yellow-500/20 text-yellow-400' :
-                                                            'bg-neutral-500/20 text-neutral-400'
-                                                        }`}>
-                                                        {item.status}
-                                                    </span>
-                                                </td>
-                                                <td className="p-3 text-right">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            if (confirm('Delete CI?')) {
-                                                                api.delete(`/nodes/${item.id}`).then(() => fetchData());
-                                                            }
-                                                        }}
-                                                        className="text-neutral-500 hover:text-red-500 p-2 transition-colors"
+                                        {filteredInventory.map((item: any) => {
+                                            const relationshipSummary = relationshipSummaries[item.id];
+                                            const relationshipState = getCiRelationshipState(relationshipSummary);
+                                            const relationshipDetails = getCiRelationshipDetails(relationshipSummary);
+                                            const relationshipTitle = formatCiRelationshipDetails(relationshipSummary);
+                                            return (
+                                                <React.Fragment key={item.id}>
+                                                    <tr
+                                                        className={`hover:bg-brand-500/5 transition-colors cursor-pointer ${selectedNode?.id === item.id ? 'bg-brand-500/10' : ''}`}
+                                                        onClick={() => setSelectedNode(item)}
                                                     >
-                                                        <span className="material-symbols-outlined text-sm">delete</span>
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
+                                                        <td className="p-3">
+                                                            <div className="font-bold text-white">{item.label}</div>
+                                                            <div className="text-[10px] text-neutral-500 font-mono">{item.id}</div>
+                                                        </td>
+                                                        <td className="p-3 text-neutral-300">
+                                                            <span className="px-2 py-1 rounded bg-white/5 text-xs border border-white/5">
+                                                                {item.type || 'Uncategorized'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3 font-mono text-neutral-400 text-xs">
+                                                            {item.ip || '-'}
+                                                        </td>
+                                                        <td className="p-3">
+                                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${item.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' :
+                                                                item.status === 'MAINTENANCE' ? 'bg-yellow-500/20 text-yellow-400' :
+                                                                    'bg-neutral-500/20 text-neutral-400'
+                                                                }`}>
+                                                                {item.status}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3">
+                                                            <span
+                                                                title={relationshipTitle}
+                                                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${relationshipState === 'both' ? 'border-purple-400/30 bg-purple-500/10 text-purple-300' :
+                                                                    relationshipState === 'incoming' ? 'border-cyan-400/30 bg-cyan-500/10 text-cyan-300' :
+                                                                        relationshipState === 'outgoing' ? 'border-brand-400/30 bg-brand-500/10 text-brand-300' :
+                                                                            'border-white/10 bg-white/5 text-neutral-500'
+                                                                    }`}
+                                                            >
+                                                                <span className="material-symbols-outlined text-xs">
+                                                                    {relationshipState === 'none' ? 'link_off' : 'account_tree'}
+                                                                </span>
+                                                                {relationshipsLoading ? 'Loading' : getCiRelationshipStateLabel(relationshipState)}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3 text-right">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    if (confirm('Delete CI?')) {
+                                                                        api.delete(`/nodes/${item.id}`).then(() => fetchData());
+                                                                    }
+                                                                }}
+                                                                className="text-neutral-500 hover:text-red-500 p-2 transition-colors"
+                                                            >
+                                                                <span className="material-symbols-outlined text-sm">delete</span>
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                    {selectedNode?.id === item.id && relationshipDetails.length > 0 && (
+                                                        <tr className="bg-neutral-950/40">
+                                                            <td colSpan={6} className="px-3 py-3">
+                                                                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                                                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-neutral-500">CI Correlation Details</p>
+                                                                    <div className="grid gap-2 md:grid-cols-2">
+                                                                        {relationshipDetails.map((detail) => (
+                                                                            <div key={`${detail.direction}-${detail.type}-${detail.otherId}`} className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                                                                                <div className="flex items-center justify-between gap-2">
+                                                                                    <span className="text-[10px] font-black uppercase text-brand-300">{detail.direction}</span>
+                                                                                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[9px] font-black text-neutral-300">{detail.type}</span>
+                                                                                </div>
+                                                                                <div className="mt-1 text-xs font-bold text-white">{detail.otherLabel}</div>
+                                                                                <div className="font-mono text-[10px] text-neutral-500">{detail.otherId}</div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </React.Fragment>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
