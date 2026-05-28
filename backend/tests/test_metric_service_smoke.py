@@ -10,6 +10,58 @@ from unittest.mock import patch, MagicMock
 from models.core import MetricDef
 
 
+class SequentialResult:
+    def __init__(self, record):
+        self.record = record
+
+    def single(self):
+        return self.record
+
+
+class SequentialMetricDeleteSession:
+    """Purpose-built fake for metric deletion orchestration tests."""
+
+    def __init__(self, *, events_recovered=0, metric_exists=True, relationship_batches=None, node_deleted=1):
+        self.events_recovered = events_recovered
+        self.metric_exists = metric_exists
+        self.relationship_batches = list(relationship_batches or [])
+        self.node_deleted = node_deleted
+        self.queries = []
+
+    def run(self, query, **params):
+        self.queries.append({"query": query, "params": params})
+        query_lower = query.lower()
+
+        if "events_recovered" in query_lower:
+            return SequentialResult({"events_recovered": self.events_recovered})
+        if "metric_exists" in query_lower:
+            return SequentialResult({"metric_exists": self.metric_exists})
+        if "relationships_deleted" in query_lower:
+            deleted = self.relationship_batches.pop(0)
+            return SequentialResult({"relationships_deleted": deleted})
+        if "node_deleted" in query_lower:
+            return SequentialResult({"node_deleted": self.node_deleted})
+
+        return SequentialResult({})
+
+    def begin_transaction(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class SequentialDriver:
+    def __init__(self, session):
+        self._session = session
+
+    def session(self):
+        return self._session
+
+
 class TestMetricServiceImports:
     """Verify that metric_service can be imported and its functions exist."""
 
@@ -92,103 +144,107 @@ class TestMetricServiceSmoke:
         assert "merge" in mock_neo4j_session.queries[0]["query"].lower()
         mock_reconcile.assert_called_once_with("test-metric", None)
 
-    def test_delete_metric_recovers_active_collection_failures_before_detach_delete(self, mock_neo4j_session):
-        """delete_metric should make active collection failures stale before deleting the definition."""
+    def test_delete_metric_recovers_events_then_deletes_relationships_in_batches(self):
+        """delete_metric should avoid DETACH DELETE and clean large fan-out in bounded batches."""
         from services.metric_service import delete_metric
 
-        mock_neo4j_session.set_response("RETURN count(DISTINCT e) AS events_recovered", [{"events_recovered": 3}])
-        mock_neo4j_session.set_response("RETURN size(metrics) AS deleted", [{"deleted": 1}])
+        session = SequentialMetricDeleteSession(
+            events_recovered=3,
+            metric_exists=True,
+            relationship_batches=[50000, 43575, 0],
+            node_deleted=1,
+        )
 
-        result = delete_metric("test-metric")
+        with patch("services.metric_service.get_db", return_value=SequentialDriver(session)):
+            result = delete_metric("test-metric")
 
         assert result == {
             "message": "Metric deleted",
             "metric_id": "test-metric",
             "deleted": True,
             "events_recovered": 3,
+            "relationships_deleted": 93575,
+            "relationship_batches": [50000, 43575],
             "history_retained": True,
         }
-        assert len(mock_neo4j_session.queries) >= 2
-        first_query = mock_neo4j_session.queries[0]["query"].lower()
-        second_query = mock_neo4j_session.queries[1]["query"].lower()
-        assert "match (e:event)" in first_query
-        assert "collection_failure" in first_query
-        assert "recovered" in first_query
-        assert "detach delete" in second_query
 
-    def test_delete_metric_is_idempotent_when_definition_missing(self, mock_neo4j_session):
+        queries = [entry["query"].lower() for entry in session.queries]
+        assert len(queries) >= 5
+        assert "match (e:event)" in queries[0]
+        assert "collection_failure" in queries[0]
+        assert "recovered" in queries[0]
+        assert all("detach delete" not in query for query in queries)
+
+        relationship_delete_queries = [query for query in queries if "relationships_deleted" in query]
+        assert len(relationship_delete_queries) == 3
+        assert all("limit $batch_size" in query for query in relationship_delete_queries)
+        assert queries.index(relationship_delete_queries[-1]) < next(
+            index for index, query in enumerate(queries) if "node_deleted" in query
+        )
+
+    def test_delete_metric_is_idempotent_when_definition_missing(self):
         """delete_metric should return a deterministic response when the MetricDef is absent."""
         from services.metric_service import delete_metric
 
-        mock_neo4j_session.set_response("RETURN count(DISTINCT e) AS events_recovered", [{"events_recovered": 0}])
-        mock_neo4j_session.set_response("RETURN size(metrics) AS deleted", [{"deleted": 0}])
+        session = SequentialMetricDeleteSession(events_recovered=0, metric_exists=False)
 
-        result = delete_metric("missing-metric")
+        with patch("services.metric_service.get_db", return_value=SequentialDriver(session)):
+            result = delete_metric("missing-metric")
 
-        assert result["message"] == "Metric not found"
-        assert result["metric_id"] == "missing-metric"
-        assert result["deleted"] is False
-        assert result["events_recovered"] == 0
-        assert result["history_retained"] is True
+        assert result == {
+            "message": "Metric not found",
+            "metric_id": "missing-metric",
+            "deleted": False,
+            "events_recovered": 0,
+            "relationships_deleted": 0,
+            "relationship_batches": [],
+            "history_retained": True,
+        }
+        queries = [entry["query"].lower() for entry in session.queries]
+        assert any("metric_exists" in query for query in queries)
+        assert all("relationships_deleted" not in query for query in queries)
+        assert all("detach delete" not in query for query in queries)
 
-    def test_delete_metric_rolls_back_event_recovery_when_delete_fails(self):
-        """Event recovery and MetricDef deletion should be one atomic transaction."""
+    def test_delete_metric_deletes_existing_metric_with_no_relationships(self):
+        """An existing bare MetricDef should still be deleted after a zero cleanup batch."""
         from services.metric_service import delete_metric
 
-        class Result:
-            def __init__(self, record):
-                self.record = record
+        session = SequentialMetricDeleteSession(
+            events_recovered=0,
+            metric_exists=True,
+            relationship_batches=[0],
+            node_deleted=1,
+        )
 
-            def single(self):
-                return self.record
+        with patch("services.metric_service.get_db", return_value=SequentialDriver(session)):
+            result = delete_metric("bare-metric")
 
-        class FailingTransaction:
-            def __init__(self):
-                self.rolled_back = False
-                self.committed = False
-                self.calls = 0
+        assert result["deleted"] is True
+        assert result["relationships_deleted"] == 0
+        assert result["relationship_batches"] == []
+        queries = [entry["query"].lower() for entry in session.queries]
+        assert any("relationships_deleted" in query for query in queries)
+        assert any("node_deleted" in query for query in queries)
+        assert all("detach delete" not in query for query in queries)
 
+    def test_delete_metric_propagates_relationship_cleanup_failure_without_detach_delete(self):
+        """Cleanup failures should surface while keeping the deletion path free of DETACH DELETE."""
+        from services.metric_service import delete_metric
+
+        class FailingRelationshipCleanupSession(SequentialMetricDeleteSession):
             def run(self, query, **params):
-                self.calls += 1
-                if self.calls == 1:
-                    return Result({"events_recovered": 2})
-                raise RuntimeError("delete failed")
+                if "relationships_deleted" in query.lower():
+                    self.queries.append({"query": query, "params": params})
+                    raise RuntimeError("relationship cleanup failed")
+                return super().run(query, **params)
 
-            def __enter__(self):
-                return self
+        session = FailingRelationshipCleanupSession(events_recovered=2, metric_exists=True)
 
-            def __exit__(self, exc_type, exc, tb):
-                self.rolled_back = exc_type is not None
-                self.committed = exc_type is None
-                return False
-
-        class Session:
-            def __init__(self, tx):
-                self.tx = tx
-
-            def begin_transaction(self):
-                return self.tx
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class Driver:
-            def __init__(self, tx):
-                self.tx = tx
-
-            def session(self):
-                return Session(self.tx)
-
-        tx = FailingTransaction()
-        with patch("services.metric_service.get_db", return_value=Driver(tx)):
-            with pytest.raises(RuntimeError, match="delete failed"):
+        with patch("services.metric_service.get_db", return_value=SequentialDriver(session)):
+            with pytest.raises(RuntimeError, match="relationship cleanup failed"):
                 delete_metric("test-metric")
 
-        assert tx.rolled_back is True
-        assert tx.committed is False
+        assert all("detach delete" not in entry["query"].lower() for entry in session.queries)
 
 
 class TestMetricMatching:

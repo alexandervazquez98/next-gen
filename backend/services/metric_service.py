@@ -9,6 +9,8 @@ from services.operation_timing import timed_operation
 
 logger = logging.getLogger(__name__)
 
+METRIC_DELETE_RELATIONSHIP_BATCH_SIZE = 50_000
+
 
 def _normalize_criteria_values(values: List[str]) -> List[str]:
     return [value.strip().lower() for value in values if isinstance(value, str) and value.strip()]
@@ -211,6 +213,84 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
             _reconcile_metric_assignments(metric.id, metric.applicable_to)
             return {"message": "Metric defined"}
 
+def _record_int(record: Any, key: str, default: int = 0) -> int:
+    if not record:
+        return default
+    value = record.get(key, default)
+    return value if isinstance(value, int) else default
+
+
+def _recover_metric_collection_failures(session: Any, metric_id: str) -> int:
+    event_result = session.run(
+        """
+        MATCH (e:Event)
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND (
+            e.metric_id = $id
+            OR EXISTS {
+              MATCH (e)-[:TRIGGERED_BY]->(:MetricDef {id: $id})
+            }
+          )
+          AND (
+            e.event_type = 'COLLECTION_FAILURE'
+            OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+          )
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.last_seen = datetime(),
+            e.message = 'Metric collection retired because metric definition was deleted',
+            e.ack = false
+        RETURN count(DISTINCT e) AS events_recovered
+        """,
+        id=metric_id,
+    )
+    return _record_int(event_result.single(), "events_recovered")
+
+
+def _metric_definition_exists(session: Any, metric_id: str) -> bool:
+    result = session.run(
+        """
+        MATCH (m:MetricDef {id: $id})
+        RETURN count(m) > 0 AS metric_exists
+        """,
+        id=metric_id,
+    )
+    record = result.single()
+    return bool(record.get("metric_exists", False)) if record else False
+
+
+def _delete_metric_relationship_batch(
+    session: Any,
+    metric_id: str,
+    batch_size: int = METRIC_DELETE_RELATIONSHIP_BATCH_SIZE,
+) -> int:
+    result = session.run(
+        """
+        MATCH (m:MetricDef {id: $id})-[r]-()
+        WITH r LIMIT $batch_size
+        WITH collect(r) AS relationships
+        FOREACH (relationship IN relationships | DELETE relationship)
+        RETURN size(relationships) AS relationships_deleted
+        """,
+        id=metric_id,
+        batch_size=batch_size,
+    )
+    return _record_int(result.single(), "relationships_deleted")
+
+
+def _delete_metric_node(session: Any, metric_id: str) -> int:
+    result = session.run(
+        """
+        MATCH (m:MetricDef {id: $id})
+        WITH m, 1 AS node_deleted
+        DELETE m
+        RETURN node_deleted
+        """,
+        id=metric_id,
+    )
+    return _record_int(result.single(), "node_deleted")
+
+
 def delete_metric(metric_id: str) -> Dict[str, Any]:
     """Delete a Metric Definition and retire active collection failures.
 
@@ -221,54 +301,45 @@ def delete_metric(metric_id: str) -> Dict[str, Any]:
     with metric_operation_guard(metric_id):
         with timed_operation(logger, "metric.delete", metric_id=metric_id):
             driver = get_db()
-            with driver.session() as session:
-                with session.begin_transaction() as tx:
-                    event_result = tx.run(
-                        """
-                        MATCH (e:Event)
-                        WHERE e.status IN ['OPEN', 'ACK']
-                          AND (
-                            e.metric_id = $id
-                            OR EXISTS {
-                              MATCH (e)-[:TRIGGERED_BY]->(:MetricDef {id: $id})
-                            }
-                          )
-                          AND (
-                            e.event_type = 'COLLECTION_FAILURE'
-                            OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
-                          )
-                        SET e.status = 'RECOVERED',
-                            e.recovered_at = datetime(),
-                            e.last_seen = datetime(),
-                            e.message = 'Metric collection retired because metric definition was deleted',
-                            e.ack = false
-                        RETURN count(DISTINCT e) AS events_recovered
-                        """,
-                        id=metric_id,
-                    )
-                    event_record = event_result.single()
-                    raw_events_recovered = event_record.get("events_recovered", 0) if event_record else 0
-                    events_recovered = raw_events_recovered if isinstance(raw_events_recovered, int) else 0
+            relationship_batches: list[int] = []
+            relationships_deleted = 0
 
-                    delete_result = tx.run(
-                        """
-                        MATCH (m:MetricDef {id: $id})
-                        WITH collect(m) AS metrics
-                        FOREACH (metric IN metrics | DETACH DELETE metric)
-                        RETURN size(metrics) AS deleted
-                        """,
-                        id=metric_id,
-                    )
-                    delete_record = delete_result.single()
-                    raw_deleted_count = delete_record.get("deleted", 0) if delete_record else 0
-                    deleted_count = raw_deleted_count if isinstance(raw_deleted_count, int) else 1
+            with driver.session() as session:
+                events_recovered = _recover_metric_collection_failures(session, metric_id)
+
+                if _metric_definition_exists(session, metric_id):
+                    while True:
+                        batch_deleted = _delete_metric_relationship_batch(session, metric_id)
+                        if batch_deleted <= 0:
+                            break
+                        relationship_batches.append(batch_deleted)
+                        relationships_deleted += batch_deleted
+
+                    deleted_count = _delete_metric_node(session, metric_id)
+                else:
+                    deleted_count = 0
 
             deleted = deleted_count > 0
+            logger.info(
+                "Metric deletion completed",
+                extra={
+                    "operation": "metric.delete.counts",
+                    "metric_id": metric_id,
+                    "deleted": deleted,
+                    "events_recovered": events_recovered,
+                    "relationships_deleted": relationships_deleted,
+                    "relationship_batches": relationship_batches,
+                    "relationship_batch_size": METRIC_DELETE_RELATIONSHIP_BATCH_SIZE,
+                    "history_retained": True,
+                },
+            )
             return {
                 "message": "Metric deleted" if deleted else "Metric not found",
                 "metric_id": metric_id,
                 "deleted": deleted,
                 "events_recovered": events_recovered,
+                "relationships_deleted": relationships_deleted,
+                "relationship_batches": relationship_batches,
                 "history_retained": True,
             }
 
