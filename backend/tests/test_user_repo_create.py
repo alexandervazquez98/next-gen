@@ -10,14 +10,13 @@ Fix: Hardcode is_active=True and force_password_change=False in
 create_user, since UserCreate has no fields for these concepts.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from pydantic import ValidationError
 
 # Patch Neo4j before importing main
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
-    from models.user import UserCreate, UserPermission
+    from models.refresh_token import RefreshToken  # noqa: F401 - register SQLAlchemy relationship
+    from models.user import UserCreate, UserPermission, UserUpdate
     from repositories import user_repo
 
 
@@ -147,6 +146,21 @@ class TestUserRepoCreateUser:
         assert db_user.phone == "+1234567890"
         assert db_user.email == "user@example.com"
 
+    def test_create_user_accepts_raw_string_permissions(self):
+        """create_user should persist raw string permissions from API/UI payloads."""
+        db = self._make_mock_db()
+        user_in = UserCreate(
+            username="stringperms",
+            password="SecureP@ss123",
+            role="OPERATOR",
+            permissions=["EVENT_VIEW", "CI_EDIT"],
+        )
+
+        user_repo.create_user(db, user_in)
+
+        db_user = db.add.call_args[0][0]
+        assert db_user.permissions == ["EVENT_VIEW", "CI_EDIT"]
+
     def test_create_user_commits_and_refreshes(self):
         """create_user should commit and refresh the new user."""
         db = self._make_mock_db()
@@ -176,3 +190,84 @@ class TestUserRepoCreateUser:
 
         db_user = db.add.call_args[0][0]
         assert db_user.tier == "T3"
+
+    def test_create_user_accepts_enum_like_permissions(self):
+        """create_user should remain compatible with enum-like permission values."""
+        db = self._make_mock_db()
+        permission = MagicMock(value="EVENT_VIEW")
+        user_in = UserCreate.model_construct(
+            username="enumlike",
+            password="SecureP@ss123",
+            role="OPERATOR",
+            tier="T1",
+            permissions=[permission],
+            allowed_locations=[],
+            allowed_ci_types=None,
+            phone=None,
+            email=None,
+        )
+
+        user_repo.create_user(db, user_in)
+
+        db_user = db.add.call_args[0][0]
+        assert db_user.permissions == ["EVENT_VIEW"]
+
+
+class TestUserRepoUpdateUser:
+    """Test user_repo.update_user permission normalization behavior."""
+
+    def _make_mock_db_with_user(self, existing_permissions=None):
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.refresh = MagicMock()
+        db_user = MagicMock()
+        db_user.permissions = list(existing_permissions or [])
+        db.query.return_value.filter.return_value.first.return_value = db_user
+        return db, db_user
+
+    def test_update_user_accepts_raw_string_permissions(self):
+        """update_user should persist raw string permissions from API/UI payloads."""
+        db, db_user = self._make_mock_db_with_user(["USER_MANAGE"])
+        update = UserUpdate(permissions=["EVENT_VIEW", "CI_EDIT"])
+
+        result = user_repo.update_user(db, "stringperms", update)
+
+        assert result is db_user
+        assert db_user.permissions == ["EVENT_VIEW", "CI_EDIT"]
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(db_user)
+
+    def test_update_user_accepts_enum_like_permissions(self):
+        """update_user should remain compatible with enum-like permission values."""
+        db, db_user = self._make_mock_db_with_user(["USER_MANAGE"])
+        permission = MagicMock(value="EVENT_VIEW")
+        update = UserUpdate.model_construct(
+            password=None,
+            role=None,
+            tier=None,
+            permissions=[permission],
+            allowed_locations=None,
+            allowed_ci_types=None,
+        )
+
+        user_repo.update_user(db, "enumlike", update)
+
+        assert db_user.permissions == ["EVENT_VIEW"]
+
+    def test_update_user_preserves_permissions_when_omitted(self):
+        """permissions=None should leave existing permissions unchanged."""
+        db, db_user = self._make_mock_db_with_user(["EVENT_VIEW", "CI_EDIT"])
+        update = UserUpdate(permissions=None)
+
+        user_repo.update_user(db, "noperms", update)
+
+        assert db_user.permissions == ["EVENT_VIEW", "CI_EDIT"]
+
+    def test_update_user_clears_permissions_with_empty_list(self):
+        """permissions=[] should explicitly clear existing permissions."""
+        db, db_user = self._make_mock_db_with_user(["EVENT_VIEW", "CI_EDIT"])
+        update = UserUpdate(permissions=[])
+
+        user_repo.update_user(db, "clearperms", update)
+
+        assert db_user.permissions == []
