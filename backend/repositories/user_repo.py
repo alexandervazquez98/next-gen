@@ -1,8 +1,14 @@
+from typing import Any, Iterable
+
 from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 from models.sql_models import User
 from models.user import UserCreate, UserUpdate
 from utils.security import get_password_hash
+
+
+def _normalize_permissions(permissions: Iterable[Any]) -> list[str]:
+    return [str(getattr(permission, "value", permission)) for permission in permissions]
 
 
 def get_user_by_username(db: Session, username: str):
@@ -19,8 +25,8 @@ def get_users(db: Session, skip: int = 0, limit: int = 100):
 
 def create_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
-    # Convert Pydantic Enums to strings for DB storage if needed
-    permissions_str = [p.value for p in user.permissions]
+    # Convert Pydantic Enums or enum-like values to strings for DB storage if needed.
+    permissions_str = _normalize_permissions(user.permissions)
 
     db_user = User(
         username=user.username,
@@ -47,17 +53,17 @@ def update_user(db: Session, username: str, user_update: UserUpdate):
         return None
 
     if user_update.password:
-        db_user.hashed_password = get_password_hash(user_update.password)
+        setattr(db_user, "hashed_password", get_password_hash(user_update.password))
     if user_update.role:
-        db_user.role = user_update.role
+        setattr(db_user, "role", user_update.role)
     if user_update.tier is not None:
-        db_user.tier = user_update.tier
+        setattr(db_user, "tier", user_update.tier)
     if user_update.permissions is not None:
-        db_user.permissions = [p.value for p in user_update.permissions]
+        setattr(db_user, "permissions", _normalize_permissions(user_update.permissions))
     if user_update.allowed_locations is not None:
-        db_user.allowed_locations = user_update.allowed_locations
+        setattr(db_user, "allowed_locations", user_update.allowed_locations)
     if user_update.allowed_ci_types is not None:
-        db_user.allowed_ci_types = user_update.allowed_ci_types
+        setattr(db_user, "allowed_ci_types", user_update.allowed_ci_types)
 
     db.commit()
     db.refresh(db_user)
