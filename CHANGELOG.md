@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.9] — 2026-05-27
+
+### Fixed
+- **User permission persistence** (PR #181, issue #172):
+  - Normalizes User Manager permission payloads so raw strings such as `EVENT_VIEW` persist without triggering `'str' object has no attribute 'value'`.
+  - Preserves compatibility with enum-like permission values, omitted permission updates, and explicit permission clearing.
+  - Adds focused backend repository coverage for user create/update permission normalization.
+- **Metric display rounding**:
+  - Rounds ICMP millisecond metric display even when unit metadata is absent.
+
 ## [1.12.8] — 2026-05-27
 
 ### Added
