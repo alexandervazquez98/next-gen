@@ -511,8 +511,10 @@ class TestMetricsDelete:
             "metric_id": "slow-metric",
         }
 
-    def test_delete_metric_success(self, mock_neo4j_driver):
+    def test_delete_metric_success(self):
         """Should delete a metric definition."""
+        from routers import metrics as metrics_router
+
         fake_user = _make_pydantic_user(
             username="operator",
             role="OPERATOR",
@@ -526,14 +528,21 @@ class TestMetricsDelete:
             override_get_current_active_user
         )
 
-        mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
-
         with (
-            patch("database.driver", mock_neo4j_driver),
             patch("routers.metrics.check_permission", return_value=True),
+            patch.object(
+                metrics_router.metric_service,
+                "delete_metric",
+                return_value={
+                    "message": "Metric deleted",
+                    "metric_id": "test-cpu",
+                    "deleted": True,
+                    "events_recovered": 0,
+                    "relationships_deleted": 0,
+                    "relationship_batches": [],
+                    "history_retained": True,
+                },
+            ),
         ):
             response = client.delete("/api/metrics/test-cpu")
 
