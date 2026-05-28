@@ -71,7 +71,7 @@ const RelationshipTooltip: React.FC<RelationshipTooltipProps> = ({ ciId, relatio
               className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 mt-0.5 ${
                 item.type === 'DEPENDS_ON'
                   ? 'bg-green-500/20 text-green-400'
-                  : item.type === 'CONNECTED_TO'
+                  : item.type === 'CONNECTS_TO'
                   ? 'bg-blue-500/20 text-blue-400'
                   : 'bg-white/10 text-neutral-400'
               }`}

@@ -2,7 +2,7 @@
  * RelationshipBadge.unit.test.tsx
  *
  * BDD unit tests for RelationshipBadge component.
- * Tests badge rendering for DEPENDS_ON (green) and CONNECTED_TO (blue) relationship types.
+ * Tests badge rendering for DEPENDS_ON (green) and CONNECTS_TO (blue) relationship types.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -17,14 +17,14 @@ const singleDependSourceMap = new Map([
 ]);
 
 const singleConnectedSourceMap = new Map([
-  ['CI-A', { asSource: [{ otherId: 'CI-C', otherLabel: 'CI-C', type: 'CONNECTED_TO' }], asTarget: [] }],
+  ['CI-A', { asSource: [{ otherId: 'CI-C', otherLabel: 'CI-C', type: 'CONNECTS_TO' }], asTarget: [] }],
 ]);
 
 const multiTypeMap = new Map([
   ['CI-A', {
     asSource: [
       { otherId: 'CI-B', otherLabel: 'CI-B', type: 'DEPENDS_ON' },
-      { otherId: 'CI-C', otherLabel: 'CI-C', type: 'CONNECTED_TO' },
+      { otherId: 'CI-C', otherLabel: 'CI-C', type: 'CONNECTS_TO' },
     ],
     asTarget: [
       { otherId: 'CI-D', otherLabel: 'CI-D', type: 'DEPENDS_ON' },
@@ -55,7 +55,7 @@ describe('RelationshipBadge', () => {
     });
   });
 
-  describe('GIVEN a CI with CONNECTED_TO relationships', () => {
+  describe('GIVEN a CI with CONNECTS_TO relationships', () => {
     it('WHEN rendered THEN a blue badge dot is displayed', () => {
       render(<RelationshipBadge ciId="CI-A" relationships={singleConnectedSourceMap} />);
       const dots = document.querySelectorAll('.bg-blue-500');
@@ -64,7 +64,7 @@ describe('RelationshipBadge', () => {
 
     it('WHEN rendered THEN badge has correct title attribute', () => {
       render(<RelationshipBadge ciId="CI-A" relationships={singleConnectedSourceMap} />);
-      const dot = document.querySelector('[title="CONNECTED_TO"]');
+      const dot = document.querySelector('[title="CONNECTS_TO"]');
       expect(dot).not.toBeNull();
     });
   });
@@ -90,7 +90,7 @@ describe('RelationshipBadge', () => {
   describe('GIVEN a CI with no entry in relationship map', () => {
     it('WHEN rendered THEN no badge is rendered', () => {
       render(<RelationshipBadge ciId="NONEXISTENT" relationships={emptyMap} />);
-      const dots = document.querySelectorAll('[title="DEPENDS_ON"], [title="CONNECTED_TO"]');
+      const dots = document.querySelectorAll('[title="DEPENDS_ON"], [title="CONNECTS_TO"]');
       expect(dots.length).toBe(0);
     });
   });

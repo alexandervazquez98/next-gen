@@ -353,7 +353,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                             >
                                 <option value="DEPENDS_ON">DEPENDS_ON (Impact Flow)</option>
                                 <option value="HOSTED_ON">HOSTED_ON (Containment)</option>
-                                <option value="CONNECTED_TO">CONNECTED_TO (Network)</option>
+                                <option value="CONNECTS_TO">CONNECTS_TO (Network)</option>
                             </select>
                         </div>
 
@@ -486,7 +486,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                                 onClick={() => {
                                                     // Smart Root Selection: Select the "Superior" node as Root
                                                     // For dependencies, the Target is the Provider (Superior)
-                                                    if (['DEPENDS_ON', 'HOSTED_ON', 'BELONGS_TO', 'MANAGED_BY'].includes(link.relationship)) {
+                                                    if (['DEPENDS_ON', 'HOSTED_ON'].includes(link.relationship)) {
                                                         setVisualizationTarget(link.target);
                                                     } else {
                                                         setVisualizationTarget(link.source);

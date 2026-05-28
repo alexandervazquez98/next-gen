@@ -61,7 +61,16 @@ export interface GraphLink {
 	id: string;
 	source: string;
 	target: string;
-	relationship: "DEPENDS_ON" | "RUNS_ON" | "PART_OF" | "MANAGED_BY";
+	relationship:
+		| "CONNECTS_TO"
+		| "DEPENDS_ON"
+		| "HOSTED_ON"
+		| "MANAGES"
+		| "USES"
+		| "PROVIDES"
+		| "RUNS_ON"
+		| "HAS_METRIC"
+		| "CATEGORIZED_AS";
 }
 
 export interface AvailabilityReportCI {
