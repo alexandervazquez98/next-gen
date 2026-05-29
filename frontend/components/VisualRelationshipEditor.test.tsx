@@ -45,6 +45,16 @@ const links: LinkData[] = [
 	},
 ];
 
+const readOnlyLinks: LinkData[] = [
+	{
+		source: "ci-a",
+		source_label: "Router A",
+		target: "ci-b",
+		target_label: "Switch B",
+		relationship: "RUNS_ON",
+	},
+];
+
 describe("VisualRelationshipEditor", () => {
 	const onMutated = vi.fn();
 
@@ -125,6 +135,37 @@ describe("VisualRelationshipEditor", () => {
 			});
 		});
 		expect(onMutated).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps RUNS_ON visible and labeled read-only", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={readOnlyLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(screen.getByText("Router A → Switch B")).toBeInTheDocument();
+		expect(screen.getAllByText("RUNS_ON").length).toBeGreaterThan(0);
+		expect(screen.getByText("Read-only")).toBeInTheDocument();
+	});
+
+	it("does not offer delete for RUNS_ON links", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={readOnlyLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("button", { name: "Delete" }),
+		).not.toBeInTheDocument();
+		expect(mockApiDelete).not.toHaveBeenCalled();
 	});
 
 	it("deletes an existing visual link and refreshes", async () => {

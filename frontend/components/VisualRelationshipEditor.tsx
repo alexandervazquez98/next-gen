@@ -3,6 +3,10 @@ import { useMemo, useState } from "react";
 import type { GraphNode } from "../types";
 import { api } from "../services/api";
 import type { LinkData } from "./RelationshipManager";
+import {
+	canDeleteRelationship,
+	isReadOnlyRelationship,
+} from "./relationshipCapabilities";
 
 const SUPPORTED_RELATIONSHIP_TYPES = [
 	"CONNECTS_TO",
@@ -106,6 +110,8 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	};
 
 	const handleDelete = async (link: LinkData) => {
+		if (!canDeleteRelationship(link.relationship)) return;
+
 		setSaving(true);
 		setError("");
 		try {
@@ -249,29 +255,42 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 							<div className="sticky top-0 bg-neutral-950/90 p-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">
 								Existing links
 							</div>
-							{ciLinks.map((link) => (
-								<div
-									key={`${link.source}-${link.target}-${link.relationship}`}
-									className="border-t border-white/5 p-3 text-xs text-neutral-300"
-								>
-									<div className="font-bold text-white">
-										{link.source_label || link.source} →{" "}
-										{link.target_label || link.target}
+							{ciLinks.map((link) => {
+								const readOnly = isReadOnlyRelationship(link.relationship);
+
+								return (
+									<div
+										key={`${link.source}-${link.target}-${link.relationship}`}
+										className="border-t border-white/5 p-3 text-xs text-neutral-300"
+									>
+										<div className="font-bold text-white">
+											{link.source_label || link.source} →{" "}
+											{link.target_label || link.target}
+										</div>
+										<div className="mt-1 flex items-center justify-between gap-2">
+											<span className="flex items-center gap-2">
+												<span className="rounded bg-white/10 px-2 py-1 font-mono text-[10px]">
+													{link.relationship}
+												</span>
+												{readOnly && (
+													<span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[10px] font-black uppercase text-amber-200">
+														Read-only
+													</span>
+												)}
+											</span>
+											{canDeleteRelationship(link.relationship) && (
+												<button
+													onClick={() => handleDelete(link)}
+													className="text-red-300 hover:text-red-200"
+													disabled={saving}
+												>
+													Delete
+												</button>
+											)}
+										</div>
 									</div>
-									<div className="mt-1 flex items-center justify-between gap-2">
-										<span className="rounded bg-white/10 px-2 py-1 font-mono text-[10px]">
-											{link.relationship}
-										</span>
-										<button
-											onClick={() => handleDelete(link)}
-											className="text-red-300 hover:text-red-200"
-											disabled={saving}
-										>
-											Delete
-										</button>
-									</div>
-								</div>
-							))}
+								);
+							})}
 							{ciLinks.length === 0 && (
 								<div className="p-6 text-center text-xs text-neutral-500">
 									No CI links yet.
