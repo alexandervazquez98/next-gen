@@ -10,7 +10,7 @@ import {
 } from "./relationshipCapabilities";
 import { getStatusColorHex } from "../utils/status";
 import {
-	buildAnchoredVisualLayout,
+	buildVisualRelationshipLayout,
 	type PositionedVisualNode,
 	VISUAL_EDITOR_VIEWBOX_HEIGHT,
 	VISUAL_EDITOR_VIEWBOX_WIDTH,
@@ -157,10 +157,12 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		() => new Map(nodes.map((node) => [node.id, node])),
 		[nodes],
 	);
-	const positionedNodes = useMemo(
-		() => buildAnchoredVisualLayout(visibleNodes, visibleCiLinks),
+	const visualLayout = useMemo(
+		() => buildVisualRelationshipLayout(visibleNodes, visibleCiLinks),
 		[visibleNodes, visibleCiLinks],
 	);
+	const positionedNodes = visualLayout.nodes;
+	const positionedClusters = visualLayout.clusters;
 	const positionMap = useMemo(
 		() => new Map(positionedNodes.map((item) => [item.id, item])),
 		[positionedNodes],
@@ -298,6 +300,39 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			});
 		svg.call(zoom);
 		container.attr("transform", zoomTransformRef.current);
+		container
+			.append("g")
+			.attr("class", "relationship-clusters")
+			.selectAll("g")
+			.data(positionedClusters)
+			.join("g")
+			.attr("transform", (cluster) => `translate(${cluster.x},${cluster.y})`)
+			.each(function (cluster) {
+				const clusterGroup = d3.select(this);
+				clusterGroup
+					.append("circle")
+					.attr("r", Math.max(90, Math.min(210, 46 + cluster.count * 4)))
+					.attr("fill", "rgba(52,91,242,0.05)")
+					.attr("stroke", "rgba(52,91,242,0.24)")
+					.attr("stroke-dasharray", "8,10");
+				clusterGroup
+					.append("text")
+					.attr("y", -58)
+					.attr("text-anchor", "middle")
+					.attr("fill", "#d4d4d4")
+					.attr("font-size", 13)
+					.attr("font-weight", 900)
+					.text(cluster.label.length > 24 ? `${cluster.label.slice(0, 21)}...` : cluster.label);
+				clusterGroup
+					.append("text")
+					.attr("y", -42)
+					.attr("text-anchor", "middle")
+					.attr("fill", "#737373")
+					.attr("font-size", 10)
+					.attr("font-weight", 700)
+					.text(`${cluster.count} CIs`);
+			});
+
 		container
 			.append("g")
 			.attr("class", "relationship-links")
