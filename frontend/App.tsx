@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './components/LoginPage';
-import { GraphNode } from './types';
+import type { GraphNode } from './types';
 import { api } from './services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from './services/queryKeys';
@@ -22,6 +23,7 @@ import UserManager from './components/UserManager';
 import RoleManager from './components/RoleManager';
 import CIDetailModal from './components/CIDetailModal';
 import MetricAnalytics from './components/MetricAnalytics';
+import VisualRelationshipEditorPage from './components/VisualRelationshipEditorPage';
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -184,6 +186,7 @@ const MainLayout: React.FC = () => {
               <Route index element={<SystemDashboard />} />
               <Route path="monitoring" element={<MonitoringConsole />} />
               <Route path="admin" element={<AdminPage />} />
+              <Route path="admin/relationships/visual-editor" element={<VisualRelationshipEditorPage />} />
               <Route path="users" element={<UserManager />} />
               <Route path="cmdb" element={<GraphCMDB onNodeClick={(n) => { setSelectedNode(n); setShowDetailModal(true); }} />} />
               {/* <Route path="network" element={<NetworkVisualizer />} /> */}

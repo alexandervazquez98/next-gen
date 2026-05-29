@@ -1,11 +1,11 @@
 import type React from 'react';
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import type { GraphNode } from '../types';
 import TopologyViewer from './TopologyViewer';
 import { api } from '../services/api';
 import RelationshipBadge from './RelationshipBadge';
 import RelationshipTooltip from './RelationshipTooltip';
-import VisualRelationshipEditor from './VisualRelationshipEditor';
 import { canDeleteRelationship, isReadOnlyRelationship } from './relationshipCapabilities';
 
 // ============================================================================
@@ -82,7 +82,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     const [sourceNodeId, setSourceNodeId] = useState<string>('');
 
     // --- State: Target Selection ---
-    const [targetCategory, setTargetCategory] = useState<string>('');
+    const [targetCategory] = useState<string>('');
     const [targetNodeIds, setTargetNodeIds] = useState<string[]>([]);
 
     // --- State: Relationship Settings ---
@@ -122,7 +122,6 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
 
     // --- State: Visualization Modal ---
     const [visualizationTarget, setVisualizationTarget] = useState<string | null>(null);
-    const [showVisualEditor, setShowVisualEditor] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
 
     // --- Effects ---
@@ -171,11 +170,6 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
             console.error("Failed to fetch links", error);
             setLinks([]);
         }
-    };
-
-    const refreshRelationshipViews = async () => {
-        await Promise.all([fetchData(), fetchLinks()]);
-        onRefresh();
     };
 
     const fetchNodeMetrics = async (nodeId: string) => {
@@ -455,13 +449,15 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                             <span className="material-symbols-outlined text-brand-500">hub</span>
                             CI Relationships ({filteredCiLinks.length})
                         </h3>
-                        <button
-                            onClick={() => setShowVisualEditor(true)}
+                        <Link
+                            to="/admin/relationships/visual-editor"
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="btn-primary text-xs"
                         >
                             <span className="material-symbols-outlined text-sm">account_tree</span>
                             Visual editor
-                        </button>
+                        </Link>
                         <div className="relative">
                             <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500 text-sm">search</span>
                             <input
@@ -615,14 +611,6 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                 </div>
             )}
 
-            {showVisualEditor && (
-                <VisualRelationshipEditor
-                    nodes={nodes}
-                    links={ciLinks}
-                    onClose={() => setShowVisualEditor(false)}
-                    onMutated={refreshRelationshipViews}
-                />
-            )}
         </div>
     );
 };
