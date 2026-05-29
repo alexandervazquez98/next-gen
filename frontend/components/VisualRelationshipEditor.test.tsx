@@ -329,6 +329,72 @@ describe("VisualRelationshipEditor", () => {
 		).toBeInTheDocument();
 	});
 
+	it("renders CI nodes as D3 SVG circles instead of large visual cards", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const appNodeButton = screen.getByRole("button", { name: "CI node App" });
+		expect(appNodeButton).toHaveAttribute("title", "App · Application");
+		expect(appNodeButton.querySelector("circle.node-circle")).toHaveAttribute(
+			"r",
+			"24",
+		);
+		expect(appNodeButton).not.toHaveClass("w-36", "rounded-2xl");
+	});
+
+	it("positions D3 nodes from CI coordinates", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={[
+					{ ...nodes[0], x: 10, y: 30 },
+					{ ...nodes[1], x: 20, y: 40 },
+				]}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: "CI node Router A" }),
+		).toHaveAttribute("transform", "translate(240,80)");
+		expect(
+			screen.getByRole("button", { name: "CI node Switch B" }),
+		).toHaveAttribute("transform", "translate(920,540)");
+	});
+
+	it("uses CMDB lat/long projection and offsets duplicate coordinates", () => {
+		const colocatedNodes = Array.from({ length: 6 }, (_, index) => ({
+			...nodes[index % nodes.length],
+			id: `ci-${index}`,
+			label: `CI ${index}`,
+			location: { lat: 32.5, long: -117 },
+		}));
+		render(
+			<VisualRelationshipEditor
+				nodes={colocatedNodes}
+				links={[]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const transforms = colocatedNodes.map((node) =>
+			screen
+				.getByRole("button", { name: `CI node ${node.label}` })
+				.getAttribute("transform"),
+		);
+		expect(transforms[0]).toBe("translate(240,80)");
+		expect(transforms[1]).toBe("translate(268,80)");
+		expect(new Set(transforms).size).toBe(colocatedNodes.length);
+	});
+
 	it("filters nodes and shows an empty state when all layers are hidden", () => {
 		render(
 			<VisualRelationshipEditor

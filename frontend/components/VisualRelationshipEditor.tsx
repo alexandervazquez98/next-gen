@@ -1,5 +1,6 @@
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as d3 from "d3";
 import type { GraphNode } from "../types";
 import { api } from "../services/api";
 import type { LinkData } from "./RelationshipManager";
@@ -7,6 +8,7 @@ import {
 	canDeleteRelationship,
 	isReadOnlyRelationship,
 } from "./relationshipCapabilities";
+import { getStatusColorHex } from "../utils/status";
 
 const SUPPORTED_RELATIONSHIP_TYPES = [
 	"CONNECTS_TO",
@@ -63,6 +65,83 @@ const nodeLabel = (node?: GraphNode) => node?.label || node?.id || "Unknown CI";
 const nodeLayer = (node: GraphNode) => node.category ?? node.type;
 const sameLayers = (a: string[], b: string[]) =>
 	a.length === b.length && a.every((layer, index) => layer === b[index]);
+const VIEWBOX_WIDTH = 1000;
+const VIEWBOX_HEIGHT = 620;
+const COORDINATE_PADDING = 80;
+
+type PositionedNode = GraphNode & {
+	mapX: number;
+	mapY: number;
+	layer: string;
+};
+
+const hasNumber = (value: unknown): value is number =>
+	typeof value === "number" && Number.isFinite(value);
+
+const rawCoordinateForNode = (node: GraphNode, index: number) => {
+	if (hasNumber(node.x) && hasNumber(node.y)) {
+		return { x: node.x, y: node.y };
+	}
+	if (hasNumber(node.location?.long) && hasNumber(node.location?.lat)) {
+		return {
+			x: VIEWBOX_WIDTH / 2 + (node.location.long + 117) * 3000,
+			y: VIEWBOX_HEIGHT / 2 - (node.location.lat - 32.5) * 3000,
+		};
+	}
+
+	const angle = (index / Math.max(1, 12)) * Math.PI * 2 - Math.PI / 2;
+	const radius = 180 + Math.floor(index / 12) * 70;
+	return {
+		x: VIEWBOX_WIDTH / 2 + Math.cos(angle) * radius,
+		y: VIEWBOX_HEIGHT / 2 + Math.sin(angle) * radius,
+	};
+};
+
+const buildCoordinateLayout = (visibleNodes: GraphNode[]): PositionedNode[] => {
+	const rawNodes = visibleNodes.map((node, index) => ({
+		node,
+		layer: nodeLayer(node),
+		...rawCoordinateForNode(node, index),
+	}));
+	if (rawNodes.length === 0) return [];
+
+	const xExtent = d3.extent(rawNodes, (item) => item.x);
+	const yExtent = d3.extent(rawNodes, (item) => item.y);
+	const xScale = d3
+		.scaleLinear()
+		.domain(
+			xExtent[0] === xExtent[1]
+				? [xExtent[0] ?? 0, (xExtent[0] ?? 0) + 1]
+				: [xExtent[0] ?? 0, xExtent[1] ?? 1],
+		)
+		.range([COORDINATE_PADDING + 160, VIEWBOX_WIDTH - COORDINATE_PADDING]);
+	const yScale = d3
+		.scaleLinear()
+		.domain(
+			yExtent[0] === yExtent[1]
+				? [yExtent[0] ?? 0, (yExtent[0] ?? 0) + 1]
+				: [yExtent[0] ?? 0, yExtent[1] ?? 1],
+		)
+		.range([COORDINATE_PADDING, VIEWBOX_HEIGHT - COORDINATE_PADDING]);
+
+	const duplicateCounts = new Map<string, number>();
+	return rawNodes.map(({ node, layer, x, y }) => {
+		const coordinateKey = `${x}:${y}`;
+		const duplicateIndex = duplicateCounts.get(coordinateKey) ?? 0;
+		duplicateCounts.set(coordinateKey, duplicateIndex + 1);
+		const duplicateRing = Math.floor((duplicateIndex - 1) / 8) + 1;
+		const duplicateSlot = (duplicateIndex - 1) % 8;
+		const duplicateAngle = duplicateSlot * (Math.PI / 4);
+		const duplicateRadius = duplicateIndex === 0 ? 0 : 28 * duplicateRing;
+
+		return {
+			...node,
+			layer,
+			mapX: xScale(x) + Math.cos(duplicateAngle) * duplicateRadius,
+			mapY: yScale(y) + Math.sin(duplicateAngle) * duplicateRadius,
+		};
+	});
+};
 
 const toCiForm = (node: GraphNode): CiFormState => ({
 	id: node.id,
@@ -92,6 +171,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const [ciSaving, setCiSaving] = useState(false);
 	const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
 	const knownLayerLabelsRef = useRef<string[]>([]);
+	const graphSvgRef = useRef<SVGSVGElement>(null);
 
 	const ciLinks = useMemo(
 		() => links.filter((link) => link.relationship !== "HAS_METRIC"),
@@ -145,30 +225,12 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		() => new Map(nodes.map((node) => [node.id, node])),
 		[nodes],
 	);
-	const positionedNodes = useMemo(() => {
-		const centerX = 500;
-		const centerY = 300;
-		const radius = visibleNodes.length > 10 ? 250 : 210;
-		return visibleNodes.map((node, index) => {
-			const angle =
-				visibleNodes.length <= 1
-					? 0
-					: (index / visibleNodes.length) * Math.PI * 2 - Math.PI / 2;
-			return {
-				node,
-				x:
-					visibleNodes.length <= 1
-						? centerX
-						: centerX + Math.cos(angle) * radius,
-				y:
-					visibleNodes.length <= 1
-						? centerY
-						: centerY + Math.sin(angle) * radius,
-			};
-		});
-	}, [visibleNodes]);
+	const positionedNodes = useMemo(
+		() => buildCoordinateLayout(visibleNodes),
+		[visibleNodes],
+	);
 	const positionMap = useMemo(
-		() => new Map(positionedNodes.map((item) => [item.node.id, item])),
+		() => new Map(positionedNodes.map((item) => [item.id, item])),
 		[positionedNodes],
 	);
 
@@ -264,26 +326,188 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		}
 	};
 
-	const selectNode = (id: string) => {
-		if (!visibleNodeIds.has(id)) return;
-		setError("");
-		setCiError("");
-		const node = nodeMap.get(id);
-		if (node) {
-			setSelectedCiId(id);
-			setCiForm(toCiForm(node));
-		}
-		if (!sourceId || (sourceId && targetId)) {
-			setSourceId(id);
-			setTargetId("");
-			return;
-		}
-		if (id === sourceId) {
-			setError("Source and target must be different CIs.");
-			return;
-		}
-		setTargetId(id);
-	};
+	const selectNode = useCallback(
+		(id: string) => {
+			if (!visibleNodeIds.has(id)) return;
+			setError("");
+			setCiError("");
+			const node = nodeMap.get(id);
+			if (node) {
+				setSelectedCiId(id);
+				setCiForm(toCiForm(node));
+			}
+			if (!sourceId || (sourceId && targetId)) {
+				setSourceId(id);
+				setTargetId("");
+				return;
+			}
+			if (id === sourceId) {
+				setError("Source and target must be different CIs.");
+				return;
+			}
+			setTargetId(id);
+		},
+		[nodeMap, sourceId, targetId, visibleNodeIds],
+	);
+
+	useEffect(() => {
+		const svgElement = graphSvgRef.current;
+		if (!svgElement) return;
+
+		const svg = d3.select(svgElement);
+		svg.selectAll("*").remove();
+
+		const container = svg.append("g").attr("class", "visual-editor-d3-layer");
+		container
+			.append("g")
+			.attr("class", "relationship-links")
+			.selectAll("g")
+			.data(visibleCiLinks)
+			.join("g")
+			.each(function (link) {
+				const source = positionMap.get(link.source);
+				const target = positionMap.get(link.target);
+				if (!source || !target) return;
+
+				const linkGroup = d3.select(this);
+				linkGroup
+					.append("line")
+					.attr("x1", source.mapX)
+					.attr("y1", source.mapY)
+					.attr("x2", target.mapX)
+					.attr("y2", target.mapY)
+					.attr("stroke", getStatusColorHex(target.status))
+					.attr("stroke-opacity", 0.45)
+					.attr("stroke-width", 2)
+					.attr(
+						"stroke-dasharray",
+						link.relationship === "DEPENDS_ON"
+							? "5, 8"
+							: link.relationship === "HOSTED_ON"
+								? "2, 2"
+								: "none",
+					);
+
+				if (visibleCiLinks.length <= 24) {
+					linkGroup
+						.append("text")
+						.attr("x", (source.mapX + target.mapX) / 2)
+						.attr("y", (source.mapY + target.mapY) / 2)
+						.attr("fill", "#d4d4d4")
+						.attr("font-size", 10)
+						.attr("font-weight", 700)
+						.text(link.relationship);
+				}
+			});
+
+		const nodeSelection = container
+			.append("g")
+			.attr("class", "relationship-nodes")
+			.selectAll<SVGGElement, PositionedNode>("g")
+			.data(positionedNodes, (node) => node.id)
+			.join("g")
+			.attr("role", "button")
+			.attr("tabindex", 0)
+			.attr("aria-label", (node) => `CI node ${nodeLabel(node)}`)
+			.attr("title", (node) => `${nodeLabel(node)} · ${node.layer}`)
+			.attr("transform", (node) => `translate(${node.mapX},${node.mapY})`)
+			.attr("class", "cursor-pointer")
+			.on("click", (_event, node) => selectNode(node.id))
+			.on("keydown", (event, node) => {
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault();
+					selectNode(node.id);
+				}
+			});
+
+		nodeSelection
+			.append("circle")
+			.attr("r", (node) =>
+				node.status === "EXCEPTION"
+					? 32
+					: node.status === "MAINTENANCE"
+						? 28
+						: 24,
+			)
+			.attr("fill", (node) =>
+				node.id === sourceId
+					? "#345bf2"
+					: node.id === targetId
+						? "#06b6d4"
+						: "#1a1a1a",
+			)
+			.attr("stroke", (node) => getStatusColorHex(node.status))
+			.attr("stroke-width", (node) =>
+				node.id === sourceId || node.id === targetId ? 5 : 2,
+			)
+			.attr("class", "node-circle transition-all duration-300");
+
+		nodeSelection
+			.append("text")
+			.attr("dy", "0.35em")
+			.attr("text-anchor", "middle")
+			.attr("fill", "#f5f5f5")
+			.attr("font-size", 11)
+			.attr("font-weight", 900)
+			.attr("pointer-events", "none")
+			.text((node) => nodeLabel(node).slice(0, 2).toUpperCase());
+
+		nodeSelection
+			.append("text")
+			.attr("dy", "3.5em")
+			.attr("text-anchor", "middle")
+			.attr("fill", "#a3a3a3")
+			.attr("font-size", 10)
+			.attr("class", "node-label pointer-events-none")
+			.text((node) =>
+				nodeLabel(node).length > 15
+					? `${nodeLabel(node).substring(0, 12)}...`
+					: nodeLabel(node),
+			);
+
+		nodeSelection
+			.on("mouseover", function (_event, node) {
+				d3.select(this)
+					.select("circle")
+					.attr("stroke-width", 6)
+					.attr("filter", "drop-shadow(0 0 8px currentColor)");
+				d3.select(this)
+					.select(".node-label")
+					.attr("fill", "white")
+					.attr("font-weight", "bold")
+					.text(nodeLabel(node));
+				nodeSelection
+					.filter((item) => item.id !== node.id)
+					.attr("opacity", 0.3);
+			})
+			.on("mouseout", function () {
+				const node = d3.select(this).datum() as PositionedNode;
+				d3.select(this)
+					.select("circle")
+					.attr(
+						"stroke-width",
+						node.id === sourceId || node.id === targetId ? 5 : 2,
+					)
+					.attr("filter", null);
+				d3.select(this)
+					.select(".node-label")
+					.attr("fill", "#a3a3a3")
+					.attr("font-weight", "normal")
+					.text(
+						nodeLabel(node).length > 15
+							? `${nodeLabel(node).substring(0, 12)}...`
+							: nodeLabel(node),
+					);
+				nodeSelection.attr("opacity", 1);
+			});
+	}, [
+		positionMap,
+		positionedNodes,
+		selectNode,
+		sourceId,
+		targetId,
+		visibleCiLinks,
+	]);
 
 	const handleCreate = async () => {
 		if (!sourceId || !targetId) {
@@ -354,7 +578,8 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 				</div>
 
 				<div className="grid flex-1 min-h-0 grid-cols-[1fr_360px] gap-4 p-4">
-					<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.16),rgba(0,0,0,0.15)_45%,rgba(0,0,0,0.55))]">
+					<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),rgba(0,0,0,0.18)_42%,rgba(0,0,0,0.62))]">
+						<div className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:48px_48px]" />
 						<div className="absolute left-4 top-4 z-10 w-56 rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur">
 							<div className="flex items-center justify-between gap-2">
 								<div>
@@ -405,64 +630,16 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 							</div>
 						</div>
 						<svg
+							ref={graphSvgRef}
 							className="absolute inset-0 h-full w-full"
-							viewBox="0 0 1000 620"
-							aria-label="Existing CI relationship links"
-						>
-							{visibleCiLinks.map((link) => {
-								const source = positionMap.get(link.source);
-								const target = positionMap.get(link.target);
-								if (!source || !target) return null;
-								return (
-									<g key={`${link.source}-${link.target}-${link.relationship}`}>
-										<line
-											x1={source.x}
-											y1={source.y}
-											x2={target.x}
-											y2={target.y}
-											className="stroke-brand-400/40"
-											strokeWidth={2}
-										/>
-										<text
-											x={(source.x + target.x) / 2}
-											y={(source.y + target.y) / 2}
-											className="fill-neutral-300 text-[10px] font-bold"
-										>
-											{link.relationship}
-										</text>
-									</g>
-								);
-							})}
-						</svg>
+							viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+							aria-label="Visual CI relationship map"
+						/>
 						{visibleNodes.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-xs font-bold uppercase tracking-widest text-neutral-500">
 								No CIs match selected layers
 							</div>
 						)}
-						{positionedNodes.map(({ node, x, y }) => {
-							const selectedAsSource = sourceId === node.id;
-							const selectedAsTarget = targetId === node.id;
-							return (
-								<button
-									key={node.id}
-									type="button"
-									onClick={() => selectNode(node.id)}
-									className={`absolute w-36 -translate-x-1/2 -translate-y-1/2 rounded-2xl border px-3 py-2 text-left shadow-xl transition-all ${selectedAsSource ? "border-brand-400 bg-brand-500/25 text-white" : selectedAsTarget ? "border-accent-cyan bg-cyan-500/20 text-white" : "border-white/10 bg-neutral-900/90 text-neutral-300 hover:border-white/30"}`}
-									style={{
-										left: `${(x / 1000) * 100}%`,
-										top: `${(y / 620) * 100}%`,
-									}}
-									aria-label={`CI node ${nodeLabel(node)}`}
-								>
-									<span className="block truncate text-xs font-black uppercase">
-										{nodeLabel(node)}
-									</span>
-									<span className="block truncate font-mono text-[10px] opacity-60">
-										{node.id}
-									</span>
-								</button>
-							);
-						})}
 					</div>
 
 					<aside className="flex min-h-0 flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
