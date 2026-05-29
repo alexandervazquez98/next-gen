@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.12] — 2026-05-29
+
+### Added
+- **Visual CI relationship editor completion** (PRs #198, #200, #202, and #204; tracker #191):
+  - Adds a dedicated visual relationship editor for creating and deleting supported CI relationships from the map context.
+  - Keeps read-only graph relationships such as `RUNS_ON` visible while labeling them read-only and suppressing unsupported delete actions.
+  - Adds visual CI create, edit, and delete controls backed by the existing `/api/nodes` create/update/delete APIs.
+  - Adds layer/technology checkbox filters derived from `node.category ?? node.type`, with all layers visible by default, All/None controls, filtered visible links, and guarded hidden endpoint selection.
+  - Preserves relationship CRUD behavior, CI CRUD behavior, legacy `CONNECTED_TO` creation exclusion, and existing backend contracts.
+
 ## [1.12.11] — 2026-05-28
 
 ### Added

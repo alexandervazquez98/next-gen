@@ -6,6 +6,7 @@ import { api } from '../services/api';
 import RelationshipBadge from './RelationshipBadge';
 import RelationshipTooltip from './RelationshipTooltip';
 import VisualRelationshipEditor from './VisualRelationshipEditor';
+import { canDeleteRelationship, isReadOnlyRelationship } from './relationshipCapabilities';
 
 // ============================================================================
 // Relationship Indicators — Types & Utilities
@@ -173,7 +174,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     };
 
     const refreshRelationshipViews = async () => {
-        await fetchLinks();
+        await Promise.all([fetchData(), fetchLinks()]);
         onRefresh();
     };
 
@@ -251,6 +252,8 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     };
 
     const handleDelete = async (link: any) => {
+        if (!canDeleteRelationship(link.relationship)) return;
+
         if (confirm(`Delete link: ${link.source} -[${link.relationship}]-> ${link.target}?`)) {
             try {
                 await api.delete('/links', link);
@@ -489,38 +492,47 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                                 </tr>
                             </thead>
                             <tbody className="text-sm">
-                                {filteredCiLinks.map((link, i) => (
-                                    <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
-                                        <td className="p-3 font-mono text-brand-400" title={link.source}>{link.source_label || link.source}</td>
-                                        <td className="p-3 text-center">
-                                            <span className="text-[10px] font-bold bg-white/10 px-2 py-1 rounded text-neutral-300 uppercase">{link.relationship}</span>
-                                        </td>
-                                        <td className="p-3 font-mono text-accent-cyan" title={link.target}>{link.target_label || link.target}</td>
-                                        <td className="p-3 text-right flex items-center justify-end gap-2">
-                                            <button
-                                                onClick={() => {
-                                                    // Smart Root Selection: Select the "Superior" node as Root
-                                                    // For dependencies, the Target is the Provider (Superior)
-                                                    if (['DEPENDS_ON', 'HOSTED_ON'].includes(link.relationship)) {
-                                                        setVisualizationTarget(link.target);
-                                                    } else {
-                                                        setVisualizationTarget(link.source);
-                                                    }
-                                                }}
-                                                className="text-neutral-500 hover:text-brand-400 transition-colors"
-                                                title="Visualize Correlation"
-                                            >
-                                                <span className="material-symbols-outlined text-lg">hub</span>
-                                            </button>
-                                            <button
-                                                onClick={() => handleDelete(link)}
-                                                className="text-neutral-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                                            >
-                                                <span className="material-symbols-outlined text-lg">delete</span>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {filteredCiLinks.map((link, i) => {
+                                    const readOnly = isReadOnlyRelationship(link.relationship);
+
+                                    return (
+                                        <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                                            <td className="p-3 font-mono text-brand-400" title={link.source}>{link.source_label || link.source}</td>
+                                            <td className="p-3 text-center">
+                                                <span className="text-[10px] font-bold bg-white/10 px-2 py-1 rounded text-neutral-300 uppercase">{link.relationship}</span>
+                                                {readOnly && (
+                                                    <span className="ml-2 text-[10px] font-bold bg-amber-400/10 px-2 py-1 rounded text-amber-200 uppercase">Read-only</span>
+                                                )}
+                                            </td>
+                                            <td className="p-3 font-mono text-accent-cyan" title={link.target}>{link.target_label || link.target}</td>
+                                            <td className="p-3 text-right flex items-center justify-end gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        // Smart Root Selection: Select the "Superior" node as Root
+                                                        // For dependencies, the Target is the Provider (Superior)
+                                                        if (['DEPENDS_ON', 'HOSTED_ON'].includes(link.relationship)) {
+                                                            setVisualizationTarget(link.target);
+                                                        } else {
+                                                            setVisualizationTarget(link.source);
+                                                        }
+                                                    }}
+                                                    className="text-neutral-500 hover:text-brand-400 transition-colors"
+                                                    title="Visualize Correlation"
+                                                >
+                                                    <span className="material-symbols-outlined text-lg">hub</span>
+                                                </button>
+                                                {canDeleteRelationship(link.relationship) && (
+                                                    <button
+                                                        onClick={() => handleDelete(link)}
+                                                        className="text-neutral-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                                    >
+                                                        <span className="material-symbols-outlined text-lg">delete</span>
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                                 {filteredCiLinks.length === 0 && (
                                     <tr>
                                         <td colSpan={4} className="p-8 text-center text-neutral-500 text-xs">
