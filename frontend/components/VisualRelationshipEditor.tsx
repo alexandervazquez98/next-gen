@@ -103,6 +103,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
 	const knownLayerLabelsRef = useRef<string[]>([]);
 	const graphSvgRef = useRef<SVGSVGElement>(null);
+	const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
 
 	const ciLinks = useMemo(
 		() => links.filter((link) => link.relationship !== "HAS_METRIC"),
@@ -292,9 +293,11 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const zoom = d3.zoom<SVGSVGElement, unknown>()
 			.scaleExtent([0.35, 3])
 			.on("zoom", (event) => {
+				zoomTransformRef.current = event.transform;
 				container.attr("transform", event.transform);
 			});
 		svg.call(zoom);
+		container.attr("transform", zoomTransformRef.current);
 		container
 			.append("g")
 			.attr("class", "relationship-links")
