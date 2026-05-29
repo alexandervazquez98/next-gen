@@ -66,6 +66,7 @@ const VisualRelationshipEditorPageContent: React.FC = () => {
     <VisualRelationshipEditor
       nodes={nodes}
       links={links}
+      mode="page"
       onClose={() => window.close()}
       onMutated={refreshRelationshipData}
     />

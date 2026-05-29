@@ -20,9 +20,9 @@ vi.mock('../context/AuthContext', () => ({
 }));
 
 vi.mock('./VisualRelationshipEditor', () => ({
-  default: ({ nodes, links }: { nodes: unknown[]; links: unknown[] }) => (
+  default: ({ nodes, links, mode }: { nodes: unknown[]; links: unknown[]; mode?: string }) => (
     <div>
-      Visual editor workspace {nodes.length} nodes {links.length} links
+      Visual editor workspace {nodes.length} nodes {links.length} links mode {mode}
     </div>
   ),
 }));
@@ -60,7 +60,7 @@ describe('VisualRelationshipEditorPage', () => {
     renderPage();
 
     expect(screen.getByLabelText('Loading visual relationship editor')).toBeInTheDocument();
-    expect(await screen.findByText('Visual editor workspace 1 nodes 1 links')).toBeInTheDocument();
+    expect(await screen.findByText('Visual editor workspace 1 nodes 1 links mode page')).toBeInTheDocument();
     await waitFor(() => {
       expect(mockApiGet).toHaveBeenCalledWith('/nodes', expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(mockApiGet).toHaveBeenCalledWith('/links', expect.objectContaining({ signal: expect.any(AbortSignal) }));
