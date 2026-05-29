@@ -87,6 +87,175 @@ describe("VisualRelationshipEditor", () => {
 		);
 	});
 
+	it("populates CI form from clicked visual node", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "CI node Router A" }));
+
+		expect(screen.getByLabelText("CI ID")).toHaveValue("ci-a");
+		expect(screen.getByLabelText("CI label")).toHaveValue("Router A");
+		expect(screen.getByLabelText("CI type")).toHaveValue("INFRASTRUCTURE");
+		expect(screen.getByLabelText("CI status")).toHaveValue("ACTIVE");
+		expect(screen.getByRole("button", { name: "Save CI" })).toBeInTheDocument();
+	});
+
+	it("prevents create without required CI fields", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "New CI" }));
+		fireEvent.click(screen.getByRole("button", { name: "Create CI" }));
+
+		expect(screen.getByText("CI ID is required.")).toBeInTheDocument();
+		expect(mockApiPost).not.toHaveBeenCalled();
+	});
+
+	it("creates CI via existing node upsert API", async () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "New CI" }));
+		fireEvent.change(screen.getByLabelText("CI ID"), {
+			target: { value: "ci-c" },
+		});
+		fireEvent.change(screen.getByLabelText("CI label"), {
+			target: { value: "Firewall C" },
+		});
+		fireEvent.change(screen.getByLabelText("CI type"), {
+			target: { value: "INFRASTRUCTURE" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Create CI" }));
+
+		await waitFor(() => {
+			expect(mockApiPost).toHaveBeenCalledWith(
+				"/nodes",
+				expect.objectContaining({
+					id: "ci-c",
+					label: "Firewall C",
+					type: "INFRASTRUCTURE",
+					status: "OK",
+					metadata: {},
+				}),
+			);
+		});
+		expect(onMutated).toHaveBeenCalledTimes(1);
+	});
+
+	it("updates selected CI via node upsert and preserves metadata", async () => {
+		const nodesWithMetadata: GraphNode[] = [
+			{ ...nodes[0], metadata: { rack: "R1" }, owner: "ops" },
+			nodes[1],
+		];
+		render(
+			<VisualRelationshipEditor
+				nodes={nodesWithMetadata}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "CI node Router A" }));
+		fireEvent.change(screen.getByLabelText("CI label"), {
+			target: { value: "Router A Updated" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Save CI" }));
+
+		await waitFor(() => {
+			expect(mockApiPost).toHaveBeenCalledWith(
+				"/nodes",
+				expect.objectContaining({
+					id: "ci-a",
+					label: "Router A Updated",
+					metadata: { rack: "R1" },
+					owner: "ops",
+				}),
+			);
+		});
+	});
+
+	it("preserves CI form state after save failure", async () => {
+		mockApiPost.mockRejectedValueOnce(new Error("boom"));
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "New CI" }));
+		fireEvent.change(screen.getByLabelText("CI ID"), {
+			target: { value: "ci-c" },
+		});
+		fireEvent.change(screen.getByLabelText("CI label"), {
+			target: { value: "Firewall C" },
+		});
+		fireEvent.change(screen.getByLabelText("CI type"), {
+			target: { value: "INFRASTRUCTURE" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Create CI" }));
+
+		expect(await screen.findByText("Could not save CI.")).toBeInTheDocument();
+		expect(screen.getByLabelText("CI ID")).toHaveValue("ci-c");
+		expect(screen.getByLabelText("CI label")).toHaveValue("Firewall C");
+		expect(onMutated).not.toHaveBeenCalled();
+	});
+
+	it("deletes selected CI using existing node delete API", async () => {
+		const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "CI node Router A" }));
+		fireEvent.click(screen.getByRole("button", { name: "Delete CI" }));
+
+		await waitFor(() =>
+			expect(mockApiDelete).toHaveBeenCalledWith("/nodes/ci-a"),
+		);
+		expect(onMutated).toHaveBeenCalledTimes(1);
+		confirmSpy.mockRestore();
+	});
+
+	it("does not allow delete without selected CI", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Delete CI" })).toBeDisabled();
+	});
+
 	it("prevents self-links", () => {
 		render(
 			<VisualRelationshipEditor
