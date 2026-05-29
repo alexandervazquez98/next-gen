@@ -174,7 +174,7 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
     };
 
     const refreshRelationshipViews = async () => {
-        await fetchLinks();
+        await Promise.all([fetchData(), fetchLinks()]);
         onRefresh();
     };
 

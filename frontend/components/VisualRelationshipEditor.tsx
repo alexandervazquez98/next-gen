@@ -17,6 +17,41 @@ const SUPPORTED_RELATIONSHIP_TYPES = [
 	"PROVIDES",
 ] as const;
 
+const CI_TYPES: GraphNode["type"][] = [
+	"SERVICE",
+	"INFRASTRUCTURE",
+	"APPLICATION",
+	"USER",
+	"CLOUD_RESOURCE",
+];
+
+const CI_STATUSES: GraphNode["status"][] = [
+	"OK",
+	"ACTIVE",
+	"EXCEPTION",
+	"MAINTENANCE",
+];
+
+type CiFormState = {
+	id: string;
+	label: string;
+	type: GraphNode["type"] | "";
+	status: GraphNode["status"];
+	ip: string;
+	owner: string;
+	location_name: string;
+};
+
+const EMPTY_CI_FORM: CiFormState = {
+	id: "",
+	label: "",
+	type: "",
+	status: "OK",
+	ip: "",
+	owner: "",
+	location_name: "",
+};
+
 interface VisualRelationshipEditorProps {
 	nodes: GraphNode[];
 	links: LinkData[];
@@ -25,6 +60,16 @@ interface VisualRelationshipEditorProps {
 }
 
 const nodeLabel = (node?: GraphNode) => node?.label || node?.id || "Unknown CI";
+
+const toCiForm = (node: GraphNode): CiFormState => ({
+	id: node.id,
+	label: node.label,
+	type: node.type,
+	status: node.status || "OK",
+	ip: node.ip || "",
+	owner: node.owner || "",
+	location_name: node.location_name || "",
+});
 
 const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	nodes,
@@ -38,6 +83,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		useState<(typeof SUPPORTED_RELATIONSHIP_TYPES)[number]>("CONNECTS_TO");
 	const [error, setError] = useState("");
 	const [saving, setSaving] = useState(false);
+	const [selectedCiId, setSelectedCiId] = useState("");
+	const [ciForm, setCiForm] = useState<CiFormState>(EMPTY_CI_FORM);
+	const [ciError, setCiError] = useState("");
+	const [ciSaving, setCiSaving] = useState(false);
 
 	const ciLinks = useMemo(
 		() => links.filter((link) => link.relationship !== "HAS_METRIC"),
@@ -68,8 +117,83 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		[positionedNodes],
 	);
 
+	const selectedCi = selectedCiId ? nodeMap.get(selectedCiId) : undefined;
+	const isEditingCi = Boolean(selectedCi);
+
+	const updateCiForm = (field: keyof CiFormState, value: string) => {
+		setCiForm((current) => ({ ...current, [field]: value }));
+	};
+
+	const startNewCi = () => {
+		setSelectedCiId("");
+		setCiForm(EMPTY_CI_FORM);
+		setCiError("");
+	};
+
+	const validateCiForm = () => {
+		if (!ciForm.id.trim()) return "CI ID is required.";
+		if (!ciForm.label.trim()) return "Label is required.";
+		if (!ciForm.type) return "Type is required.";
+		return "";
+	};
+
+	const buildCiPayload = (): GraphNode => ({
+		...(selectedCi ?? {}),
+		id: ciForm.id.trim(),
+		label: ciForm.label.trim(),
+		type: ciForm.type as GraphNode["type"],
+		status: ciForm.status || "OK",
+		metadata: selectedCi?.metadata ?? {},
+		ip: ciForm.ip.trim() || undefined,
+		owner: ciForm.owner.trim() || undefined,
+		location_name: ciForm.location_name.trim() || undefined,
+	});
+
+	const handleSaveCi = async () => {
+		const validationError = validateCiForm();
+		if (validationError) {
+			setCiError(validationError);
+			return;
+		}
+		setCiSaving(true);
+		setCiError("");
+		try {
+			await api.post("/nodes", buildCiPayload());
+			await onMutated();
+		} catch (err) {
+			console.error(err);
+			setCiError("Could not save CI.");
+		} finally {
+			setCiSaving(false);
+		}
+	};
+
+	const handleDeleteCi = async () => {
+		if (!selectedCi) return;
+		if (!confirm(`Delete CI ${selectedCi.id}?`)) return;
+		setCiSaving(true);
+		setCiError("");
+		try {
+			await api.delete(`/nodes/${encodeURIComponent(selectedCi.id)}`);
+			setSelectedCiId("");
+			setCiForm(EMPTY_CI_FORM);
+			await onMutated();
+		} catch (err) {
+			console.error(err);
+			setCiError("Could not delete CI.");
+		} finally {
+			setCiSaving(false);
+		}
+	};
+
 	const selectNode = (id: string) => {
 		setError("");
+		setCiError("");
+		const node = nodeMap.get(id);
+		if (node) {
+			setSelectedCiId(id);
+			setCiForm(toCiForm(node));
+		}
 		if (!sourceId || (sourceId && targetId)) {
 			setSourceId(id);
 			setTargetId("");
@@ -205,6 +329,107 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 					</div>
 
 					<aside className="flex min-h-0 flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+						<div className="rounded-xl border border-white/10 bg-black/20 p-3">
+							<div className="flex items-center justify-between gap-2">
+								<p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+									CI details — {isEditingCi ? "editing" : "new"}
+								</p>
+								<button
+									type="button"
+									onClick={startNewCi}
+									className="text-[10px] font-black uppercase text-brand-300 hover:text-brand-200"
+								>
+									New CI
+								</button>
+							</div>
+							<div className="mt-3 grid grid-cols-2 gap-2 text-xs text-neutral-300">
+								<label className="col-span-2 space-y-1">
+									<span className="text-neutral-500">CI ID</span>
+									<input
+										aria-label="CI ID"
+										value={ciForm.id}
+										disabled={isEditingCi || ciSaving}
+										onChange={(event) => updateCiForm("id", event.target.value)}
+										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white disabled:opacity-60"
+									/>
+								</label>
+								<label className="col-span-2 space-y-1">
+									<span className="text-neutral-500">Label</span>
+									<input
+										aria-label="CI label"
+										value={ciForm.label}
+										disabled={ciSaving}
+										onChange={(event) =>
+											updateCiForm("label", event.target.value)
+										}
+										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-white"
+									/>
+								</label>
+								<label className="space-y-1">
+									<span className="text-neutral-500">Type</span>
+									<select
+										aria-label="CI type"
+										value={ciForm.type}
+										disabled={ciSaving}
+										onChange={(event) =>
+											updateCiForm("type", event.target.value)
+										}
+										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
+									>
+										<option value="">Select type</option>
+										{CI_TYPES.map((type) => (
+											<option key={type} value={type}>
+												{type}
+											</option>
+										))}
+									</select>
+								</label>
+								<label className="space-y-1">
+									<span className="text-neutral-500">Status</span>
+									<select
+										aria-label="CI status"
+										value={ciForm.status}
+										disabled={ciSaving}
+										onChange={(event) =>
+											updateCiForm("status", event.target.value)
+										}
+										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
+									>
+										{CI_STATUSES.map((status) => (
+											<option key={status} value={status}>
+												{status}
+											</option>
+										))}
+									</select>
+								</label>
+								{ciError && (
+									<div className="col-span-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-300">
+										{ciError}
+									</div>
+								)}
+								<button
+									type="button"
+									onClick={handleSaveCi}
+									disabled={ciSaving}
+									className="col-span-2 rounded-xl bg-cyan-600 py-2 text-xs font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									{ciSaving
+										? "Saving CI..."
+										: isEditingCi
+											? "Save CI"
+											: "Create CI"}
+								</button>
+								<button
+									type="button"
+									onClick={handleDeleteCi}
+									disabled={!isEditingCi || ciSaving}
+									className="col-span-2 rounded-xl border border-red-500/30 py-2 text-xs font-black uppercase text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									Delete CI
+								</button>
+							</div>
+						</div>
+
 						<div className="rounded-xl border border-white/10 bg-black/20 p-3">
 							<p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
 								New relationship
