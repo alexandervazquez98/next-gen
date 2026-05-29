@@ -55,6 +55,47 @@ const readOnlyLinks: LinkData[] = [
 	},
 ];
 
+const appNode: GraphNode = {
+	id: "app-1",
+	label: "App",
+	type: "APPLICATION",
+	category: "Application",
+	status: "ACTIVE",
+	metadata: {},
+};
+const dbNode: GraphNode = {
+	id: "db-1",
+	label: "DB",
+	type: "INFRASTRUCTURE",
+	category: "Database",
+	status: "ACTIVE",
+	metadata: {},
+};
+const infraNode: GraphNode = {
+	id: "infra-1",
+	label: "Infra",
+	type: "INFRASTRUCTURE",
+	status: "ACTIVE",
+	metadata: {},
+};
+const layeredNodes: GraphNode[] = [appNode, dbNode, infraNode];
+const layeredLinks: LinkData[] = [
+	{
+		source: "app-1",
+		source_label: "App",
+		target: "db-1",
+		target_label: "DB",
+		relationship: "CONNECTS_TO",
+	},
+	{
+		source: "app-1",
+		source_label: "App",
+		target: "infra-1",
+		target_label: "Infra",
+		relationship: "USES",
+	},
+];
+
 describe("VisualRelationshipEditor", () => {
 	const onMutated = vi.fn();
 
@@ -254,6 +295,202 @@ describe("VisualRelationshipEditor", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Delete CI" })).toBeDisabled();
+	});
+
+	it("renders layer filters from category/type and selects all by default", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const appLayer = screen.getByRole("checkbox", {
+			name: /Application layer \(1 CIs\)/,
+		});
+		const databaseLayer = screen.getByRole("checkbox", {
+			name: /Database layer \(1 CIs\)/,
+		});
+		expect(
+			screen.getByRole("checkbox", {
+				name: /INFRASTRUCTURE layer \(1 CIs\)/,
+			}),
+		).toBeChecked();
+
+		expect(appLayer).toBeChecked();
+		expect(databaseLayer).toBeChecked();
+		expect(
+			screen.getByRole("button", { name: "CI node App" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "CI node DB" }),
+		).toBeInTheDocument();
+	});
+
+	it("filters nodes and shows an empty state when all layers are hidden", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("checkbox", { name: /Database layer/ }));
+
+		expect(
+			screen.queryByRole("button", { name: "CI node DB" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "CI node App" }),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "None" }));
+
+		expect(
+			screen.queryByRole("button", { name: "CI node App" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText("No CIs match selected layers"),
+		).toBeInTheDocument();
+	});
+
+	it("filters links whose endpoints are hidden", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(screen.getByText("App → DB")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("checkbox", { name: /Database layer/ }));
+
+		expect(screen.queryByText("App → DB")).not.toBeInTheDocument();
+		expect(screen.getByText("App → Infra")).toBeInTheDocument();
+	});
+
+	it("clears hidden selected endpoints and preserves visible relationship creation", async () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={[]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "CI node App" }));
+		fireEvent.click(screen.getByRole("button", { name: "CI node DB" }));
+		expect(screen.getByText(/Target:/).parentElement).toHaveTextContent("DB");
+
+		fireEvent.click(screen.getByRole("checkbox", { name: /Database layer/ }));
+
+		expect(screen.getByText(/Target:/).parentElement).toHaveTextContent(
+			"Select target",
+		);
+		expect(
+			screen.getByRole("button", { name: "Create relationship" }),
+		).toBeDisabled();
+		expect(mockApiPost).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByRole("checkbox", { name: /Database layer/ }));
+		fireEvent.click(screen.getByRole("button", { name: "CI node App" }));
+		fireEvent.click(screen.getByRole("button", { name: "CI node DB" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Create relationship" }),
+		);
+
+		await waitFor(() => {
+			expect(mockApiPost).toHaveBeenCalledWith("/links", {
+				source: "app-1",
+				target: "db-1",
+				relationship: "CONNECTS_TO",
+			});
+		});
+	});
+
+	it("preserves deselected and none layer choices across node refreshes", () => {
+		const { rerender } = render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("checkbox", { name: /Database layer/ }));
+		rerender(
+			<VisualRelationshipEditor
+				nodes={[...layeredNodes]}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("checkbox", { name: /Database layer/ }),
+		).not.toBeChecked();
+		expect(
+			screen.queryByRole("button", { name: "CI node DB" }),
+		).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "None" }));
+		rerender(
+			<VisualRelationshipEditor
+				nodes={[...layeredNodes]}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(
+			screen.getByText("No CIs match selected layers"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("checkbox", { name: /Application layer/ }),
+		).not.toBeChecked();
+		expect(
+			screen.getByRole("checkbox", { name: /Database layer/ }),
+		).not.toBeChecked();
+		expect(
+			screen.getByRole("checkbox", { name: /INFRASTRUCTURE layer/ }),
+		).not.toBeChecked();
+	});
+
+	it("auto-selects newly discovered layers after node refresh", () => {
+		const { rerender } = render(
+			<VisualRelationshipEditor
+				nodes={[layeredNodes[0]]}
+				links={[]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		rerender(
+			<VisualRelationshipEditor
+				nodes={[layeredNodes[0], layeredNodes[1]]}
+				links={[]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("checkbox", { name: /Database layer \(1 CIs\)/ }),
+		).toBeChecked();
+		expect(
+			screen.getByRole("button", { name: "CI node DB" }),
+		).toBeInTheDocument();
 	});
 
 	it("prevents self-links", () => {

@@ -1,5 +1,5 @@
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphNode } from "../types";
 import { api } from "../services/api";
 import type { LinkData } from "./RelationshipManager";
@@ -60,6 +60,9 @@ interface VisualRelationshipEditorProps {
 }
 
 const nodeLabel = (node?: GraphNode) => node?.label || node?.id || "Unknown CI";
+const nodeLayer = (node: GraphNode) => node.category ?? node.type;
+const sameLayers = (a: string[], b: string[]) =>
+	a.length === b.length && a.every((layer, index) => layer === b[index]);
 
 const toCiForm = (node: GraphNode): CiFormState => ({
 	id: node.id,
@@ -87,10 +90,56 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const [ciForm, setCiForm] = useState<CiFormState>(EMPTY_CI_FORM);
 	const [ciError, setCiError] = useState("");
 	const [ciSaving, setCiSaving] = useState(false);
+	const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
+	const knownLayerLabelsRef = useRef<string[]>([]);
 
 	const ciLinks = useMemo(
 		() => links.filter((link) => link.relationship !== "HAS_METRIC"),
 		[links],
+	);
+	const layerOptions = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const node of nodes) {
+			const layer = nodeLayer(node);
+			counts.set(layer, (counts.get(layer) ?? 0) + 1);
+		}
+		return Array.from(counts.entries())
+			.map(([label, count]) => ({ label, count }))
+			.sort((a, b) => a.label.localeCompare(b.label));
+	}, [nodes]);
+
+	useEffect(() => {
+		const available = layerOptions.map((option) => option.label);
+		const previousAvailable = knownLayerLabelsRef.current;
+		knownLayerLabelsRef.current = available;
+
+		setSelectedLayers((current) => {
+			const availableSet = new Set(available);
+			const previousAvailableSet = new Set(previousAvailable);
+			const preserved = current.filter((layer) => availableSet.has(layer));
+			const newlyDiscovered = available.filter(
+				(layer) => !previousAvailableSet.has(layer),
+			);
+			const next = [...preserved, ...newlyDiscovered];
+			return sameLayers(current, next) ? current : next;
+		});
+	}, [layerOptions]);
+
+	const visibleNodes = useMemo(
+		() => nodes.filter((node) => selectedLayers.includes(nodeLayer(node))),
+		[nodes, selectedLayers],
+	);
+	const visibleNodeIds = useMemo(
+		() => new Set(visibleNodes.map((node) => node.id)),
+		[visibleNodes],
+	);
+	const visibleCiLinks = useMemo(
+		() =>
+			ciLinks.filter(
+				(link) =>
+					visibleNodeIds.has(link.source) && visibleNodeIds.has(link.target),
+			),
+		[ciLinks, visibleNodeIds],
 	);
 	const nodeMap = useMemo(
 		() => new Map(nodes.map((node) => [node.id, node])),
@@ -99,19 +148,25 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const positionedNodes = useMemo(() => {
 		const centerX = 500;
 		const centerY = 300;
-		const radius = nodes.length > 10 ? 250 : 210;
-		return nodes.map((node, index) => {
+		const radius = visibleNodes.length > 10 ? 250 : 210;
+		return visibleNodes.map((node, index) => {
 			const angle =
-				nodes.length <= 1
+				visibleNodes.length <= 1
 					? 0
-					: (index / nodes.length) * Math.PI * 2 - Math.PI / 2;
+					: (index / visibleNodes.length) * Math.PI * 2 - Math.PI / 2;
 			return {
 				node,
-				x: nodes.length <= 1 ? centerX : centerX + Math.cos(angle) * radius,
-				y: nodes.length <= 1 ? centerY : centerY + Math.sin(angle) * radius,
+				x:
+					visibleNodes.length <= 1
+						? centerX
+						: centerX + Math.cos(angle) * radius,
+				y:
+					visibleNodes.length <= 1
+						? centerY
+						: centerY + Math.sin(angle) * radius,
 			};
 		});
-	}, [nodes]);
+	}, [visibleNodes]);
 	const positionMap = useMemo(
 		() => new Map(positionedNodes.map((item) => [item.node.id, item])),
 		[positionedNodes],
@@ -119,6 +174,29 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 
 	const selectedCi = selectedCiId ? nodeMap.get(selectedCiId) : undefined;
 	const isEditingCi = Boolean(selectedCi);
+
+	useEffect(() => {
+		setSourceId((current) =>
+			current && !visibleNodeIds.has(current) ? "" : current,
+		);
+		setTargetId((current) =>
+			current && !visibleNodeIds.has(current) ? "" : current,
+		);
+	}, [visibleNodeIds]);
+
+	const toggleLayer = (layer: string) => {
+		setSelectedLayers((current) =>
+			current.includes(layer)
+				? current.filter((item) => item !== layer)
+				: [...current, layer],
+		);
+	};
+	const selectAllLayers = () => {
+		setSelectedLayers(layerOptions.map((option) => option.label));
+	};
+	const clearAllLayers = () => {
+		setSelectedLayers([]);
+	};
 
 	const updateCiForm = (field: keyof CiFormState, value: string) => {
 		setCiForm((current) => ({ ...current, [field]: value }));
@@ -187,6 +265,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	};
 
 	const selectNode = (id: string) => {
+		if (!visibleNodeIds.has(id)) return;
 		setError("");
 		setCiError("");
 		const node = nodeMap.get(id);
@@ -213,6 +292,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		}
 		if (sourceId === targetId) {
 			setError("Source and target must be different CIs.");
+			return;
+		}
+		if (!visibleNodeIds.has(sourceId) || !visibleNodeIds.has(targetId)) {
+			setError("Selected CIs must be visible.");
 			return;
 		}
 		setSaving(true);
@@ -272,12 +355,61 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 
 				<div className="grid flex-1 min-h-0 grid-cols-[1fr_360px] gap-4 p-4">
 					<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.16),rgba(0,0,0,0.15)_45%,rgba(0,0,0,0.55))]">
+						<div className="absolute left-4 top-4 z-10 w-56 rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur">
+							<div className="flex items-center justify-between gap-2">
+								<div>
+									<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+										Layers
+									</p>
+									<p className="text-[10px] text-neutral-500">
+										{visibleNodes.length}/{nodes.length} CIs
+									</p>
+								</div>
+								<div className="flex gap-2 text-[10px] font-black uppercase">
+									<button
+										type="button"
+										onClick={selectAllLayers}
+										className="text-brand-300 hover:text-brand-200"
+									>
+										All
+									</button>
+									<button
+										type="button"
+										onClick={clearAllLayers}
+										className="text-neutral-400 hover:text-white"
+									>
+										None
+									</button>
+								</div>
+							</div>
+							<div className="mt-3 space-y-2">
+								{layerOptions.map((option) => (
+									<label
+										key={option.label}
+										className="flex items-center justify-between gap-2 text-xs text-neutral-300"
+									>
+										<span className="flex items-center gap-2 truncate">
+											<input
+												type="checkbox"
+												checked={selectedLayers.includes(option.label)}
+												onChange={() => toggleLayer(option.label)}
+												aria-label={`${option.label} layer (${option.count} CIs)`}
+											/>
+											<span className="truncate">{option.label}</span>
+										</span>
+										<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
+											{option.count}
+										</span>
+									</label>
+								))}
+							</div>
+						</div>
 						<svg
 							className="absolute inset-0 h-full w-full"
 							viewBox="0 0 1000 620"
 							aria-label="Existing CI relationship links"
 						>
-							{ciLinks.map((link) => {
+							{visibleCiLinks.map((link) => {
 								const source = positionMap.get(link.source);
 								const target = positionMap.get(link.target);
 								if (!source || !target) return null;
@@ -302,6 +434,11 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 								);
 							})}
 						</svg>
+						{visibleNodes.length === 0 && (
+							<div className="absolute inset-0 flex items-center justify-center text-xs font-bold uppercase tracking-widest text-neutral-500">
+								No CIs match selected layers
+							</div>
+						)}
 						{positionedNodes.map(({ node, x, y }) => {
 							const selectedAsSource = sourceId === node.id;
 							const selectedAsTarget = targetId === node.id;
@@ -480,7 +617,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 							<div className="sticky top-0 bg-neutral-950/90 p-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">
 								Existing links
 							</div>
-							{ciLinks.map((link) => {
+							{visibleCiLinks.map((link) => {
 								const readOnly = isReadOnlyRelationship(link.relationship);
 
 								return (
@@ -516,9 +653,11 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 									</div>
 								);
 							})}
-							{ciLinks.length === 0 && (
+							{visibleCiLinks.length === 0 && (
 								<div className="p-6 text-center text-xs text-neutral-500">
-									No CI links yet.
+									{ciLinks.length === 0
+										? "No CI links yet."
+										: "No visible CI links for selected layers."}
 								</div>
 							)}
 						</div>
