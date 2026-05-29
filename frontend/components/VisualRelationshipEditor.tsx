@@ -59,6 +59,7 @@ interface VisualRelationshipEditorProps {
 	links: LinkData[];
 	onClose: () => void;
 	onMutated: () => void | Promise<void>;
+	mode?: "modal" | "page";
 }
 
 const nodeLabel = (node?: GraphNode) => node?.label || node?.id || "Unknown CI";
@@ -158,6 +159,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	links,
 	onClose,
 	onMutated,
+	mode = "modal",
 }) => {
 	const [sourceId, setSourceId] = useState("");
 	const [targetId, setTargetId] = useState("");
@@ -556,9 +558,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		}
 	};
 
-	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-6 backdrop-blur-xl">
-			<div className="flex h-full w-full max-w-7xl flex-col rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl">
+	const isPageMode = mode === "page";
+
+	const editorContent = (
+		<div className={`${isPageMode ? "flex h-full w-full flex-col bg-neutral-950" : "flex h-full w-full max-w-7xl flex-col rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"}`}>
 				<div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
 					<div>
 						<h2 className="text-xl font-black uppercase text-white">
@@ -841,6 +844,13 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 					</aside>
 				</div>
 			</div>
+	);
+
+	if (isPageMode) return editorContent;
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-6 backdrop-blur-xl">
+			{editorContent}
 		</div>
 	);
 };
