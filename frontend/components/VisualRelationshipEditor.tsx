@@ -9,6 +9,12 @@ import {
 	isReadOnlyRelationship,
 } from "./relationshipCapabilities";
 import { getStatusColorHex } from "../utils/status";
+import {
+	buildAnchoredVisualLayout,
+	type PositionedVisualNode,
+	VISUAL_EDITOR_VIEWBOX_HEIGHT,
+	VISUAL_EDITOR_VIEWBOX_WIDTH,
+} from "./visualRelationshipLayout";
 
 const SUPPORTED_RELATIONSHIP_TYPES = [
 	"CONNECTS_TO",
@@ -66,83 +72,6 @@ const nodeLabel = (node?: GraphNode) => node?.label || node?.id || "Unknown CI";
 const nodeLayer = (node: GraphNode) => node.category ?? node.type;
 const sameLayers = (a: string[], b: string[]) =>
 	a.length === b.length && a.every((layer, index) => layer === b[index]);
-const VIEWBOX_WIDTH = 1000;
-const VIEWBOX_HEIGHT = 620;
-const COORDINATE_PADDING = 80;
-
-type PositionedNode = GraphNode & {
-	mapX: number;
-	mapY: number;
-	layer: string;
-};
-
-const hasNumber = (value: unknown): value is number =>
-	typeof value === "number" && Number.isFinite(value);
-
-const rawCoordinateForNode = (node: GraphNode, index: number) => {
-	if (hasNumber(node.x) && hasNumber(node.y)) {
-		return { x: node.x, y: node.y };
-	}
-	if (hasNumber(node.location?.long) && hasNumber(node.location?.lat)) {
-		return {
-			x: VIEWBOX_WIDTH / 2 + (node.location.long + 117) * 3000,
-			y: VIEWBOX_HEIGHT / 2 - (node.location.lat - 32.5) * 3000,
-		};
-	}
-
-	const angle = (index / Math.max(1, 12)) * Math.PI * 2 - Math.PI / 2;
-	const radius = 180 + Math.floor(index / 12) * 70;
-	return {
-		x: VIEWBOX_WIDTH / 2 + Math.cos(angle) * radius,
-		y: VIEWBOX_HEIGHT / 2 + Math.sin(angle) * radius,
-	};
-};
-
-const buildCoordinateLayout = (visibleNodes: GraphNode[]): PositionedNode[] => {
-	const rawNodes = visibleNodes.map((node, index) => ({
-		node,
-		layer: nodeLayer(node),
-		...rawCoordinateForNode(node, index),
-	}));
-	if (rawNodes.length === 0) return [];
-
-	const xExtent = d3.extent(rawNodes, (item) => item.x);
-	const yExtent = d3.extent(rawNodes, (item) => item.y);
-	const xScale = d3
-		.scaleLinear()
-		.domain(
-			xExtent[0] === xExtent[1]
-				? [xExtent[0] ?? 0, (xExtent[0] ?? 0) + 1]
-				: [xExtent[0] ?? 0, xExtent[1] ?? 1],
-		)
-		.range([COORDINATE_PADDING + 160, VIEWBOX_WIDTH - COORDINATE_PADDING]);
-	const yScale = d3
-		.scaleLinear()
-		.domain(
-			yExtent[0] === yExtent[1]
-				? [yExtent[0] ?? 0, (yExtent[0] ?? 0) + 1]
-				: [yExtent[0] ?? 0, yExtent[1] ?? 1],
-		)
-		.range([COORDINATE_PADDING, VIEWBOX_HEIGHT - COORDINATE_PADDING]);
-
-	const duplicateCounts = new Map<string, number>();
-	return rawNodes.map(({ node, layer, x, y }) => {
-		const coordinateKey = `${x}:${y}`;
-		const duplicateIndex = duplicateCounts.get(coordinateKey) ?? 0;
-		duplicateCounts.set(coordinateKey, duplicateIndex + 1);
-		const duplicateRing = Math.floor((duplicateIndex - 1) / 8) + 1;
-		const duplicateSlot = (duplicateIndex - 1) % 8;
-		const duplicateAngle = duplicateSlot * (Math.PI / 4);
-		const duplicateRadius = duplicateIndex === 0 ? 0 : 28 * duplicateRing;
-
-		return {
-			...node,
-			layer,
-			mapX: xScale(x) + Math.cos(duplicateAngle) * duplicateRadius,
-			mapY: yScale(y) + Math.sin(duplicateAngle) * duplicateRadius,
-		};
-	});
-};
 
 const toCiForm = (node: GraphNode): CiFormState => ({
 	id: node.id,
@@ -228,8 +157,8 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		[nodes],
 	);
 	const positionedNodes = useMemo(
-		() => buildCoordinateLayout(visibleNodes),
-		[visibleNodes],
+		() => buildAnchoredVisualLayout(visibleNodes, visibleCiLinks),
+		[visibleNodes, visibleCiLinks],
 	);
 	const positionMap = useMemo(
 		() => new Map(positionedNodes.map((item) => [item.id, item])),
@@ -359,7 +288,13 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const svg = d3.select(svgElement);
 		svg.selectAll("*").remove();
 
-		const container = svg.append("g").attr("class", "visual-editor-d3-layer");
+		const container = svg.append("g").attr("class", "visual-editor-zoom-root");
+		const zoom = d3.zoom<SVGSVGElement, unknown>()
+			.scaleExtent([0.35, 3])
+			.on("zoom", (event) => {
+				container.attr("transform", event.transform);
+			});
+		svg.call(zoom);
 		container
 			.append("g")
 			.attr("class", "relationship-links")
@@ -405,7 +340,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const nodeSelection = container
 			.append("g")
 			.attr("class", "relationship-nodes")
-			.selectAll<SVGGElement, PositionedNode>("g")
+			.selectAll<SVGGElement, PositionedVisualNode>("g")
 			.data(positionedNodes, (node) => node.id)
 			.join("g")
 			.attr("role", "button")
@@ -483,7 +418,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 					.attr("opacity", 0.3);
 			})
 			.on("mouseout", function () {
-				const node = d3.select(this).datum() as PositionedNode;
+				const node = d3.select(this).datum() as PositionedVisualNode;
 				d3.select(this)
 					.select("circle")
 					.attr(
@@ -635,7 +570,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 						<svg
 							ref={graphSvgRef}
 							className="absolute inset-0 h-full w-full"
-							viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+							viewBox={`0 0 ${VISUAL_EDITOR_VIEWBOX_WIDTH} ${VISUAL_EDITOR_VIEWBOX_HEIGHT}`}
 							aria-label="Visual CI relationship map"
 						/>
 						{visibleNodes.length === 0 && (
