@@ -326,17 +326,21 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		svg.call(zoom);
 		svg.call(zoom.transform, zoomTransformRef.current);
 
-		container
+		const linkEndpointIds = (link: (typeof graphLinks)[number]) => ({
+			sourceId: typeof link.source === "string" ? link.source : link.source.id,
+			targetId: typeof link.target === "string" ? link.target : link.target.id,
+		});
+
+		const linkSelection = container
 			.append("g")
 			.attr("class", "relationship-links")
 			.selectAll<SVGGElement, (typeof graphLinks)[number]>("g")
 			.data(graphLinks)
 			.join("g")
+			.attr("data-link-source", (link) => linkEndpointIds(link).sourceId)
+			.attr("data-link-target", (link) => linkEndpointIds(link).targetId)
 			.each(function (link) {
-				const sourceId =
-					typeof link.source === "string" ? link.source : link.source.id;
-				const targetId =
-					typeof link.target === "string" ? link.target : link.target.id;
+				const { sourceId, targetId } = linkEndpointIds(link);
 				const source = positionMap.get(sourceId);
 				const target = positionMap.get(targetId);
 				if (!source || !target) return;
@@ -382,6 +386,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("tabindex", 0)
 			.attr("aria-label", (node) => `CI node ${node.label}`)
 			.attr("title", (node) => `${node.label} · ${node.layer}`)
+			.attr("data-node-id", (node) => node.id)
 			.attr("transform", (node) => `translate(${node.x},${node.y})`)
 			.attr("class", "cursor-pointer")
 			.on("click", (_event, node) => selectNode(node.id))
@@ -433,6 +438,80 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("class", "node-label pointer-events-none")
 			.text((node) => truncateGraphLabel(node.label).displayLabel);
 
+		const selectedStrokeWidth = (node: EditorGraphNodeDatum) =>
+			node.id === sourceId || node.id === targetId
+				? 5
+				: (statusVisualMap.get(node.id)?.strokeWidth ?? 2);
+		const resetGraphFocus = () => {
+			nodeSelection.attr("opacity", 1);
+			nodeSelection
+				.select<SVGCircleElement>("circle.node-circle")
+				.attr("stroke-width", selectedStrokeWidth)
+				.attr("filter", null);
+			nodeSelection
+				.select<SVGTextElement>("text.node-label")
+				.attr("fill", "#a3a3a3")
+				.attr("font-weight", 700)
+				.text((node) => truncateGraphLabel(node.label).displayLabel);
+			linkSelection
+				.select<SVGLineElement>("line")
+				.attr("stroke-opacity", 0.55)
+				.attr("stroke-width", 2);
+			linkSelection.select<SVGTextElement>("text").attr("opacity", 1);
+		};
+		const applyGraphFocus = (activeNodeId: string) => {
+			const relatedNodeIds = new Set([activeNodeId]);
+			const relatedLinkIds = new Set<string>();
+			for (const link of graphLinks) {
+				const { sourceId: linkSourceId, targetId: linkTargetId } =
+					linkEndpointIds(link);
+				if (linkSourceId === activeNodeId || linkTargetId === activeNodeId) {
+					relatedNodeIds.add(linkSourceId);
+					relatedNodeIds.add(linkTargetId);
+					relatedLinkIds.add(link.id);
+				}
+			}
+
+			nodeSelection.attr("opacity", (node) => {
+				if (node.id === activeNodeId) return 1;
+				return relatedNodeIds.has(node.id) ? 0.9 : 0.18;
+			});
+			nodeSelection
+				.select<SVGCircleElement>("circle.node-circle")
+				.attr("stroke-width", (node) =>
+					node.id === activeNodeId ? 7 : selectedStrokeWidth(node),
+				)
+				.attr("filter", (node) =>
+					node.id === activeNodeId ? "drop-shadow(0 0 8px currentColor)" : null,
+				);
+			nodeSelection
+				.select<SVGTextElement>("text.node-label")
+				.attr("fill", (node) =>
+					node.id === activeNodeId ? "#ffffff" : "#a3a3a3",
+				)
+				.attr("font-weight", (node) => (node.id === activeNodeId ? 900 : 700))
+				.text((node) =>
+					node.id === activeNodeId
+						? truncateGraphLabel(node.label).fullLabel
+						: truncateGraphLabel(node.label).displayLabel,
+				);
+			linkSelection
+				.select<SVGLineElement>("line")
+				.attr("stroke-opacity", (link) =>
+					relatedLinkIds.has(link.id) ? 0.72 : 0.12,
+				)
+				.attr("stroke-width", (link) =>
+					relatedLinkIds.has(link.id) ? 3 : 1.5,
+				);
+			linkSelection
+				.select<SVGTextElement>("text")
+				.attr("opacity", (link) => (relatedLinkIds.has(link.id) ? 1 : 0.18));
+		};
+		nodeSelection
+			.on("mouseover", (_event, node) => applyGraphFocus(node.id))
+			.on("mouseout", resetGraphFocus)
+			.on("focus", (_event, node) => applyGraphFocus(node.id))
+			.on("blur", resetGraphFocus);
 
 		return () => {
 			svg.on(".zoom", null);

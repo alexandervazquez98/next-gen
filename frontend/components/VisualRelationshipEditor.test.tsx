@@ -389,6 +389,113 @@ describe("VisualRelationshipEditor", () => {
 		expect(appNodeButton).not.toHaveClass("w-36", "rounded-2xl");
 	});
 
+	it("fades unrelated nodes and links while keeping related graph items prominent on hover", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={layeredNodes}
+				links={layeredLinks}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const svg = screen.getByLabelText("Visual CI relationship map");
+		const appGroup = screen.getByRole("button", { name: "CI node App" });
+		const dbGroup = screen.getByRole("button", { name: "CI node DB" });
+		const infraGroup = screen.getByRole("button", { name: "CI node Infra" });
+		const relatedLink = svg.querySelector(
+			'[data-link-source="app-1"][data-link-target="db-1"] line',
+		);
+		const unrelatedLink = svg.querySelector(
+			'[data-link-source="app-1"][data-link-target="infra-1"] line',
+		);
+
+		expect(relatedLink).toHaveAttribute("stroke-opacity", "0.55");
+		expect(unrelatedLink).toHaveAttribute("stroke-opacity", "0.55");
+
+		fireEvent.mouseOver(dbGroup);
+
+		expect(dbGroup).toHaveAttribute("opacity", "1");
+		expect(appGroup).toHaveAttribute("opacity", "0.9");
+		expect(infraGroup).toHaveAttribute("opacity", "0.18");
+		expect(relatedLink).toHaveAttribute("stroke-opacity", "0.72");
+		expect(unrelatedLink).toHaveAttribute("stroke-opacity", "0.12");
+
+		fireEvent.mouseOut(dbGroup);
+
+		expect(appGroup).toHaveAttribute("opacity", "1");
+		expect(infraGroup).toHaveAttribute("opacity", "1");
+		expect(relatedLink).toHaveAttribute("stroke-opacity", "0.55");
+		expect(unrelatedLink).toHaveAttribute("stroke-opacity", "0.55");
+	});
+
+	it("expands truncated labels on hover and focus, then restores compact labels", () => {
+		const longLabelNode = {
+			...nodes[0],
+			label: "Very Long Router Label",
+		};
+		render(
+			<VisualRelationshipEditor
+				nodes={[longLabelNode, nodes[1]]}
+				links={[
+					{
+						...links[0],
+						source_label: longLabelNode.label,
+					},
+				]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const longNode = screen.getByRole("button", {
+			name: "CI node Very Long Router Label",
+		});
+		expect(screen.getByText("Very Long Ro...")).toBeInTheDocument();
+
+		fireEvent.mouseOver(longNode);
+		expect(screen.getByText("Very Long Router Label")).toBeInTheDocument();
+
+		fireEvent.mouseOut(longNode);
+		expect(screen.getByText("Very Long Ro...")).toBeInTheDocument();
+
+		fireEvent.focus(longNode);
+		expect(screen.getByText("Very Long Router Label")).toBeInTheDocument();
+
+		fireEvent.blur(longNode);
+		expect(screen.getByText("Very Long Ro...")).toBeInTheDocument();
+	});
+
+	it("keeps selected source and target styling distinguishable during hover focus", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "CI node Router A" }));
+		fireEvent.click(screen.getByRole("button", { name: "CI node Switch B" }));
+
+		const routerNode = screen.getByRole("button", { name: "CI node Router A" });
+		const switchNode = screen.getByRole("button", { name: "CI node Switch B" });
+		const routerCircle = routerNode.querySelector("circle.node-circle");
+		const switchCircle = switchNode.querySelector("circle.node-circle");
+		expect(routerCircle).toHaveAttribute("fill", "#345bf2");
+		expect(switchCircle).toHaveAttribute("fill", "#06b6d4");
+
+		fireEvent.mouseOver(switchNode);
+
+		expect(routerCircle).toHaveAttribute("fill", "#345bf2");
+		expect(switchCircle).toHaveAttribute("fill", "#06b6d4");
+		expect(switchCircle).toHaveAttribute("stroke-width", "7");
+
+		fireEvent.mouseOut(switchNode);
+		expect(switchCircle).toHaveAttribute("stroke-width", "5");
+	});
+
 	it("positions D3 nodes from CI coordinates", () => {
 		render(
 			<VisualRelationshipEditor
@@ -652,6 +759,29 @@ describe("VisualRelationshipEditor", () => {
 			});
 		});
 		expect(onMutated).toHaveBeenCalledTimes(1);
+	});
+
+	it("excludes HAS_METRIC relationships from visual editing", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={[
+					...links,
+					{
+						source: "ci-a",
+						source_label: "Router A",
+						target: "ci-b",
+						target_label: "Switch B",
+						relationship: "HAS_METRIC",
+					},
+				]}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		expect(screen.queryByText("HAS_METRIC")).not.toBeInTheDocument();
+		expect(screen.getByText("Router A → Switch B")).toBeInTheDocument();
 	});
 
 	it("keeps RUNS_ON visible and labeled read-only", () => {
