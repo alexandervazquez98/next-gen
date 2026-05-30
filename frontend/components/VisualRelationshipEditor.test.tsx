@@ -1,4 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphNode } from "../types";
 import VisualRelationshipEditor from "./VisualRelationshipEditor";
@@ -105,6 +107,45 @@ describe("VisualRelationshipEditor", () => {
 		onMutated.mockReset();
 		mockApiPost.mockResolvedValue({});
 		mockApiDelete.mockResolvedValue({});
+	});
+
+	it("does not attach d3 drag behavior in the visual editor graph path", () => {
+		const source = readFileSync(
+			path.resolve(process.cwd(), "components/VisualRelationshipEditor.tsx"),
+			"utf8",
+		);
+
+		expect(source).not.toMatch(/\bd3\s*\.\s*drag\s*\(/);
+		expect(source).not.toMatch(
+			/import\s*\{[^}]*\bdrag\b[^}]*\}\s*from\s*["']d3["']/,
+		);
+	});
+
+	it("uses GraphCMDB-style zoom root without static cluster bubbles", () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const svg = screen.getByLabelText("Visual CI relationship map");
+		expect(svg.querySelector(".visual-editor-zoom-root")).toBeInTheDocument();
+		expect(svg.querySelector(".relationship-links")).toBeInTheDocument();
+		expect(svg.querySelector(".relationship-nodes")).toBeInTheDocument();
+		expect(svg.querySelector(".relationship-clusters")).not.toBeInTheDocument();
+	});
+
+	it("uses broad zoom bounds and removes zoom listeners on cleanup", () => {
+		const source = readFileSync(
+			path.resolve(process.cwd(), "components/VisualRelationshipEditor.tsx"),
+			"utf8",
+		);
+
+		expect(source).toContain(".scaleExtent([0.01, 12])");
+		expect(source).toContain('svg.on(".zoom", null)');
 	});
 
 	it("selects source then target by clicking static CI nodes", () => {
@@ -393,7 +434,9 @@ describe("VisualRelationshipEditor", () => {
 				.getByRole("button", { name: `CI node ${node.label}` })
 				.getAttribute("transform"),
 		);
-		expect(transforms.every((transform) => transform?.startsWith("translate("))).toBe(true);
+		expect(
+			transforms.every((transform) => transform?.startsWith("translate(")),
+		).toBe(true);
 		expect(new Set(transforms).size).toBe(colocatedNodes.length);
 	});
 

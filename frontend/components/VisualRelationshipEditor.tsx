@@ -8,10 +8,12 @@ import {
 	canDeleteRelationship,
 	isReadOnlyRelationship,
 } from "./relationshipCapabilities";
-import { getStatusColorHex } from "../utils/status";
 import {
-	buildVisualRelationshipLayout,
-	type PositionedVisualNode,
+	buildEditorForceGraphLayout,
+	getEditorStatusVisual,
+	truncateGraphLabel,
+	type EditorGraphNodeDatum,
+	type EditorNodePosition,
 	VISUAL_EDITOR_VIEWBOX_HEIGHT,
 	VISUAL_EDITOR_VIEWBOX_WIDTH,
 } from "./visualRelationshipLayout";
@@ -104,6 +106,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const knownLayerLabelsRef = useRef<string[]>([]);
 	const graphSvgRef = useRef<SVGSVGElement>(null);
 	const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
+	const nodePositionCacheRef = useRef<Map<string, EditorNodePosition>>(
+		new Map(),
+	);
+	const graphLayoutKeyRef = useRef("");
 
 	const ciLinks = useMemo(
 		() => links.filter((link) => link.relationship !== "HAS_METRIC"),
@@ -157,16 +163,15 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		() => new Map(nodes.map((node) => [node.id, node])),
 		[nodes],
 	);
-	const visualLayout = useMemo(
-		() => buildVisualRelationshipLayout(visibleNodes, visibleCiLinks),
-		[visibleNodes, visibleCiLinks],
-	);
-	const positionedNodes = visualLayout.nodes;
-	const positionedClusters = visualLayout.clusters;
-	const positionMap = useMemo(
-		() => new Map(positionedNodes.map((item) => [item.id, item])),
-		[positionedNodes],
-	);
+
+	useEffect(() => {
+		const currentNodeIds = new Set(nodes.map((node) => node.id));
+		for (const cachedNodeId of nodePositionCacheRef.current.keys()) {
+			if (!currentNodeIds.has(cachedNodeId)) {
+				nodePositionCacheRef.current.delete(cachedNodeId);
+			}
+		}
+	}, [nodes]);
 
 	const selectedCi = selectedCiId ? nodeMap.get(selectedCiId) : undefined;
 	const isEditingCi = Boolean(selectedCi);
@@ -288,104 +293,96 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const svgElement = graphSvgRef.current;
 		if (!svgElement) return;
 
+		const graphLayoutKey = JSON.stringify({
+			nodes: visibleNodes.map((node) => node.id).sort(),
+			links: visibleCiLinks
+				.map((link) => `${link.source}->${link.target}:${link.relationship}`)
+				.sort(),
+		});
+		const reuseCachedLayout = graphLayoutKeyRef.current === graphLayoutKey;
+		graphLayoutKeyRef.current = graphLayoutKey;
+		const graph = buildEditorForceGraphLayout(visibleNodes, visibleCiLinks, {
+			nodePositionCache: nodePositionCacheRef.current,
+			ticks: reuseCachedLayout ? 0 : undefined,
+		});
+		const graphNodes = graph.nodes;
+		const graphLinks = graph.links;
+		const positionMap = new Map(graphNodes.map((node) => [node.id, node]));
+		const statusVisualMap = new Map(
+			graphNodes.map((node) => [node.id, getEditorStatusVisual(node.status)]),
+		);
+
 		const svg = d3.select(svgElement);
 		svg.selectAll("*").remove();
 
 		const container = svg.append("g").attr("class", "visual-editor-zoom-root");
-		const zoom = d3.zoom<SVGSVGElement, unknown>()
-			.scaleExtent([0.35, 3])
+		const zoom = d3
+			.zoom<SVGSVGElement, unknown>()
+			.scaleExtent([0.01, 12])
 			.on("zoom", (event) => {
 				zoomTransformRef.current = event.transform;
 				container.attr("transform", event.transform);
 			});
 		svg.call(zoom);
-		container.attr("transform", zoomTransformRef.current);
-		container
-			.append("g")
-			.attr("class", "relationship-clusters")
-			.selectAll("g")
-			.data(positionedClusters)
-			.join("g")
-			.attr("transform", (cluster) => `translate(${cluster.x},${cluster.y})`)
-			.each(function (cluster) {
-				const clusterGroup = d3.select(this);
-				clusterGroup
-					.append("circle")
-					.attr("r", Math.max(90, Math.min(210, 46 + cluster.count * 4)))
-					.attr("fill", "rgba(52,91,242,0.05)")
-					.attr("stroke", "rgba(52,91,242,0.24)")
-					.attr("stroke-dasharray", "8,10");
-				clusterGroup
-					.append("text")
-					.attr("y", -58)
-					.attr("text-anchor", "middle")
-					.attr("fill", "#d4d4d4")
-					.attr("font-size", 13)
-					.attr("font-weight", 900)
-					.text(cluster.label.length > 24 ? `${cluster.label.slice(0, 21)}...` : cluster.label);
-				clusterGroup
-					.append("text")
-					.attr("y", -42)
-					.attr("text-anchor", "middle")
-					.attr("fill", "#737373")
-					.attr("font-size", 10)
-					.attr("font-weight", 700)
-					.text(`${cluster.count} CIs`);
-			});
+		svg.call(zoom.transform, zoomTransformRef.current);
 
 		container
 			.append("g")
 			.attr("class", "relationship-links")
-			.selectAll("g")
-			.data(visibleCiLinks)
+			.selectAll<SVGGElement, (typeof graphLinks)[number]>("g")
+			.data(graphLinks)
 			.join("g")
 			.each(function (link) {
-				const source = positionMap.get(link.source);
-				const target = positionMap.get(link.target);
+				const sourceId =
+					typeof link.source === "string" ? link.source : link.source.id;
+				const targetId =
+					typeof link.target === "string" ? link.target : link.target.id;
+				const source = positionMap.get(sourceId);
+				const target = positionMap.get(targetId);
 				if (!source || !target) return;
 
 				const linkGroup = d3.select(this);
 				linkGroup
 					.append("line")
-					.attr("x1", source.mapX)
-					.attr("y1", source.mapY)
-					.attr("x2", target.mapX)
-					.attr("y2", target.mapY)
-					.attr("stroke", getStatusColorHex(target.status))
-					.attr("stroke-opacity", 0.45)
+					.attr("x1", source.x)
+					.attr("y1", source.y)
+					.attr("x2", target.x)
+					.attr("y2", target.y)
+					.attr("stroke", statusVisualMap.get(target.id)?.color ?? "#4b5563")
+					.attr("stroke-opacity", 0.55)
 					.attr("stroke-width", 2)
 					.attr(
 						"stroke-dasharray",
-						link.relationship === "DEPENDS_ON"
+						link.type === "DEPENDS_ON"
 							? "5, 8"
-							: link.relationship === "HOSTED_ON"
+							: link.type === "HOSTED_ON"
 								? "2, 2"
 								: "none",
 					);
 
-				if (visibleCiLinks.length <= 24) {
+				if (graphLinks.length <= 24) {
 					linkGroup
 						.append("text")
-						.attr("x", (source.mapX + target.mapX) / 2)
-						.attr("y", (source.mapY + target.mapY) / 2)
+						.attr("x", (source.x + target.x) / 2)
+						.attr("y", (source.y + target.y) / 2)
 						.attr("fill", "#d4d4d4")
 						.attr("font-size", 10)
 						.attr("font-weight", 700)
-						.text(link.relationship);
+						.text(link.type);
 				}
 			});
 
 		const nodeSelection = container
 			.append("g")
 			.attr("class", "relationship-nodes")
-			.selectAll<SVGGElement, PositionedVisualNode>("g")
-			.data(positionedNodes, (node) => node.id)
+			.selectAll<SVGGElement, EditorGraphNodeDatum>("g")
+			.data(graphNodes, (node) => node.id)
 			.join("g")
 			.attr("role", "button")
 			.attr("tabindex", 0)
-			.attr("aria-label", (node) => `CI node ${nodeLabel(node)}`)
-			.attr("title", (node) => `${nodeLabel(node)} · ${node.layer}`)
-			.attr("transform", (node) => `translate(${node.mapX},${node.mapY})`)
+			.attr("aria-label", (node) => `CI node ${node.label}`)
+			.attr("title", (node) => `${node.label} · ${node.layer}`)
+			.attr("transform", (node) => `translate(${node.x},${node.y})`)
 			.attr("class", "cursor-pointer")
 			.on("click", (_event, node) => selectNode(node.id))
 			.on("keydown", (event, node) => {
@@ -397,13 +394,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 
 		nodeSelection
 			.append("circle")
-			.attr("r", (node) =>
-				node.status === "EXCEPTION"
-					? 32
-					: node.status === "MAINTENANCE"
-						? 28
-						: 24,
-			)
+			.attr("r", (node) => statusVisualMap.get(node.id)?.radius ?? 24)
 			.attr("fill", (node) =>
 				node.id === sourceId
 					? "#345bf2"
@@ -411,9 +402,14 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 						? "#06b6d4"
 						: "#1a1a1a",
 			)
-			.attr("stroke", (node) => getStatusColorHex(node.status))
+			.attr(
+				"stroke",
+				(node) => statusVisualMap.get(node.id)?.color ?? "#4b5563",
+			)
 			.attr("stroke-width", (node) =>
-				node.id === sourceId || node.id === targetId ? 5 : 2,
+				node.id === sourceId || node.id === targetId
+					? 5
+					: (statusVisualMap.get(node.id)?.strokeWidth ?? 2),
 			)
 			.attr("class", "node-circle transition-all duration-300");
 
@@ -425,7 +421,7 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("font-size", 11)
 			.attr("font-weight", 900)
 			.attr("pointer-events", "none")
-			.text((node) => nodeLabel(node).slice(0, 2).toUpperCase());
+			.text((node) => node.label.slice(0, 2).toUpperCase());
 
 		nodeSelection
 			.append("text")
@@ -433,56 +429,15 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("text-anchor", "middle")
 			.attr("fill", "#a3a3a3")
 			.attr("font-size", 10)
+			.attr("font-weight", 700)
 			.attr("class", "node-label pointer-events-none")
-			.text((node) =>
-				nodeLabel(node).length > 15
-					? `${nodeLabel(node).substring(0, 12)}...`
-					: nodeLabel(node),
-			);
+			.text((node) => truncateGraphLabel(node.label).displayLabel);
 
-		nodeSelection
-			.on("mouseover", function (_event, node) {
-				d3.select(this)
-					.select("circle")
-					.attr("stroke-width", 6)
-					.attr("filter", "drop-shadow(0 0 8px currentColor)");
-				d3.select(this)
-					.select(".node-label")
-					.attr("fill", "white")
-					.attr("font-weight", "bold")
-					.text(nodeLabel(node));
-				nodeSelection
-					.filter((item) => item.id !== node.id)
-					.attr("opacity", 0.3);
-			})
-			.on("mouseout", function () {
-				const node = d3.select(this).datum() as PositionedVisualNode;
-				d3.select(this)
-					.select("circle")
-					.attr(
-						"stroke-width",
-						node.id === sourceId || node.id === targetId ? 5 : 2,
-					)
-					.attr("filter", null);
-				d3.select(this)
-					.select(".node-label")
-					.attr("fill", "#a3a3a3")
-					.attr("font-weight", "normal")
-					.text(
-						nodeLabel(node).length > 15
-							? `${nodeLabel(node).substring(0, 12)}...`
-							: nodeLabel(node),
-					);
-				nodeSelection.attr("opacity", 1);
-			});
-	}, [
-		positionMap,
-		positionedNodes,
-		selectNode,
-		sourceId,
-		targetId,
-		visibleCiLinks,
-	]);
+
+		return () => {
+			svg.on(".zoom", null);
+		};
+	}, [visibleNodes, visibleCiLinks, selectNode, sourceId, targetId]);
 
 	const handleCreate = async () => {
 		if (!sourceId || !targetId) {
@@ -534,289 +489,287 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const isPageMode = mode === "page";
 
 	const editorContent = (
-		<div className={`${isPageMode ? "flex h-full w-full flex-col bg-neutral-950" : "flex h-full w-full max-w-7xl flex-col rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"}`}>
-				<div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
-					<div>
-						<h2 className="text-xl font-black uppercase text-white">
-							Visual Relationship Editor
-						</h2>
-						<p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
-							Click source CI, click target CI, choose type, then create link
-						</p>
+		<div
+			className={`${isPageMode ? "flex h-full w-full flex-col bg-neutral-950" : "flex h-full w-full max-w-7xl flex-col rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"}`}
+		>
+			<div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+				<div>
+					<h2 className="text-xl font-black uppercase text-white">
+						Visual Relationship Editor
+					</h2>
+					<p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+						Click source CI, click target CI, choose type, then create link
+					</p>
+				</div>
+				<button
+					onClick={onClose}
+					className="text-neutral-400 hover:text-white"
+					aria-label="Close visual relationship editor"
+				>
+					<span className="material-symbols-outlined text-3xl">close</span>
+				</button>
+			</div>
+
+			<div className="grid flex-1 min-h-0 grid-cols-[1fr_360px] gap-4 p-4">
+				<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),rgba(0,0,0,0.18)_42%,rgba(0,0,0,0.62))]">
+					<div className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:48px_48px]" />
+					<div className="absolute left-4 top-4 z-10 w-56 rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur">
+						<div className="flex items-center justify-between gap-2">
+							<div>
+								<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+									Layers
+								</p>
+								<p className="text-[10px] text-neutral-500">
+									{visibleNodes.length}/{nodes.length} CIs
+								</p>
+							</div>
+							<div className="flex gap-2 text-[10px] font-black uppercase">
+								<button
+									type="button"
+									onClick={selectAllLayers}
+									className="text-brand-300 hover:text-brand-200"
+								>
+									All
+								</button>
+								<button
+									type="button"
+									onClick={clearAllLayers}
+									className="text-neutral-400 hover:text-white"
+								>
+									None
+								</button>
+							</div>
+						</div>
+						<div className="mt-3 space-y-2">
+							{layerOptions.map((option) => (
+								<label
+									key={option.label}
+									className="flex items-center justify-between gap-2 text-xs text-neutral-300"
+								>
+									<span className="flex items-center gap-2 truncate">
+										<input
+											type="checkbox"
+											checked={selectedLayers.includes(option.label)}
+											onChange={() => toggleLayer(option.label)}
+											aria-label={`${option.label} layer (${option.count} CIs)`}
+										/>
+										<span className="truncate">{option.label}</span>
+									</span>
+									<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
+										{option.count}
+									</span>
+								</label>
+							))}
+						</div>
 					</div>
-					<button
-						onClick={onClose}
-						className="text-neutral-400 hover:text-white"
-						aria-label="Close visual relationship editor"
-					>
-						<span className="material-symbols-outlined text-3xl">close</span>
-					</button>
+					<svg
+						ref={graphSvgRef}
+						className="absolute inset-0 h-full w-full"
+						viewBox={`0 0 ${VISUAL_EDITOR_VIEWBOX_WIDTH} ${VISUAL_EDITOR_VIEWBOX_HEIGHT}`}
+						aria-label="Visual CI relationship map"
+					/>
+					{visibleNodes.length === 0 && (
+						<div className="absolute inset-0 flex items-center justify-center text-xs font-bold uppercase tracking-widest text-neutral-500">
+							No CIs match selected layers
+						</div>
+					)}
 				</div>
 
-				<div className="grid flex-1 min-h-0 grid-cols-[1fr_360px] gap-4 p-4">
-					<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),rgba(0,0,0,0.18)_42%,rgba(0,0,0,0.62))]">
-						<div className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:48px_48px]" />
-						<div className="absolute left-4 top-4 z-10 w-56 rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur">
-							<div className="flex items-center justify-between gap-2">
-								<div>
-									<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
-										Layers
-									</p>
-									<p className="text-[10px] text-neutral-500">
-										{visibleNodes.length}/{nodes.length} CIs
-									</p>
-								</div>
-								<div className="flex gap-2 text-[10px] font-black uppercase">
-									<button
-										type="button"
-										onClick={selectAllLayers}
-										className="text-brand-300 hover:text-brand-200"
-									>
-										All
-									</button>
-									<button
-										type="button"
-										onClick={clearAllLayers}
-										className="text-neutral-400 hover:text-white"
-									>
-										None
-									</button>
-								</div>
-							</div>
-							<div className="mt-3 space-y-2">
-								{layerOptions.map((option) => (
-									<label
-										key={option.label}
-										className="flex items-center justify-between gap-2 text-xs text-neutral-300"
-									>
-										<span className="flex items-center gap-2 truncate">
-											<input
-												type="checkbox"
-												checked={selectedLayers.includes(option.label)}
-												onChange={() => toggleLayer(option.label)}
-												aria-label={`${option.label} layer (${option.count} CIs)`}
-											/>
-											<span className="truncate">{option.label}</span>
-										</span>
-										<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
-											{option.count}
-										</span>
-									</label>
-								))}
-							</div>
-						</div>
-						<svg
-							ref={graphSvgRef}
-							className="absolute inset-0 h-full w-full"
-							viewBox={`0 0 ${VISUAL_EDITOR_VIEWBOX_WIDTH} ${VISUAL_EDITOR_VIEWBOX_HEIGHT}`}
-							aria-label="Visual CI relationship map"
-						/>
-						{visibleNodes.length === 0 && (
-							<div className="absolute inset-0 flex items-center justify-center text-xs font-bold uppercase tracking-widest text-neutral-500">
-								No CIs match selected layers
-							</div>
-						)}
-					</div>
-
-					<aside className="flex min-h-0 flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-						<div className="rounded-xl border border-white/10 bg-black/20 p-3">
-							<div className="flex items-center justify-between gap-2">
-								<p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
-									CI details — {isEditingCi ? "editing" : "new"}
-								</p>
-								<button
-									type="button"
-									onClick={startNewCi}
-									className="text-[10px] font-black uppercase text-brand-300 hover:text-brand-200"
-								>
-									New CI
-								</button>
-							</div>
-							<div className="mt-3 grid grid-cols-2 gap-2 text-xs text-neutral-300">
-								<label className="col-span-2 space-y-1">
-									<span className="text-neutral-500">CI ID</span>
-									<input
-										aria-label="CI ID"
-										value={ciForm.id}
-										disabled={isEditingCi || ciSaving}
-										onChange={(event) => updateCiForm("id", event.target.value)}
-										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white disabled:opacity-60"
-									/>
-								</label>
-								<label className="col-span-2 space-y-1">
-									<span className="text-neutral-500">Label</span>
-									<input
-										aria-label="CI label"
-										value={ciForm.label}
-										disabled={ciSaving}
-										onChange={(event) =>
-											updateCiForm("label", event.target.value)
-										}
-										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-white"
-									/>
-								</label>
-								<label className="space-y-1">
-									<span className="text-neutral-500">Type</span>
-									<select
-										aria-label="CI type"
-										value={ciForm.type}
-										disabled={ciSaving}
-										onChange={(event) =>
-											updateCiForm("type", event.target.value)
-										}
-										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
-									>
-										<option value="">Select type</option>
-										{CI_TYPES.map((type) => (
-											<option key={type} value={type}>
-												{type}
-											</option>
-										))}
-									</select>
-								</label>
-								<label className="space-y-1">
-									<span className="text-neutral-500">Status</span>
-									<select
-										aria-label="CI status"
-										value={ciForm.status}
-										disabled={ciSaving}
-										onChange={(event) =>
-											updateCiForm("status", event.target.value)
-										}
-										className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
-									>
-										{CI_STATUSES.map((status) => (
-											<option key={status} value={status}>
-												{status}
-											</option>
-										))}
-									</select>
-								</label>
-								{ciError && (
-									<div className="col-span-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-300">
-										{ciError}
-									</div>
-								)}
-								<button
-									type="button"
-									onClick={handleSaveCi}
-									disabled={ciSaving}
-									className="col-span-2 rounded-xl bg-cyan-600 py-2 text-xs font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
-								>
-									{ciSaving
-										? "Saving CI..."
-										: isEditingCi
-											? "Save CI"
-											: "Create CI"}
-								</button>
-								<button
-									type="button"
-									onClick={handleDeleteCi}
-									disabled={!isEditingCi || ciSaving}
-									className="col-span-2 rounded-xl border border-red-500/30 py-2 text-xs font-black uppercase text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
-								>
-									Delete CI
-								</button>
-							</div>
-						</div>
-
-						<div className="rounded-xl border border-white/10 bg-black/20 p-3">
+				<aside className="flex min-h-0 flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+					<div className="rounded-xl border border-white/10 bg-black/20 p-3">
+						<div className="flex items-center justify-between gap-2">
 							<p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
-								New relationship
+								CI details — {isEditingCi ? "editing" : "new"}
 							</p>
-							<div className="mt-3 space-y-2 text-xs text-neutral-300">
-								<div>
-									<span className="text-neutral-500">Source:</span>{" "}
-									{nodeLabel(nodeMap.get(sourceId))}
-								</div>
-								<div>
-									<span className="text-neutral-500">Target:</span>{" "}
-									{targetId
-										? nodeLabel(nodeMap.get(targetId))
-										: "Select target"}
-								</div>
-								<select
-									value={relationship}
+							<button
+								type="button"
+								onClick={startNewCi}
+								className="text-[10px] font-black uppercase text-brand-300 hover:text-brand-200"
+							>
+								New CI
+							</button>
+						</div>
+						<div className="mt-3 grid grid-cols-2 gap-2 text-xs text-neutral-300">
+							<label className="col-span-2 space-y-1">
+								<span className="text-neutral-500">CI ID</span>
+								<input
+									aria-label="CI ID"
+									value={ciForm.id}
+									disabled={isEditingCi || ciSaving}
+									onChange={(event) => updateCiForm("id", event.target.value)}
+									className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white disabled:opacity-60"
+								/>
+							</label>
+							<label className="col-span-2 space-y-1">
+								<span className="text-neutral-500">Label</span>
+								<input
+									aria-label="CI label"
+									value={ciForm.label}
+									disabled={ciSaving}
 									onChange={(event) =>
-										setRelationship(event.target.value as typeof relationship)
+										updateCiForm("label", event.target.value)
 									}
-									className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
-									aria-label="Relationship type"
+									className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-white"
+								/>
+							</label>
+							<label className="space-y-1">
+								<span className="text-neutral-500">Type</span>
+								<select
+									aria-label="CI type"
+									value={ciForm.type}
+									disabled={ciSaving}
+									onChange={(event) => updateCiForm("type", event.target.value)}
+									className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
 								>
-									{SUPPORTED_RELATIONSHIP_TYPES.map((type) => (
+									<option value="">Select type</option>
+									{CI_TYPES.map((type) => (
 										<option key={type} value={type}>
 											{type}
 										</option>
 									))}
 								</select>
-								{error && (
-									<div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-300">
-										{error}
-									</div>
-								)}
-								<button
-									onClick={handleCreate}
-									disabled={
-										saving || !sourceId || !targetId || sourceId === targetId
+							</label>
+							<label className="space-y-1">
+								<span className="text-neutral-500">Status</span>
+								<select
+									aria-label="CI status"
+									value={ciForm.status}
+									disabled={ciSaving}
+									onChange={(event) =>
+										updateCiForm("status", event.target.value)
 									}
-									className="w-full rounded-xl bg-brand-600 py-2 text-xs font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+									className="w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
 								>
-									{saving ? "Saving..." : "Create relationship"}
-								</button>
-							</div>
-						</div>
-
-						<div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/10 bg-black/20">
-							<div className="sticky top-0 bg-neutral-950/90 p-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">
-								Existing links
-							</div>
-							{visibleCiLinks.map((link) => {
-								const readOnly = isReadOnlyRelationship(link.relationship);
-
-								return (
-									<div
-										key={`${link.source}-${link.target}-${link.relationship}`}
-										className="border-t border-white/5 p-3 text-xs text-neutral-300"
-									>
-										<div className="font-bold text-white">
-											{link.source_label || link.source} →{" "}
-											{link.target_label || link.target}
-										</div>
-										<div className="mt-1 flex items-center justify-between gap-2">
-											<span className="flex items-center gap-2">
-												<span className="rounded bg-white/10 px-2 py-1 font-mono text-[10px]">
-													{link.relationship}
-												</span>
-												{readOnly && (
-													<span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[10px] font-black uppercase text-amber-200">
-														Read-only
-													</span>
-												)}
-											</span>
-											{canDeleteRelationship(link.relationship) && (
-												<button
-													onClick={() => handleDelete(link)}
-													className="text-red-300 hover:text-red-200"
-													disabled={saving}
-												>
-													Delete
-												</button>
-											)}
-										</div>
-									</div>
-								);
-							})}
-							{visibleCiLinks.length === 0 && (
-								<div className="p-6 text-center text-xs text-neutral-500">
-									{ciLinks.length === 0
-										? "No CI links yet."
-										: "No visible CI links for selected layers."}
+									{CI_STATUSES.map((status) => (
+										<option key={status} value={status}>
+											{status}
+										</option>
+									))}
+								</select>
+							</label>
+							{ciError && (
+								<div className="col-span-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-300">
+									{ciError}
 								</div>
 							)}
+							<button
+								type="button"
+								onClick={handleSaveCi}
+								disabled={ciSaving}
+								className="col-span-2 rounded-xl bg-cyan-600 py-2 text-xs font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{ciSaving
+									? "Saving CI..."
+									: isEditingCi
+										? "Save CI"
+										: "Create CI"}
+							</button>
+							<button
+								type="button"
+								onClick={handleDeleteCi}
+								disabled={!isEditingCi || ciSaving}
+								className="col-span-2 rounded-xl border border-red-500/30 py-2 text-xs font-black uppercase text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								Delete CI
+							</button>
 						</div>
-					</aside>
-				</div>
+					</div>
+
+					<div className="rounded-xl border border-white/10 bg-black/20 p-3">
+						<p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+							New relationship
+						</p>
+						<div className="mt-3 space-y-2 text-xs text-neutral-300">
+							<div>
+								<span className="text-neutral-500">Source:</span>{" "}
+								{nodeLabel(nodeMap.get(sourceId))}
+							</div>
+							<div>
+								<span className="text-neutral-500">Target:</span>{" "}
+								{targetId ? nodeLabel(nodeMap.get(targetId)) : "Select target"}
+							</div>
+							<select
+								value={relationship}
+								onChange={(event) =>
+									setRelationship(event.target.value as typeof relationship)
+								}
+								className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-white"
+								aria-label="Relationship type"
+							>
+								{SUPPORTED_RELATIONSHIP_TYPES.map((type) => (
+									<option key={type} value={type}>
+										{type}
+									</option>
+								))}
+							</select>
+							{error && (
+								<div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-300">
+									{error}
+								</div>
+							)}
+							<button
+								onClick={handleCreate}
+								disabled={
+									saving || !sourceId || !targetId || sourceId === targetId
+								}
+								className="w-full rounded-xl bg-brand-600 py-2 text-xs font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{saving ? "Saving..." : "Create relationship"}
+							</button>
+						</div>
+					</div>
+
+					<div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/10 bg-black/20">
+						<div className="sticky top-0 bg-neutral-950/90 p-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">
+							Existing links
+						</div>
+						{visibleCiLinks.map((link) => {
+							const readOnly = isReadOnlyRelationship(link.relationship);
+
+							return (
+								<div
+									key={`${link.source}-${link.target}-${link.relationship}`}
+									className="border-t border-white/5 p-3 text-xs text-neutral-300"
+								>
+									<div className="font-bold text-white">
+										{link.source_label || link.source} →{" "}
+										{link.target_label || link.target}
+									</div>
+									<div className="mt-1 flex items-center justify-between gap-2">
+										<span className="flex items-center gap-2">
+											<span className="rounded bg-white/10 px-2 py-1 font-mono text-[10px]">
+												{link.relationship}
+											</span>
+											{readOnly && (
+												<span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[10px] font-black uppercase text-amber-200">
+													Read-only
+												</span>
+											)}
+										</span>
+										{canDeleteRelationship(link.relationship) && (
+											<button
+												onClick={() => handleDelete(link)}
+												className="text-red-300 hover:text-red-200"
+												disabled={saving}
+											>
+												Delete
+											</button>
+										)}
+									</div>
+								</div>
+							);
+						})}
+						{visibleCiLinks.length === 0 && (
+							<div className="p-6 text-center text-xs text-neutral-500">
+								{ciLinks.length === 0
+									? "No CI links yet."
+									: "No visible CI links for selected layers."}
+							</div>
+						)}
+					</div>
+				</aside>
 			</div>
+		</div>
 	);
 
 	if (isPageMode) return editorContent;
