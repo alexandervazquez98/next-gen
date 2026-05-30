@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from models.timescale_models import MetricValue
 from polling import event_writer, pg_queue
-from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
+from polling.icmp_measurements import ICMP_AVAILABILITY_METRIC_ID, ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 
 
 def _utc_now() -> datetime:
@@ -58,7 +58,17 @@ def _timestamp(value: Any) -> Any:
     return value
 
 
+def _is_internal_icmp_availability(envelope: Mapping[str, Any]) -> bool:
+    return (
+        str(envelope.get("protocol") or "").upper() == "ICMP"
+        and envelope.get("metric_id") == ICMP_AVAILABILITY_METRIC_ID
+        and bool((envelope.get("metadata") or {}).get("internal"))
+    )
+
+
 def _sample(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
+    if _is_internal_icmp_availability(envelope):
+        return None
     numeric = _numeric(envelope)
     if numeric is None:
         return None
@@ -228,7 +238,10 @@ def run_writer_once(
             stats["retried"] += 1
         return stats
 
-    event_payloads = new_payloads + pending_payloads
+    event_payloads = [
+        item for item in new_payloads + pending_payloads
+        if not _is_internal_icmp_availability(item["envelope"])
+    ]
     try:
         event_writer.batch_update_events(neo4j_driver, [item["envelope"] for item in event_payloads])
     except Exception as exc:
@@ -238,7 +251,7 @@ def run_writer_once(
             stats["retried"] += 1
         return stats
 
-    for item in event_payloads:
+    for item in new_payloads + pending_payloads:
         pg_queue.complete_result(queue_db, item["result_id"])
         stats["written"] += 1
     return stats

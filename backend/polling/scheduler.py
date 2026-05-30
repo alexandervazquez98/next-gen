@@ -10,7 +10,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from polling.contracts import PollingPriority, PollingProtocol
 from polling.pg_queue import create_cycle, enqueue_tasks
-from polling.icmp_measurements import is_icmp_telemetry_metric
+from polling.icmp_measurements import ICMP_AVAILABILITY_METRIC_ID, is_icmp_availability_metric, is_icmp_telemetry_metric
 from polling.protocol_contracts import build_protocol_payload
 
 
@@ -64,7 +64,7 @@ def _source(record: Mapping[str, Any], protocol: PollingProtocol) -> str:
     if protocol == PollingProtocol.SNMP:
         return f"{record.get('ip')}:{record.get('port') or record.get('snmp_port') or 161}/{record.get('oid')}"
     if protocol == PollingProtocol.ICMP:
-        return str(record.get("ip") or record.get("source") or "")
+        return str(record.get("ip") or record.get("ip_address") or record.get("source") or "")
     if protocol == PollingProtocol.CLI:
         return f"{record.get('ip')}:{record.get('cli_command')}"
     if protocol == PollingProtocol.REST:
@@ -90,18 +90,23 @@ def _priority(record: Mapping[str, Any], protocol: PollingProtocol) -> PollingPr
 
 
 def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCycle) -> list[dict[str, Any]]:
-    """Expand due metric definition records into durable queue task rows."""
+    """Expand due metric definition records into durable queue task rows.
+
+    ICMP latency/jitter MetricDefs are derived telemetry sidecars. They should
+    not be polled directly, but their presence on a CI means the CI wants ICMP
+    collection. When no explicit ICMP availability metric exists, synthesize one
+    internal availability task so latency/jitter values can still be produced
+    without creating a per-CI PING MetricDef.
+    """
     tasks: list[dict[str, Any]] = []
-    for record in records:
-        protocol = _protocol(record)
-        ci_id = str(record.get("node_id") or record.get("ci_id") or "")
-        metric_id = str(record.get("metric_id") or record.get("id") or "")
-        if not ci_id or not metric_id:
-            raise ValueError("Scheduler records require node_id/ci_id and metric_id/id")
-        if protocol == PollingProtocol.ICMP and is_icmp_telemetry_metric(metric_id, dict(record)):
-            continue
+    sidecar_sources: dict[tuple[str, str], dict[str, Any]] = {}
+    availability_sources: set[tuple[str, str]] = set()
+
+    def add_task(record: Mapping[str, Any], protocol: PollingProtocol, ci_id: str, metric_id: str) -> None:
         source = _source(record, protocol)
         payload = build_protocol_payload({**dict(record), "protocol": protocol.value, "source": source})
+        if record.get("internal"):
+            payload["internal"] = True
         priority = _priority(record, protocol)
         tasks.append({
             "task_id": _task_id(cycle, ci_id, metric_id, protocol, source),
@@ -122,7 +127,40 @@ def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCy
             "payload": payload,
             "metadata_version": record.get("metadata_version") or cycle.config_version,
             "metric_kind": record.get("metric_kind"),
+            "internal": bool(record.get("internal")),
         })
+
+    for record in records:
+        protocol = _protocol(record)
+        ci_id = str(record.get("node_id") or record.get("ci_id") or "")
+        metric_id = str(record.get("metric_id") or record.get("id") or "")
+        if not ci_id or not metric_id:
+            raise ValueError("Scheduler records require node_id/ci_id and metric_id/id")
+        source = _source(record, protocol)
+        source_key = (ci_id, source)
+        if protocol == PollingProtocol.ICMP and is_icmp_telemetry_metric(metric_id, dict(record)):
+            icmp_ip = record.get("ip") or record.get("ip_address")
+            if icmp_ip:
+                sidecar_sources.setdefault(source_key, {**dict(record), "ip": icmp_ip})
+            continue
+        if protocol == PollingProtocol.ICMP and is_icmp_availability_metric(metric_id, dict(record)):
+            availability_sources.add(source_key)
+        add_task(record, protocol, ci_id, metric_id)
+
+    for source_key, record in sidecar_sources.items():
+        if source_key in availability_sources:
+            continue
+        ci_id, _source_value = source_key
+        synthetic = {
+            **record,
+            "node_id": ci_id,
+            "metric_id": ICMP_AVAILABILITY_METRIC_ID,
+            "protocol": PollingProtocol.ICMP.value,
+            "metric_kind": "availability",
+            "internal": True,
+        }
+        add_task(synthetic, PollingProtocol.ICMP, ci_id, ICMP_AVAILABILITY_METRIC_ID)
+
     return sorted(tasks, key=lambda task: (int(task["priority"]), task["protocol"].value, task["metric_id"]))
 
 

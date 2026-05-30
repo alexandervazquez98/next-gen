@@ -23,10 +23,12 @@ from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
 from postgres_db import SessionLocal
 from config import get_icmp_settings, get_polling_pipeline_settings
 from polling.icmp_measurements import (
+    ICMP_AVAILABILITY_METRIC_ID,
     ICMP_LATENCY_METRIC_ID,
     build_icmp_sidecar_samples,
     coerce_ping_measurement,
     is_icmp_availability_metric,
+    is_icmp_telemetry_metric,
     PingMeasurement,
     parse_ping_latency_ms,
 )
@@ -409,10 +411,6 @@ def poll_snmp():
                      coalesce(m.polling_interval, 60) as interval,
                      coalesce(r.last_polled, datetime({year:1970})) as last_p
                 WHERE duration.between(last_p, datetime()).seconds >= interval
-                  AND NOT (
-                    toUpper(coalesce(m.protocol, '')) = 'ICMP'
-                    AND (m.id IN ['icmp_latency_ms', 'icmp_jitter_ms'] OR coalesce(m.metric_kind, '') = 'telemetry')
-                  )
                 RETURN n.id as node_id, n.ip as ip, 
                        coalesce(n.snmp_community, 'public') as community,
                        coalesce(n.snmp_port, 161) as port,
@@ -422,8 +420,16 @@ def poll_snmp():
                        interval
             """)
             
+            records = list(result)
+            records.sort(key=lambda record: (
+                1 if normalized_protocol(record["protocol"]) == "ICMP" and is_icmp_telemetry_metric(record["metric_id"], {"metric_kind": record.get("metric_kind")}) else 0,
+                record["node_id"],
+                record["metric_id"],
+            ))
+            polled_icmp_nodes = set()
+
             # Use iterator to process one by one
-            for record in result:
+            for record in records:
                 metrics_count += 1
                 node_id = record["node_id"]
                 mid = record["metric_id"]
@@ -438,7 +444,18 @@ def poll_snmp():
                 sidecar_samples = []
                 metric_metadata = {"metric_kind": record.get("metric_kind")}
                 icmp_settings = get_icmp_settings()
-                if protocol == "ICMP" and not is_icmp_availability_metric(mid, metric_metadata):
+                internal_icmp_poll = False
+                if protocol == "ICMP" and is_icmp_telemetry_metric(mid, metric_metadata):
+                    if node_id in polled_icmp_nodes:
+                        continue
+                    polled_icmp_nodes.add(node_id)
+                    mid = ICMP_AVAILABILITY_METRIC_ID
+                    internal_icmp_poll = True
+                elif protocol == "ICMP" and is_icmp_availability_metric(mid, metric_metadata):
+                    if node_id in polled_icmp_nodes:
+                        continue
+                    polled_icmp_nodes.add(node_id)
+                elif protocol == "ICMP":
                     continue
                 if protocol == "ICMP":
                     measurement = coerce_ping_measurement(fetch_icmp_ping(
@@ -488,34 +505,36 @@ def poll_snmp():
                 
                 if val is not None:
                     primary_time = datetime.utcnow()
-                    metrics_to_save.append({
-                        "node_id": node_id,
-                        "metric_id": mid,
-                        "value": val,
-                        "time": primary_time
-                    })
+                    if not internal_icmp_poll:
+                        metrics_to_save.append({
+                            "node_id": node_id,
+                            "metric_id": mid,
+                            "value": val,
+                            "time": primary_time
+                        })
                     metrics_to_save.extend(sidecar_samples)
 
                     metric_name = record["metric_name"] or mid
                     severity = _base_severity_from_criticality(record["criticality"])
-                    latest_updates.append({
-                        "node_id": node_id,
-                        "metric_id": mid,
-                        "value": val,
-                        "protocol": protocol,
-                        "metric_name": metric_name,
-                        "criticality": record["criticality"],
-                        "status": severity if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else "OK",
-                        "message": (
-                            f"Service/Host Down: {metric_name}"
-                            if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0
-                            else "Latest sample collected by legacy SNMP worker"
-                        ),
-                        "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else None,
-                        "source_protocol": SOURCE_PROTOCOL_ICMP if protocol == SOURCE_PROTOCOL_ICMP else protocol,
-                        "severity": severity,
-                        "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP else "telemetry",
-                    })
+                    if not internal_icmp_poll:
+                        latest_updates.append({
+                            "node_id": node_id,
+                            "metric_id": mid,
+                            "value": val,
+                            "protocol": protocol,
+                            "metric_name": metric_name,
+                            "criticality": record["criticality"],
+                            "status": severity if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else "OK",
+                            "message": (
+                                f"Service/Host Down: {metric_name}"
+                                if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0
+                                else "Latest sample collected by legacy SNMP worker"
+                            ),
+                            "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else None,
+                            "source_protocol": SOURCE_PROTOCOL_ICMP if protocol == SOURCE_PROTOCOL_ICMP else protocol,
+                            "severity": severity,
+                            "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP else "telemetry",
+                        })
                     for sample in sidecar_samples:
                         latest_updates.append({
                             "node_id": node_id,
