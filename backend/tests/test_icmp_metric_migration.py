@@ -1,7 +1,7 @@
 from tests.conftest import MockNeo4jDriver
 
 
-def test_create_default_ping_metric_links_latency_and_jitter_sidecars(monkeypatch):
+def test_create_default_ping_metric_links_only_latency_and_jitter_sidecars(monkeypatch):
     from repositories import topology_repo
 
     driver = MockNeo4jDriver()
@@ -11,16 +11,33 @@ def test_create_default_ping_metric_links_latency_and_jitter_sidecars(monkeypatc
 
     queries = "\n".join(q["query"] for q in driver.mock_session.queries)
     params = [q["params"] for q in driver.mock_session.queries]
-    assert "PING-router-a" in str(params)
     assert "icmp_latency_ms" in str(params)
     assert "icmp_jitter_ms" in str(params)
-    assert "metric_kind = 'availability'" in queries
     assert "metric_kind = 'telemetry'" in queries
+    assert "metric_kind = 'availability'" not in queries
+    assert "PING-ci-1" not in str(params)
+    assert "PING-router-a" not in str(params)
+    assert "MERGE (m:MetricDef {id: $metric_id})" not in queries
     assert "MERGE (n)-[:HAS_METRIC]->(latency)" in queries
     assert "MERGE (n)-[:HAS_METRIC]->(jitter)" in queries
 
 
-def test_migrate_icmp_sidecar_metrics_is_idempotent_for_existing_ping_cis(monkeypatch):
+def test_create_default_ping_metric_edit_does_not_create_ping_metric(monkeypatch):
+    from repositories import topology_repo
+
+    driver = MockNeo4jDriver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.create_default_ping_metric("ci-1", "router-renamed")
+
+    queries = "\n".join(q["query"] for q in driver.mock_session.queries)
+    params = [q["params"] for q in driver.mock_session.queries]
+    assert "RETURN availability.id AS metric_id" not in queries
+    assert "PING-router-renamed" not in str(params)
+    assert "PING-ci-1" not in str(params)
+
+
+def test_migrate_icmp_sidecar_metrics_is_idempotent_for_existing_cis_with_ips(monkeypatch):
     from repositories import topology_repo
 
     driver = MockNeo4jDriver()
@@ -32,8 +49,11 @@ def test_migrate_icmp_sidecar_metrics_is_idempotent_for_existing_ping_cis(monkey
     params = [q["params"] for q in driver.mock_session.queries]
     assert "MERGE (latency:MetricDef {id: $latency_id})" in queries
     assert "MERGE (jitter:MetricDef {id: $jitter_id})" in queries
-    assert "availability.id = 'PING-CHECK'" in queries
-    assert "availability.id STARTS WITH 'PING-'" in queries
+    assert "MATCH (n:CI)" in queries
+    assert "n.ip IS NOT NULL" in queries
+    assert "trim(toString(n.ip)) <> ''" in queries
+    assert "availability.id = 'PING-CHECK'" not in queries
+    assert "availability.id STARTS WITH 'PING-'" not in queries
     assert "MERGE (n)-[:HAS_METRIC]->(latency)" in queries
     assert "MERGE (n)-[:HAS_METRIC]->(jitter)" in queries
     assert {"latency_id": "icmp_latency_ms", "jitter_id": "icmp_jitter_ms"} in params

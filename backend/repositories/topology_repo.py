@@ -444,14 +444,13 @@ def ensure_icmp_sidecar_metric_defs(session) -> None:
 
 
 def migrate_icmp_sidecar_metrics() -> None:
-    """Idempotently link ICMP latency/jitter MetricDefs to CIs with ping availability metrics."""
+    """Idempotently link ICMP latency/jitter MetricDefs to existing CIs with IPs."""
     driver = get_db()
     with driver.session() as session:
         ensure_icmp_sidecar_metric_defs(session)
         session.run("""
-            MATCH (n:CI)-[:HAS_METRIC]->(availability:MetricDef)
-            WHERE toUpper(coalesce(availability.protocol, '')) = 'ICMP'
-              AND (availability.id = 'PING-CHECK' OR availability.id STARTS WITH 'PING-' OR coalesce(availability.metric_kind, '') = 'availability')
+            MATCH (n:CI)
+            WHERE n.ip IS NOT NULL AND trim(toString(n.ip)) <> ''
             MATCH (latency:MetricDef {id: $latency_id})
             MATCH (jitter:MetricDef {id: $jitter_id})
             MERGE (n)-[:HAS_METRIC]->(latency)
@@ -461,27 +460,15 @@ def migrate_icmp_sidecar_metrics() -> None:
 
 def create_default_ping_metric(node_id: str, node_label: str) -> None:
     """
-    Create a default ICMP PING metric for a CI node when it has an IP address.
-    Creates a MetricDef node and links it to the CI via HAS_METRIC relationship.
+    Ensure ICMP latency and jitter metrics are available for a CI.
+
+    Do not create a per-CI PING availability MetricDef. The queue scheduler
+    derives an internal ICMP availability polling task from these sidecar links
+    so latency/jitter can be collected without polluting the metric catalog with
+    one ping metric per CI.
     """
     driver = get_db()
-    metric_id = f"PING-{node_label}"
     with driver.session() as session:
-        # Create or merge the MetricDef for ICMP PING
-        session.run("""
-            MERGE (m:MetricDef {id: $metric_id})
-            SET m.protocol = 'ICMP',
-                m.name = coalesce(m.name, 'ICMP Availability'),
-                m.description = 'ICMP Ping Monitoring',
-                m.applicable_to = $applicable_to,
-                m.operator = '>=',
-                m.criticality = 1,
-                m.metric_kind = 'availability'
-            WITH m
-            MATCH (n:CI {id: $node_id})
-            MERGE (n)-[:HAS_METRIC]->(m)
-        """, metric_id=metric_id, node_id=node_id,
-           applicable_to=json.dumps({"names": [node_label]}))
         ensure_icmp_sidecar_metric_defs(session)
         session.run("""
             MATCH (n:CI {id: $node_id})

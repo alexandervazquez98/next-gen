@@ -6,6 +6,7 @@ from database import get_db
 from models.core import MetricDef
 from services.metric_operation_guard import metric_operation_guard
 from services.operation_timing import timed_operation
+from polling.icmp_measurements import is_icmp_telemetry_metric
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +512,8 @@ def reconcile_node_metrics(node: Dict[str, Any]):
         # Parentheses required because | and - have same precedence and left-to-right would mis-evaluate
         effective_ids = ((applicable_ids | dict_metric_ids) - excluded) | extra
 
+        preserve_icmp_sidecars = bool(node.get("ip"))
+
         with driver.session() as session:
             # 1. Fetch CURRENTLY LINKED metrics
             result = session.run("""
@@ -525,6 +528,13 @@ def reconcile_node_metrics(node: Dict[str, Any]):
             # 2. Determine Removals
             for mid, apt_json in linked_metrics.items():
                 if mid not in effective_ids:
+                    # ICMP latency/jitter are derived telemetry sidecars created by
+                    # ping provisioning, not criteria/dictionary metrics. Preserve
+                    # direct links so CI updates do not drop them immediately after
+                    # create_default_ping_metric attaches them.
+                    if preserve_icmp_sidecars and is_icmp_telemetry_metric(mid, {}):
+                        continue
+
                     # Check if explicitly named (Safety check)
                     is_explicit = False
                     try:

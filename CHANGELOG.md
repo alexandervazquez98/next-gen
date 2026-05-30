@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.13] — 2026-05-30
+
+### Fixed
+- **ICMP latency/jitter provisioning** (issue #217):
+  - Stops creating per-CI `PING-*` metric definitions when CIs are created or edited.
+  - Ensures `icmp_latency_ms` and `icmp_jitter_ms` sidecar metrics are linked for CIs with IPs, including existing CIs through the safe rebuild migration step.
+  - Keeps queue and legacy polling able to collect latency/jitter through internal ICMP probes without exposing synthetic availability metrics.
+
 ## [1.12.12] — 2026-05-29
 
 ### Added

@@ -269,6 +269,83 @@ class TestReconcileNodeMetricsWithAppliedDictionary:
 
     @patch("services.metric_service.get_db")
     @patch("services.metric_service.get_applicable_metrics")
+    def test_preserves_icmp_latency_and_jitter_sidecars_when_not_applicable(
+        self, mock_get_applicable, mock_get_db
+    ):
+        """
+        ICMP latency/jitter are derived sidecars linked by ping provisioning.
+        Generic reconciliation must not remove them just because they do not
+        match brand/model/dictionary criteria.
+        """
+        from services.metric_service import reconcile_node_metrics
+
+        mock_session = MagicMock()
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__.return_value = mock_session
+        mock_get_db.return_value = mock_driver
+
+        linked_records = [
+            FakeRecord({"mid": "icmp_latency_ms", "apt": None}),
+            FakeRecord({"mid": "icmp_jitter_ms", "apt": None}),
+            FakeRecord({"mid": "old-metric", "apt": "{}"}),
+        ]
+
+        responses = {
+            "has_dictionary": FakeResult([]),
+            "return m.id as mid": FakeResult(linked_records),
+            "delete": FakeResult([]),
+        }
+        mock_session.run.side_effect = self._build_run_side_effect(responses)
+        mock_get_applicable.return_value = []
+
+        reconcile_node_metrics({"id": "ci-001", "name": "Router-01", "ip": "10.0.0.1"})
+
+        delete_mids = [
+            c[1].get("mid")
+            for c in mock_session.run.call_args_list
+            if "delete r" in c[0][0].lower()
+        ]
+        assert "old-metric" in delete_mids
+        assert "icmp_latency_ms" not in delete_mids
+        assert "icmp_jitter_ms" not in delete_mids
+
+    @patch("services.metric_service.get_db")
+    @patch("services.metric_service.get_applicable_metrics")
+    def test_removes_icmp_sidecars_when_ci_no_longer_has_ip(
+        self, mock_get_applicable, mock_get_db
+    ):
+        """Removing a CI IP should deprovision ICMP sidecars during reconcile."""
+        from services.metric_service import reconcile_node_metrics
+
+        mock_session = MagicMock()
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__.return_value = mock_session
+        mock_get_db.return_value = mock_driver
+
+        linked_records = [
+            FakeRecord({"mid": "icmp_latency_ms", "apt": None}),
+            FakeRecord({"mid": "icmp_jitter_ms", "apt": None}),
+        ]
+        responses = {
+            "has_dictionary": FakeResult([]),
+            "return m.id as mid": FakeResult(linked_records),
+            "delete": FakeResult([]),
+        }
+        mock_session.run.side_effect = self._build_run_side_effect(responses)
+        mock_get_applicable.return_value = []
+
+        reconcile_node_metrics({"id": "ci-001", "name": "Router-01", "ip": None})
+
+        delete_mids = [
+            c[1].get("mid")
+            for c in mock_session.run.call_args_list
+            if "delete r" in c[0][0].lower()
+        ]
+        assert "icmp_latency_ms" in delete_mids
+        assert "icmp_jitter_ms" in delete_mids
+
+    @patch("services.metric_service.get_db")
+    @patch("services.metric_service.get_applicable_metrics")
     def test_removes_obsolete_metrics_from_previous_dictionary(
         self, mock_get_applicable, mock_get_db
     ):

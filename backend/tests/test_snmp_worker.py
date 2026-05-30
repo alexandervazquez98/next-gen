@@ -774,6 +774,58 @@ class TestICMPDebounce:
         assert _consecutive_failures.get("ci-001", 0) >= 3
 
 
+def test_poll_snmp_prefers_legacy_availability_when_sidecars_return_first():
+    from engines.snmp_worker import _consecutive_failures
+    from polling.icmp_measurements import PingMeasurement
+
+    _consecutive_failures.clear()
+    mock_db = MagicMock()
+    mock_db.execute.return_value.first.return_value = None
+    mock_session = MockNeo4jSession()
+    mock_session.set_response("match", [
+        {
+            "node_id": "ci-001",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "ICMP Latency",
+            "criticality": 1,
+        },
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "metric_kind": "availability",
+            "ip": "192.168.1.1",
+            "community": "public",
+            "oid": None,
+            "port": 161,
+            "metric_name": "Ping availability",
+            "criticality": 3,
+        },
+    ])
+    mock_session.set_default_response([])
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+    with patch("engines.snmp_worker.driver", mock_driver), \
+         patch("engines.snmp_worker.SessionLocal", return_value=mock_db), \
+         patch("engines.snmp_worker.bulk_insert_metrics") as mock_bulk_insert, \
+         patch("engines.snmp_worker.fetch_icmp_ping", return_value=PingMeasurement(True, 12.0)) as mock_fetch_icmp:
+        from engines.snmp_worker import poll_snmp
+        poll_snmp()
+
+    mock_fetch_icmp.assert_called_once()
+    rows = mock_bulk_insert.call_args.args[1]
+    assert any(row["metric_id"] == "PING-CHECK" and row["value"] == 1.0 for row in rows)
+
+
 def test_poll_snmp_skips_icmp_sidecar_metrics_as_primary_poll_targets():
     from engines.snmp_worker import _consecutive_failures
     from polling.icmp_measurements import PingMeasurement

@@ -101,6 +101,38 @@ def test_icmp_executor_maps_ping_success_and_failure_statuses():
     assert "latency_ms" not in failure.metadata["icmp"]
 
 
+def test_icmp_executor_marks_internal_synthetic_availability_in_metadata():
+    from polling.icmp_measurements import PingMeasurement
+    from polling.snmp_executor import execute_poll_task
+
+    payload = {"kind": "icmp_ping", "target": "10.0.0.1", "timeout_ms": 500, "retries": 1, "internal": True}
+    result = execute_poll_task(
+        _task("ICMP", payload, metric_id="icmp_availability", internal=True),
+        icmp_fetcher=lambda **kwargs: PingMeasurement(True, 18.25, raw="ok"),
+    )
+
+    assert result.metadata["internal"] is True
+    assert result.metadata["metric_kind"] == "availability"
+    assert result.metadata["icmp"]["latency_ms"] == 18.25
+
+
+def test_icmp_executor_preserves_internal_marker_on_fetcher_exception():
+    from polling.contracts import PollingResultStatus
+    from polling.snmp_executor import execute_poll_task
+
+    def boom(**kwargs):
+        raise RuntimeError("icmp exploded")
+
+    payload = {"kind": "icmp_ping", "target": "10.0.0.1", "timeout_ms": 500, "retries": 1, "internal": True}
+    result = execute_poll_task(
+        _task("ICMP", payload, metric_id="icmp_availability", internal=True),
+        icmp_fetcher=boom,
+    )
+
+    assert result.status == PollingResultStatus.ERROR
+    assert result.metadata["internal"] is True
+
+
 def test_icmp_executor_fetcher_exception_returns_error_envelope_without_unbound_measurement():
     from polling.contracts import PollingResultStatus
     from polling.snmp_executor import execute_poll_task

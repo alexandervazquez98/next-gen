@@ -36,7 +36,7 @@ def _records():
     ]
 
 
-def test_scheduler_skips_icmp_latency_and_jitter_sidecar_records():
+def test_scheduler_skips_icmp_sidecar_records_when_availability_exists():
     from polling.scheduler import build_cycle, build_tasks_from_records
 
     cycle = build_cycle(scheduled_for=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc), config_version="v1")
@@ -63,6 +63,87 @@ def test_scheduler_skips_icmp_latency_and_jitter_sidecar_records():
 
     assert {task["metric_id"] for task in tasks} == {"PING-CHECK", "CPU", "CLI-CPU"}
     assert all(task["metric_id"] not in {"icmp_latency_ms", "icmp_jitter_ms"} for task in tasks)
+
+
+def test_scheduler_synthesizes_icmp_poll_task_from_sidecar_records_without_ping_metric():
+    from polling.contracts import PollingPriority, PollingProtocol
+    from polling.scheduler import build_cycle, build_tasks_from_records
+
+    cycle = build_cycle(scheduled_for=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc), config_version="v1")
+    records = [
+        {
+            "node_id": "ci-icmp",
+            "ip": "10.0.0.1",
+            "site_id": "site-a",
+            "subnet": "10.0.0.0/24",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        },
+        {
+            "node_id": "ci-icmp",
+            "ip": "10.0.0.1",
+            "site_id": "site-a",
+            "subnet": "10.0.0.0/24",
+            "metric_id": "icmp_jitter_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        },
+    ]
+
+    tasks = build_tasks_from_records(records, cycle)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["metric_id"] == "icmp_availability"
+    assert task["metric_kind"] == "availability"
+    assert task["protocol"] == PollingProtocol.ICMP
+    assert task["priority"] == PollingPriority.ICMP_AVAILABILITY
+    assert task["payload"] == {"kind": "icmp_ping", "target": "10.0.0.1", "timeout_ms": 3000, "retries": 2, "internal": True}
+
+
+def test_scheduler_synthesizes_icmp_poll_task_from_ip_address_sidecar_records():
+    from polling.scheduler import build_cycle, build_tasks_from_records
+
+    cycle = build_cycle(scheduled_for=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc), config_version="v1")
+
+    tasks = build_tasks_from_records([
+        {
+            "node_id": "ci-ip-address",
+            "ip_address": "10.0.0.9",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        }
+    ], cycle)
+
+    assert len(tasks) == 1
+    assert tasks[0]["metric_id"] == "icmp_availability"
+    assert tasks[0]["internal"] is True
+    assert tasks[0]["payload"]["target"] == "10.0.0.9"
+    assert tasks[0]["payload"]["internal"] is True
+
+
+def test_scheduler_ignores_icmp_sidecar_records_without_ip():
+    from polling.scheduler import build_cycle, build_tasks_from_records
+
+    cycle = build_cycle(scheduled_for=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc), config_version="v1")
+
+    tasks = build_tasks_from_records([
+        {
+            "node_id": "ci-no-ip",
+            "source": "stale-source-without-ip",
+            "metric_id": "icmp_latency_ms",
+            "protocol": "ICMP",
+            "metric_kind": "telemetry",
+            "metadata_version": "v1",
+        }
+    ], cycle)
+
+    assert tasks == []
 
 
 def test_scheduler_builds_15_minute_cycle_and_priority_ordered_tasks():
