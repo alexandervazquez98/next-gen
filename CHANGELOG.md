@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Lists newly created CIs in `/api/nodes` even when they do not have latitude/longitude coordinates yet.
   - Preserves non-admin inventory scoping by `location_name`.
   - Adds backend query regression coverage and Admin inventory refresh coverage.
+- **Neo4j offline backup workflow** (issue #130):
+  - Adds an explicit `--neo4j-offline` mode for `pre-rebuild-backup.sh` and `safe-rebuild.sh`.
+  - Creates PostgreSQL backups unchanged, then stops only Neo4j to run a timestamped `neo4j-admin` offline dump.
+  - Documents offline dump and restore procedures for maintenance windows.
 
 ## [1.12.14] — 2026-05-31
 

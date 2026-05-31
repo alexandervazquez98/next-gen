@@ -3,21 +3,26 @@ set -eu
 
 usage() {
     cat <<'USAGE'
-Usage: sh scripts/pre-rebuild-backup.sh [--skip-neo4j]
+Usage: sh scripts/pre-rebuild-backup.sh [--skip-neo4j] [--neo4j-offline]
 
-Creates a pre-rebuild PostgreSQL dump and attempts a safe Neo4j online export.
+Creates a pre-rebuild PostgreSQL dump and attempts a safe Neo4j backup.
 The script never runs destructive Docker commands and never removes volumes.
 
 Options:
-  --skip-neo4j  Only create the PostgreSQL dump.
+  --skip-neo4j      Only create the PostgreSQL dump.
+  --neo4j-offline   Stop only Neo4j, run a neo4j-admin dump, then restart Neo4j.
 USAGE
 }
 
 skip_neo4j=0
+offline_neo4j=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --skip-neo4j)
             skip_neo4j=1
+            ;;
+        --neo4j-offline)
+            offline_neo4j=1
             ;;
         -h|--help)
             usage
@@ -30,6 +35,11 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$skip_neo4j" -eq 1 ] && [ "$offline_neo4j" -eq 1 ]; then
+    printf 'ERROR: --skip-neo4j and --neo4j-offline cannot be used together.\n' >&2
+    exit 2
+fi
 
 compose() {
     docker compose "$@"
@@ -63,11 +73,53 @@ service explicitly, run the dump, then start Neo4j again. Do not use docker
 compose down -v.
 
 Operator command during a maintenance window:
-  docker compose stop neo4j
-  docker compose run --rm --no-deps --entrypoint neo4j-admin neo4j database dump neo4j --to-path=/backups --overwrite-destination=true
-  docker compose up -d neo4j
+  sh scripts/pre-rebuild-backup.sh --neo4j-offline
 NOTE
 }
+
+run_neo4j_offline_dump() {
+    dump_dir_name=$1
+    dump_host_dir=$backup_dir/$dump_dir_name
+
+    printf 'Stopping Neo4j for offline dump maintenance window...\n'
+    if ! compose stop neo4j; then
+        printf 'ERROR: could not stop Neo4j; offline dump was not attempted.\n' >&2
+        exit 1
+    fi
+
+    if ! mkdir -p "$dump_host_dir"; then
+        printf 'ERROR: could not create Neo4j dump directory: %s\n' "$dump_host_dir" >&2
+        printf 'Restarting Neo4j before exiting.\n' >&2
+        compose up -d neo4j
+        exit 1
+    fi
+
+    printf 'Creating Neo4j offline dump under /backups/%s\n' "$dump_dir_name"
+    if compose run --rm --no-deps --entrypoint neo4j-admin neo4j \
+        database dump neo4j \
+        --to-path="/backups/$dump_dir_name" \
+        --overwrite-destination=true; then
+        printf 'Neo4j offline dump created under: %s\n' "$dump_host_dir"
+        dump_status=0
+    else
+        printf 'ERROR: Neo4j offline dump failed. Restarting Neo4j before exiting.\n' >&2
+        dump_status=1
+    fi
+
+    printf 'Restarting Neo4j after offline dump attempt...\n'
+    compose up -d neo4j
+
+    if [ "$dump_status" -ne 0 ]; then
+        exit "$dump_status"
+    fi
+}
+
+if [ "${PRE_REBUILD_BACKUP_LIB_ONLY:-0}" = "1" ]; then
+    return 0 2>/dev/null || {
+        printf 'ERROR: PRE_REBUILD_BACKUP_LIB_ONLY is only supported when sourcing this script for tests.\n' >&2
+        exit 2
+    }
+fi
 
 require_command docker
 
@@ -76,6 +128,7 @@ backup_dir=$(sh scripts/validate-env.sh --check-backup-dir --print-backup-dir)
 timestamp=$(date -u '+%Y%m%d_%H%M%S')
 postgres_file="postgres_${timestamp}.dump"
 neo4j_file="neo4j_${timestamp}.cypher"
+neo4j_dump_dir="neo4j_${timestamp}_dump"
 neo4j_note="neo4j_${timestamp}_offline-dump-required.txt"
 
 printf 'Validating Docker Compose configuration...\n'
@@ -95,6 +148,8 @@ compose exec -T postgres sh -c '
 
 if [ "$skip_neo4j" -eq 1 ]; then
     printf 'Skipping Neo4j export by request.\n'
+elif [ "$offline_neo4j" -eq 1 ]; then
+    run_neo4j_offline_dump "$neo4j_dump_dir"
 else
     require_running_service neo4j
 

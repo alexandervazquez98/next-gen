@@ -3,19 +3,21 @@ set -eu
 
 usage() {
     cat <<'USAGE'
-Usage: sh scripts/safe-rebuild.sh [--dry-run] [--skip-neo4j]
+Usage: sh scripts/safe-rebuild.sh [--dry-run] [--skip-neo4j] [--neo4j-offline]
 
 Safely bootstraps backup storage, creates a pre-rebuild backup, rebuilds images,
 and restarts services without deleting Docker volumes.
 
 Options:
-  --dry-run     Print the deploy flow without creating directories or changing containers.
-  --skip-neo4j  Pass through to pre-rebuild-backup.sh to skip the Neo4j online export.
+  --dry-run        Print the deploy flow without creating directories or changing containers.
+  --skip-neo4j     Pass through to pre-rebuild-backup.sh to skip the Neo4j backup.
+  --neo4j-offline  Pass through to pre-rebuild-backup.sh to run a Neo4j offline dump.
 USAGE
 }
 
 dry_run=0
 skip_neo4j=0
+offline_neo4j=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -24,6 +26,9 @@ while [ "$#" -gt 0 ]; do
             ;;
         --skip-neo4j)
             skip_neo4j=1
+            ;;
+        --neo4j-offline)
+            offline_neo4j=1
             ;;
         -h|--help)
             usage
@@ -36,6 +41,11 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$skip_neo4j" -eq 1 ] && [ "$offline_neo4j" -eq 1 ]; then
+    printf 'ERROR: --skip-neo4j and --neo4j-offline cannot be used together.\n' >&2
+    exit 2
+fi
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -183,6 +193,8 @@ verify_container_backups backend
 printf 'Creating pre-rebuild backup...\n'
 if [ "$skip_neo4j" -eq 1 ]; then
     run sh scripts/pre-rebuild-backup.sh --skip-neo4j
+elif [ "$offline_neo4j" -eq 1 ]; then
+    run sh scripts/pre-rebuild-backup.sh --neo4j-offline
 else
     run sh scripts/pre-rebuild-backup.sh
 fi
@@ -201,7 +213,7 @@ cat <<'NEXT'
 
 Next verification:
 1. Confirm the PostgreSQL dump exists in BACKUP_DIR.
-2. Confirm Neo4j has either an APOC export or an offline-dump-required note.
+2. Confirm Neo4j has an APOC export, an offline dump directory, or an offline-dump-required note.
 3. Check backend/frontend health in the browser or API.
 4. Do not run docker compose down -v, docker volume rm, or delete data directories.
 NEXT
