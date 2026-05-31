@@ -351,6 +351,9 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
     event_type = None
     failure_family = None
     source_protocol = normalized_protocol(metric_def.get("protocol")) or None
+    availability_source = str(metric_def.get("availability_source") or "").strip().upper()
+    if availability_source not in {"PING", "ICMP"}:
+        availability_source = None
     message = f"Metric {metric_def.get('name', metric_def['id'])} is OK. Value: {val}"
     numeric_value = None
 
@@ -371,10 +374,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
         try:
             num_val = float(val)
             numeric_value = num_val
-            is_availability_metric = (
-                source_protocol == "ICMP"
-                or metric_def.get("name") == "mariadb-GS"
-            )
+            is_availability_metric = source_protocol == "ICMP" and availability_source is not None
 
             if not is_availability_metric:
                 operator = metric_def.get("operator", ">=")
@@ -526,7 +526,8 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         existing.recovered_at = NULL,
                         existing.event_type = $event_type,
                         existing.failure_family = $failure_family,
-                        existing.source_protocol = $source_protocol
+                        existing.source_protocol = $source_protocol,
+                        existing.availability_source = $availability_source
                 """,
                     existing_element_id=existing_element_id,
                     msg=message,
@@ -534,6 +535,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     event_type=event_type,
                     failure_family=failure_family,
                     source_protocol=source_protocol,
+                    availability_source=availability_source,
                 )
             else:
                 snapshot = resolve_event_snapshot(session, ci.get("id"))
@@ -570,6 +572,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         event_type: $event_type,
                         failure_family: $failure_family,
                         source_protocol: $source_protocol,
+                        availability_source: $availability_source,
                         created_at: datetime(),
                         last_seen: datetime(),
                         ack: false,
@@ -599,6 +602,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     event_type=event_type,
                     failure_family=failure_family,
                     source_protocol=source_protocol,
+                    availability_source=availability_source,
                     propagated_from=propagated_from,
                     correlation_type=correlation_type,
                     root_cause_ci_id=root_cause_ci_id,

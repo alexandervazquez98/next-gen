@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.17] — 2026-05-31
+
+### Fixed
+- **Availability source-of-truth hardening** (issue #239):
+  - Adds explicit `availability_source` tagging for Ping/ICMP availability metrics and events.
+  - Scopes MTTR/MTBF/availability reports to tagged `PING`/`ICMP` availability evidence, excluding untagged ICMP and `mariadb-GS` fallback behavior.
+  - Adds a safe rebuild migration to backfill existing ICMP availability metrics/events while keeping latency and jitter telemetry excluded.
+  - Adds focused backend regression coverage for report filtering, polling event emission, legacy worker behavior, and migration idempotency.
+
 ## [1.12.16] — 2026-05-31
 
 ### Fixed

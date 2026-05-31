@@ -86,6 +86,7 @@ def get_metrics() -> List[Dict[str, Any]]:
                 "applicable_to": criteria,
                 "polling_interval": m.get("polling_interval", 60),
                 "can_propagate": m.get("can_propagate", True),
+                "availability_source": m.get("availability_source"),
                 # CLI-specific fields
                 "cli_command": m.get("cli_command"),
                 "cli_target": m.get("cli_target"),
@@ -128,6 +129,7 @@ def get_metric(metric_id: str) -> Optional[Dict[str, Any]]:
             "applicable_to": criteria,
             "polling_interval": m.get("polling_interval", 60),
             "can_propagate": m.get("can_propagate", True),
+            "availability_source": m.get("availability_source"),
             # CLI-specific fields
             "cli_command": m.get("cli_command"),
             "cli_target": m.get("cli_target"),
@@ -190,6 +192,7 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
                         m.operator = $operator, m.criticality = $criticality,
                         m.polling_interval = $polling_interval,
                         m.can_propagate = $can_propagate,
+                        m.availability_source = $availability_source,
                         m.cli_command = $cli_command,
                         m.cli_target = $cli_target,
                         m.cli_value_extractor = $cli_value_extractor,
@@ -203,6 +206,7 @@ def create_metric(metric: MetricDef) -> Dict[str, str]:
                      operator=metric.operator or ">=", criticality=metric.criticality or 1,
                      polling_interval=metric.polling_interval or 60,
                      can_propagate=metric.can_propagate,
+                     availability_source=metric.availability_source,
                      cli_command=metric.cli_command,
                      cli_target=metric.cli_target,
                      cli_value_extractor=metric.cli_value_extractor,

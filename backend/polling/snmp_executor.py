@@ -170,8 +170,11 @@ def execute_poll_task(
     icmp_result_metadata: dict[str, Any] = {}
     if protocol == PollingProtocol.ICMP:
         is_internal_icmp = bool(_get(task, "internal") or task_metadata.get("internal") or payload.get("internal"))
+        availability_source = _get(task, "availability_source") or task_metadata.get("availability_source")
         if measurement is not None:
             icmp_result_metadata = {"metric_kind": "availability", "icmp": icmp_metadata(measurement)}
+            if availability_source:
+                icmp_result_metadata["availability_source"] = str(availability_source).upper()
         elif is_icmp_telemetry_metric(metric_id, task_metadata):
             icmp_result_metadata = {"metric_kind": "telemetry"}
         if is_internal_icmp:
@@ -207,6 +210,7 @@ def execute_poll_task(
             "credential_ref": _get(task, "credential_ref"),
             "endpoint": _get(task, "endpoint"),
             "metadata_version": _get(task, "metadata_version"),
+            "availability_source": _get(task, "availability_source") or task_metadata.get("availability_source"),
             "worker_id": worker_id,
         },
         timing={

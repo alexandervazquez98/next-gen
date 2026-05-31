@@ -59,6 +59,7 @@ class MetricDef(BaseModel):
     applicable_to: Optional[Dict[str, List[str]]] = None
     polling_interval: Optional[int] = 60
     can_propagate: bool = True
+    availability_source: Optional[Literal["PING", "ICMP"]] = None
     # CLI-specific fields (optional, validated only when protocol == "CLI")
     cli_command: Optional[str] = None
     cli_target: Optional[str] = None

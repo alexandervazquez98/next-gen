@@ -284,23 +284,32 @@ def _refresh_snmp_collection_failures(session, failures):
     """, failures=failures)
 
 
+def _availability_source(value: Any) -> str | None:
+    source = str(value or "").strip().upper()
+    return source if source in {"PING", "ICMP"} else None
+
+
 def _refresh_icmp_availability_events(session, updates):
     availability_events = [
         u
         for u in updates
         if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and _availability_source(u.get("availability_source")) is not None
         and float(u.get("value") or 0) == 0.0
     ]
     if not availability_events:
         return
     session.run("""
         UNWIND $availability_events AS row
-        WITH row WHERE row.event_type = 'AVAILABILITY' AND row.source_protocol = 'ICMP'
+        WITH row WHERE row.event_type = 'AVAILABILITY'
+          AND row.source_protocol = 'ICMP'
+          AND row.availability_source IN ['PING', 'ICMP']
         MATCH (n:CI {id: row.node_id})
         MATCH (m:MetricDef {id: row.metric_id})
         OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
         WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
           AND existing.event_type = 'AVAILABILITY'
+          AND existing.availability_source IN ['PING', 'ICMP']
           AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
         WITH row, n, m, head(collect(existing)) AS existing
         FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -308,6 +317,7 @@ def _refresh_icmp_availability_events(session, updates):
                 id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                 status: 'OPEN', severity: row.severity, message: row.message,
                 event_type: row.event_type, source_protocol: row.source_protocol,
+                availability_source: row.availability_source,
                 created_at: datetime(), last_seen: datetime(), ack: false,
                 correlation_type: 'ROOT', root_cause_ci_id: row.node_id
             })
@@ -319,7 +329,8 @@ def _refresh_icmp_availability_events(session, updates):
                 existing.message = row.message, existing.last_seen = datetime(),
                 existing.recovered_at = NULL, existing.ack = false,
                 existing.event_type = row.event_type,
-                existing.source_protocol = row.source_protocol
+                existing.source_protocol = row.source_protocol,
+                existing.availability_source = row.availability_source
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
@@ -331,6 +342,7 @@ def _recover_icmp_availability_events(session, updates):
         u
         for u in updates
         if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and _availability_source(u.get("availability_source")) is not None
         and float(u.get("value") or 0) == 1.0
     ]
     if not recoveries:
@@ -340,6 +352,7 @@ def _recover_icmp_availability_events(session, updates):
         MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
         WHERE e.status IN ['OPEN', 'ACK']
           AND e.event_type = 'AVAILABILITY'
+          AND e.availability_source IN ['PING', 'ICMP']
           AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.protocol)
         SET e.status = 'RECOVERED',
             e.recovered_at = datetime(),
@@ -417,6 +430,7 @@ def poll_snmp():
                        m.id as metric_id, m.name as metric_name, m.protocol as protocol,
                        m.oid as oid, m.criticality as criticality,
                        m.metric_kind as metric_kind,
+                       m.availability_source as availability_source,
                        interval
             """)
             
@@ -442,7 +456,11 @@ def poll_snmp():
 
                 val = None
                 sidecar_samples = []
-                metric_metadata = {"metric_kind": record.get("metric_kind")}
+                availability_source = _availability_source(record.get("availability_source"))
+                metric_metadata = {
+                    "metric_kind": record.get("metric_kind"),
+                    "availability_source": availability_source,
+                }
                 icmp_settings = get_icmp_settings()
                 internal_icmp_poll = False
                 if protocol == "ICMP" and is_icmp_telemetry_metric(mid, metric_metadata):
@@ -451,7 +469,7 @@ def poll_snmp():
                     polled_icmp_nodes.add(node_id)
                     mid = ICMP_AVAILABILITY_METRIC_ID
                     internal_icmp_poll = True
-                elif protocol == "ICMP" and is_icmp_availability_metric(mid, metric_metadata):
+                elif protocol == "ICMP" and availability_source and is_icmp_availability_metric(mid, metric_metadata):
                     if node_id in polled_icmp_nodes:
                         continue
                     polled_icmp_nodes.add(node_id)
@@ -524,16 +542,17 @@ def poll_snmp():
                             "protocol": protocol,
                             "metric_name": metric_name,
                             "criticality": record["criticality"],
-                            "status": severity if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else "OK",
+                            "status": severity if protocol == SOURCE_PROTOCOL_ICMP and availability_source and val == 0.0 else "OK",
                             "message": (
                                 f"Service/Host Down: {metric_name}"
-                                if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0
+                                if protocol == SOURCE_PROTOCOL_ICMP and availability_source and val == 0.0
                                 else "Latest sample collected by legacy SNMP worker"
                             ),
-                            "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and val == 0.0 else None,
+                            "event_type": EVENT_TYPE_AVAILABILITY if protocol == SOURCE_PROTOCOL_ICMP and availability_source and val == 0.0 else None,
                             "source_protocol": SOURCE_PROTOCOL_ICMP if protocol == SOURCE_PROTOCOL_ICMP else protocol,
+                            "availability_source": availability_source,
                             "severity": severity,
-                            "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP else "telemetry",
+                            "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP and availability_source else "telemetry",
                         })
                     for sample in sidecar_samples:
                         latest_updates.append({

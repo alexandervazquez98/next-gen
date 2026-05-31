@@ -127,6 +127,7 @@ def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCy
             "payload": payload,
             "metadata_version": record.get("metadata_version") or cycle.config_version,
             "metric_kind": record.get("metric_kind"),
+            "availability_source": record.get("availability_source"),
             "internal": bool(record.get("internal")),
         })
 
@@ -157,6 +158,7 @@ def build_tasks_from_records(records: Iterable[Mapping[str, Any]], cycle: PollCy
             "metric_id": ICMP_AVAILABILITY_METRIC_ID,
             "protocol": PollingProtocol.ICMP.value,
             "metric_kind": "availability",
+            "availability_source": "ICMP",
             "internal": True,
         }
         add_task(synthetic, PollingProtocol.ICMP, ci_id, ICMP_AVAILABILITY_METRIC_ID)

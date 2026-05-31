@@ -42,7 +42,7 @@ def test_create_metric_persists_interval(mock_get_db):
     metric_service.create_metric(metric)
     
     # THEN
-    args, kwargs = mock_session.run.call_args
+    args, kwargs = mock_session.run.call_args_list[0]
     assert "polling_interval" in kwargs
     assert kwargs["polling_interval"] == 15
     assert "m.polling_interval = $polling_interval" in args[0]

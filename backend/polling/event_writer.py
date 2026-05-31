@@ -7,7 +7,6 @@ from enum import Enum
 from typing import Any, Iterable, Mapping
 from uuid import UUID
 
-from polling.icmp_measurements import is_icmp_availability_metric
 from services.polling_event_lifecycle import (
     COLLECTION_FAILURE_PREFIX,
     EVENT_TYPE_AVAILABILITY,
@@ -54,6 +53,11 @@ def _base_severity(metadata: Mapping[str, Any]) -> str:
     return {2: "WARNING", 3: "CRITICAL"}.get(int(metadata.get("criticality") or 1), "INFO")
 
 
+def _availability_source(metadata: Mapping[str, Any]) -> str | None:
+    source = str(metadata.get("availability_source") or "").strip().upper()
+    return source if source in {"PING", "ICMP"} else None
+
+
 def _collection_failure_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
     for row in rows:
@@ -98,7 +102,8 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
             event_type = EVENT_TYPE_COLLECTION_FAILURE
             message = collection_failure_message(envelope.get("error") or {}, result_status)
         elif numeric is not None:
-            availability = (protocol == "ICMP" and is_icmp_availability_metric(metric_id, metadata)) or metric_name == "mariadb-GS"
+            availability_source = _availability_source(metadata)
+            availability = protocol == "ICMP" and availability_source is not None
             if availability and numeric == 0:
                 severity = _base_severity(metadata)
                 is_breach = True
@@ -131,6 +136,7 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
             "event_type": event_type,
             "failure_family": failure_family,
             "source_protocol": source_protocol,
+            "availability_source": _availability_source(metadata),
             "recover_collection_failure": recover_collection_failure,
             "recover_non_collection_event": recover_non_collection_event,
             "collection_recovery_message": collection_recovery_message,
@@ -196,6 +202,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                 CREATE (created:Event {
                     id: randomUUID(), ci_id: row.ci_id, metric_id: row.metric_id, status: 'OPEN',
                     event_type: row.event_type, failure_family: row.failure_family, source_protocol: row.source_protocol,
+                    availability_source: row.availability_source,
                     severity: row.severity, message: row.message, created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type, propagated_from: row.propagated_from, root_cause_ci_id: row.root_cause_ci_id,
                     business_service_id: row.business_service_id, business_service_name: row.business_service_name,
@@ -211,7 +218,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                 SET existing.status = 'OPEN', existing.severity = row.severity, existing.message = row.message,
                     existing.last_seen = datetime(), existing.ack = false, existing.recovered_at = NULL,
                     existing.event_type = row.event_type, existing.failure_family = row.failure_family,
-                    existing.source_protocol = row.source_protocol
+                    existing.source_protocol = row.source_protocol,
+                    existing.availability_source = row.availability_source
                 MERGE (n)-[:HAS_EVENT]->(existing)
                 MERGE (existing)-[:TRIGGERED_BY]->(m)
             )
@@ -229,6 +237,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                 e.severity = row.severity,
                 e.message = row.message,
                 e.source_protocol = row.source_protocol,
+                e.availability_source = row.availability_source,
                 e.last_seen = datetime(),
                 e.ack = false,
                 e.correlation_type = coalesce(e.correlation_type, row.correlation_type),

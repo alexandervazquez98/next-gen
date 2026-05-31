@@ -533,6 +533,7 @@ class TestICMPDebounce:
         mock_session.set_response("match", [{
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "ip": "192.168.1.1",
             "community": "public",
@@ -583,6 +584,7 @@ class TestICMPDebounce:
         mock_session.set_response("match", [{
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "ip": "192.168.1.1",
             "community": "public",
@@ -645,6 +647,7 @@ class TestICMPDebounce:
         mock_session.set_response("match", [{
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "ip": "192.168.1.1",
             "community": "public",
@@ -683,6 +686,7 @@ class TestICMPDebounce:
         mock_session.set_response("match", [{
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "ip": "192.168.1.1",
             "community": "public",
@@ -738,6 +742,7 @@ class TestICMPDebounce:
         mock_session.set_response("match", [{
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "ip": "192.168.1.1",
             "community": "public",
@@ -798,6 +803,7 @@ def test_poll_snmp_prefers_legacy_availability_when_sidecars_return_first():
         {
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "metric_kind": "availability",
             "ip": "192.168.1.1",
@@ -838,6 +844,7 @@ def test_poll_snmp_skips_icmp_sidecar_metrics_as_primary_poll_targets():
         {
             "node_id": "ci-001",
             "metric_id": "PING-CHECK",
+            "availability_source": "ICMP",
             "protocol": "ICMP",
             "metric_kind": "availability",
             "ip": "192.168.1.1",

@@ -105,6 +105,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
                         "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
                     },
@@ -116,6 +117,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "CLOSED",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
                         "recovered_at": datetime(2026, 1, 1, 2, 20, tzinfo=timezone.utc),
                     },
@@ -127,6 +129,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
                         "recovered_at": None,
                     },
@@ -143,6 +146,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "OPEN",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
@@ -182,6 +186,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
                         "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
                     },
@@ -198,6 +203,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "ACK",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
@@ -228,6 +234,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
                         "recovered_at": datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc),
                     },
@@ -326,6 +333,240 @@ class TestEventServiceSmoke:
         assert "RETURN e, ci, category" in recovered_query
         assert "RETURN e, ci, category" in active_query
 
+    def test_get_availability_report_queries_scope_to_availability_events(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+
+        get_availability_report(start=start, end=end, now=end)
+
+        recovered_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "NOT e.status IN ['OPEN', 'ACK']" in query["query"]
+        )["query"]
+        active_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+        )["query"]
+
+        assert "e.event_type = 'AVAILABILITY'" in recovered_query
+        assert "e.event_type = 'AVAILABILITY'" in active_query
+        assert "e.availability_source IN ['PING', 'ICMP']" in recovered_query
+        assert "e.availability_source IN ['PING', 'ICMP']" in active_query
+
+    def test_get_availability_report_excludes_non_availability_event_types(
+        self, mock_neo4j_session
+    ):
+        """Only availability incidents should drive MTTR/MTBF/availability rows."""
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-availability-recovered",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01", "status": "OK"},
+                },
+                {
+                    "e": {
+                        "id": "evt-threshold-recovered",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "THRESHOLD_BREACH",
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01", "status": "DEGRADED"},
+                },
+                {
+                    "e": {
+                        "id": "evt-collection-closed",
+                        "ci_id": "ci-2",
+                        "status": "CLOSED",
+                        "event_type": "COLLECTION_FAILURE",
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 1, 15, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-2", "name": "Switch-01", "status": "OK"},
+                },
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-availability-active",
+                        "ci_id": "ci-1",
+                        "status": "ACK",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01", "status": "DOWN"},
+                },
+                {
+                    "e": {
+                        "id": "evt-snmp-active",
+                        "ci_id": "ci-1",
+                        "status": "OPEN",
+                        "event_type": "COLLECTION_FAILURE",
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01", "status": "UNKNOWN"},
+                },
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        assert report["total_groups"] == 1
+        row = report["rows"][0]
+        assert row["ci_id"] == "ci-1"
+        assert row["event_type"] == "AVAILABILITY"
+        assert row["recovered_incidents"] == 1
+        assert row["active_events"] == 1
+        assert row["downtime_seconds"] == 1800
+        assert row["active_downtime_seconds"] == 3600
+        assert row["availability_percentage"] == 62.5
+
+    def test_get_availability_report_excludes_untagged_availability_events(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-tagged-ping",
+                        "ci_id": "ci-1",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "PING",
+                        "metric_id": "PING-CHECK",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-1", "name": "Router-01", "status": "OK"},
+                },
+                {
+                    "e": {
+                        "id": "evt-untagged-icmp",
+                        "ci_id": "ci-2",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "source_protocol": "ICMP",
+                        "metric_id": "PING-CHECK",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-2", "name": "Legacy Ping", "status": "OK"},
+                },
+                {
+                    "e": {
+                        "id": "evt-mariadb",
+                        "ci_id": "ci-3",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "metric_id": "mariadb-GS",
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-3", "name": "MariaDB", "status": "OK"},
+                },
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        assert report["total_groups"] == 1
+        assert report["rows"][0]["ci_id"] == "ci-1"
+
+    def test_get_availability_report_handles_ci_status_variants_for_availability_events(
+        self, mock_neo4j_session
+    ):
+        """CI state at event time should not change event-status availability math."""
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 6, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "not e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-online-recovered",
+                        "ci_id": "ci-online",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 1, 20, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-online", "name": "Router Online", "status": "OK"},
+                },
+                {
+                    "e": {
+                        "id": "evt-maint-recovered",
+                        "ci_id": "ci-maint",
+                        "status": "CLOSED",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 2, 45, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-maint", "name": "Router Maintenance", "status": "MAINTENANCE"},
+                },
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "e.status in ['open', 'ack']",
+            [
+                {
+                    "e": {
+                        "id": "evt-down-active",
+                        "ci_id": "ci-down",
+                        "status": "OPEN",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "created_at": datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-down", "name": "Router Down", "status": "DOWN"},
+                }
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        rows = {row["ci_id"]: row for row in report["rows"]}
+        assert rows["ci-online"]["ci"]["status"] == "OK"
+        assert rows["ci-online"]["recovered_incidents"] == 1
+        assert rows["ci-online"]["downtime_seconds"] == 1200
+        assert rows["ci-online"]["availability_percentage"] == 94.4444
+        assert rows["ci-maint"]["ci"]["status"] == "MAINTENANCE"
+        assert rows["ci-maint"]["recovered_incidents"] == 1
+        assert rows["ci-maint"]["downtime_seconds"] == 2700
+        assert rows["ci-maint"]["availability_percentage"] == 87.5
+        assert rows["ci-down"]["ci"]["status"] == "DOWN"
+        assert rows["ci-down"]["active_events"] == 1
+        assert rows["ci-down"]["active_downtime_seconds"] == 3600
+        assert rows["ci-down"]["availability_percentage"] == 83.3333
+
     def test_get_availability_report_queries_filter_window_in_cypher(
         self, mock_neo4j_session
     ):
@@ -374,6 +615,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "OPEN",
                         "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
                         "created_at": datetime(2025, 12, 31, 23, 0, tzinfo=timezone.utc),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
