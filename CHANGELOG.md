@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.15] — 2026-05-31
+
 ### Fixed
+- **Graph CMDB scalable geo layout**:
+  - Replaces fixed coordinate scaling with viewport-aware projection over a larger virtual canvas for country/world-scale CMDB views.
+  - Adds initial cluster overlap resolution so city-dense clusters separate before manual drag.
+  - Expands fallback/no-coordinate cluster placement and strengthens node collision handling for dense municipal layouts.
 - **Admin CI creation visibility** (PR #225, issue #189):
   - Lists newly created CIs in `/api/nodes` even when they do not have latitude/longitude coordinates yet.
   - Preserves non-admin inventory scoping by `location_name`.

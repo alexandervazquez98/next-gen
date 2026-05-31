@@ -10,6 +10,11 @@ export type ClusterCircle = {
 	radius: number;
 };
 
+export type ClusterCenter = ClusterCircle & {
+	count?: number;
+	hasGeo?: boolean;
+};
+
 export type GeoPoint = {
 	lat?: number;
 	long?: number;
@@ -27,7 +32,22 @@ export type ClusterGeoQuality = {
 	medianCoordinate: { lat: number; long: number } | null;
 };
 
+export type GeoProjectionPoint = {
+	id: string;
+	lat: number;
+	long: number;
+};
+
+export type GeoProjectionOptions = {
+	width: number;
+	height: number;
+	paddingX?: number;
+	paddingY?: number;
+	reservedRightWidth?: number;
+};
+
 const GEO_OUTLIER_DISTANCE_KM = 50;
+const MIN_GEO_DOMAIN_DEGREES = 0.02;
 
 const clamp = (value: number, min: number, max: number) => {
 	if (min > max) return (min + max) / 2;
@@ -40,6 +60,14 @@ const median = (values: number[]) => {
 	return sorted.length % 2 === 0
 		? (sorted[mid - 1] + sorted[mid]) / 2
 		: sorted[mid];
+};
+
+const expandDomain = (min: number, max: number, minimumSpan: number) => {
+	const span = max - min;
+	if (span >= minimumSpan) return { min, max };
+	const center = (min + max) / 2;
+	const halfSpan = minimumSpan / 2;
+	return { min: center - halfSpan, max: center + halfSpan };
 };
 
 export const isValidGeoCoordinate = (lat: unknown, lon: unknown) =>
@@ -109,6 +137,52 @@ export const summarizeClusterGeoQuality = <T extends GeoQualityNode>(
 	};
 };
 
+export const projectGeoPointsToCanvas = (
+	points: GeoProjectionPoint[],
+	{
+		width,
+		height,
+		paddingX = Math.max(130, width * 0.08),
+		paddingY = Math.max(120, height * 0.1),
+		reservedRightWidth = 0,
+	}: GeoProjectionOptions,
+) => {
+	const result = new Map<string, { x: number; y: number }>();
+	if (points.length === 0) return result;
+
+	const minX = paddingX;
+	const maxX = Math.max(minX, width - paddingX - reservedRightWidth);
+	const minY = paddingY;
+	const maxY = Math.max(minY, height - paddingY);
+	const lats = points.map((point) => point.lat);
+	const longs = points.map((point) => point.long);
+	const latDomain = expandDomain(
+		Math.min(...lats),
+		Math.max(...lats),
+		MIN_GEO_DOMAIN_DEGREES,
+	);
+	const longDomain = expandDomain(
+		Math.min(...longs),
+		Math.max(...longs),
+		MIN_GEO_DOMAIN_DEGREES,
+	);
+
+	points.forEach((point) => {
+		result.set(point.id, {
+			x:
+				minX +
+				((point.long - longDomain.min) / (longDomain.max - longDomain.min)) *
+					(maxX - minX),
+			y:
+				maxY -
+				((point.lat - latDomain.min) / (latDomain.max - latDomain.min)) *
+					(maxY - minY),
+		});
+	});
+
+	return result;
+};
+
 export const clampClusterCenterToBounds = <T extends ClusterCircle>(
 	center: T,
 	{ width, height, padding = 24 }: ClusterBounds,
@@ -123,6 +197,58 @@ export const clampClusterCenterToBounds = <T extends ClusterCircle>(
 		x: clamp(center.x, minX, maxX),
 		y: clamp(center.y, minY, maxY),
 	};
+};
+
+export const resolveClusterOverlaps = <T extends ClusterCenter>(
+	centers: Record<string, T>,
+	bounds: ClusterBounds,
+	{
+		padding = 18,
+		iterations = 8,
+	}: { padding?: number; iterations?: number } = {},
+): Record<string, T> => {
+	const resolved = Object.fromEntries(
+		Object.entries(centers).map(([name, center]) => [name, { ...center }]),
+	) as Record<string, T>;
+	const names = Object.keys(resolved);
+
+	for (let iteration = 0; iteration < iterations; iteration += 1) {
+		let moved = false;
+		for (let i = 0; i < names.length; i += 1) {
+			for (let j = i + 1; j < names.length; j += 1) {
+				const a = resolved[names[i]];
+				const b = resolved[names[j]];
+				const minDistance = a.radius + b.radius + padding;
+				let dx = b.x - a.x;
+				let dy = b.y - a.y;
+				let distance = Math.hypot(dx, dy);
+
+				if (distance >= minDistance) continue;
+				if (distance === 0) {
+					const angle = ((i + j + iteration + 1) * Math.PI) / 4;
+					dx = Math.cos(angle);
+					dy = Math.sin(angle);
+					distance = 1;
+				}
+
+				const push = (minDistance - distance) / 2;
+				const ux = dx / distance;
+				const uy = dy / distance;
+				resolved[names[i]] = clampClusterCenterToBounds(
+					{ ...a, x: a.x - ux * push, y: a.y - uy * push },
+					bounds,
+				);
+				resolved[names[j]] = clampClusterCenterToBounds(
+					{ ...b, x: b.x + ux * push, y: b.y + uy * push },
+					bounds,
+				);
+				moved = true;
+			}
+		}
+		if (!moved) break;
+	}
+
+	return resolved;
 };
 
 export const getBoundedClusterDelta = (

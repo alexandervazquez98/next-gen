@@ -3,6 +3,8 @@ import {
 	clampClusterCenterToBounds,
 	getBoundedClusterDelta,
 	isValidGeoCoordinate,
+	projectGeoPointsToCanvas,
+	resolveClusterOverlaps,
 	summarizeClusterGeoQuality,
 } from "./graphLayout";
 
@@ -36,6 +38,23 @@ describe("graph layout bounds", () => {
 		expect(result.x).toBe(400);
 		expect(result.y).toBe(300);
 	});
+
+	it("pushes initially overlapping clusters apart", () => {
+		const result = resolveClusterOverlaps(
+			{
+				a: { x: 300, y: 300, radius: 90 },
+				b: { x: 330, y: 300, radius: 90 },
+			},
+			{ width: 900, height: 700, padding: 24 },
+			{ padding: 20, iterations: 12 },
+		);
+
+		const distance = Math.hypot(
+			result.a.x - result.b.x,
+			result.a.y - result.b.y,
+		);
+		expect(distance).toBeGreaterThanOrEqual(199);
+	});
 });
 
 describe("graph geo quality", () => {
@@ -68,5 +87,30 @@ describe("graph geo quality", () => {
 
 		expect(quality.outlierNodeIds.has("far")).toBe(true);
 		expect(quality.outlierNodeIds.has("near-1")).toBe(false);
+	});
+
+	it("projects country-scale coordinates inside the drawable canvas", () => {
+		const result = projectGeoPointsToCanvas(
+			[
+				{ id: "west", lat: 32.5, long: -117 },
+				{ id: "east", lat: 19.4, long: -99.1 },
+			],
+			{ width: 1200, height: 800, paddingX: 120, paddingY: 100 },
+		);
+
+		expect(result.get("west")?.x).toBeCloseTo(120);
+		expect(result.get("west")?.y).toBeCloseTo(100);
+		expect(result.get("east")?.x).toBeCloseTo(1080);
+		expect(result.get("east")?.y).toBeCloseTo(700);
+	});
+
+	it("keeps single-city coordinates stable instead of dividing by a zero-sized domain", () => {
+		const result = projectGeoPointsToCanvas(
+			[{ id: "same-city", lat: 19.4326, long: -99.1332 }],
+			{ width: 1200, height: 800, paddingX: 120, paddingY: 100 },
+		);
+
+		expect(result.get("same-city")?.x).toBeCloseTo(600);
+		expect(result.get("same-city")?.y).toBeCloseTo(400);
 	});
 });
