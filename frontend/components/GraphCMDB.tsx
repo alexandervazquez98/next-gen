@@ -193,11 +193,6 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 		const clusterEntries = Array.from(
 			d3.group(nodes, getClusterName).entries(),
 		).sort(([a], [b]) => a.localeCompare(b));
-		const layoutSignature = `${groupByLocation}:${clusterEntries.map(([name, group]) => `${name}:${group.length}`).join("|")}`;
-		if (layoutSignatureRef.current !== layoutSignature) {
-			nodeStateRef.current.clear();
-			layoutSignatureRef.current = layoutSignature;
-		}
 
 		const clusterCenters: Record<
 			string,
@@ -392,14 +387,17 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			};
 			if (info.total === 1) return { x: center.x, y: center.y };
 
-			const angle = (info.index / info.total) * Math.PI * 2 - Math.PI / 2;
-			const ringRadius = Math.min(
-				Math.max(0, center.radius - 38),
-				Math.max(34, 18 + info.total * 7),
+			const maxRadius = Math.max(0, center.radius - 44);
+			const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+			const normalizedIndex = info.index + 0.5;
+			const radius = Math.min(
+				maxRadius,
+				Math.sqrt(normalizedIndex / info.total) * maxRadius,
 			);
+			const angle = info.index * goldenAngle - Math.PI / 2;
 			return {
-				x: center.x + Math.cos(angle) * ringRadius,
-				y: center.y + Math.sin(angle) * ringRadius,
+				x: center.x + Math.cos(angle) * radius,
+				y: center.y + Math.sin(angle) * radius,
 			};
 		};
 
@@ -525,6 +523,18 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`;
 		};
 
+		const layoutSignature = `${groupByLocation}:${width}x${height}:${clusterEntries.map(([name, group]) => `${name}:${group.length}`).join("|")}:${Object.entries(
+			clusterCenters,
+		)
+			.map(
+				([name, center]) =>
+					`${name}:${Math.round(center.x)}:${Math.round(center.y)}:${Math.round(center.radius)}`,
+			)
+			.join("|")}`;
+		if (layoutSignatureRef.current !== layoutSignature) {
+			nodeStateRef.current.clear();
+			layoutSignatureRef.current = layoutSignature;
+		}
 		const cachedNodesExist = nodes.some((n) => nodeStateRef.current.has(n.id));
 
 		const validNodes = nodes.map((node) => {

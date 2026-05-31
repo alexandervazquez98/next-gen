@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.12.16] — 2026-05-31
+## [1.12.17] — 2026-05-31
 
 ### Fixed
 - **Availability source-of-truth hardening** (issue #239):
@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Scopes MTTR/MTBF/availability reports to tagged `PING`/`ICMP` availability evidence, excluding untagged ICMP and `mariadb-GS` fallback behavior.
   - Adds a safe rebuild migration to backfill existing ICMP availability metrics/events while keeping latency and jitter telemetry excluded.
   - Adds focused backend regression coverage for report filtering, polling event emission, legacy worker behavior, and migration idempotency.
+
+## [1.12.16] — 2026-05-31
+
+### Fixed
+- **Graph CMDB internal cluster layout**:
+  - Distributes nodes inside cluster circles with a floating sunflower layout instead of a bottom-heavy ring/clamp pattern.
+  - Invalidates cached node positions when virtual canvas dimensions or cluster centers/radii change.
 
 ## [1.12.15] — 2026-05-31
 
