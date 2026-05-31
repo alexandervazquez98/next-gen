@@ -67,3 +67,32 @@ def test_migrate_icmp_sidecar_metrics_script_entrypoint_invokes_repository(monke
 
     assert script.main() == 0
     assert calls == ["migrated"]
+
+
+def test_migrate_icmp_availability_source_tags_icmp_except_sidecars(monkeypatch):
+    from repositories import topology_repo
+
+    driver = MockNeo4jDriver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.migrate_icmp_availability_source()
+
+    queries = "\n".join(q["query"] for q in driver.mock_session.queries)
+    params = [q["params"] for q in driver.mock_session.queries]
+    assert "m.availability_source = coalesce(m.availability_source, 'ICMP')" in queries
+    assert "e.availability_source = m.availability_source" in queries
+    assert "e.availability_source = coalesce(e.availability_source, 'ICMP')" in queries
+    assert "NOT m.id IN $excluded_metric_ids" in queries
+    assert "NOT e.metric_id IN $excluded_metric_ids" in queries
+    assert "coalesce(m.name, '') <> 'mariadb-GS'" in queries
+    assert {"excluded_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "mariadb-GS"]} in params
+
+
+def test_migrate_icmp_availability_source_script_entrypoint_invokes_repository(monkeypatch):
+    from scripts import migrate_icmp_availability_source as script
+
+    calls = []
+    monkeypatch.setattr(script.topology_repo, "migrate_icmp_availability_source", lambda: calls.append("migrated"))
+
+    assert script.main() == 0
+    assert calls == ["migrated"]

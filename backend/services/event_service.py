@@ -598,6 +598,8 @@ def get_availability_report(
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
             WHERE e.created_at IS NOT NULL
               AND e.recovered_at IS NOT NULL
+              AND e.event_type = 'AVAILABILITY'
+              AND e.availability_source IN ['PING', 'ICMP']
               AND NOT e.status IN ['OPEN', 'ACK']
               AND e.created_at >= $window_start
               AND e.created_at <= $window_end
@@ -613,6 +615,10 @@ def get_availability_report(
         for record in recovered_result:
             event_data = _node_to_dict(_record_value(record, "e"))
             ci_data = _node_to_dict(_record_value(record, "ci"))
+            if event_data.get("event_type") != "AVAILABILITY":
+                continue
+            if event_data.get("availability_source") not in {"PING", "ICMP"}:
+                continue
             key = _availability_group_key(event_data)
             if key is None:
                 continue
@@ -642,6 +648,8 @@ def get_availability_report(
             """
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
             WHERE e.status IN ['OPEN', 'ACK']
+              AND e.event_type = 'AVAILABILITY'
+              AND e.availability_source IN ['PING', 'ICMP']
               AND e.created_at IS NOT NULL
               AND e.created_at <= $window_end
             OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
@@ -654,6 +662,10 @@ def get_availability_report(
         for record in active_result:
             event_data = _node_to_dict(_record_value(record, "e"))
             ci_data = _node_to_dict(_record_value(record, "ci"))
+            if event_data.get("event_type") != "AVAILABILITY":
+                continue
+            if event_data.get("availability_source") not in {"PING", "ICMP"}:
+                continue
             key = _availability_group_key(event_data)
             if key is None:
                 continue

@@ -471,6 +471,47 @@ def migrate_icmp_sidecar_metrics() -> None:
         """, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID)
 
 
+def migrate_icmp_availability_source() -> None:
+    """Backfill explicit availability_source for existing ICMP availability metrics/events.
+
+    ICMP latency and jitter sidecars stay telemetry-only and are intentionally
+    excluded from the availability source-of-truth tag.
+    """
+    excluded_metric_ids = [ICMP_LATENCY_METRIC_ID, ICMP_JITTER_METRIC_ID, "mariadb-GS"]
+    driver = get_db()
+    with driver.session() as session:
+        session.run("""
+            MATCH (m:MetricDef)
+            WHERE toUpper(coalesce(m.protocol, '')) = 'ICMP'
+              AND NOT m.id IN $excluded_metric_ids
+              AND coalesce(m.name, '') <> 'mariadb-GS'
+              AND coalesce(m.metric_kind, 'availability') <> 'telemetry'
+            SET m.availability_source = coalesce(m.availability_source, 'ICMP'),
+                m.metric_kind = coalesce(m.metric_kind, 'availability')
+        """, excluded_metric_ids=excluded_metric_ids)
+        session.run("""
+            MATCH (e:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE e.event_type = 'AVAILABILITY'
+              AND toUpper(coalesce(e.source_protocol, '')) = 'ICMP'
+              AND toUpper(coalesce(m.protocol, '')) = 'ICMP'
+              AND m.availability_source IN ['PING', 'ICMP']
+              AND NOT m.id IN $excluded_metric_ids
+              AND coalesce(m.name, '') <> 'mariadb-GS'
+            SET e.availability_source = m.availability_source
+        """, excluded_metric_ids=excluded_metric_ids)
+        session.run("""
+            MATCH (e:Event)
+            WHERE e.event_type = 'AVAILABILITY'
+              AND toUpper(coalesce(e.source_protocol, '')) = 'ICMP'
+              AND e.metric_id IS NOT NULL
+              AND NOT e.metric_id IN $excluded_metric_ids
+              AND NOT EXISTS {
+                MATCH (e)-[:TRIGGERED_BY]->(:MetricDef)
+              }
+            SET e.availability_source = coalesce(e.availability_source, 'ICMP')
+        """, excluded_metric_ids=excluded_metric_ids)
+
+
 def create_default_ping_metric(node_id: str, node_label: str) -> None:
     """
     Ensure ICMP latency and jitter metrics are available for a CI.

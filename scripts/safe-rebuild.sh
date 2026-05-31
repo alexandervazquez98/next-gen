@@ -208,6 +208,9 @@ run docker compose up -d
 printf 'Applying ICMP latency/jitter sidecar migration...\n'
 run docker compose exec -T backend python scripts/migrate_icmp_sidecar_metrics.py
 
+printf 'Applying ICMP availability source migration...\n'
+run docker compose exec -T backend python scripts/migrate_icmp_availability_source.py
+
 printf '\nSafe rebuild flow completed. Current service status:\n'
 run docker compose ps
 

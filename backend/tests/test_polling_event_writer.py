@@ -22,8 +22,8 @@ def test_event_writer_ignores_icmp_latency_and_jitter_as_availability_events():
     from polling.event_writer import build_event_rows
 
     rows = build_event_rows([
-        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"name": "PING-CHECK", "criticality": 3}},
-        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-router", "metadata": {"name": "PING-router", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"name": "PING-CHECK", "criticality": 3, "availability_source": "PING"}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-router", "metadata": {"name": "PING-router", "criticality": 3, "availability_source": "ICMP"}},
         {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_latency_ms", "metadata": {"name": "ICMP Latency", "criticality": 3}},
         {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_jitter_ms", "metadata": {"name": "ICMP Jitter", "criticality": 3}},
         {**_event_row(0.0), "protocol": "ICMP", "metric_id": "icmp_latency_ms", "metadata": {"name": "ICMP Latency", "criticality": 3, "metric_kind": "availability"}},
@@ -37,13 +37,30 @@ def test_event_writer_ignores_icmp_latency_and_jitter_as_availability_events():
         assert row["is_breach"] is False
 
 
+def test_event_writer_requires_explicit_availability_source_tag():
+    from polling.event_writer import build_event_rows
+
+    rows = build_event_rows([
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"name": "PING-CHECK", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "SNMP", "metric_id": "mariadb-GS", "metadata": {"name": "mariadb-GS", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"name": "PING-CHECK", "criticality": 3, "availability_source": "PING"}},
+    ])
+
+    assert rows[0]["event_type"] is None
+    assert rows[0]["is_breach"] is False
+    assert rows[1]["event_type"] is None
+    assert rows[1]["is_breach"] is False
+    assert rows[2]["event_type"] == "AVAILABILITY"
+    assert rows[2]["availability_source"] == "PING"
+
+
 def test_event_writer_derives_threshold_breach_and_availability_recovery_rows():
     from polling.event_writer import build_event_rows
 
     rows = build_event_rows([
         _event_row(97.0),
-        {**_event_row(1.0), "protocol": "ICMP", "metric_id": "PING-CHECK"},
-        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK"},
+        {**_event_row(1.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"availability_source": "PING", "criticality": 3}},
+        {**_event_row(0.0), "protocol": "ICMP", "metric_id": "PING-CHECK", "metadata": {"availability_source": "PING", "criticality": 3}},
     ])
 
     assert rows[0]["is_breach"] is True
@@ -56,6 +73,7 @@ def test_event_writer_derives_threshold_breach_and_availability_recovery_rows():
     assert rows[2]["is_breach"] is True
     assert rows[2]["event_type"] == "AVAILABILITY"
     assert rows[2]["source_protocol"] == "ICMP"
+    assert rows[2]["availability_source"] == "PING"
     assert rows[2]["severity"] == "CRITICAL"
     assert "Service/Host Down" in rows[2]["message"]
 
