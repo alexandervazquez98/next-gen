@@ -26,6 +26,8 @@ Use this path when you want the script to validate `.env`, create the backup dir
 git pull origin main
 # Review/update .env from .env.example before continuing.
 sh scripts/safe-rebuild.sh
+# Or, during a Neo4j maintenance window when APOC export is unavailable:
+# sh scripts/safe-rebuild.sh --neo4j-offline
 docker compose ps
 docker compose logs --tail=100 backend
 ```
@@ -101,6 +103,8 @@ The script performs the deploy preflight and rebuild in order:
 
 Use `sh scripts/safe-rebuild.sh --dry-run` to print the flow without creating directories, rebuilding images, or restarting containers. The dry run still validates `.env` and resolves `BACKUP_DIR`.
 
+Use `sh scripts/safe-rebuild.sh --neo4j-offline` only during a maintenance window. It still creates the PostgreSQL dump, but it passes `--neo4j-offline` to `pre-rebuild-backup.sh`, which stops only Neo4j, runs a `neo4j-admin` dump, and starts Neo4j again before the rebuild continues.
+
 ## Manual Fallback
 
 Use this only when you need to run each step by hand. Unlike `safe-rebuild.sh`, `pre-rebuild-backup.sh` stays strict and expects `BACKUP_DIR` to already exist. Docker Compose direct commands do not auto-run these safety checks.
@@ -130,8 +134,9 @@ If `BACKUP_DIR` is customized, create and validate that resolved path instead of
 | Env validation | Calls `scripts/validate-env.sh --check-backup-dir` before Docker Compose checks or dumps. In the recommended flow, `scripts/safe-rebuild.sh` creates and verifies the directory before this strict check runs. |
 | PostgreSQL | Runs `pg_dump -Fc` inside the `postgres` service using the container environment. |
 | Neo4j | Attempts an online APOC Cypher export when `apoc.export.cypher.all` is available. |
-| Neo4j fallback | Writes an operator note explaining the offline dump command when online export is unavailable. |
-| Docker safety | Uses `docker compose config`, `ps`, and `exec`; it never stops services or removes volumes. |
+| Neo4j fallback | Writes an operator note explaining `sh scripts/pre-rebuild-backup.sh --neo4j-offline` when online export is unavailable. |
+| Neo4j offline mode | With `--neo4j-offline`, stops only Neo4j, creates a timestamped `neo4j_YYYYMMDD_HHMMSS_dump/` directory under `BACKUP_DIR`, runs `neo4j-admin database dump`, and starts Neo4j again. |
+| Docker safety | Uses `docker compose config`, `ps`, and `exec`; the default path never stops services or removes volumes. Offline Neo4j mode stops and restarts only `neo4j` during the maintenance window. |
 
 Generated files use UTC timestamps, for example `postgres_20260524_153000.dump`.
 
@@ -165,23 +170,38 @@ docker compose exec -T neo4j sh -c '
 
 This replay can duplicate data if the target is not empty. Use it for a clean restore target unless you have reviewed the Cypher content.
 
-## Neo4j Full Dump Limitation
+## Neo4j Offline Dump Workflow
 
 Neo4j Community/dev images do not provide Enterprise online backup. A full `neo4j-admin database dump` is an offline maintenance action.
 
 Run this only when you intentionally accept a Neo4j service interruption:
 
 ```sh
-docker compose stop neo4j
-docker compose run --rm --no-deps --entrypoint neo4j-admin neo4j database dump neo4j --to-path=/backups --overwrite-destination=true
-docker compose up -d neo4j
+sh scripts/pre-rebuild-backup.sh --neo4j-offline
+# Or as part of the full rebuild flow:
+sh scripts/safe-rebuild.sh --neo4j-offline
 ```
+
+The offline mode:
+
+1. Creates the normal PostgreSQL dump first.
+2. Stops only the `neo4j` service.
+3. Creates a timestamped `neo4j_YYYYMMDD_HHMMSS_dump/` directory under `BACKUP_DIR`.
+4. Runs:
+
+   ```sh
+   docker compose run --rm --no-deps --entrypoint neo4j-admin neo4j database dump neo4j --to-path=/backups/neo4j_YYYYMMDD_HHMMSS_dump --overwrite-destination=true
+   ```
+
+5. Starts `neo4j` again even when the dump command fails.
+
+After the command completes, confirm the dump directory exists under `BACKUP_DIR`, then check Neo4j health with `docker compose ps` and application smoke tests.
 
 Restore an offline dump into a stopped, empty Neo4j data directory only after separately preserving the current data directory:
 
 ```sh
 docker compose stop neo4j
-docker compose run --rm --no-deps --entrypoint neo4j-admin neo4j database load neo4j --from-path=/backups --overwrite-destination=true
+docker compose run --rm --no-deps --entrypoint neo4j-admin neo4j database load neo4j --from-path=/backups/neo4j_YYYYMMDD_HHMMSS_dump --overwrite-destination=true
 docker compose up -d neo4j
 ```
 
@@ -191,5 +211,5 @@ Do not delete `docker/neo4j/data` unless you have an explicit, tested restore pl
 
 - [ ] `sh scripts/safe-rebuild.sh` completed successfully from a POSIX shell.
 - [ ] PostgreSQL dump exists in `BACKUP_DIR`.
-- [ ] Neo4j has either an APOC export file or an offline-dump-required note.
+- [ ] Neo4j has an APOC export file, an offline dump directory, or an offline-dump-required note.
 - [ ] No command uses `docker compose down -v`.
