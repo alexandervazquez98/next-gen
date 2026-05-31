@@ -6,6 +6,10 @@ import { STATUS_COLORS } from "../utils/status";
 import { useGraphTopologyQuery } from "../hooks/queries/useGraphTopologyQuery";
 import { useCategoriesQuery } from "../hooks/queries/useCategoriesQuery";
 import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
+import {
+	clampClusterCenterToBounds,
+	getBoundedClusterDelta,
+} from "./graphLayout";
 
 interface GraphCMDBProps {
 	onNodeClick: (node: GraphNode) => void;
@@ -193,6 +197,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 		};
 		const clusterRadius = (count: number) =>
 			Math.min(180, Math.max(82, 34 + Math.sqrt(count) * 32));
+		const clusterBounds = { width, height, padding: 24 };
 		if (groupByLocation && clusterEntries.length > 0) {
 			const layouts = clusterEntries.map(([clusterName, group], index) => {
 				const coords = group
@@ -306,6 +311,27 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 					};
 				});
 			}
+		}
+
+		if (groupByLocation) {
+			Object.entries(clusterCenters).forEach(([name, center]) => {
+				const bounded = clampClusterCenterToBounds(center, clusterBounds);
+				const correction = {
+					dx: bounded.x - center.x,
+					dy: bounded.y - center.y,
+				};
+				clusterCenters[name] = bounded;
+				if (correction.dx !== 0 || correction.dy !== 0) {
+					const previousOffset = clusterOffsetRef.current.get(name) || {
+						dx: 0,
+						dy: 0,
+					};
+					clusterOffsetRef.current.set(name, {
+						dx: previousOffset.dx + correction.dx,
+						dy: previousOffset.dy + correction.dy,
+					});
+				}
+			});
 		}
 
 		if (
@@ -962,24 +988,31 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			if (dx === 0 && dy === 0) return;
 			const center = clusterCenters[name];
 			if (!center) return;
-			center.x += dx;
-			center.y += dy;
+			const boundedDelta = getBoundedClusterDelta(
+				center,
+				dx,
+				dy,
+				clusterBounds,
+			);
+			if (boundedDelta.dx === 0 && boundedDelta.dy === 0) return;
+			center.x += boundedDelta.dx;
+			center.y += boundedDelta.dy;
 			const previousOffset = clusterOffsetRef.current.get(name) || {
 				dx: 0,
 				dy: 0,
 			};
 			clusterOffsetRef.current.set(name, {
-				dx: previousOffset.dx + dx,
-				dy: previousOffset.dy + dy,
+				dx: previousOffset.dx + boundedDelta.dx,
+				dy: previousOffset.dy + boundedDelta.dy,
 			});
 			validNodes.forEach((node: any) => {
 				if (node.clusterName !== name) return;
-				node.targetX += dx;
-				node.targetY += dy;
+				node.targetX += boundedDelta.dx;
+				node.targetY += boundedDelta.dy;
 				const contained = clampPointToCluster(
 					name,
-					(node.x ?? node.targetX) + dx,
-					(node.y ?? node.targetY) + dy,
+					(node.x ?? node.targetX) + boundedDelta.dx,
+					(node.y ?? node.targetY) + boundedDelta.dy,
 				);
 				node.x = contained.x;
 				node.y = contained.y;
