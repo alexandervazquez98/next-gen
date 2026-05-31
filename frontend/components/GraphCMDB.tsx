@@ -9,6 +9,10 @@ import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
 import {
 	clampClusterCenterToBounds,
 	getBoundedClusterDelta,
+	isValidGeoCoordinate,
+	projectGeoPointsToCanvas,
+	resolveClusterOverlaps,
+	summarizeClusterGeoQuality,
 } from "./graphLayout";
 
 interface GraphCMDBProps {
@@ -132,14 +136,34 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 	useEffect(() => {
 		if (!svgRef.current) return;
 
-		const width = svgRef.current.clientWidth || 1200;
-		const height = svgRef.current.clientHeight || 800;
+		const viewportWidth = svgRef.current.clientWidth || 1200;
+		const viewportHeight = svgRef.current.clientHeight || 800;
+		const clusterCount = Math.max(
+			1,
+			new Set(nodes.map((node) => node.location_name || node.owner || node.id))
+				.size,
+		);
+		const virtualScale = Math.sqrt(clusterCount);
+		const width = Math.min(
+			12000,
+			Math.max(viewportWidth, 3200, virtualScale * 760),
+		);
+		const height = Math.min(
+			8000,
+			Math.max(viewportHeight, 2200, virtualScale * 520),
+		);
 		const svg = d3.select(svgRef.current);
 
 		// PERSIST ZOOM: prefer the ref-backed transform because the SVG DOM
 		// is fully rebuilt on data refreshes and DOM-derived state can be stale.
 		const currentTransform =
-			zoomTransformRef.current || d3.zoomTransform(svgRef.current);
+			zoomTransformRef.current === d3.zoomIdentity &&
+			(width > viewportWidth || height > viewportHeight)
+				? d3.zoomIdentity.translate(
+						(viewportWidth - width) / 2,
+						(viewportHeight - height) / 2,
+					)
+				: zoomTransformRef.current || d3.zoomTransform(svgRef.current);
 		svg.selectAll("*").remove();
 
 		const container = svg.append("g").attr("class", "main-container");
@@ -179,85 +203,44 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			string,
 			{ x: number; y: number; radius: number; count: number; hasGeo: boolean }
 		> = {};
-		const isValidCoordinate = (lat: unknown, lon: unknown) =>
-			typeof lat === "number" &&
-			typeof lon === "number" &&
-			Number.isFinite(lat) &&
-			Number.isFinite(lon) &&
-			lat >= -90 &&
-			lat <= 90 &&
-			lon >= -180 &&
-			lon <= 180;
-		const median = (values: number[]) => {
-			const sorted = values.slice().sort((a, b) => a - b);
-			const mid = Math.floor(sorted.length / 2);
-			return sorted.length % 2 === 0
-				? (sorted[mid - 1] + sorted[mid]) / 2
-				: sorted[mid];
-		};
+		const clusterGeoQuality = new Map<
+			string,
+			ReturnType<typeof summarizeClusterGeoQuality>
+		>();
 		const clusterRadius = (count: number) =>
 			Math.min(180, Math.max(82, 34 + Math.sqrt(count) * 32));
 		const clusterBounds = { width, height, padding: 24 };
 		if (groupByLocation && clusterEntries.length > 0) {
 			const layouts = clusterEntries.map(([clusterName, group], index) => {
-				const coords = group
-					.map((node) => ({
-						lat: node.location?.lat,
-						lon: node.location?.long,
-					}))
-					.filter(({ lat, lon }) => isValidCoordinate(lat, lon)) as Array<{
-					lat: number;
-					lon: number;
-				}>;
+				const quality = summarizeClusterGeoQuality(group);
+				clusterGeoQuality.set(clusterName, quality);
 				return {
 					clusterName,
 					group,
 					index,
 					radius: clusterRadius(group.length),
-					geo:
-						coords.length > 0
-							? {
-									lat: median(coords.map((c) => c.lat)),
-									lon: median(coords.map((c) => c.lon)),
-								}
-							: null,
+					geo: quality.medianCoordinate
+						? {
+								lat: quality.medianCoordinate.lat,
+								lon: quality.medianCoordinate.long,
+							}
+						: null,
 				};
 			});
 			const geoLayouts = layouts.filter((layout) => layout.geo);
 			const fallbackLayouts = layouts.filter((layout) => !layout.geo);
 			const fallbackLaneWidth =
 				geoLayouts.length > 0 && fallbackLayouts.length > 0
-					? Math.min(280, Math.max(180, width * 0.22))
+					? Math.min(width * 0.4, Math.max(320, width * 0.32))
 					: 0;
-			const paddingX = Math.max(130, width * 0.08);
-			const paddingY = Math.max(120, height * 0.1);
-			const geoMinX = paddingX;
-			const geoMaxX = Math.max(geoMinX, width - paddingX - fallbackLaneWidth);
-			const geoMinY = paddingY;
-			const geoMaxY = Math.max(geoMinY, height - paddingY);
-			const lats = geoLayouts.map((layout) => layout.geo?.lat ?? 0);
-			const lons = geoLayouts.map((layout) => layout.geo?.lon ?? 0);
-			const minLat = Math.min(...lats);
-			const maxLat = Math.max(...lats);
-			const minLon = Math.min(...lons);
-			const maxLon = Math.max(...lons);
-			const geoBase = new Map<string, { x: number; y: number }>();
-			geoLayouts.forEach((layout) => {
-				const lat = layout.geo?.lat ?? 0;
-				const lon = layout.geo?.lon ?? 0;
-				geoBase.set(layout.clusterName, {
-					x:
-						maxLon === minLon
-							? (geoMinX + geoMaxX) / 2
-							: geoMinX +
-								((lon - minLon) / (maxLon - minLon)) * (geoMaxX - geoMinX),
-					y:
-						maxLat === minLat
-							? (geoMinY + geoMaxY) / 2
-							: geoMaxY -
-								((lat - minLat) / (maxLat - minLat)) * (geoMaxY - geoMinY),
-				});
-			});
+			const geoBase = projectGeoPointsToCanvas(
+				geoLayouts.map((layout) => ({
+					id: layout.clusterName,
+					lat: layout.geo?.lat ?? 0,
+					long: layout.geo?.lon ?? 0,
+				})),
+				{ width, height, reservedRightWidth: fallbackLaneWidth },
+			);
 			const sameCoordinateGroups = d3.group(
 				geoLayouts,
 				(layout) =>
@@ -287,13 +270,18 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				});
 			});
 			if (fallbackLayouts.length > 0) {
-				const cols =
-					geoLayouts.length > 0
-						? 1
-						: Math.ceil(Math.sqrt(fallbackLayouts.length));
+				const cols = Math.max(
+					1,
+					Math.ceil(
+						Math.sqrt(
+							fallbackLayouts.length * (geoLayouts.length > 0 ? 0.65 : 1),
+						),
+					),
+				);
 				const rows = Math.ceil(fallbackLayouts.length / cols);
 				const laneMinX = geoLayouts.length > 0 ? width - fallbackLaneWidth : 0;
-				const cellWidth = (width - laneMinX) / Math.max(cols, 1);
+				const laneWidth = width - laneMinX;
+				const cellWidth = laneWidth / Math.max(cols, 1);
 				const cellHeight = height / Math.max(rows, 1);
 				fallbackLayouts.forEach((layout, i) => {
 					const col = i % cols;
@@ -314,7 +302,12 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 		}
 
 		if (groupByLocation) {
-			Object.entries(clusterCenters).forEach(([name, center]) => {
+			const resolvedClusterCenters = resolveClusterOverlaps(
+				clusterCenters,
+				clusterBounds,
+				{ padding: 20, iterations: 10 },
+			);
+			Object.entries(resolvedClusterCenters).forEach(([name, center]) => {
 				const bounded = clampClusterCenterToBounds(center, clusterBounds);
 				const correction = {
 					dx: bounded.x - center.x,
@@ -359,6 +352,19 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				});
 		});
 
+		const nodeGeoTargets = projectGeoPointsToCanvas(
+			nodes
+				.filter((node) =>
+					isValidGeoCoordinate(node.location?.lat, node.location?.long),
+				)
+				.map((node) => ({
+					id: node.id,
+					lat: node.location?.lat ?? 0,
+					long: node.location?.long ?? 0,
+				})),
+			{ width, height },
+		);
+
 		const clampPointToCluster = (clusterName: string, x: number, y: number) => {
 			if (!groupByLocation) return { x, y };
 			const center = clusterCenters[clusterName];
@@ -376,13 +382,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 		const getClusterTarget = (node: GraphNode) => {
 			const info = nodeClusterIndex.get(node.id);
 			if (!groupByLocation || !info) {
-				if (node.location?.lat && node.location?.long) {
-					return {
-						x: width / 2 + (node.location.long + 117) * 3000,
-						y: height / 2 - (node.location.lat - 32.5) * 3000,
-					};
-				}
-				return { x: width / 2, y: height / 2 };
+				return nodeGeoTargets.get(node.id) || { x: width / 2, y: height / 2 };
 			}
 
 			const center = clusterCenters[info.clusterName] || {
@@ -532,6 +532,8 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			const cached = nodeStateRef.current.get(node.id);
 			const target = getClusterTarget(node);
 			n.clusterName = getClusterName(node);
+			const quality = clusterGeoQuality.get(n.clusterName);
+			n.isGeoOutlier = quality?.outlierNodeIds.has(node.id) ?? false;
 			n.targetX = target.x;
 			n.targetY = target.y;
 
@@ -613,6 +615,24 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			typeof endpoint === "object"
 				? endpoint
 				: validNodeById.get(endpoint) || nodeById.get(endpoint);
+		const clusterQualityTooltip = (name: string) => {
+			const center = clusterCenters[name];
+			const quality = clusterGeoQuality.get(name);
+			if (!center || !quality) return `${name}: coordinate quality unavailable`;
+			const notes = [
+				`${name}: ${quality.validCoordinateCount}/${center.count} CIs with valid coordinates`,
+			];
+			if (!center.hasGeo) {
+				notes.push("Fallback lane: no valid coordinates in this cluster");
+			}
+			if (quality.missingCoordinateCount > 0) {
+				notes.push(`${quality.missingCoordinateCount} CIs without coordinates`);
+			}
+			if (quality.outlierNodeIds.size > 0) {
+				notes.push(`${quality.outlierNodeIds.size} possible geo outlier CIs`);
+			}
+			return notes.join(" • ");
+		};
 
 		const clusterSelection = groupByLocation
 			? container
@@ -631,6 +651,10 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 						setSelectedCluster((current) => (current === name ? null : name));
 					})
 			: null;
+
+		clusterSelection
+			?.append("title")
+			.text(([name]) => clusterQualityTooltip(name));
 
 		clusterSelection
 			?.append("circle")
@@ -686,6 +710,37 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			.attr("font-weight", 800)
 			.attr("letter-spacing", "0.05em")
 			.text(([name, center]) => `${name} (${center.count})`);
+
+		const clusterBadgeSelection = clusterSelection
+			?.append("g")
+			.attr("class", "geo-quality-badges pointer-events-none")
+			.attr("transform", ([, center]) => `translate(0,${center.radius - 20})`);
+
+		clusterBadgeSelection
+			?.append("text")
+			.attr("text-anchor", "middle")
+			.attr("fill", ([name]) =>
+				clusterCenters[name]?.hasGeo ? "#fbbf24" : "#fb7185",
+			)
+			.attr("font-size", "10px")
+			.attr("font-weight", 800)
+			.attr("paint-order", "stroke")
+			.attr("stroke", "#0f172a")
+			.attr("stroke-width", 3)
+			.text(([name]) => {
+				const center = clusterCenters[name];
+				const quality = clusterGeoQuality.get(name);
+				if (!center || !quality) return "";
+				const badges: string[] = [];
+				if (!center.hasGeo) badges.push("sin coords");
+				else if (quality.missingCoordinateCount > 0) {
+					badges.push(`${quality.missingCoordinateCount} sin coords`);
+				}
+				if (quality.outlierNodeIds.size > 0) {
+					badges.push(`${quality.outlierNodeIds.size} outlier`);
+				}
+				return badges.join(" • ");
+			});
 
 		const clusterLinkSelection = container
 			.append("g")
@@ -788,10 +843,10 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				"charge",
 				d3
 					.forceManyBody()
-					.strength(clusterMode ? -25 : groupByLocation ? -120 : -420),
+					.strength(clusterMode ? -55 : groupByLocation ? -140 : -420),
 			)
 			.force("center", d3.forceCenter(width / 2, height / 2).strength(0.02))
-			.force("collision", d3.forceCollide().radius(34))
+			.force("collision", d3.forceCollide().radius(38).iterations(2))
 			.force(
 				"x",
 				d3
@@ -940,6 +995,23 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				const linkCount = linkCountByNodeId.get(node.id) || 0;
 				return linkCount > 4 ? `+${linkCount} links` : "";
 			});
+
+		nodeSelection
+			.append("text")
+			.attr("dy", "-3.8em")
+			.attr("text-anchor", "middle")
+			.attr("fill", "#fb7185")
+			.attr("font-size", "9px")
+			.attr("font-weight", 800)
+			.attr("paint-order", "stroke")
+			.attr("stroke", "#0f172a")
+			.attr("stroke-width", 3)
+			.attr("class", "geo-outlier-badge pointer-events-none")
+			.text((node: any) =>
+				selectedCluster === node.clusterName && node.isGeoOutlier
+					? "geo outlier"
+					: "",
+			);
 
 		const enforceContainment = () => {
 			validNodes.forEach((node: any) => {
