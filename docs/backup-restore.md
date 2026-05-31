@@ -7,7 +7,7 @@ Use this runbook before Docker rebuilds or releases. Docker Compose commands do 
 1. Update code on the deploy host: `git pull origin main` or checkout the intended release branch/tag.
 2. Review `.env` against `.env.example` and add any new required values.
 3. Run `sh scripts/safe-rebuild.sh` for the full safe rebuild flow.
-4. Verify services with `docker compose ps` and logs or health checks.
+4. Verify services with `docker compose ps` and confirm backend, frontend, snmp-engine, PostgreSQL, and Neo4j health checks are healthy.
 5. Confirm backup files exist under `BACKUP_DIR`, default `.docker/backups`.
 
 Do not run `docker compose down -v` as part of rebuilds. That deletes named volumes and can destroy database state.
@@ -58,6 +58,7 @@ Use these before a deploy when you want to inspect the scripts and Compose confi
 ```sh
 sh scripts/safe-rebuild.sh --dry-run
 sh -n scripts/*.sh
+shellcheck -x scripts/*.sh monitor_performance.sh docker/neo4j/entrypoint.sh
 docker compose config --quiet
 ```
 

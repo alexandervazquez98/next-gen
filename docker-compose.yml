@@ -112,6 +112,18 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_TARGET=${VITE_API_TARGET:-http://nexgen_backend:8000}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/', (r) => process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   # Engines / Workers
@@ -161,4 +173,16 @@ services:
       - POLLING_BENCHMARK_DURATION_SECONDS=${POLLING_BENCHMARK_DURATION_SECONDS:-0}
       - POLLING_BENCHMARK_PROTOCOL_MIX=${POLLING_BENCHMARK_PROTOCOL_MIX:-ICMP:0.15,SNMP:0.55,CLI:0.15,REST:0.10,MQTT_STUB:0.05}
       - POLLING_BENCHMARK_SINK=${POLLING_BENCHMARK_SINK:-synthetic}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,sys; from neo4j import GraphDatabase; d=GraphDatabase.driver(os.environ['NEO4J_URI'], auth=(os.environ['NEO4J_USER'], os.environ['NEO4J_PASSWORD'])); d.verify_connectivity(); d.close(); sys.exit(0)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     restart: unless-stopped

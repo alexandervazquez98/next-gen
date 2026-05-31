@@ -153,6 +153,7 @@ verify_container_backups() {
         return
     fi
 
+    # shellcheck disable=SC2016
     compose exec -T "$service_name" sh -c '
         set -eu
         test -d /backups
@@ -164,6 +165,7 @@ verify_container_backups() {
 }
 
 if [ "${SAFE_REBUILD_LIB_ONLY:-0}" = "1" ]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || {
         printf 'ERROR: SAFE_REBUILD_LIB_ONLY is only supported when sourcing this script for tests.\n' >&2
         exit 2

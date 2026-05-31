@@ -115,6 +115,7 @@ run_neo4j_offline_dump() {
 }
 
 if [ "${PRE_REBUILD_BACKUP_LIB_ONLY:-0}" = "1" ]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || {
         printf 'ERROR: PRE_REBUILD_BACKUP_LIB_ONLY is only supported when sourcing this script for tests.\n' >&2
         exit 2
@@ -138,6 +139,7 @@ printf 'Validated BACKUP_DIR: %s\n' "$backup_dir"
 require_running_service postgres
 
 printf 'Creating PostgreSQL dump: /backups/%s\n' "$postgres_file"
+# shellcheck disable=SC2016
 compose exec -T postgres sh -c '
     set -eu
     : "${POSTGRES_USER:?POSTGRES_USER is required}"
@@ -154,6 +156,7 @@ else
     require_running_service neo4j
 
     printf 'Attempting Neo4j online APOC export: /backups/%s\n' "$neo4j_file"
+    # shellcheck disable=SC2016
     if compose exec -T neo4j sh -c '
         set -eu
         : "${NEO4J_AUTH:?NEO4J_AUTH is required}"

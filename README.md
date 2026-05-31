@@ -79,7 +79,7 @@ Flujo recomendado:
 5. Solo si validacion y backup terminaron bien, ejecuta `docker compose build && docker compose up -d`.
 6. Verifica con `docker compose ps` y `docker compose logs --tail=100 backend`.
 
-Comandos check-only: `sh scripts/safe-rebuild.sh --dry-run`, `sh -n scripts/*.sh` y `docker compose config --quiet`. Ejecuta los scripts desde Linux/macOS/Git Bash/WSL, no desde PowerShell. No uses `docker compose down -v` en rebuilds porque elimina volumenes. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore, fallback manual y limitaciones de Neo4j Community.
+Comandos check-only: `sh scripts/safe-rebuild.sh --dry-run`, `sh -n scripts/*.sh`, `shellcheck -x scripts/*.sh monitor_performance.sh docker/neo4j/entrypoint.sh` y `docker compose config --quiet`. Ejecuta los scripts desde Linux/macOS/Git Bash/WSL, no desde PowerShell. No uses `docker compose down -v` en rebuilds porque elimina volumenes. Ver [`docs/backup-restore.md`](docs/backup-restore.md) para restore, fallback manual y limitaciones de Neo4j Community.
 
 ## Tests focalizados
 
