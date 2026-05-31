@@ -23,7 +23,19 @@ vi.mock('../context/AuthContext', () => ({
 
 vi.mock('./MetricsManager', () => ({ default: () => <div>Metrics Manager</div> }));
 vi.mock('./DictionaryManager', () => ({ default: () => <div>Dictionary Manager</div> }));
-vi.mock('./CIEditor', () => ({ default: () => <div>CI Editor</div> }));
+vi.mock('./CIEditor', () => ({
+    default: ({ onSave }: { onSave: (node: any) => Promise<void> }) => (
+        <div>
+            CI Editor
+            <button
+                type="button"
+                onClick={() => onSave({ id: 'ci-new', label: 'New Router', type: 'Network', status: 'ACTIVE' })}
+            >
+                Save mock CI
+            </button>
+        </div>
+    ),
+}));
 vi.mock('./RelationshipManager', () => ({ default: () => <div>Relationship Manager</div> }));
 vi.mock('./MassLinkEditor', () => ({ default: () => <div>Mass Link Editor</div> }));
 vi.mock('./CatalogManager', () => ({ default: () => <div>Catalog Manager</div> }));
@@ -94,5 +106,33 @@ describe('AdminPage inventory relationships', () => {
         expect(screen.getByText('CONNECTS_TO')).toBeInTheDocument();
         expect(screen.getAllByText('Switch B').length).toBeGreaterThan(0);
         expect(screen.getAllByText('ci-b').length).toBeGreaterThan(0);
+    });
+
+    it('refreshes inventory after creating a CI from the editor', async () => {
+        const createdNode = { id: 'ci-new', label: 'New Router', type: 'Network', status: 'ACTIVE', ip: undefined };
+        mockApiGet.mockImplementation((endpoint: string) => {
+            if (endpoint === '/nodes') {
+                const createCompleted = mockApiPost.mock.calls.some(([postEndpoint]) => postEndpoint === '/nodes');
+                return Promise.resolve(createCompleted ? [...nodes, createdNode] : nodes);
+            }
+            return Promise.resolve([]);
+        });
+
+        render(<AdminPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'INVENTORY' }));
+        expect(await screen.findByText('Router A')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save mock CI' }));
+
+        await waitFor(() => {
+            expect(mockApiPost).toHaveBeenCalledWith('/nodes', {
+                id: 'ci-new',
+                label: 'New Router',
+                type: 'Network',
+                status: 'ACTIVE',
+            });
+        });
+        expect(await screen.findByText('New Router')).toBeInTheDocument();
     });
 });
