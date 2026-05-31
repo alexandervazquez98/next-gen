@@ -56,7 +56,7 @@ def get_full_graph(current_user: Optional[User] = None, layer: Optional[str] = N
         labels = node_props.get("_labels", [])
         
         # Determine primary type/label
-        primary_type = "CI" # Default for filtered view
+        primary_type = "CI" if not labels or "CI" in labels else "Unknown"
         if "Category" in labels: primary_type = "Category"
         elif "OwnerGroup" in labels: primary_type = "Owner"
         elif "MetricDef" in labels: primary_type = "Metric"
@@ -68,9 +68,20 @@ def get_full_graph(current_user: Optional[User] = None, layer: Optional[str] = N
         if primary_type == "CI" and node_props.get("layer"):
             display_type = node_props.get("layer")
 
+        fallback_id = (
+            node_props.get("id")
+            or node_props.get("name")
+            or node_props.get("label")
+            or " ".join(
+                str(part)
+                for part in [node_props.get("brand"), node_props.get("model")]
+                if part
+            )
+        )
+
         nodes.append({
-            "id": node_props.get("id"),
-            "label": node_props.get("name") or node_props.get("label") or node_props.get("id"),
+            "id": fallback_id,
+            "label": node_props.get("name") or node_props.get("label") or fallback_id,
             "type": display_type,
             "status": node_props.get("status", "ACTIVE"),
             "location": node_props.get("location"),

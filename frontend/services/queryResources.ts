@@ -86,8 +86,41 @@ export const fetchRelatedEvents = (
 	{ signal }: { signal?: AbortSignal } = {},
 ) => api.get<EventSummary[]>(`/events/related/${ciId}`, { signal });
 
-export const fetchGraphTopology = ({ signal }: { signal?: AbortSignal } = {}) =>
-	api.get<GraphTopologyResponse>("/graph/full", { signal });
+type GraphFilterValue = string | string[];
+
+export interface FetchGraphTopologyOptions {
+	layer?: GraphFilterValue;
+	location?: GraphFilterValue;
+	owner?: GraphFilterValue;
+	signal?: AbortSignal;
+}
+
+export const fetchGraphTopology = ({
+	layer,
+	location,
+	owner,
+	signal,
+}: FetchGraphTopologyOptions = {}) => {
+	const params = new URLSearchParams();
+	const setFilterParam = (key: string, value?: GraphFilterValue) => {
+		if (Array.isArray(value)) {
+			const selected = value.filter(Boolean);
+			if (selected.length > 0) params.set(key, selected.join(","));
+			return;
+		}
+		if (value) params.set(key, value);
+	};
+	setFilterParam("layer", layer);
+	setFilterParam("location", location);
+	setFilterParam("owner", owner);
+	const query = params.toString();
+	return api.get<GraphTopologyResponse>(
+		`/graph/full${query ? `?${query}` : ""}`,
+		{
+			signal,
+		},
+	);
+};
 
 export const fetchOwners = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<OwnerRecord[]>("/owners", { signal });
