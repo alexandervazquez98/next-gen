@@ -60,8 +60,35 @@ normalize_backup_dir_for_check() {
         {
             gsub(/\\\\/, "/")
             gsub(/\/\/+/, "/")
-            sub(/\/+$|^$/, "")
-            print
+            absolute = ($0 ~ /^\//)
+            n = split($0, parts, "/")
+            depth = 0
+
+            for (i = 1; i <= n; i++) {
+                part = parts[i]
+                if (part == "" || part == ".") {
+                    continue
+                }
+                if (part == "..") {
+                    if (depth > 0 && stack[depth] != "..") {
+                        delete stack[depth]
+                        depth--
+                    } else if (!absolute) {
+                        depth++
+                        stack[depth] = part
+                    }
+                    continue
+                }
+                depth++
+                stack[depth] = part
+            }
+
+            normalized = absolute ? "/" : ""
+            for (i = 1; i <= depth; i++) {
+                normalized = normalized (i == 1 || normalized == "/" ? "" : "/") stack[i]
+            }
+            sub(/\/+$/, "", normalized)
+            print normalized
         }
     '
 }
@@ -100,7 +127,7 @@ ensure_host_backup_dir() {
         exit 1
     fi
 
-    test_file="$backup_dir/.safe-rebuild-write-test"
+    test_file="$backup_dir/.safe-rebuild-write-test.$$"
     if ! : > "$test_file"; then
         printf 'ERROR: could not write to BACKUP_DIR: %s\n' "$backup_dir" >&2
         exit 1
@@ -120,10 +147,18 @@ verify_container_backups() {
         set -eu
         test -d /backups
         test -w /backups
-        : > /backups/.safe-rebuild-write-test
-        rm -f /backups/.safe-rebuild-write-test
+        test_file="/backups/.safe-rebuild-write-test.$$"
+        : > "$test_file"
+        rm -f "$test_file"
     '
 }
+
+if [ "${SAFE_REBUILD_LIB_ONLY:-0}" = "1" ]; then
+    return 0 2>/dev/null || {
+        printf 'ERROR: SAFE_REBUILD_LIB_ONLY is only supported when sourcing this script for tests.\n' >&2
+        exit 2
+    }
+fi
 
 require_command docker
 
