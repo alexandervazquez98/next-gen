@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.14] — 2026-05-31
+
+### Fixed
+- **Backup path validation hardening** (PR #224, issue #133):
+  - Normalizes `.` and `..` path segments before rejecting unsafe `BACKUP_DIR` values in `safe-rebuild.sh`.
+  - Keeps symlink behavior unchanged by avoiding filesystem canonicalization.
+  - Uses PID-suffixed backup write-test files and adds focused shell coverage for unsafe path aliases.
+
 ## [1.12.13] — 2026-05-30
 
 ### Fixed
