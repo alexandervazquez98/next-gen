@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adds an explicit `--neo4j-offline` mode for `pre-rebuild-backup.sh` and `safe-rebuild.sh`.
   - Creates PostgreSQL backups unchanged, then stops only Neo4j to run a timestamped `neo4j-admin` offline dump.
   - Documents offline dump and restore procedures for maintenance windows.
+- **Deploy healthchecks and ShellCheck validation** (issue #132):
+  - Adds Docker Compose healthchecks for frontend and `snmp-engine`.
+  - Adds a GitHub Actions ShellCheck workflow for shell scripts.
+  - Documents ShellCheck as part of deploy preflight validation.
 
 ## [1.12.14] — 2026-05-31
 
