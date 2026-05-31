@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	clampClusterCenterToBounds,
 	getBoundedClusterDelta,
+	isValidGeoCoordinate,
+	summarizeClusterGeoQuality,
 } from "./graphLayout";
 
 describe("graph layout bounds", () => {
@@ -33,5 +35,38 @@ describe("graph layout bounds", () => {
 
 		expect(result.x).toBe(400);
 		expect(result.y).toBe(300);
+	});
+});
+
+describe("graph geo quality", () => {
+	it("validates geographic coordinates", () => {
+		expect(isValidGeoCoordinate(-34.6, -58.4)).toBe(true);
+		expect(isValidGeoCoordinate(91, -58.4)).toBe(false);
+		expect(isValidGeoCoordinate(-34.6, Number.NaN)).toBe(false);
+	});
+
+	it("summarizes missing coordinates and median coordinates", () => {
+		const quality = summarizeClusterGeoQuality([
+			{ id: "a", location: { lat: -34.6, long: -58.4 } },
+			{ id: "b", location: { lat: -34.7, long: -58.5 } },
+			{ id: "c" },
+		]);
+
+		expect(quality.validCoordinateCount).toBe(2);
+		expect(quality.missingCoordinateCount).toBe(1);
+		expect(quality.medianCoordinate?.lat).toBeCloseTo(-34.65);
+		expect(quality.medianCoordinate?.long).toBeCloseTo(-58.45);
+	});
+
+	it("marks distant CIs as geo outliers relative to the cluster median", () => {
+		const quality = summarizeClusterGeoQuality([
+			{ id: "near-1", location: { lat: -34.6, long: -58.4 } },
+			{ id: "near-2", location: { lat: -34.61, long: -58.41 } },
+			{ id: "near-3", location: { lat: -34.62, long: -58.42 } },
+			{ id: "far", location: { lat: -31.4, long: -64.2 } },
+		]);
+
+		expect(quality.outlierNodeIds.has("far")).toBe(true);
+		expect(quality.outlierNodeIds.has("near-1")).toBe(false);
 	});
 });

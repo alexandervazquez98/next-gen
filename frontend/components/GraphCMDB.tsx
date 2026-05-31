@@ -9,6 +9,7 @@ import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
 import {
 	clampClusterCenterToBounds,
 	getBoundedClusterDelta,
+	summarizeClusterGeoQuality,
 } from "./graphLayout";
 
 interface GraphCMDBProps {
@@ -179,48 +180,28 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			string,
 			{ x: number; y: number; radius: number; count: number; hasGeo: boolean }
 		> = {};
-		const isValidCoordinate = (lat: unknown, lon: unknown) =>
-			typeof lat === "number" &&
-			typeof lon === "number" &&
-			Number.isFinite(lat) &&
-			Number.isFinite(lon) &&
-			lat >= -90 &&
-			lat <= 90 &&
-			lon >= -180 &&
-			lon <= 180;
-		const median = (values: number[]) => {
-			const sorted = values.slice().sort((a, b) => a - b);
-			const mid = Math.floor(sorted.length / 2);
-			return sorted.length % 2 === 0
-				? (sorted[mid - 1] + sorted[mid]) / 2
-				: sorted[mid];
-		};
+		const clusterGeoQuality = new Map<
+			string,
+			ReturnType<typeof summarizeClusterGeoQuality>
+		>();
 		const clusterRadius = (count: number) =>
 			Math.min(180, Math.max(82, 34 + Math.sqrt(count) * 32));
 		const clusterBounds = { width, height, padding: 24 };
 		if (groupByLocation && clusterEntries.length > 0) {
 			const layouts = clusterEntries.map(([clusterName, group], index) => {
-				const coords = group
-					.map((node) => ({
-						lat: node.location?.lat,
-						lon: node.location?.long,
-					}))
-					.filter(({ lat, lon }) => isValidCoordinate(lat, lon)) as Array<{
-					lat: number;
-					lon: number;
-				}>;
+				const quality = summarizeClusterGeoQuality(group);
+				clusterGeoQuality.set(clusterName, quality);
 				return {
 					clusterName,
 					group,
 					index,
 					radius: clusterRadius(group.length),
-					geo:
-						coords.length > 0
-							? {
-									lat: median(coords.map((c) => c.lat)),
-									lon: median(coords.map((c) => c.lon)),
-								}
-							: null,
+					geo: quality.medianCoordinate
+						? {
+								lat: quality.medianCoordinate.lat,
+								lon: quality.medianCoordinate.long,
+							}
+						: null,
 				};
 			});
 			const geoLayouts = layouts.filter((layout) => layout.geo);
@@ -532,6 +513,8 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			const cached = nodeStateRef.current.get(node.id);
 			const target = getClusterTarget(node);
 			n.clusterName = getClusterName(node);
+			const quality = clusterGeoQuality.get(n.clusterName);
+			n.isGeoOutlier = quality?.outlierNodeIds.has(node.id) ?? false;
 			n.targetX = target.x;
 			n.targetY = target.y;
 
@@ -613,6 +596,24 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			typeof endpoint === "object"
 				? endpoint
 				: validNodeById.get(endpoint) || nodeById.get(endpoint);
+		const clusterQualityTooltip = (name: string) => {
+			const center = clusterCenters[name];
+			const quality = clusterGeoQuality.get(name);
+			if (!center || !quality) return `${name}: coordinate quality unavailable`;
+			const notes = [
+				`${name}: ${quality.validCoordinateCount}/${center.count} CIs with valid coordinates`,
+			];
+			if (!center.hasGeo) {
+				notes.push("Fallback lane: no valid coordinates in this cluster");
+			}
+			if (quality.missingCoordinateCount > 0) {
+				notes.push(`${quality.missingCoordinateCount} CIs without coordinates`);
+			}
+			if (quality.outlierNodeIds.size > 0) {
+				notes.push(`${quality.outlierNodeIds.size} possible geo outlier CIs`);
+			}
+			return notes.join(" • ");
+		};
 
 		const clusterSelection = groupByLocation
 			? container
@@ -631,6 +632,10 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 						setSelectedCluster((current) => (current === name ? null : name));
 					})
 			: null;
+
+		clusterSelection
+			?.append("title")
+			.text(([name]) => clusterQualityTooltip(name));
 
 		clusterSelection
 			?.append("circle")
@@ -686,6 +691,37 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			.attr("font-weight", 800)
 			.attr("letter-spacing", "0.05em")
 			.text(([name, center]) => `${name} (${center.count})`);
+
+		const clusterBadgeSelection = clusterSelection
+			?.append("g")
+			.attr("class", "geo-quality-badges pointer-events-none")
+			.attr("transform", ([, center]) => `translate(0,${center.radius - 20})`);
+
+		clusterBadgeSelection
+			?.append("text")
+			.attr("text-anchor", "middle")
+			.attr("fill", ([name]) =>
+				clusterCenters[name]?.hasGeo ? "#fbbf24" : "#fb7185",
+			)
+			.attr("font-size", "10px")
+			.attr("font-weight", 800)
+			.attr("paint-order", "stroke")
+			.attr("stroke", "#0f172a")
+			.attr("stroke-width", 3)
+			.text(([name]) => {
+				const center = clusterCenters[name];
+				const quality = clusterGeoQuality.get(name);
+				if (!center || !quality) return "";
+				const badges: string[] = [];
+				if (!center.hasGeo) badges.push("sin coords");
+				else if (quality.missingCoordinateCount > 0) {
+					badges.push(`${quality.missingCoordinateCount} sin coords`);
+				}
+				if (quality.outlierNodeIds.size > 0) {
+					badges.push(`${quality.outlierNodeIds.size} outlier`);
+				}
+				return badges.join(" • ");
+			});
 
 		const clusterLinkSelection = container
 			.append("g")
@@ -940,6 +976,23 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				const linkCount = linkCountByNodeId.get(node.id) || 0;
 				return linkCount > 4 ? `+${linkCount} links` : "";
 			});
+
+		nodeSelection
+			.append("text")
+			.attr("dy", "-3.8em")
+			.attr("text-anchor", "middle")
+			.attr("fill", "#fb7185")
+			.attr("font-size", "9px")
+			.attr("font-weight", 800)
+			.attr("paint-order", "stroke")
+			.attr("stroke", "#0f172a")
+			.attr("stroke-width", 3)
+			.attr("class", "geo-outlier-badge pointer-events-none")
+			.text((node: any) =>
+				selectedCluster === node.clusterName && node.isGeoOutlier
+					? "geo outlier"
+					: "",
+			);
 
 		const enforceContainment = () => {
 			validNodes.forEach((node: any) => {
