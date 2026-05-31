@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 from typing import List, Dict, Any, Optional, Set
 import importlib
 import json
@@ -249,11 +250,22 @@ def execute_mass_update(source_filter, target_filter, old_rel, new_rel, allowed_
 def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locations=None, is_admin=False):
     driver = get_db()
     where, params = [], {}
-    if layer: where.append("n.layer = $layer"); params["layer"] = layer
-    if location: where.append("n.location_name = $location"); params["location"] = location
-    if owner: where.append("n.owner = $owner"); params["owner"] = owner
+
+    def normalize_filter(value):
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    layers = normalize_filter(layer)
+    locations = normalize_filter(location)
+    owners = normalize_filter(owner)
+    if layers: where.append("n.layer IN $layers"); params["layers"] = layers
+    if locations: where.append("n.location_name IN $locations"); params["locations"] = locations
+    if owners: where.append("n.owner IN $owners"); params["owners"] = owners
     if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
-    w_str = (" WHERE " + " AND ".join(where)) if where else ""
+    w_str = (" AND " + " AND ".join(where)) if where else ""
     with driver.session() as session:
         # Build the query: only CIs with valid location coordinates
         node_query = f"""
@@ -303,14 +315,15 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
         link_filters = []
         security_filter = None
         for cond in where:
-            if "n." in cond:
-                # Replace n. prefix with a. and b. for the link query
-                link_filters.append(cond.replace("n.", "a."))
-                link_filters.append(cond.replace("n.", "b."))
             # Extract security filter to apply separately
             if "allowed_locations" in cond:
                 # Transform to apply to both endpoints a and b
                 security_filter = cond.replace("n.", "a.") + " OR " + cond.replace("n.", "b.")
+                continue
+            if "n." in cond:
+                # Replace n. prefix with a. and b. for the link query
+                link_filters.append(cond.replace("n.", "a."))
+                link_filters.append(cond.replace("n.", "b."))
 
         # Build the link query with proper AND/OR structure:
         # Security is always AND'd, user filters are OR'd per condition group

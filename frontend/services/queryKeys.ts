@@ -7,6 +7,11 @@ export const queryKeys = {
 	activeEvents: () => ["events", "CONSOLE"] as const,
 	availabilityReport: () => ["events", "availability-report"] as const,
 	eventDetail: (eventId: string) => ["events", "detail", eventId] as const,
-	graphTopology: () => ["graph-topology"] as const,
+	graphTopologyRoot: () => ["graph-topology"] as const,
+	graphTopology: (filters?: {
+		layer?: string | string[];
+		location?: string | string[];
+		owner?: string | string[];
+	}) => ["graph-topology", filters ?? {}] as const,
 	relatedEvents: (ciId: string) => ["events", "related", ciId] as const,
 };

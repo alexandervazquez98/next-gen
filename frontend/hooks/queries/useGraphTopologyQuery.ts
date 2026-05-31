@@ -1,9 +1,18 @@
-import { useQuery } from '@tanstack/react-query';
-import { queryKeys } from '../../services/queryKeys';
-import { fetchGraphTopology } from '../../services/queryResources';
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../services/queryKeys";
+import {
+	fetchGraphTopology,
+	type FetchGraphTopologyOptions,
+} from "../../services/queryResources";
 
-export const useGraphTopologyQuery = () => useQuery({
-  queryKey: queryKeys.graphTopology(),
-  queryFn: ({ signal }) => fetchGraphTopology({ signal }),
-  refetchInterval: 30000,
-});
+export type GraphTopologyFilters = Pick<
+	FetchGraphTopologyOptions,
+	"layer" | "location" | "owner"
+>;
+
+export const useGraphTopologyQuery = (filters: GraphTopologyFilters = {}) =>
+	useQuery({
+		queryKey: queryKeys.graphTopology(filters),
+		queryFn: ({ signal }) => fetchGraphTopology({ ...filters, signal }),
+		refetchInterval: 30000,
+	});

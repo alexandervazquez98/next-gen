@@ -17,6 +17,8 @@ Strategy:
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from models.user import User
+from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
@@ -30,6 +32,12 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
 # TestClient
 # ---------------------------------------------------------------------------
 client = TestClient(app)
+app.dependency_overrides[get_current_active_user] = lambda: User(
+    username="test-admin",
+    role="ADMIN",
+    permissions=[],
+    allowed_locations=[],
+)
 
 
 # ===========================================================================
@@ -205,7 +213,7 @@ class TestGraphFull:
     def test_full_graph_returns_empty(self):
         """Should return empty graph when no data exists."""
         with patch("services.link_service.topology_repo") as mock_repo:
-            mock_repo.get_full_graph_data.return_value = ([], [])
+            mock_repo.get_filtered_graph_data.return_value = ([], [])
 
             response = client.get("/api/graph/full")
 
@@ -246,7 +254,7 @@ class TestGraphFull:
         ]
 
         with patch("services.link_service.topology_repo") as mock_repo:
-            mock_repo.get_full_graph_data.return_value = (raw_nodes, raw_links)
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, raw_links)
 
             response = client.get("/api/graph/full")
 
@@ -275,7 +283,7 @@ class TestGraphFull:
         raw_links = []
 
         with patch("services.link_service.topology_repo") as mock_repo:
-            mock_repo.get_full_graph_data.return_value = (raw_nodes, raw_links)
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, raw_links)
 
             response = client.get("/api/graph/full")
 
@@ -306,7 +314,7 @@ class TestGraphFull:
         ]
 
         with patch("services.link_service.topology_repo") as mock_repo:
-            mock_repo.get_full_graph_data.return_value = (raw_nodes, [])
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, [])
 
             response = client.get("/api/graph/full")
 
@@ -323,7 +331,7 @@ class TestGraphFull:
     def test_full_graph_no_auth_required(self):
         """Full graph should NOT require authentication (documented gap)."""
         with patch("services.link_service.topology_repo") as mock_repo:
-            mock_repo.get_full_graph_data.return_value = ([], [])
+            mock_repo.get_filtered_graph_data.return_value = ([], [])
 
             response = client.get("/api/graph/full")
 
