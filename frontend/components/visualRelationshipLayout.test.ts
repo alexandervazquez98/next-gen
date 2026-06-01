@@ -64,6 +64,173 @@ describe("visual relationship layout", () => {
 		expect(east.anchorY).toBe(origin.anchorY);
 	});
 
+	it("groups editor nodes by location and distributes them inside cluster targets", () => {
+		const graph = buildEditorForceGraphLayout(
+			[
+				...Array.from({ length: 8 }, (_, index) =>
+					baseNode(`a-${index}`, {
+						location_name: "City A",
+						location: { lat: 19.4326, long: -99.1332 },
+					}),
+				),
+				...Array.from({ length: 4 }, (_, index) =>
+					baseNode(`b-${index}`, {
+						location_name: "City B",
+						location: { lat: 20.5888, long: -100.3899 },
+					}),
+				),
+			],
+			[],
+			{ ticks: 0, width: 2200, height: 1400 },
+		).nodes;
+		const cityA = graph.filter(
+			(node) => node.sourceNode.location_name === "City A",
+		);
+		const cityB = graph.filter(
+			(node) => node.sourceNode.location_name === "City B",
+		);
+		const cityASpread = new Set(
+			cityA.map(
+				(node) => `${Math.round(node.anchorX)}:${Math.round(node.anchorY)}`,
+			),
+		);
+		const cityACenterX =
+			cityA.reduce((sum, node) => sum + node.anchorX, 0) / cityA.length;
+		const cityBCenterX =
+			cityB.reduce((sum, node) => sum + node.anchorX, 0) / cityB.length;
+
+		expect(cityASpread.size).toBe(cityA.length);
+		expect(Math.abs(cityACenterX - cityBCenterX)).toBeGreaterThan(200);
+	});
+
+	it("can place highly related CIs closer to the cluster center", () => {
+		const nodes = [
+			...Array.from({ length: 4 }, (_, index) =>
+				baseNode(`a-${index + 1}`, {
+					location_name: "City A",
+					location: { lat: 19.4326, long: -99.1332 },
+				}),
+			),
+			baseNode("b-1", {
+				location_name: "City B",
+				location: { lat: 20.5888, long: -100.3899 },
+			}),
+		];
+		const relationshipLinks = [
+			{
+				source: "a-4",
+				target: "a-1",
+				source_label: "a-4",
+				target_label: "a-1",
+				relationship: "CONNECTS_TO",
+			},
+			{
+				source: "a-4",
+				target: "a-2",
+				source_label: "a-4",
+				target_label: "a-2",
+				relationship: "CONNECTS_TO",
+			},
+			{
+				source: "a-4",
+				target: "a-3",
+				source_label: "a-4",
+				target_label: "a-3",
+				relationship: "CONNECTS_TO",
+			},
+		];
+		const radial = buildEditorForceGraphLayout(nodes, relationshipLinks, {
+			ticks: 0,
+			width: 2200,
+			height: 1400,
+			clusterPlacementMode: "radial",
+		}).nodes;
+		const relationshipAware = buildEditorForceGraphLayout(
+			nodes,
+			relationshipLinks,
+			{
+				ticks: 0,
+				width: 2200,
+				height: 1400,
+				clusterPlacementMode: "relationshipAware",
+			},
+		).nodes;
+		const clusterCenter = (items: typeof radial) => {
+			const cityA = items.filter(
+				(node) => node.sourceNode.location_name === "City A",
+			);
+			return {
+				x: cityA.reduce((sum, node) => sum + node.anchorX, 0) / cityA.length,
+				y: cityA.reduce((sum, node) => sum + node.anchorY, 0) / cityA.length,
+			};
+		};
+		const distanceFromCityACenter = (items: typeof radial, id: string) => {
+			const center = clusterCenter(items);
+			const node = items.find((item) => item.id === id)!;
+			return Math.hypot(node.anchorX - center.x, node.anchorY - center.y);
+		};
+
+		expect(distanceFromCityACenter(relationshipAware, "a-4")).toBeLessThan(
+			distanceFromCityACenter(radial, "a-4"),
+		);
+	});
+
+	it("packs filtered editor clusters closer together without changing full-view anchors", () => {
+		const nodes = [
+			...Array.from({ length: 3 }, (_, index) =>
+				baseNode(`north-${index}`, {
+					location_name: "North",
+					location: { lat: 26.9, long: -101.4 },
+				}),
+			),
+			...Array.from({ length: 3 }, (_, index) =>
+				baseNode(`center-${index}`, {
+					location_name: "Center",
+					location: { lat: 20.6, long: -100.4 },
+				}),
+			),
+			...Array.from({ length: 3 }, (_, index) =>
+				baseNode(`south-${index}`, {
+					location_name: "South",
+					location: { lat: 16.8, long: -99.9 },
+				}),
+			),
+		];
+		const full = buildEditorForceGraphLayout(nodes, [], {
+			ticks: 0,
+			width: 3000,
+			height: 2200,
+		}).nodes;
+		const compact = buildEditorForceGraphLayout(nodes, [], {
+			ticks: 0,
+			width: 3000,
+			height: 2200,
+			compactClusters: true,
+		}).nodes;
+		const centerFor = (items: typeof full, location: string) => {
+			const group = items.filter(
+				(node) => node.sourceNode.location_name === location,
+			);
+			return {
+				x: group.reduce((sum, node) => sum + node.anchorX, 0) / group.length,
+				y: group.reduce((sum, node) => sum + node.anchorY, 0) / group.length,
+			};
+		};
+		const distance = (
+			a: ReturnType<typeof centerFor>,
+			b: ReturnType<typeof centerFor>,
+		) => Math.hypot(a.x - b.x, a.y - b.y);
+
+		expect(
+			distance(centerFor(compact, "North"), centerFor(compact, "South")),
+		).toBeLessThan(
+			distance(centerFor(full, "North"), centerFor(full, "South")),
+		);
+		expect(centerFor(full, "Center").x).not.toBe(
+			centerFor(compact, "Center").x,
+		);
+	});
+
 	it("keeps editor force graph fallback positions stable across input order changes", () => {
 		const nodes = [baseNode("b"), baseNode("a"), baseNode("c")];
 		const first = buildEditorForceGraphLayout(nodes, [], { ticks: 0 }).nodes;

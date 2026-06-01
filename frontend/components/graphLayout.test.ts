@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+	GRAPH_NODE_COLLISION_RADIUS,
 	clampClusterCenterToBounds,
+	estimateClusterRadius,
 	getBoundedClusterDelta,
+	getClusterInnerRadius,
+	getClusterNodeTarget,
 	isValidGeoCoordinate,
 	projectGeoPointsToCanvas,
 	resolveClusterOverlaps,
@@ -54,6 +58,35 @@ describe("graph layout bounds", () => {
 			result.a.y - result.b.y,
 		);
 		expect(distance).toBeGreaterThanOrEqual(199);
+	});
+
+	it("sizes dense clusters with enough inner room for node collision", () => {
+		const smallRadius = estimateClusterRadius(3);
+		const denseRadius = estimateClusterRadius(24);
+
+		expect(smallRadius).toBeGreaterThan(110);
+		expect(denseRadius).toBeGreaterThan(smallRadius);
+		expect(getClusterInnerRadius(denseRadius)).toBeGreaterThan(
+			GRAPH_NODE_COLLISION_RADIUS * 4,
+		);
+	});
+
+	it("distributes cluster node targets across the cluster interior", () => {
+		const center = { x: 500, y: 500, radius: estimateClusterRadius(12) };
+		const targets = Array.from({ length: 12 }, (_, index) =>
+			getClusterNodeTarget(center, index, 12),
+		);
+		const averageY =
+			targets.reduce((sum, target) => sum + target.y, 0) / targets.length;
+		const bottomHalfCount = targets.filter(
+			(target) => target.y > center.y,
+		).length;
+
+		expect(Math.abs(averageY - center.y)).toBeLessThan(
+			getClusterInnerRadius(center.radius) * 0.2,
+		);
+		expect(bottomHalfCount).toBeGreaterThan(3);
+		expect(bottomHalfCount).toBeLessThan(9);
 	});
 });
 

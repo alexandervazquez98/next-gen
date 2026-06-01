@@ -7,8 +7,12 @@ import { useGraphTopologyQuery } from "../hooks/queries/useGraphTopologyQuery";
 import { useCategoriesQuery } from "../hooks/queries/useCategoriesQuery";
 import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
 import {
+	GRAPH_NODE_COLLISION_RADIUS,
 	clampClusterCenterToBounds,
+	estimateClusterRadius,
 	getBoundedClusterDelta,
+	getClusterInnerRadius,
+	getClusterNodeTarget,
 	isValidGeoCoordinate,
 	projectGeoPointsToCanvas,
 	resolveClusterOverlaps,
@@ -202,8 +206,6 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			string,
 			ReturnType<typeof summarizeClusterGeoQuality>
 		>();
-		const clusterRadius = (count: number) =>
-			Math.min(180, Math.max(82, 34 + Math.sqrt(count) * 32));
 		const clusterBounds = { width, height, padding: 24 };
 		if (groupByLocation && clusterEntries.length > 0) {
 			const layouts = clusterEntries.map(([clusterName, group], index) => {
@@ -213,7 +215,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 					clusterName,
 					group,
 					index,
-					radius: clusterRadius(group.length),
+					radius: estimateClusterRadius(group.length),
 					geo: quality.medianCoordinate
 						? {
 								lat: quality.medianCoordinate.lat,
@@ -364,7 +366,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 			if (!groupByLocation) return { x, y };
 			const center = clusterCenters[clusterName];
 			if (!center) return { x, y };
-			const maxRadius = Math.max(0, center.radius - 38);
+			const maxRadius = getClusterInnerRadius(center.radius);
 			const dx = x - center.x;
 			const dy = y - center.y;
 			const distance = Math.hypot(dx, dy);
@@ -385,20 +387,7 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				y: height / 2,
 				radius: 90,
 			};
-			if (info.total === 1) return { x: center.x, y: center.y };
-
-			const maxRadius = Math.max(0, center.radius - 44);
-			const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-			const normalizedIndex = info.index + 0.5;
-			const radius = Math.min(
-				maxRadius,
-				Math.sqrt(normalizedIndex / info.total) * maxRadius,
-			);
-			const angle = info.index * goldenAngle - Math.PI / 2;
-			return {
-				x: center.x + Math.cos(angle) * radius,
-				y: center.y + Math.sin(angle) * radius,
-			};
+			return getClusterNodeTarget(center, info.index, info.total);
 		};
 
 		const defs = container.append("defs");
@@ -853,23 +842,29 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				"charge",
 				d3
 					.forceManyBody()
-					.strength(clusterMode ? -55 : groupByLocation ? -140 : -420),
+					.strength(clusterMode ? -8 : groupByLocation ? -140 : -420),
 			)
-			.force("center", d3.forceCenter(width / 2, height / 2).strength(0.02))
-			.force("collision", d3.forceCollide().radius(38).iterations(2))
+			.force(
+				"center",
+				d3.forceCenter(width / 2, height / 2).strength(clusterMode ? 0 : 0.02),
+			)
+			.force(
+				"collision",
+				d3.forceCollide().radius(GRAPH_NODE_COLLISION_RADIUS).iterations(2),
+			)
 			.force(
 				"x",
 				d3
 					.forceX()
 					.x((d: any) => d.targetX ?? width / 2)
-					.strength(groupByLocation ? 0.58 : 0.22),
+					.strength(clusterMode ? 0.9 : groupByLocation ? 0.58 : 0.22),
 			)
 			.force(
 				"y",
 				d3
 					.forceY()
 					.y((d: any) => d.targetY ?? height / 2)
-					.strength(groupByLocation ? 0.58 : 0.22),
+					.strength(clusterMode ? 0.9 : groupByLocation ? 0.58 : 0.22),
 			)
 			.alpha(cachedNodesExist ? 0.18 : 1.0);
 

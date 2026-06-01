@@ -109,19 +109,35 @@ describe("VisualRelationshipEditor", () => {
 		mockApiDelete.mockResolvedValue({});
 	});
 
-	it("does not attach d3 drag behavior in the visual editor graph path", () => {
+	it("attaches session-only CI dragging and placement controls", () => {
 		const source = readFileSync(
 			path.resolve(process.cwd(), "components/VisualRelationshipEditor.tsx"),
 			"utf8",
 		);
 
-		expect(source).not.toMatch(/\bd3\s*\.\s*drag\s*\(/);
-		expect(source).not.toMatch(
-			/import\s*\{[^}]*\bdrag\b[^}]*\}\s*from\s*["']d3["']/,
+		expect(source).toMatch(/\.drag<SVGGElement, EditorGraphNodeDatum>\s*\(/);
+		expect(source).toContain("constrainNodeToCluster");
+		expect(source).toContain("nodePositionCacheRef.current.set(node.id");
+
+		render(
+			<VisualRelationshipEditor
+				nodes={nodes}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
 		);
+
+		expect(
+			screen.getByRole("button", { name: "Auto Links" }),
+		).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Radial" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Reset View" }),
+		).toBeInTheDocument();
 	});
 
-	it("uses GraphCMDB-style zoom root without static cluster bubbles", () => {
+	it("uses GraphCMDB-style zoom root with relationship cluster bubbles", () => {
 		render(
 			<VisualRelationshipEditor
 				nodes={nodes}
@@ -133,9 +149,9 @@ describe("VisualRelationshipEditor", () => {
 
 		const svg = screen.getByLabelText("Visual CI relationship map");
 		expect(svg.querySelector(".visual-editor-zoom-root")).toBeInTheDocument();
+		expect(svg.querySelector(".relationship-clusters")).toBeInTheDocument();
 		expect(svg.querySelector(".relationship-links")).toBeInTheDocument();
 		expect(svg.querySelector(".relationship-nodes")).toBeInTheDocument();
-		expect(svg.querySelector(".relationship-clusters")).not.toBeInTheDocument();
 	});
 
 	it("uses broad zoom bounds and removes zoom listeners on cleanup", () => {

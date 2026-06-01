@@ -10,8 +10,10 @@ import {
 } from "./relationshipCapabilities";
 import {
 	buildEditorForceGraphLayout,
+	editorClusterName,
 	getEditorStatusVisual,
 	truncateGraphLabel,
+	type EditorClusterPlacementMode,
 	type EditorGraphNodeDatum,
 	type EditorNodePosition,
 	VISUAL_EDITOR_VIEWBOX_HEIGHT,
@@ -103,7 +105,14 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	const [ciError, setCiError] = useState("");
 	const [ciSaving, setCiSaving] = useState(false);
 	const [selectedLayers, setSelectedLayers] = useState<string[]>([]);
+	const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
+	const [locationSearch, setLocationSearch] = useState("");
+	const [graphSearch, setGraphSearch] = useState("");
+	const [clusterPlacementMode, setClusterPlacementMode] =
+		useState<EditorClusterPlacementMode>("relationshipAware");
+	const [viewResetNonce, setViewResetNonce] = useState(0);
 	const knownLayerLabelsRef = useRef<string[]>([]);
+	const knownLocationLabelsRef = useRef<string[]>([]);
 	const graphSvgRef = useRef<SVGSVGElement>(null);
 	const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
 	const nodePositionCacheRef = useRef<Map<string, EditorNodePosition>>(
@@ -125,6 +134,23 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.map(([label, count]) => ({ label, count }))
 			.sort((a, b) => a.label.localeCompare(b.label));
 	}, [nodes]);
+	const locationOptions = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const node of nodes) {
+			const location = node.location_name || "Unassigned";
+			counts.set(location, (counts.get(location) ?? 0) + 1);
+		}
+		return Array.from(counts.entries())
+			.map(([label, count]) => ({ label, count }))
+			.sort((a, b) => a.label.localeCompare(b.label));
+	}, [nodes]);
+	const filteredLocationOptions = useMemo(() => {
+		const query = locationSearch.trim().toLowerCase();
+		if (!query) return locationOptions;
+		return locationOptions.filter((option) =>
+			option.label.toLowerCase().includes(query),
+		);
+	}, [locationOptions, locationSearch]);
 
 	useEffect(() => {
 		const available = layerOptions.map((option) => option.label);
@@ -143,9 +169,69 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		});
 	}, [layerOptions]);
 
+	useEffect(() => {
+		const available = locationOptions.map((option) => option.label);
+		const previousAvailable = knownLocationLabelsRef.current;
+		knownLocationLabelsRef.current = available;
+
+		setSelectedLocations((current) => {
+			const availableSet = new Set(available);
+			const previousAvailableSet = new Set(previousAvailable);
+			const preserved = current.filter((location) =>
+				availableSet.has(location),
+			);
+			const newlyDiscovered = available.filter(
+				(location) => !previousAvailableSet.has(location),
+			);
+			const next = [...preserved, ...newlyDiscovered];
+			return sameLayers(current, next) ? current : next;
+		});
+	}, [locationOptions]);
+
+	const searchableText = (value: unknown): string => {
+		if (value === null || value === undefined) return "";
+		if (
+			typeof value === "string" ||
+			typeof value === "number" ||
+			typeof value === "boolean"
+		) {
+			return String(value);
+		}
+		if (Array.isArray(value)) return value.map(searchableText).join(" ");
+		if (typeof value === "object") {
+			return Object.entries(value as Record<string, unknown>)
+				.map(([key, entryValue]) => `${key} ${searchableText(entryValue)}`)
+				.join(" ");
+		}
+		return "";
+	};
+	const normalizedGraphSearch = graphSearch.trim().toLowerCase();
+	const nodeMatchesGraphSearch = useCallback(
+		(node: GraphNode) => {
+			if (!normalizedGraphSearch) return true;
+			return searchableText({
+				...node,
+				metadata: node.metadata,
+				clusterName: editorClusterName(node),
+			})
+				.toLowerCase()
+				.includes(normalizedGraphSearch);
+		},
+		[normalizedGraphSearch],
+	);
+	const matchingNodeIds = useMemo(() => {
+		if (!normalizedGraphSearch) return new Set<string>();
+		return new Set(nodes.filter(nodeMatchesGraphSearch).map((node) => node.id));
+	}, [nodes, nodeMatchesGraphSearch, normalizedGraphSearch]);
 	const visibleNodes = useMemo(
-		() => nodes.filter((node) => selectedLayers.includes(nodeLayer(node))),
-		[nodes, selectedLayers],
+		() =>
+			nodes.filter(
+				(node) =>
+					selectedLayers.includes(nodeLayer(node)) &&
+					selectedLocations.includes(node.location_name || "Unassigned") &&
+					nodeMatchesGraphSearch(node),
+			),
+		[nodes, selectedLayers, selectedLocations, nodeMatchesGraphSearch],
 	);
 	const visibleNodeIds = useMemo(
 		() => new Set(visibleNodes.map((node) => node.id)),
@@ -159,6 +245,9 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			),
 		[ciLinks, visibleNodeIds],
 	);
+	const compactLocationClusters =
+		selectedLocations.length > 0 &&
+		selectedLocations.length < locationOptions.length;
 	const nodeMap = useMemo(
 		() => new Map(nodes.map((node) => [node.id, node])),
 		[nodes],
@@ -197,6 +286,29 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 	};
 	const clearAllLayers = () => {
 		setSelectedLayers([]);
+	};
+	const toggleLocation = (location: string) => {
+		setSelectedLocations((current) =>
+			current.includes(location)
+				? current.filter((item) => item !== location)
+				: [...current, location],
+		);
+	};
+	const selectAllLocations = () => {
+		setSelectedLocations(locationOptions.map((option) => option.label));
+	};
+	const clearAllLocations = () => {
+		setSelectedLocations([]);
+	};
+	const resetGraphView = () => {
+		setSelectedLayers(layerOptions.map((option) => option.label));
+		setSelectedLocations(locationOptions.map((option) => option.label));
+		setLocationSearch("");
+		setGraphSearch("");
+		nodePositionCacheRef.current.clear();
+		graphLayoutKeyRef.current = "";
+		zoomTransformRef.current = d3.zoomIdentity;
+		setViewResetNonce((current) => current + 1);
 	};
 
 	const updateCiForm = (field: keyof CiFormState, value: string) => {
@@ -293,8 +405,27 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const svgElement = graphSvgRef.current;
 		if (!svgElement) return;
 
+		const viewportRect = svgElement.getBoundingClientRect();
+		const viewportWidth = viewportRect.width || svgElement.clientWidth || 1200;
+		const viewportHeight =
+			viewportRect.height || svgElement.clientHeight || 800;
+		const graphWidth = VISUAL_EDITOR_VIEWBOX_WIDTH;
+		const graphHeight = VISUAL_EDITOR_VIEWBOX_HEIGHT;
 		const graphLayoutKey = JSON.stringify({
-			nodes: visibleNodes.map((node) => node.id).sort(),
+			version: "clustered-scaled-v3",
+			width: graphWidth,
+			height: graphHeight,
+			compactLocationClusters,
+			clusterPlacementMode,
+			viewResetNonce,
+			nodes: visibleNodes
+				.map((node) => {
+					const clusterName =
+						(node as typeof node & { cluster_name?: string }).cluster_name ??
+						"";
+					return `${node.id}:${clusterName}:${node.location_name ?? ""}:${node.owner ?? ""}:${node.location?.lat ?? ""}:${node.location?.long ?? ""}`;
+				})
+				.sort(),
 			links: visibleCiLinks
 				.map((link) => `${link.source}->${link.target}:${link.relationship}`)
 				.sort(),
@@ -304,6 +435,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		const graph = buildEditorForceGraphLayout(visibleNodes, visibleCiLinks, {
 			nodePositionCache: nodePositionCacheRef.current,
 			ticks: reuseCachedLayout ? 0 : undefined,
+			width: graphWidth,
+			height: graphHeight,
+			compactClusters: compactLocationClusters,
+			clusterPlacementMode,
 		});
 		const graphNodes = graph.nodes;
 		const graphLinks = graph.links;
@@ -313,23 +448,143 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		);
 
 		const svg = d3.select(svgElement);
+		svg.attr("width", viewportWidth).attr("height", viewportHeight);
 		svg.selectAll("*").remove();
 
 		const container = svg.append("g").attr("class", "visual-editor-zoom-root");
+		const initialTransform =
+			zoomTransformRef.current === d3.zoomIdentity
+				? d3.zoomIdentity.translate(
+						(viewportWidth - graphWidth) / 2,
+						(viewportHeight - graphHeight) / 2,
+					)
+				: zoomTransformRef.current;
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
+			.extent([
+				[0, 0],
+				[viewportWidth, viewportHeight],
+			])
 			.scaleExtent([0.01, 12])
 			.on("zoom", (event) => {
 				zoomTransformRef.current = event.transform;
 				container.attr("transform", event.transform);
 			});
 		svg.call(zoom);
-		svg.call(zoom.transform, zoomTransformRef.current);
+		svg.call(zoom.transform, initialTransform);
 
 		const linkEndpointIds = (link: (typeof graphLinks)[number]) => ({
 			sourceId: typeof link.source === "string" ? link.source : link.source.id,
 			targetId: typeof link.target === "string" ? link.target : link.target.id,
 		});
+
+		const clusterGroups = new Map<string, EditorGraphNodeDatum[]>();
+		graphNodes.forEach((node) => {
+			const clusterName = editorClusterName(node.sourceNode);
+			clusterGroups.set(clusterName, [
+				...(clusterGroups.get(clusterName) ?? []),
+				node,
+			]);
+		});
+		const clusterData = Array.from(clusterGroups.entries()).map(
+			([name, members]) => {
+				const x =
+					members.reduce((sum, node) => sum + node.x, 0) / members.length;
+				const y =
+					members.reduce((sum, node) => sum + node.y, 0) / members.length;
+				const memberRadius = Math.max(
+					...members.map((node) => {
+						const visual = statusVisualMap.get(node.id);
+						return Math.hypot(node.x - x, node.y - y) + (visual?.radius ?? 24);
+					}),
+				);
+				return {
+					name,
+					count: members.length,
+					x,
+					y,
+					radius: Math.max(92, memberRadius + 44),
+				};
+			},
+		);
+		const clusterByName = new Map(
+			clusterData.map((cluster) => [cluster.name, cluster]),
+		);
+		const constrainNodeToCluster = (
+			node: EditorGraphNodeDatum,
+			x: number,
+			y: number,
+		) => {
+			const cluster = clusterByName.get(editorClusterName(node.sourceNode));
+			if (!cluster) return { x, y };
+			const nodeRadius = statusVisualMap.get(node.id)?.radius ?? 24;
+			const maxDistance = Math.max(0, cluster.radius - nodeRadius - 14);
+			const dx = x - cluster.x;
+			const dy = y - cluster.y;
+			const distance = Math.hypot(dx, dy);
+			if (distance <= maxDistance || distance === 0) return { x, y };
+			const scale = maxDistance / distance;
+			return {
+				x: cluster.x + dx * scale,
+				y: cluster.y + dy * scale,
+			};
+		};
+		const matchingClusterNames = new Set(
+			clusterData
+				.filter((cluster) =>
+					graphNodes.some(
+						(node) =>
+							editorClusterName(node.sourceNode) === cluster.name &&
+							matchingNodeIds.has(node.id),
+					),
+				)
+				.map((cluster) => cluster.name),
+		);
+		const clusterSelection = container
+			.append("g")
+			.attr("class", "relationship-clusters")
+			.selectAll<SVGGElement, (typeof clusterData)[number]>("g")
+			.data(clusterData)
+			.join("g")
+			.attr("transform", (cluster) => `translate(${cluster.x},${cluster.y})`)
+			.attr("opacity", 0.72);
+
+		clusterSelection
+			.append("circle")
+			.attr("r", (cluster) => cluster.radius)
+			.attr("fill", (cluster) =>
+				matchingClusterNames.has(cluster.name)
+					? "rgba(250, 204, 21, 0.12)"
+					: "rgba(15, 23, 42, 0.42)",
+			)
+			.attr("stroke", (cluster) =>
+				matchingClusterNames.has(cluster.name) ? "#facc15" : "#345bf2",
+			)
+			.attr("stroke-opacity", (cluster) =>
+				matchingClusterNames.has(cluster.name) ? 0.78 : 0.36,
+			)
+			.attr("stroke-width", (cluster) =>
+				matchingClusterNames.has(cluster.name) ? 3 : 1.5,
+			)
+			.attr("stroke-dasharray", "5, 8")
+			.style("pointer-events", "none");
+
+		clusterSelection
+			.append("text")
+			.attr("y", (cluster) => -cluster.radius - 10)
+			.attr("text-anchor", "middle")
+			.attr("fill", "#e5e7eb")
+			.attr("font-size", 10)
+			.attr("font-weight", 900)
+			.attr("paint-order", "stroke")
+			.attr("stroke", "#020617")
+			.attr("stroke-width", 4)
+			.style("pointer-events", "none")
+			.text((cluster) => `${cluster.name} (${cluster.count})`);
+
+		clusterSelection
+			.append("title")
+			.text((cluster) => `${cluster.name}: ${cluster.count} CIs`);
 
 		const linkSelection = container
 			.append("g")
@@ -376,6 +631,27 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 				}
 			});
 
+		const updateLinksForNode = (nodeId: string) => {
+			linkSelection.each(function (link) {
+				const { sourceId, targetId } = linkEndpointIds(link);
+				if (sourceId !== nodeId && targetId !== nodeId) return;
+				const source = positionMap.get(sourceId);
+				const target = positionMap.get(targetId);
+				if (!source || !target) return;
+				const linkGroup = d3.select(this);
+				linkGroup
+					.select<SVGLineElement>("line")
+					.attr("x1", source.x)
+					.attr("y1", source.y)
+					.attr("x2", target.x)
+					.attr("y2", target.y);
+				linkGroup
+					.select<SVGTextElement>("text")
+					.attr("x", (source.x + target.x) / 2)
+					.attr("y", (source.y + target.y) / 2);
+			});
+		};
+		const suppressedClickNodeIds = new Set<string>();
 		const nodeSelection = container
 			.append("g")
 			.attr("class", "relationship-nodes")
@@ -389,7 +665,10 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("data-node-id", (node) => node.id)
 			.attr("transform", (node) => `translate(${node.x},${node.y})`)
 			.attr("class", "cursor-pointer")
-			.on("click", (_event, node) => selectNode(node.id))
+			.on("click", (_event, node) => {
+				if (suppressedClickNodeIds.delete(node.id)) return;
+				selectNode(node.id);
+			})
 			.on("keydown", (event, node) => {
 				if (event.key === "Enter" || event.key === " ") {
 					event.preventDefault();
@@ -405,16 +684,24 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 					? "#345bf2"
 					: node.id === targetId
 						? "#06b6d4"
-						: "#1a1a1a",
+						: matchingNodeIds.has(node.id)
+							? "#3a2f08"
+							: "#1a1a1a",
 			)
-			.attr(
-				"stroke",
-				(node) => statusVisualMap.get(node.id)?.color ?? "#4b5563",
+			.attr("stroke", (node) =>
+				matchingNodeIds.has(node.id)
+					? "#facc15"
+					: (statusVisualMap.get(node.id)?.color ?? "#4b5563"),
 			)
 			.attr("stroke-width", (node) =>
-				node.id === sourceId || node.id === targetId
+				matchingNodeIds.has(node.id) ||
+				node.id === sourceId ||
+				node.id === targetId
 					? 5
 					: (statusVisualMap.get(node.id)?.strokeWidth ?? 2),
+			)
+			.attr("filter", (node) =>
+				matchingNodeIds.has(node.id) ? "drop-shadow(0 0 14px #facc15)" : null,
 			)
 			.attr("class", "node-circle transition-all duration-300");
 
@@ -437,6 +724,45 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("font-weight", 700)
 			.attr("class", "node-label pointer-events-none")
 			.text((node) => truncateGraphLabel(node.label).displayLabel);
+
+		nodeSelection.call(
+			d3
+				.drag<SVGGElement, EditorGraphNodeDatum>()
+				.on("start", function (event, node) {
+					event.sourceEvent?.stopPropagation();
+					d3.select(this).raise().attr("data-dragging", "true");
+					node.vx = 0;
+					node.vy = 0;
+				})
+				.on("drag", function (event, node) {
+					event.sourceEvent?.stopPropagation();
+					const next = constrainNodeToCluster(node, event.x, event.y);
+					node.x = next.x;
+					node.y = next.y;
+					node.vx = 0;
+					node.vy = 0;
+					positionMap.set(node.id, node);
+					nodePositionCacheRef.current.set(node.id, {
+						x: next.x,
+						y: next.y,
+						vx: 0,
+						vy: 0,
+					});
+					suppressedClickNodeIds.add(node.id);
+					d3.select(this).attr("transform", `translate(${next.x},${next.y})`);
+					updateLinksForNode(node.id);
+				})
+				.on("end", function (event, node) {
+					event.sourceEvent?.stopPropagation();
+					d3.select(this).attr("data-dragging", null);
+					nodePositionCacheRef.current.set(node.id, {
+						x: node.x,
+						y: node.y,
+						vx: 0,
+						vy: 0,
+					});
+				}),
+		);
 
 		const selectedStrokeWidth = (node: EditorGraphNodeDatum) =>
 			node.id === sourceId || node.id === targetId
@@ -516,7 +842,16 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 		return () => {
 			svg.on(".zoom", null);
 		};
-	}, [visibleNodes, visibleCiLinks, selectNode, sourceId, targetId]);
+	}, [
+		visibleNodes,
+		visibleCiLinks,
+		selectNode,
+		sourceId,
+		targetId,
+		compactLocationClusters,
+		clusterPlacementMode,
+		viewResetNonce,
+	]);
 
 	const handleCreate = async () => {
 		if (!sourceId || !targetId) {
@@ -592,59 +927,185 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			<div className="grid flex-1 min-h-0 grid-cols-[1fr_360px] gap-4 p-4">
 				<div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),rgba(0,0,0,0.18)_42%,rgba(0,0,0,0.62))]">
 					<div className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:48px_48px]" />
-					<div className="absolute left-4 top-4 z-10 w-56 rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur">
-						<div className="flex items-center justify-between gap-2">
-							<div>
-								<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
-									Layers
-								</p>
-								<p className="text-[10px] text-neutral-500">
-									{visibleNodes.length}/{nodes.length} CIs
-								</p>
+					<div className="absolute left-4 top-4 z-10 max-h-[calc(100%-2rem)] w-72 overflow-y-auto rounded-xl border border-white/10 bg-neutral-950/85 p-3 shadow-xl backdrop-blur custom-scrollbar">
+						<div className="mb-3 flex items-center justify-between gap-2">
+							<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+								View Controls
+							</p>
+							<button
+								type="button"
+								onClick={resetGraphView}
+								className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black uppercase text-neutral-300 hover:border-brand-400 hover:text-white"
+							>
+								Reset View
+							</button>
+						</div>
+						<div className="mb-3 rounded-lg border border-white/5 bg-black/20 p-2">
+							<p className="mb-2 text-[10px] font-black uppercase tracking-widest text-neutral-400">
+								CI Placement
+							</p>
+							<div className="grid grid-cols-2 gap-2 text-[10px] font-black uppercase">
+								<button
+									type="button"
+									onClick={() => setClusterPlacementMode("relationshipAware")}
+									className={`rounded-lg border px-2 py-1 ${clusterPlacementMode === "relationshipAware" ? "border-brand-400 bg-brand-500/20 text-white" : "border-white/10 text-neutral-400 hover:text-white"}`}
+								>
+									Auto Links
+								</button>
+								<button
+									type="button"
+									onClick={() => setClusterPlacementMode("radial")}
+									className={`rounded-lg border px-2 py-1 ${clusterPlacementMode === "radial" ? "border-brand-400 bg-brand-500/20 text-white" : "border-white/10 text-neutral-400 hover:text-white"}`}
+								>
+									Radial
+								</button>
 							</div>
-							<div className="flex gap-2 text-[10px] font-black uppercase">
-								<button
-									type="button"
-									onClick={selectAllLayers}
-									className="text-brand-300 hover:text-brand-200"
-								>
-									All
-								</button>
-								<button
-									type="button"
-									onClick={clearAllLayers}
-									className="text-neutral-400 hover:text-white"
-								>
-									None
-								</button>
+							<p className="mt-2 text-[10px] leading-snug text-neutral-500">
+								Drag CIs inside their cluster to fine-tune this session.
+							</p>
+						</div>
+						<label className="block">
+							<span className="mb-1 block text-[10px] font-black uppercase tracking-widest text-neutral-400">
+								Graph Search
+							</span>
+							<div className="relative">
+								<input
+									value={graphSearch}
+									onChange={(event) => setGraphSearch(event.target.value)}
+									placeholder="Search any CI field..."
+									className="w-full rounded-lg border border-yellow-500/20 bg-neutral-950 py-2 pl-8 pr-8 text-xs text-white outline-none transition-colors focus:border-yellow-400"
+								/>
+								<span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-sm text-yellow-400">
+									search
+								</span>
+								{graphSearch && (
+									<button
+										type="button"
+										onClick={() => setGraphSearch("")}
+										className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-yellow-300"
+									>
+										×
+									</button>
+								)}
+							</div>
+						</label>
+
+						<div className="mt-4">
+							<div className="flex items-center justify-between gap-2">
+								<div>
+									<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+										Layers
+									</p>
+									<p className="text-[10px] text-neutral-500">
+										{visibleNodes.length}/{nodes.length} CIs
+									</p>
+								</div>
+								<div className="flex gap-2 text-[10px] font-black uppercase">
+									<button
+										type="button"
+										onClick={selectAllLayers}
+										className="text-brand-300 hover:text-brand-200"
+									>
+										All
+									</button>
+									<button
+										type="button"
+										onClick={clearAllLayers}
+										className="text-neutral-400 hover:text-white"
+									>
+										None
+									</button>
+								</div>
+							</div>
+							<div className="mt-3 max-h-36 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+								{layerOptions.map((option) => (
+									<label
+										key={option.label}
+										className="flex items-center justify-between gap-2 text-xs text-neutral-300"
+									>
+										<span className="flex items-center gap-2 truncate">
+											<input
+												type="checkbox"
+												checked={selectedLayers.includes(option.label)}
+												onChange={() => toggleLayer(option.label)}
+												aria-label={`${option.label} layer (${option.count} CIs)`}
+											/>
+											<span className="truncate">{option.label}</span>
+										</span>
+										<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
+											{option.count}
+										</span>
+									</label>
+								))}
 							</div>
 						</div>
-						<div className="mt-3 space-y-2">
-							{layerOptions.map((option) => (
-								<label
-									key={option.label}
-									className="flex items-center justify-between gap-2 text-xs text-neutral-300"
-								>
-									<span className="flex items-center gap-2 truncate">
-										<input
-											type="checkbox"
-											checked={selectedLayers.includes(option.label)}
-											onChange={() => toggleLayer(option.label)}
-											aria-label={`${option.label} layer (${option.count} CIs)`}
-										/>
-										<span className="truncate">{option.label}</span>
-									</span>
-									<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
-										{option.count}
-									</span>
-								</label>
-							))}
+
+						<div className="mt-4 border-t border-white/10 pt-4">
+							<div className="flex items-center justify-between gap-2">
+								<div>
+									<p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+										Locations
+									</p>
+									<p className="text-[10px] text-neutral-500">
+										{selectedLocations.length}/{locationOptions.length} selected
+									</p>
+								</div>
+								<div className="flex gap-2 text-[10px] font-black uppercase">
+									<button
+										type="button"
+										onClick={selectAllLocations}
+										aria-label="All locations"
+										className="text-brand-300 hover:text-brand-200"
+									>
+										All
+									</button>
+									<button
+										type="button"
+										onClick={clearAllLocations}
+										aria-label="No locations"
+										className="text-neutral-400 hover:text-white"
+									>
+										None
+									</button>
+								</div>
+							</div>
+							<div className="relative mt-2">
+								<input
+									value={locationSearch}
+									onChange={(event) => setLocationSearch(event.target.value)}
+									placeholder="Search locations..."
+									className="w-full rounded-lg border border-white/5 bg-neutral-950 py-2 pl-8 pr-3 text-xs text-white outline-none transition-colors focus:border-brand-500"
+								/>
+								<span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-sm text-neutral-600">
+									search
+								</span>
+							</div>
+							<div className="mt-3 max-h-44 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+								{filteredLocationOptions.map((option) => (
+									<label
+										key={option.label}
+										className="flex items-center justify-between gap-2 text-xs text-neutral-300"
+									>
+										<span className="flex items-center gap-2 truncate">
+											<input
+												type="checkbox"
+												checked={selectedLocations.includes(option.label)}
+												onChange={() => toggleLocation(option.label)}
+												aria-label={`${option.label} location (${option.count} CIs)`}
+											/>
+											<span className="truncate">{option.label}</span>
+										</span>
+										<span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-neutral-400">
+											{option.count}
+										</span>
+									</label>
+								))}
+							</div>
 						</div>
 					</div>
 					<svg
 						ref={graphSvgRef}
 						className="absolute inset-0 h-full w-full"
-						viewBox={`0 0 ${VISUAL_EDITOR_VIEWBOX_WIDTH} ${VISUAL_EDITOR_VIEWBOX_HEIGHT}`}
 						aria-label="Visual CI relationship map"
 					/>
 					{visibleNodes.length === 0 && (

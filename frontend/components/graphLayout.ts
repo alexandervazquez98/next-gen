@@ -48,6 +48,7 @@ export type GeoProjectionOptions = {
 
 const GEO_OUTLIER_DISTANCE_KM = 50;
 const MIN_GEO_DOMAIN_DEGREES = 0.02;
+export const GRAPH_NODE_COLLISION_RADIUS = 38;
 
 const clamp = (value: number, min: number, max: number) => {
 	if (min > max) return (min + max) / 2;
@@ -181,6 +182,35 @@ export const projectGeoPointsToCanvas = (
 	});
 
 	return result;
+};
+
+export const estimateClusterRadius = (count: number) => {
+	const safeCount = Math.max(1, count);
+	const capacityRadius =
+		48 + Math.sqrt(safeCount) * GRAPH_NODE_COLLISION_RADIUS * 1.45;
+	return Math.min(520, Math.max(110, capacityRadius));
+};
+
+export const getClusterInnerRadius = (clusterRadius: number) =>
+	Math.max(0, clusterRadius - GRAPH_NODE_COLLISION_RADIUS - 12);
+
+export const getClusterNodeTarget = <T extends ClusterCircle>(
+	center: T,
+	index: number,
+	total: number,
+) => {
+	if (total <= 1) return { x: center.x, y: center.y };
+
+	const innerRadius = getClusterInnerRadius(center.radius);
+	const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+	const normalizedIndex = index + 0.5;
+	const radius = Math.sqrt(normalizedIndex / total) * innerRadius;
+	const angle = index * goldenAngle - Math.PI / 2;
+
+	return {
+		x: center.x + Math.cos(angle) * radius,
+		y: center.y + Math.sin(angle) * radius,
+	};
 };
 
 export const clampClusterCenterToBounds = <T extends ClusterCircle>(
