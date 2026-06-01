@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.18] — 2026-06-01
+
 ### Fixed
 - **Technical availability correlation filtering** (issue #242):
   - Excludes propagated/correlated availability events from MTTR/MTBF and availability report calculations.
