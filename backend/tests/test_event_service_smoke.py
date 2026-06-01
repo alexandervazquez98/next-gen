@@ -325,7 +325,8 @@ class TestEventServiceSmoke:
         active_query = next(
             query
             for query in mock_neo4j_session.queries
-            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+            if "e.status IN ['OPEN', 'ACK']" in query["query"]
+            and "NOT e.status IN ['OPEN', 'ACK']" not in query["query"]
         )["query"]
 
         assert "head(collect(DISTINCT cat.name)) AS category" in recovered_query
@@ -350,13 +351,16 @@ class TestEventServiceSmoke:
         active_query = next(
             query
             for query in mock_neo4j_session.queries
-            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+            if "e.status IN ['OPEN', 'ACK']" in query["query"]
+            and "NOT e.status IN ['OPEN', 'ACK']" not in query["query"]
         )["query"]
 
         assert "e.event_type = 'AVAILABILITY'" in recovered_query
         assert "e.event_type = 'AVAILABILITY'" in active_query
         assert "e.availability_source IN ['PING', 'ICMP']" in recovered_query
         assert "e.availability_source IN ['PING', 'ICMP']" in active_query
+        assert "toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'" in recovered_query
+        assert "toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'" in active_query
 
     def test_get_availability_report_excludes_non_availability_event_types(
         self, mock_neo4j_session
@@ -402,6 +406,19 @@ class TestEventServiceSmoke:
                     },
                     "ci": {"id": "ci-2", "name": "Switch-01", "status": "OK"},
                 },
+                {
+                    "e": {
+                        "id": "evt-propagated-recovered",
+                        "ci_id": "ci-3",
+                        "status": "RECOVERED",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "correlation_type": "PROPAGATED",
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "recovered_at": datetime(2026, 1, 1, 1, 30, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-3", "name": "Propagated Switch", "status": "OK"},
+                },
             ],
         )
         mock_neo4j_session.set_response(
@@ -427,6 +444,18 @@ class TestEventServiceSmoke:
                         "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "UNKNOWN"},
+                },
+                {
+                    "e": {
+                        "id": "evt-propagated-active",
+                        "ci_id": "ci-4",
+                        "status": "OPEN",
+                        "event_type": "AVAILABILITY",
+                        "availability_source": "ICMP",
+                        "correlation_type": "propagated",
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                    },
+                    "ci": {"id": "ci-4", "name": "Impacted Radio", "status": "DOWN"},
                 },
             ],
         )
@@ -584,7 +613,8 @@ class TestEventServiceSmoke:
         active_query = next(
             query
             for query in mock_neo4j_session.queries
-            if "WHERE e.status IN ['OPEN', 'ACK']" in query["query"]
+            if "e.status IN ['OPEN', 'ACK']" in query["query"]
+            and "NOT e.status IN ['OPEN', 'ACK']" not in query["query"]
         )
 
         assert recovered_query["params"] == {
