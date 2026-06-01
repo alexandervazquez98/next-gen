@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.19] — 2026-06-01
+
+### Fixed
+- **CMDB and visual relationship editor geo cluster layouts**:
+  - Keeps GraphCMDB geo clusters scaled across a larger virtual canvas while preserving real CI coordinates and reducing municipal overlap.
+  - Adds Visual Relationship Editor cluster bubbles, location checkbox filtering, location search, and GraphCMDB-style yellow graph search highlighting.
+  - Compacts filtered location clusters while Reset View restores the full original geo layout, clears searches, zoom, cache, and session-only manual positions.
+  - Adds Auto Links and Radial CI placement modes plus session-only drag movement constrained inside each cluster.
+
 ## [1.12.18] — 2026-06-01
 
 ### Fixed
