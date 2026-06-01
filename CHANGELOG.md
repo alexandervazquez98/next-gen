@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Technical availability correlation filtering** (issue #242):
+  - Excludes propagated/correlated availability events from MTTR/MTBF and availability report calculations.
+  - Keeps the existing `availability_source` `PING`/`ICMP` source-of-truth filter for direct technical availability evidence.
+  - Adds regression coverage for propagated recovered and active availability events.
+
 ## [1.12.17] — 2026-05-31
 
 ### Fixed

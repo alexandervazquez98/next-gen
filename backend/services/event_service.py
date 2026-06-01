@@ -457,7 +457,20 @@ _SENSITIVE_CI_KEY_PARTS = (
 )
 
 
+def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
+    event_type = str(event_data.get("event_type") or "").upper()
+    availability_source = str(event_data.get("availability_source") or "").upper()
+    correlation_type = str(event_data.get("correlation_type") or "ROOT").upper()
+    return (
+        event_type == "AVAILABILITY"
+        and availability_source in {"PING", "ICMP"}
+        and correlation_type != "PROPAGATED"
+    )
+
+
 def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
+    if not _is_authoritative_availability_event(event_data):
+        return None
     ci_id = event_data.get("ci_id")
     event_type = event_data.get("event_type")
     if not ci_id or not event_type:
@@ -600,6 +613,7 @@ def get_availability_report(
               AND e.recovered_at IS NOT NULL
               AND e.event_type = 'AVAILABILITY'
               AND e.availability_source IN ['PING', 'ICMP']
+              AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'
               AND NOT e.status IN ['OPEN', 'ACK']
               AND e.created_at >= $window_start
               AND e.created_at <= $window_end
@@ -615,10 +629,6 @@ def get_availability_report(
         for record in recovered_result:
             event_data = _node_to_dict(_record_value(record, "e"))
             ci_data = _node_to_dict(_record_value(record, "ci"))
-            if event_data.get("event_type") != "AVAILABILITY":
-                continue
-            if event_data.get("availability_source") not in {"PING", "ICMP"}:
-                continue
             key = _availability_group_key(event_data)
             if key is None:
                 continue
@@ -647,9 +657,10 @@ def get_availability_report(
         active_result = session.run(
             """
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
-            WHERE e.status IN ['OPEN', 'ACK']
-              AND e.event_type = 'AVAILABILITY'
+            WHERE e.event_type = 'AVAILABILITY'
               AND e.availability_source IN ['PING', 'ICMP']
+              AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'
+              AND e.status IN ['OPEN', 'ACK']
               AND e.created_at IS NOT NULL
               AND e.created_at <= $window_end
             OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
@@ -662,10 +673,6 @@ def get_availability_report(
         for record in active_result:
             event_data = _node_to_dict(_record_value(record, "e"))
             ci_data = _node_to_dict(_record_value(record, "ci"))
-            if event_data.get("event_type") != "AVAILABILITY":
-                continue
-            if event_data.get("availability_source") not in {"PING", "ICMP"}:
-                continue
             key = _availability_group_key(event_data)
             if key is None:
                 continue
