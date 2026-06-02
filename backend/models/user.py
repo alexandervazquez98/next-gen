@@ -92,8 +92,21 @@ class User(UserBase):
     force_password_change: Optional[bool] = False
 
 
+class CurrentUserSessionPolicy(BaseModel):
+    profile: str
+    idle_timeout_minutes: int | None = None
+    persistent: bool = False
+
+
 class UserInDB(User):
     password: str
+    session_id: str | None = None
+    session_policy: CurrentUserSessionPolicy | None = None
+
+
+class CurrentUser(User):
+    session_id: str | None = None
+    session_policy: CurrentUserSessionPolicy | None = None
 
 
 class Token(BaseModel):

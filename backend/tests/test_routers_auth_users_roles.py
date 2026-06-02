@@ -39,6 +39,8 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
 from models.user import (
     User,
     UserInDB,
+    CurrentUser,
+    CurrentUserSessionPolicy,
     UserCreate,
     UserUpdate,
     UserPermission,
@@ -81,6 +83,33 @@ def _make_pydantic_user(
         tier=tier,
     )
 
+
+def _make_pydantic_current_user(
+    username: str = "testuser",
+    role: str = "OPERATOR",
+    permissions: list[UserPermission] | None = None,
+    disabled: bool = False,
+    tier: str = "T1",
+    session_id: str = "sess-current-user",
+    profile: str = "standard",
+    idle_timeout_minutes: int | None = 15,
+    persistent: bool = False,
+) -> CurrentUser:
+    """Create a current-user payload matching the users/me response contract."""
+    return CurrentUser(
+        username=username,
+        role=role,
+        permissions=permissions or [],
+        allowed_locations=[],
+        disabled=disabled,
+        tier=tier,
+        session_id=session_id,
+        session_policy=CurrentUserSessionPolicy(
+            profile=profile,
+            idle_timeout_minutes=idle_timeout_minutes,
+            persistent=persistent,
+        ),
+    )
 
 def _make_pydantic_user_in_db(
     username: str = "testuser",
@@ -324,6 +353,95 @@ class TestAuthUsersMe:
         data = response.json()
         assert data["username"] == "testuser"
         assert data["role"] == "OPERATOR"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_get_current_user_includes_session_policy(self):
+        """Session policy metadata must be returned for frontend inactivity decisions."""
+        fake_user = _make_pydantic_current_user(
+            username="testuser",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_VIEW],
+            profile="standard",
+            idle_timeout_minutes=15,
+            persistent=False,
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/auth/users/me")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "testuser"
+        policy = data["session_policy"]
+        assert policy["profile"] == "standard"
+        assert policy["idle_timeout_minutes"] == 15
+        assert policy["persistent"] is False
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_get_current_user_includes_operational_session_policy(self):
+        """Operational policy metadata should be stable for frontend timeout decisions."""
+        fake_user = _make_pydantic_current_user(
+            username="nocuser",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_VIEW],
+            session_id="sess-operational",
+            profile="operational",
+            idle_timeout_minutes=None,
+            persistent=True,
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/auth/users/me")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["session_id"] == "sess-operational"
+        policy = data["session_policy"]
+        assert policy["profile"] == "operational"
+        assert policy["idle_timeout_minutes"] is None
+        assert policy["persistent"] is True
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_get_current_user_allows_missing_session_id(self):
+        """Legacy tokens without sid should produce explicit null session_id."""
+        fake_user = _make_pydantic_current_user(
+            username="legacyuser",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_VIEW],
+            session_id=None,
+            profile="standard",
+            idle_timeout_minutes=15,
+            persistent=False,
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/auth/users/me")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["session_id"] is None
+        assert data["session_policy"]["profile"] == "standard"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 

@@ -29,7 +29,7 @@ from services.session_policy import (
 from utils.security import verify_password, get_password_hash
 from postgres_db import get_pg_db
 from repositories import user_repo
-from models.user import Token, User, PasswordChangeRequest
+from models.user import Token, User, PasswordChangeRequest, CurrentUser
 from models.refresh_token import RefreshTokenResponse
 from middleware.rate_limit import (
     check_rate_limit,
@@ -369,7 +369,7 @@ async def logout(
     return {"status": "success", "message": "Logged out"}
 
 
-@router.get("/users/me", response_model=User)
+@router.get("/users/me", response_model=CurrentUser)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
