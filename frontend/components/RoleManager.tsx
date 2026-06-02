@@ -11,7 +11,7 @@ interface Role {
 }
 
 const ALL_PERMISSIONS = [
-    { category: "Event Management", perms: ["EVENT_VIEW", "EVENT_ACK", "EVENT_CLOSE"] },
+    { category: "Event Management", perms: ["EVENT_VIEW", "EVENT_ACK", "EVENT_CLOSE", "EVENT_FORCED_CLOSE"] },
     { category: "CI Management", perms: ["CI_VIEW", "CI_EDIT", "CI_DELETE"] },
     { category: "Diagnostics", perms: ["RUN_DIAGNOSTICS"] },
     { category: "System", perms: ["USER_MANAGE", "ROLE_MANAGE"] },
@@ -27,9 +27,15 @@ const RoleManager: React.FC = () => {
     });
     const [isNew, setIsNew] = useState(false);
 
+    const canViewRoles = hasPermission('USER_MANAGE') || hasPermission('ROLE_MANAGE') || hasPermission('ADMIN');
+    const canMutateRoles = hasPermission('ROLE_MANAGE') || hasPermission('ADMIN');
+
     useEffect(() => {
+        if (!canViewRoles) {
+            return;
+        }
         fetchRoles();
-    }, []);
+    }, [canViewRoles]);
 
     const fetchRoles = async () => {
         try {
@@ -41,6 +47,9 @@ const RoleManager: React.FC = () => {
     };
 
     const handleEdit = (role: Role) => {
+        if (role.is_system) {
+            return;
+        }
         setCurrentRole(role);
         setIsNew(false);
         setView('edit');
@@ -54,12 +63,22 @@ const RoleManager: React.FC = () => {
 
     const handleSave = async () => {
         const url = isNew ? '/roles/' : `/roles/${currentRole.name}`;
+        const payload = isNew
+            ? {
+                name: currentRole.name,
+                description: currentRole.description,
+                permissions: currentRole.permissions,
+            }
+            : {
+                description: currentRole.description,
+                permissions: currentRole.permissions,
+            };
 
         try {
             if (isNew) {
-                await api.post(url, currentRole);
+                await api.post(url, payload);
             } else {
-                await api.put(url, currentRole);
+                await api.put(url, payload);
             }
             fetchRoles();
             setView('list');
@@ -86,8 +105,8 @@ const RoleManager: React.FC = () => {
         setCurrentRole({ ...currentRole, permissions: Array.from(perms) });
     };
 
-    if (!hasPermission('ROLE_MANAGE') && !hasPermission('ADMIN')) {
-        return <div className="p-8 text-neutral-500">Access Denied. Required: ROLE_MANAGE</div>;
+    if (!canViewRoles) {
+        return <div className="p-8 text-neutral-500">Access Denied. Required: USER_MANAGE or ROLE_MANAGE</div>;
     }
 
     if (view === 'edit') {
@@ -156,13 +175,15 @@ const RoleManager: React.FC = () => {
         <div>
             <div className="flex justify-between items-center mb-6">
                 <h3 className="text-xl font-bold text-white uppercase tracking-wider">Available Roles</h3>
-                <button
-                    onClick={handleCreate}
-                    className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-widest flex items-center gap-2"
-                >
-                    <span className="material-symbols-outlined text-sm">add_security</span>
-                    New Role
-                </button>
+                {canMutateRoles && (
+                    <button
+                        onClick={handleCreate}
+                        className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-widest flex items-center gap-2"
+                    >
+                        <span className="material-symbols-outlined text-sm">add_security</span>
+                        New Role
+                    </button>
+                )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -183,14 +204,16 @@ const RoleManager: React.FC = () => {
                         </div>
 
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {!role.is_system && (
+                            {canMutateRoles && !role.is_system && (
                                 <button onClick={() => handleDelete(role.name)} className="text-red-500 hover:text-red-400 p-2 hover:bg-white/5 rounded-lg" title="Delete">
                                     <span className="material-symbols-outlined text-lg">delete</span>
                                 </button>
                             )}
-                            <button onClick={() => handleEdit(role)} className="text-brand-400 hover:text-white p-2 hover:bg-white/5 rounded-lg" title="Edit">
-                                <span className="material-symbols-outlined text-lg">edit_note</span>
-                            </button>
+                            {canMutateRoles && !role.is_system && (
+                                <button onClick={() => handleEdit(role)} className="text-brand-400 hover:text-white p-2 hover:bg-white/5 rounded-lg" title="Edit">
+                                    <span className="material-symbols-outlined text-lg">edit_note</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 ))}

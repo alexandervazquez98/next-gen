@@ -1,9 +1,51 @@
 
-from typing import List
+from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from services.auth_service import get_current_active_user, check_permission
 from models.user import Role, RoleCreate, RoleUpdate, User, UserPermission
 from database import get_db
+
+
+ALLOWED_PERMISSIONS = {perm.value for perm in UserPermission}
+
+
+def _normalize_and_validate_permissions(permissions: list[Any] | None) -> list[str] | None:
+    """Normalize role permissions to canonical string values and validate against UserPermission."""
+
+    if permissions is None:
+        return None
+
+    normalized: list[str] = []
+    invalid_permissions: list[Any] = []
+
+    for permission in permissions:
+        if not isinstance(permission, str):
+            invalid_permissions.append(permission)
+            continue
+
+        clean = permission.strip()
+        if not clean:
+            invalid_permissions.append(permission)
+            continue
+
+        if clean not in ALLOWED_PERMISSIONS:
+            invalid_permissions.append(clean)
+            continue
+
+        if clean not in normalized:
+            normalized.append(clean)
+
+    if invalid_permissions:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Invalid permissions",
+                "invalid_permissions": invalid_permissions,
+                "allowed_permissions": sorted(ALLOWED_PERMISSIONS),
+            },
+        )
+
+    return normalized
 
 router = APIRouter(
     prefix="/roles",
@@ -61,11 +103,10 @@ async def create_role(role: RoleCreate, current_user: User = Depends(get_current
         is_system: false 
     }) RETURN r
     """
-    
+
     params = role.dict()
-    # permissions enum list to string list
-    params["permissions"] = [p.value for p in role.permissions]
-    
+    params["permissions"] = _normalize_and_validate_permissions(role.permissions)
+
     results, _, _ = driver.execute_query(create_query, **params)
     node = results[0]["r"]
     return Role(**dict(node))
@@ -97,10 +138,10 @@ async def update_role(name: str, role_update: RoleUpdate, current_user: User = D
     
     params = {"name": name, "description": role_update.description}
     if role_update.permissions is not None:
-        params["permissions"] = [p.value for p in role_update.permissions]
+        params["permissions"] = _normalize_and_validate_permissions(role_update.permissions)
     else:
         params["permissions"] = None
-        
+
     results, _, _ = driver.execute_query(update_query, **params)
     return Role(**dict(results[0]["r"]))
 
