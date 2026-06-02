@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.21] — 2026-06-02
+
+### Fixed
+- **Role permission save and access hardening** (PR #249, issue #246):
+  - Fixes role create/update 500s caused by backend enum `.value` access on string permission payloads.
+  - Validates and normalizes role permission strings before persistence, returning actionable 400 responses for invalid values.
+  - Separates RoleManager read vs mutate access so `USER_MANAGE` can view roles while `ROLE_MANAGE`/admin can mutate them.
+  - Prevents system-role edit/delete flows in RoleManager and adds regression coverage for API error handling.
+
 ## [1.12.20] — 2026-06-01
 
 ### Fixed
