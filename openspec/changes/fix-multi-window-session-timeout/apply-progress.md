@@ -1,97 +1,89 @@
-# Apply Progress — PR1 / Backend policy schema foundation
+# Apply Progress — fix-multi-window-session-timeout
 
-Scope: `fix-multi-window-session-timeout` (Issue #188) — **PR1 only**.
+Scope: `fix-multi-window-session-timeout` (Issue #188).
 
-## Status
+## Chain status
 
-- PR selection: **Only PR1** (backend policy/schema foundation), in line with user instruction.
-- Delivery model: `single-pr` exception accepted by user.
-- **Reviewer recommendations addressed in this continuation:**
-  - legacy-row migration backfill and non-null alignment
-  - explicit profile-driven cookie expiry assertions
-  - refresh-session_id continuity on refresh rotation
+- PR1: `fix/session-policy-foundation` -> `main`, opened as PR #245, accepted for review.
+- PR2: `fix/session-refresh-stale-recovery` -> `fix/session-policy-foundation`, backend-only stale refresh/rate-limit slice in progress.
+- PR3/PR4: not started.
 
-## Completed in PR1
+## PR1 summary
 
-### Added
+PR1 completed backend session-policy foundation:
 
 - `backend/services/session_policy.py`
 - `backend/tests/test_session_policy.py`
+- policy metadata on refresh tokens
+- startup migration/backfill for refresh token metadata
+- policy-aware cookie max-age
+- JWT `sid`/`profile` claims
+- refresh `session_id` continuity
 
-### Updated
+PR1 verify accepted the slice for review.
 
-- `backend/services/auth_service.py`
-  - `create_refresh_token` now accepts optional `policy` and `session_id`.
-  - Uses policy to set token expiry and stores session-policy metadata.
-- `backend/models/refresh_token.py`
-  - Added session-policy columns: `session_id`, `policy_profile`, `last_activity_at`, `rotated_at`, `replaced_by_token_id`, `revoked_reason`, `stale_recovery_count`.
-- `backend/routers/auth.py`
-  - Resolves session policy at login/refresh.
-  - Applies policy-aware cookie max-age values.
-- `backend/main.py`
-  - Added `_ensure_refresh_token_schema_migration` and startup call for additive column/index migration.
-- `backend/tests/test_auth_service_refresh.py`
-  - Policy metadata persistence tests for standard/operational profiles.
-- `backend/tests/test_auth_router_refresh.py`
-  - Login cookie assertions were strengthened to verify environment-driven profile-based `refresh_token` `Max-Age` in both standard and operational policies.
-- `openspec/changes/fix-multi-window-session-timeout/tasks.md`
-  - Marked PR1 task steps 1–5 as complete.
+## PR2 summary
 
-## Verification (Strict-TDD evidence)
+PR2 implements backend stale refresh-token recovery and contention handling:
 
-### TDD Cycle Evidence
+- structured `RefreshVerificationStatus` / `RefreshVerificationResult`
+- terminal statuses for missing/expired/revoked/idle-expired/stale-rejected states
+- recoverable stale-rotation status for short concurrent-tab grace window
+- bounded stale recovery count based on session policy
+- rotated token metadata (`rotated_at`, `replaced_by_token_id`, `revoked_reason`)
+- refresh endpoint branches by structured status
+- recoverable stale refresh does not add rate-limit failures
+- stale recovery count reservation uses an atomic conditional update before issuing recovered tokens
+- valid refresh still rotates old token using single-use semantics
+- tests for service-level status handling, atomic recovery reservation, and router/rate-limit behavior
+
+## PR2 incident note
+
+Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth_router_refresh.py`, leaving a partial but coherent backend diff. A fresh incident audit found no conflict markers or syntax failures and recommended continuing manually. The only blocker was a test patch returning a non-JWT `access_token` while decoding it. That test was corrected by letting the real `create_access_token` run.
+
+## Strict-TDD — TDD Cycle Evidence
+
+### PR1
 
 | Phase | Evidence |
 | --- | --- |
-| RED | Added/updated PR1 tests first in:
-`backend/tests/test_session_policy.py`,
-`backend/tests/test_auth_service.py`,
-`backend/tests/test_auth_service_refresh.py`,
-`backend/tests/test_auth_router_refresh.py`.
-New access-token continuity/protocol claims were first asserted in:
-`test_auth_router_refresh.py::test_login_access_token_includes_session_and_profile_claims` and `test_auth_router_refresh.py::test_refresh_includes_session_claim_continuity_and_profile`.
-Also added `test_auth_service.py::test_token_includes_session_and_profile_claims`.
-| GREEN | Implemented code changes to include `sid` + `profile` in access token payloads and preserve `sid` continuity during refresh in:
-- `backend/routers/auth.py`.
-- `backend/services/auth_service.py` already persisted session/policy metadata for refresh tokens (from PR1).
-| TRIANGULATE | Repeated focused matrix check using:
-- `python -m pytest backend/tests/test_session_policy.py`\
-- `python -m pytest backend/tests/test_auth_service.py`\
-- `python -m pytest backend/tests/test_auth_service_refresh.py`\
-- `python -m pytest backend/tests/test_auth_router_refresh.py`
-| REFACTOR | Kept PR1 scope to backend-only and backward-compatible payload shape (`sub` and `role` preserved). |
+| RED | Added/updated PR1 tests first in `backend/tests/test_session_policy.py`, `backend/tests/test_auth_service.py`, `backend/tests/test_auth_service_refresh.py`, and `backend/tests/test_auth_router_refresh.py`. |
+| GREEN | Implemented session policy foundation, refresh token metadata, cookie policy wiring, and JWT `sid`/`profile` claims. |
+| TRIANGULATE | Focused backend tests passed: `47 passed` for session/auth refresh tests and `26 passed` for auth service tests. |
+| REFACTOR | Kept PR1 backend-only and preserved existing `sub`/`role` access token claims. |
 
-### Focused proof command (evidence)
+### PR2
+
+| Phase | Evidence |
+| --- | --- |
+| RED | Added stale-rotation, idle-expiry, terminal status, recoverable stale refresh, and rate-limit non-increment tests in `backend/tests/test_auth_service_refresh.py` and `backend/tests/test_auth_router_refresh.py`. |
+| GREEN | Implemented structured refresh verification result/status, rotation metadata, recoverable stale refresh handling, and router branching. |
+| TRIANGULATE | Ran focused PR2 backend matrix: `cd backend && python -m pytest tests/test_auth_service_refresh.py tests/test_auth_router_refresh.py tests/test_session_policy.py tests/test_auth_service.py tests/test_rate_limit.py` — **97 passed**. |
+| REFACTOR | Kept PR2 backend-only; did not implement frontend singleflight/cross-tab or inactivity UX. |
+
+## Verification commands
+
+### PR1 accepted evidence
 
 - `cd backend && python -m pytest tests/test_session_policy.py tests/test_auth_service_refresh.py tests/test_auth_router_refresh.py`
-  - **Result:** **47 passed**.
+  - **47 passed**
 - `cd backend && python -m pytest tests/test_auth_service.py`
-  - **Result:** **26 passed**.
+  - **26 passed**
 
-### Additional verification
+### PR2 current evidence
 
-- `python -m pytest backend/tests/test_routers_auth_users_roles.py`
-  - **Result:** 3 failures due pre-existing/environmental DB/runtime issues (`psycopg2` hstore OID unpack and unrelated roles test payload enum/string assumptions), plus dependent auth path DB bootstrap. Not introduced by PR1 policy changes.
-- `python -m pytest`
-  - **Result:** existing known suite-level failure in `backend/scripts/test_single_ci_reconcile.py` (`ModuleNotFoundError: No module named 'database'`) observed as before.
+- `cd backend && python -m pytest tests/test_auth_service_refresh.py tests/test_auth_router_refresh.py tests/test_session_policy.py tests/test_auth_service.py tests/test_rate_limit.py`
+  - **97 passed**
 
-## Deviations from design
+## Remaining work
 
-- Startup migration is implemented as a minimal additive DDL guard in `main.py` and now backfills existing rows (`session_id`, `policy_profile`, `last_activity_at`, `stale_recovery_count`) to align model non-null expectations.
-- PR1 is intentionally backend-only; no frontend token-orchestration/inactivity UX work included.
+- PR2 still needs fresh review and SDD verify before commit/PR.
+- PR3: API contract bridge for frontend policy visibility if required.
+- PR4: frontend singleflight, cross-tab coordination, and inactivity UX.
 
-## Remaining work (PR2–PR4)
+## Known risks
 
-- PR2: stale-token recovery state machine, rotation edge cases, and recoverable/terminal refresh statuses.
-- PR3: API contract decisions for policy visibility to frontend.
-- PR4: frontend single-flight refresh, cross-tab coordination, and inactivity behavior.
-
-### PR1-specific follow-up before verify handoff
-
-- Update `test_auth_service_refresh.py` now includes session metadata regression coverage for `verify_refresh_token(..., include_session_metadata=True)`.
-- `routers/auth.py` now threads prior token lineage (`session_id`) into new refresh token creation.
-- Open follow-up: validate startup migration behavior in a real PostgreSQL instance for backfilled legacy rows (especially `CONCAT`/`NOW()` SQL compatibility).
-
-## Workload boundary
-
-- Kept PR1 edits within the requested slice to minimize change size; backend/auth contract foundation only.
+- Stale-token recovery must remain tightly bounded to prevent replay abuse.
+- Browser cross-tab coordination is still not implemented; backend tolerance is PR2's focus.
+- PostgreSQL startup migration/backfill still needs validation against a real PostgreSQL instance.
+- `open-issues-triage.md` remains untracked and outside PR2 scope.
