@@ -21,7 +21,7 @@ def create_hypertable(db: Session):
         print(f"Error creating hypertable: {e}")
         db.rollback()
 
-def insert_metric_value(db: Session, node_id: str, metric_id: str, value: float, timestamp: datetime = None):
+def insert_metric_value(db: Session, node_id: str, metric_id: str, value: float, timestamp: Optional[datetime] = None):
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     
@@ -60,8 +60,8 @@ def get_metric_history(
     metric_id: str, 
     limit: int = 100, 
     hours: int = 24,
-    start_time: str = None,
-    end_time: str = None
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     
     query = db.query(MetricValue).filter(MetricValue.node_id == node_id, MetricValue.metric_id == metric_id)
@@ -83,6 +83,31 @@ def get_metric_history(
     results = query.order_by(MetricValue.time.asc()).limit(limit).all()
     
     return [{"time": r.time, "value": r.value} for r in results]
+
+def get_metric_history_days(
+    db: Session,
+    node_id: str,
+    metric_id: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> List[str]:
+    """Return local/UTC date keys (YYYY-MM-DD) that contain metric samples."""
+    query = db.query(func.date(MetricValue.time)).filter(
+        MetricValue.node_id == node_id,
+        MetricValue.metric_id == metric_id,
+    )
+
+    if start_time and end_time:
+        try:
+            start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            query = query.filter(MetricValue.time >= start, MetricValue.time <= end)
+        except ValueError:
+            pass
+
+    rows = query.distinct().order_by(func.date(MetricValue.time).asc()).all()
+    return [str(row[0]) for row in rows]
+
 
 def get_latest_metrics(db: Session, node_id: str) -> Dict[str, Any]:
     # This is expensive in standard SQL without strict constraints or specialized index usage (Latest LKT).
@@ -136,7 +161,8 @@ def _interpolate_to_grid(
             continue
         elif before is None:
             # Before first source point — use first available
-            result.append({"time": target_time, "value": after["value"]})
+            if after is not None:
+                result.append({"time": target_time, "value": after["value"]})
         elif after is None:
             # After last source point — use last available
             result.append({"time": target_time, "value": before["value"]})
@@ -169,8 +195,8 @@ def get_metric_history_batch(
     node_ids: List[str],
     metric_id: str,
     hours: int = 24,
-    start_time: str = None,
-    end_time: str = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
     limit: int = 1000
 ) -> List[Dict[str, Any]]:
     """

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.20] — 2026-06-01
+
+### Fixed
+- **Analytics metric history controls and chart layout**:
+  - Replaces raw Custom Time Range datetime fields with a calendar and time picker for faster range selection.
+  - Adds history-day highlighting so calendar days with metric samples appear shaded in green.
+  - Adds a metric history day-bucket endpoint for analytics availability shading.
+  - Reserves chart space for Recharts X-axis labels and brush controls so the timeline remains visible in single-CI and multi-CI visualizers.
+
 ## [1.12.19] — 2026-06-01
 
 ### Fixed

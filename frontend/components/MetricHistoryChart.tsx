@@ -196,14 +196,14 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 				className="flex-1 w-full min-h-0 relative"
 				style={{ minWidth: 0, minHeight: 0 }}
 			>
-				<ResponsiveContainer width="99%" height="99%">
+				<ResponsiveContainer width="100%" height="100%">
 					<AreaChart
 						data={displayData}
 						margin={{
 							top: 10,
-							right: 10,
-							left: -20,
-							bottom: hasBrushApplied ? 50 : 0,
+							right: 16,
+							left: 0,
+							bottom: data.length > 0 ? 54 : 16,
 						}}
 						onMouseDown={handleMouseDown}
 						onMouseMove={handleMouseMove}
@@ -245,8 +245,8 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 							}}
 							itemStyle={{ color: "#fff" }}
 							labelStyle={{ color: "#a3a3a3", marginBottom: "4px" }}
-							formatter={(value) => [
-								`${formatMetricValue(value as string | number, unit)}${unit ? ` ${unit}` : ""}`,
+							formatter={(value: string | number) => [
+								`${formatMetricValue(value, unit)}${unit ? ` ${unit}` : ""}`,
 								metricName,
 							]}
 						/>
@@ -298,7 +298,7 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 	};
 
 	return (
-		<div className="bg-surface-800 rounded-xl p-6 border border-white/5 shadow-inner flex flex-col h-full min-h-[300px]">
+		<div className="bg-surface-800 rounded-xl p-6 border border-white/5 shadow-inner flex flex-col h-full min-h-[340px]">
 			<div className="flex justify-between items-center mb-6 flex-shrink-0">
 				<div>
 					<h3 className="text-white font-bold uppercase tracking-tight">

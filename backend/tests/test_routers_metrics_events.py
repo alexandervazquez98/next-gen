@@ -868,6 +868,34 @@ class TestMetricsHistory:
 
         app.dependency_overrides.pop(get_pg_db, None)
 
+    def test_history_days_returns_available_date_keys(self, mock_db):
+        """History-days endpoint returns dates for calendar availability shading."""
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "repositories.metric_repo.get_metric_history_days",
+            return_value=["2026-06-01", "2026-06-02"],
+        ) as mock_history_days:
+            response = client.get(
+                "/api/metrics/ci-001/cpu-load/history-days?start_time=2026-06-01T00:00:00Z&end_time=2026-06-03T00:00:00Z"
+            )
+
+        assert response.status_code == 200
+        assert response.json() == ["2026-06-01", "2026-06-02"]
+        mock_history_days.assert_called_once_with(
+            mock_db,
+            "ci-001",
+            "cpu-load",
+            "2026-06-01T00:00:00Z",
+            "2026-06-03T00:00:00Z",
+        )
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
 
 class TestMultiMetricsHistory:
     """Tests for GET /api/metrics/{metric_id}/history?node_ids=... — multi-CI batch endpoint."""

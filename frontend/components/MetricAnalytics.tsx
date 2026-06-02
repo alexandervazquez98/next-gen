@@ -5,7 +5,12 @@ import MetricHistoryChart from "./MetricHistoryChart";
 import MultiSelectCIs from "./MultiSelectCIs";
 import MultiMetricChart from "./MultiMetricChart";
 import AvailabilityDashboard from "./AvailabilityDashboard";
-import { fetchNodes, fetchNodeMetricHistory } from "../services/queryResources";
+import DateTimeRangePicker from "./DateTimeRangePicker";
+import {
+	fetchNodes,
+	fetchNodeMetricHistory,
+	fetchNodeMetricHistoryDays,
+} from "../services/queryResources";
 import { formatMetricValue } from "../utils/metricFormatting";
 
 interface BrushRange {
@@ -17,7 +22,8 @@ type AnalyticsSection = "METRICS" | "AVAILABILITY";
 const ANALYTICS_SECTIONS: AnalyticsSection[] = ["METRICS", "AVAILABILITY"];
 
 const MetricAnalytics: React.FC = () => {
-	const [activeSection, setActiveSection] = useState<AnalyticsSection>("METRICS");
+	const [activeSection, setActiveSection] =
+		useState<AnalyticsSection>("METRICS");
 	const [nodes, setNodes] = useState<GraphNode[]>([]);
 	const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
 	const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -27,6 +33,9 @@ const MetricAnalytics: React.FC = () => {
 	const [, setLoading] = useState(true);
 	const [startDate, setStartDate] = useState("");
 	const [endDate, setEndDate] = useState("");
+	const [metricHistoryDays, setMetricHistoryDays] = useState<Set<string>>(
+		() => new Set(),
+	);
 
 	// Multi-CI state
 	const [brushRange, setBrushRange] = useState<BrushRange | null>(null);
@@ -286,6 +295,68 @@ const MetricAnalytics: React.FC = () => {
 		endDate,
 	]);
 
+	const hasMultipleSelected = selectedNodeIds.length > 1;
+	const selectedNodes = selectedNodeIds
+		.map((nodeId) => nodes.find((node) => node.id === nodeId))
+		.filter((node): node is GraphNode => Boolean(node));
+
+	useEffect(() => {
+		const metricRequests = hasMultipleSelected
+			? selectedNodeIds.flatMap((nodeId) => {
+					const primaryMetric = selectedMetricByNodeId[nodeId];
+					const secondaryMetric = showSecondary
+						? secondaryMetricByNodeId[nodeId]
+						: undefined;
+					return [primaryMetric, secondaryMetric]
+						.filter((metricId): metricId is string => Boolean(metricId))
+						.map((metricId) => ({ nodeId, metricId }));
+				})
+			: selectedNode && selectedMetric
+				? [{ nodeId: selectedNode.id, metricId: selectedMetric.name }]
+				: [];
+
+		if (metricRequests.length === 0) {
+			setMetricHistoryDays(new Set());
+			return;
+		}
+
+		const controller = new AbortController();
+		const end = new Date();
+		const start = new Date(end);
+		start.setFullYear(end.getFullYear() - 1);
+
+		Promise.all(
+			metricRequests.map(({ nodeId, metricId }) =>
+				fetchNodeMetricHistoryDays({
+					nodeId,
+					metricId,
+					startTime: start.toISOString(),
+					endTime: end.toISOString(),
+					signal: controller.signal,
+				}),
+			),
+		)
+			.then((dayGroups) => {
+				setMetricHistoryDays(new Set(dayGroups.flat()));
+			})
+			.catch((err) => {
+				if (err.name !== "AbortError") {
+					console.error("Failed to fetch metric history days", err);
+				}
+				setMetricHistoryDays(new Set());
+			});
+
+		return () => controller.abort();
+	}, [
+		hasMultipleSelected,
+		selectedNode,
+		selectedMetric,
+		selectedNodeIds,
+		selectedMetricByNodeId,
+		showSecondary,
+		secondaryMetricByNodeId,
+	]);
+
 	const handleResetDateRange = () => {
 		setStartDate("");
 		setEndDate("");
@@ -300,11 +371,6 @@ const MetricAnalytics: React.FC = () => {
 		setBrushRange(range);
 	};
 
-	const hasMultipleSelected = selectedNodeIds.length > 1;
-	const selectedNodes = selectedNodeIds
-		.map((nodeId) => nodes.find((node) => node.id === nodeId))
-		.filter((node): node is GraphNode => Boolean(node));
-
 	return (
 		<div className="flex h-full min-w-0 max-w-full flex-col overflow-x-hidden overflow-y-auto bg-surface-950 p-4 text-white md:p-8">
 			<header className="mb-8 flex min-w-0 flex-col gap-6 md:flex-row md:items-end md:justify-between">
@@ -316,7 +382,10 @@ const MetricAnalytics: React.FC = () => {
 						Historical Telemetry Visualization
 					</p>
 				</div>
-				<nav className="flex gap-3 border-b border-white/5 pb-3 md:border-b-0 md:pb-0" aria-label="Analytics sections">
+				<nav
+					className="flex gap-3 border-b border-white/5 pb-3 md:border-b-0 md:pb-0"
+					aria-label="Analytics sections"
+				>
 					{ANALYTICS_SECTIONS.map((section) => (
 						<button
 							key={section}
@@ -333,170 +402,45 @@ const MetricAnalytics: React.FC = () => {
 			{activeSection === "AVAILABILITY" ? (
 				<AvailabilityDashboard />
 			) : (
-			<div className="grid min-w-0 max-w-full flex-1 grid-cols-12 gap-4 md:gap-8 lg:min-h-0">
-				{/* Controls Sidebar */}
-				<div className="col-span-12 flex min-w-0 max-w-full flex-col space-y-6 overflow-x-hidden lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
-					{/* Multi-CI Selector */}
-					<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
-						<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
-							Compare Multiple CIs
-						</label>
-						<MultiSelectCIs
-							selectedIds={selectedNodeIds}
-							onChange={handleMultiCiChange}
-							availableNodes={nodes}
-							maxCIs={10}
-						/>
-					</div>
-
-					{/* Date Range Selector */}
-					<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
-						<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
-							Custom Time Range
-						</label>
-						<div className="min-w-0 space-y-3">
-							<div>
-								<label className="text-[10px] text-neutral-400 block mb-1">
-									Start Date
-								</label>
-								<input
-									type="datetime-local"
-									className="w-full min-w-0 max-w-full rounded-lg border border-white/10 bg-black/40 p-2 text-xs text-white outline-none focus:border-brand-500"
-									value={startDate}
-									onChange={(e) => setStartDate(e.target.value)}
-								/>
-							</div>
-							<div>
-								<label className="text-[10px] text-neutral-400 block mb-1">
-									End Date
-								</label>
-								<input
-									type="datetime-local"
-									className="w-full min-w-0 max-w-full rounded-lg border border-white/10 bg-black/40 p-2 text-xs text-white outline-none focus:border-brand-500"
-									value={endDate}
-									onChange={(e) => setEndDate(e.target.value)}
-								/>
-							</div>
-							{startDate && endDate && (
-								<button
-									onClick={handleResetDateRange}
-									className="w-full mt-2 bg-white/5 hover:bg-white/10 text-neutral-300 text-xs font-bold py-2 rounded-lg uppercase transition-colors"
-								>
-									Reset to Live View
-								</button>
-							)}
-						</div>
-					</div>
-
-					{/* Metric Selector */}
-					<div className="min-w-0 max-w-full flex-1 overflow-y-auto rounded-xl border border-white/5 bg-surface-900 p-5 lg:min-h-0">
-						<label className="mb-3 block text-xs font-bold uppercase tracking-wider text-neutral-500">
-							{hasMultipleSelected ? "Metric per CI" : "Available Metrics"}
-						</label>
-						<div className="min-w-0 space-y-3">
-							{hasMultipleSelected ? (
-								selectedNodes.map((node) => {
-									const metrics = node.metrics ?? [];
-									return (
-										<div
-											key={node.id}
-											className="min-w-0 max-w-full rounded-lg border border-white/10 bg-white/[0.03] p-3"
-										>
-											<p className="truncate text-xs font-bold uppercase text-white">
-												{node.label}
-											</p>
-											<p className="mb-2 truncate font-mono text-[10px] text-neutral-500">
-												{node.brand || "Unknown brand"} {node.model || ""}
-											</p>
-											{metrics.length > 0 ? (
-												<select
-													value={
-														selectedMetricByNodeId[node.id] ?? metrics[0].name
-													}
-													onChange={(event) => {
-														setSelectedMetricByNodeId((previous) => ({
-															...previous,
-															[node.id]: event.target.value,
-														}));
-														setMultiCiData([]);
-														setBrushRange(null);
-													}}
-													className="w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none transition-colors focus:border-brand-500"
-												>
-													{metrics.map((metric) => (
-														<option key={metric.name} value={metric.name}>
-															{metric.name}
-														</option>
-													))}
-												</select>
-											) : (
-												<p className="text-xs text-neutral-600 py-2">
-													No metrics available for this CI.
-												</p>
-											)}
-										</div>
-									);
-								})
-							) : (
-								<>
-									{selectedNode?.metrics?.map((m, idx) => (
-										<button
-											key={idx}
-											onClick={() => {
-												setSelectedMetric(m);
-												setMultiCiData([]);
-												setBrushRange(null);
-											}}
-											className={`flex w-full min-w-0 items-center justify-between rounded-lg border p-3 text-left transition-all ${
-												selectedMetric?.name === m.name
-													? "bg-brand-500/20 border-brand-500/50 text-white"
-													: "bg-white/5 border-transparent text-neutral-400 hover:bg-white/10"
-											}`}
-										>
-											<div className="min-w-0">
-												<p className="truncate text-xs font-bold uppercase">
-													{m.name}
-												</p>
-												<p className="mt-0.5 truncate font-mono text-[10px] opacity-60">
-													{m.protocol}
-												</p>
-											</div>
-											<span
-												className={`h-2 w-2 shrink-0 rounded-full ${m.status === "OK" ? "bg-emerald-500" : "bg-red-500"}`}
-											></span>
-										</button>
-									))}
-									{(!selectedNode?.metrics ||
-										selectedNode.metrics.length === 0) && (
-										<p className="text-xs text-neutral-600 text-center py-4">
-											No metrics available for this CI.
-										</p>
-									)}
-								</>
-							)}
-						</div>
-					</div>
-
-					{/* Secondary Metric Toggle */}
-					{hasMultipleSelected && (
+				<div className="grid min-w-0 max-w-full flex-1 grid-cols-12 gap-4 md:gap-8 lg:min-h-0">
+					{/* Controls Sidebar */}
+					<div className="col-span-12 flex min-w-0 max-w-full flex-col space-y-6 overflow-x-hidden lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
+						{/* Multi-CI Selector */}
 						<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
-							<div className="mb-3 flex min-w-0 items-center justify-between gap-3">
-								<label className="truncate text-xs font-bold uppercase tracking-wider text-neutral-500">
-									Secondary Metric
-								</label>
-								<button
-									aria-label="Toggle secondary metric comparison"
-									onClick={() => setShowSecondary(!showSecondary)}
-									className={`h-5 w-10 shrink-0 rounded-full transition-colors ${showSecondary ? "bg-brand-500" : "bg-white/20"}`}
-								>
-									<div
-										className={`w-4 h-4 rounded-full bg-white transition-transform ${showSecondary ? "translate-x-5" : "translate-x-0.5"}`}
-									></div>
-								</button>
-							</div>
-							{showSecondary && (
-								<div className="min-w-0 space-y-3">
-									{selectedNodes.map((node) => {
+							<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
+								Compare Multiple CIs
+							</label>
+							<MultiSelectCIs
+								selectedIds={selectedNodeIds}
+								onChange={handleMultiCiChange}
+								availableNodes={nodes}
+								maxCIs={10}
+							/>
+						</div>
+
+						{/* Date Range Selector */}
+						<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
+							<label className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-500">
+								Custom Time Range
+							</label>
+							<DateTimeRangePicker
+								startDate={startDate}
+								endDate={endDate}
+								onStartDateChange={setStartDate}
+								onEndDateChange={setEndDate}
+								onReset={handleResetDateRange}
+								availableDays={metricHistoryDays}
+							/>
+						</div>
+
+						{/* Metric Selector */}
+						<div className="min-w-0 max-w-full flex-1 overflow-y-auto rounded-xl border border-white/5 bg-surface-900 p-5 lg:min-h-0">
+							<label className="mb-3 block text-xs font-bold uppercase tracking-wider text-neutral-500">
+								{hasMultipleSelected ? "Metric per CI" : "Available Metrics"}
+							</label>
+							<div className="min-w-0 space-y-3">
+								{hasMultipleSelected ? (
+									selectedNodes.map((node) => {
 										const metrics = node.metrics ?? [];
 										return (
 											<div
@@ -506,19 +450,20 @@ const MetricAnalytics: React.FC = () => {
 												<p className="truncate text-xs font-bold uppercase text-white">
 													{node.label}
 												</p>
+												<p className="mb-2 truncate font-mono text-[10px] text-neutral-500">
+													{node.brand || "Unknown brand"} {node.model || ""}
+												</p>
 												{metrics.length > 0 ? (
 													<select
 														value={
-															secondaryMetricByNodeId[node.id] ??
-															metrics[1]?.name ??
-															metrics[0].name
+															selectedMetricByNodeId[node.id] ?? metrics[0].name
 														}
 														onChange={(event) => {
-															setSecondaryMetricByNodeId((previous) => ({
+															setSelectedMetricByNodeId((previous) => ({
 																...previous,
 																[node.id]: event.target.value,
 															}));
-															setSecondaryMultiCiData([]);
+															setMultiCiData([]);
 															setBrushRange(null);
 														}}
 														className="w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none transition-colors focus:border-brand-500"
@@ -536,19 +481,177 @@ const MetricAnalytics: React.FC = () => {
 												)}
 											</div>
 										);
-									})}
-								</div>
-							)}
+									})
+								) : (
+									<>
+										{selectedNode?.metrics?.map((m, idx) => (
+											<button
+												key={idx}
+												onClick={() => {
+													setSelectedMetric(m);
+													setMultiCiData([]);
+													setBrushRange(null);
+												}}
+												className={`flex w-full min-w-0 items-center justify-between rounded-lg border p-3 text-left transition-all ${
+													selectedMetric?.name === m.name
+														? "bg-brand-500/20 border-brand-500/50 text-white"
+														: "bg-white/5 border-transparent text-neutral-400 hover:bg-white/10"
+												}`}
+											>
+												<div className="min-w-0">
+													<p className="truncate text-xs font-bold uppercase">
+														{m.name}
+													</p>
+													<p className="mt-0.5 truncate font-mono text-[10px] opacity-60">
+														{m.protocol}
+													</p>
+												</div>
+												<span
+													className={`h-2 w-2 shrink-0 rounded-full ${m.status === "OK" ? "bg-emerald-500" : "bg-red-500"}`}
+												></span>
+											</button>
+										))}
+										{(!selectedNode?.metrics ||
+											selectedNode.metrics.length === 0) && (
+											<p className="text-xs text-neutral-600 text-center py-4">
+												No metrics available for this CI.
+											</p>
+										)}
+									</>
+								)}
+							</div>
 						</div>
-					)}
-				</div>
 
-				{/* Main Chart Area */}
-				<div className="col-span-12 flex min-h-[24rem] min-w-0 max-w-full flex-col gap-6 overflow-hidden pb-8 lg:col-span-9 lg:h-full lg:min-h-0">
-					{hasMultipleSelected ? (
-						<>
-							{/* Multi-CI Chart View */}
+						{/* Secondary Metric Toggle */}
+						{hasMultipleSelected && (
+							<div className="min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-900 p-5">
+								<div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+									<label className="truncate text-xs font-bold uppercase tracking-wider text-neutral-500">
+										Secondary Metric
+									</label>
+									<button
+										aria-label="Toggle secondary metric comparison"
+										onClick={() => setShowSecondary(!showSecondary)}
+										className={`h-5 w-10 shrink-0 rounded-full transition-colors ${showSecondary ? "bg-brand-500" : "bg-white/20"}`}
+									>
+										<div
+											className={`w-4 h-4 rounded-full bg-white transition-transform ${showSecondary ? "translate-x-5" : "translate-x-0.5"}`}
+										></div>
+									</button>
+								</div>
+								{showSecondary && (
+									<div className="min-w-0 space-y-3">
+										{selectedNodes.map((node) => {
+											const metrics = node.metrics ?? [];
+											return (
+												<div
+													key={node.id}
+													className="min-w-0 max-w-full rounded-lg border border-white/10 bg-white/[0.03] p-3"
+												>
+													<p className="truncate text-xs font-bold uppercase text-white">
+														{node.label}
+													</p>
+													{metrics.length > 0 ? (
+														<select
+															value={
+																secondaryMetricByNodeId[node.id] ??
+																metrics[1]?.name ??
+																metrics[0].name
+															}
+															onChange={(event) => {
+																setSecondaryMetricByNodeId((previous) => ({
+																	...previous,
+																	[node.id]: event.target.value,
+																}));
+																setSecondaryMultiCiData([]);
+																setBrushRange(null);
+															}}
+															className="w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none transition-colors focus:border-brand-500"
+														>
+															{metrics.map((metric) => (
+																<option key={metric.name} value={metric.name}>
+																	{metric.name}
+																</option>
+															))}
+														</select>
+													) : (
+														<p className="text-xs text-neutral-600 py-2">
+															No metrics available for this CI.
+														</p>
+													)}
+												</div>
+											);
+										})}
+									</div>
+								)}
+							</div>
+						)}
+					</div>
+
+					{/* Main Chart Area */}
+					<div className="col-span-12 flex min-h-[24rem] min-w-0 max-w-full flex-col gap-6 overflow-hidden pb-8 lg:col-span-9 lg:h-full lg:min-h-0">
+						{hasMultipleSelected ? (
+							<>
+								{/* Multi-CI Chart View */}
+								<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
+									<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
+										<span className="material-symbols-outlined text-9xl">
+											monitoring
+										</span>
+									</div>
+
+									<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
+										{multiCiLoading ? (
+											<div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
+												LOADING METRICS...
+											</div>
+										) : (
+											<MultiMetricChart
+												nodeData={multiCiData}
+												brushRange={brushRange}
+												onBrushChange={handleBrushChange}
+												metricName="Selected metrics"
+											/>
+										)}
+									</div>
+								</div>
+
+								{/* Secondary Metric Section */}
+								{showSecondary && (
+									<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
+										<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
+											<span className="material-symbols-outlined text-9xl">
+												analytics
+											</span>
+										</div>
+										<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
+											<div className="mb-4 min-w-0">
+												<h3 className="text-white font-bold uppercase tracking-tight">
+													Secondary Metrics Comparison
+												</h3>
+												<p className="text-xs text-neutral-500">
+													Secondary metric per selected CI
+												</p>
+											</div>
+											{secondaryMultiCiLoading ? (
+												<div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
+													LOADING SECONDARY METRIC...
+												</div>
+											) : (
+												<MultiMetricChart
+													nodeData={secondaryMultiCiData}
+													brushRange={brushRange}
+													onBrushChange={handleBrushChange}
+													metricName="Secondary metrics"
+												/>
+											)}
+										</div>
+									</div>
+								)}
+							</>
+						) : selectedNode && selectedMetric ? (
 							<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
+								{/* Background Pattern */}
 								<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
 									<span className="material-symbols-outlined text-9xl">
 										monitoring
@@ -556,110 +659,52 @@ const MetricAnalytics: React.FC = () => {
 								</div>
 
 								<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
-									{multiCiLoading ? (
-										<div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
-											LOADING METRICS...
-										</div>
-									) : (
-										<MultiMetricChart
-											nodeData={multiCiData}
-											brushRange={brushRange}
-											onBrushChange={handleBrushChange}
-											metricName="Selected metrics"
-										/>
-									)}
-								</div>
-							</div>
-
-							{/* Secondary Metric Section */}
-							{showSecondary && (
-								<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
-									<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
-										<span className="material-symbols-outlined text-9xl">
-											analytics
-										</span>
-									</div>
-									<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
-										<div className="mb-4 min-w-0">
-											<h3 className="text-white font-bold uppercase tracking-tight">
-												Secondary Metrics Comparison
-											</h3>
-											<p className="text-xs text-neutral-500">
-												Secondary metric per selected CI
-											</p>
-										</div>
-										{secondaryMultiCiLoading ? (
-											<div className="flex-1 flex items-center justify-center text-neutral-500 animate-pulse font-mono text-sm">
-												LOADING SECONDARY METRIC...
-											</div>
-										) : (
-											<MultiMetricChart
-												nodeData={secondaryMultiCiData}
-												brushRange={brushRange}
-												onBrushChange={handleBrushChange}
-												metricName="Secondary metrics"
-											/>
-										)}
-									</div>
-								</div>
-							)}
-						</>
-					) : selectedNode && selectedMetric ? (
-						<div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-900 p-4 md:p-8">
-							{/* Background Pattern */}
-							<div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
-								<span className="material-symbols-outlined text-9xl">
-									monitoring
-								</span>
-							</div>
-
-							<div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
-								<MetricHistoryChart
-									nodeId={selectedNode.id}
-									metricId={selectedMetric.name}
-									metricName={selectedMetric.name}
-									unit={selectedMetric.unit}
-									customRange={
-										startDate && endDate
-											? {
-													start: new Date(startDate).toISOString(),
-													end: new Date(endDate).toISOString(),
-												}
-											: null
-									}
-								/>
-
-								<div className="mt-8 grid flex-shrink-0 grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
-									<StatCard
-										label="Current Value"
-										value={selectedMetric.value}
+									<MetricHistoryChart
+										nodeId={selectedNode.id}
+										metricId={selectedMetric.name}
+										metricName={selectedMetric.name}
 										unit={selectedMetric.unit}
+										customRange={
+											startDate && endDate
+												? {
+														start: new Date(startDate).toISOString(),
+														end: new Date(endDate).toISOString(),
+													}
+												: null
+										}
 									/>
-									<StatCard
-										label="Status"
-										value={selectedMetric.status}
-										isStatus
-									/>
-									<StatCard
-										label="Last Updated"
-										value={selectedMetric.last_updated}
-										isDate
-									/>
+
+									<div className="mt-8 grid flex-shrink-0 grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
+										<StatCard
+											label="Current Value"
+											value={selectedMetric.value}
+											unit={selectedMetric.unit}
+										/>
+										<StatCard
+											label="Status"
+											value={selectedMetric.status}
+											isStatus
+										/>
+										<StatCard
+											label="Last Updated"
+											value={selectedMetric.last_updated}
+											isDate
+										/>
+									</div>
 								</div>
 							</div>
-						</div>
-					) : (
-						<div className="flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-surface-900 text-neutral-600">
-							<span className="material-symbols-outlined text-6xl mb-4 opacity-20">
-								analytics
-							</span>
-							<p className="font-bold uppercase tracking-widest">
-								Select a CI and Metric
-							</p>
-						</div>
-					)}
+						) : (
+							<div className="flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-surface-900 text-neutral-600">
+								<span className="material-symbols-outlined text-6xl mb-4 opacity-20">
+									analytics
+								</span>
+								<p className="font-bold uppercase tracking-widest">
+									Select a CI and Metric
+								</p>
+							</div>
+						)}
+					</div>
 				</div>
-			</div>
 			)}
 		</div>
 	);

@@ -168,6 +168,30 @@ export const fetchNodeMetricHistory = async (
 	});
 };
 
+export interface FetchNodeMetricHistoryDaysOptions {
+	nodeId: string;
+	metricId: string;
+	startTime?: string;
+	endTime?: string;
+	signal?: AbortSignal;
+}
+
+export const fetchNodeMetricHistoryDays = async ({
+	nodeId,
+	metricId,
+	startTime,
+	endTime,
+	signal,
+}: FetchNodeMetricHistoryDaysOptions): Promise<string[]> => {
+	const params = new URLSearchParams();
+	if (startTime) params.set("start_time", startTime);
+	if (endTime) params.set("end_time", endTime);
+
+	const query = params.toString();
+	const url = `/metrics/${encodeURIComponent(nodeId)}/${encodeURIComponent(metricId)}/history-days${query ? `?${query}` : ""}`;
+	return api.get<string[]>(url, { signal });
+};
+
 export interface FetchMetricsHistoryOptions {
 	nodeIds: string[];
 	metricId: string;

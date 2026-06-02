@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import {
+	act,
+	render,
+	screen,
+	waitFor,
+	cleanup,
+	fireEvent,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MetricAnalytics from "./MetricAnalytics";
 import type { GraphNode } from "../types";
@@ -8,11 +15,13 @@ const {
 	mockFetchNodesSearch,
 	mockFetchMetricsHistory,
 	mockFetchNodeMetricHistory,
+	mockFetchNodeMetricHistoryDays,
 } = vi.hoisted(() => ({
 	mockFetchNodes: vi.fn(),
 	mockFetchNodesSearch: vi.fn(),
 	mockFetchMetricsHistory: vi.fn(),
 	mockFetchNodeMetricHistory: vi.fn(),
+	mockFetchNodeMetricHistoryDays: vi.fn(),
 }));
 
 vi.mock("../services/queryResources", () => ({
@@ -20,6 +29,7 @@ vi.mock("../services/queryResources", () => ({
 	fetchNodesSearch: mockFetchNodesSearch,
 	fetchMetricsHistory: mockFetchMetricsHistory,
 	fetchNodeMetricHistory: mockFetchNodeMetricHistory,
+	fetchNodeMetricHistoryDays: mockFetchNodeMetricHistoryDays,
 }));
 
 // Mock global fetch for initial node loading
@@ -31,7 +41,11 @@ vi.mock("./MetricHistoryChart", () => ({
 }));
 
 vi.mock("./AvailabilityDashboard", () => ({
-	default: () => <section aria-label="Availability MTTR/MTBF">Availability MTTR/MTBF Dashboard</section>,
+	default: () => (
+		<section aria-label="Availability MTTR/MTBF">
+			Availability MTTR/MTBF Dashboard
+		</section>
+	),
 }));
 
 describe("MetricAnalytics", () => {
@@ -83,6 +97,7 @@ describe("MetricAnalytics", () => {
 		mockFetchNodesSearch.mockReset();
 		mockFetchMetricsHistory.mockReset();
 		mockFetchNodeMetricHistory.mockReset();
+		mockFetchNodeMetricHistoryDays.mockReset();
 		// Mock localStorage for MetricAnalytics component
 		Object.defineProperty(globalThis, "localStorage", {
 			value: {
@@ -96,6 +111,7 @@ describe("MetricAnalytics", () => {
 		mockFetchNodes.mockResolvedValue([]);
 		mockFetchMetricsHistory.mockResolvedValue({ nodes: [] });
 		mockFetchNodeMetricHistory.mockResolvedValue([]);
+		mockFetchNodeMetricHistoryDays.mockResolvedValue([]);
 	});
 
 	afterEach(() => {
@@ -107,9 +123,15 @@ describe("MetricAnalytics", () => {
 		it("renders METRICS and AVAILABILITY sections without admin-only gating", () => {
 			render(<MetricAnalytics />);
 
-			expect(screen.getByRole("button", { name: "METRICS" })).toBeInTheDocument();
-			expect(screen.getByRole("button", { name: "AVAILABILITY" })).toBeInTheDocument();
-			expect(screen.getByText("Historical Telemetry Visualization")).toBeInTheDocument();
+			expect(
+				screen.getByRole("button", { name: "METRICS" }),
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole("button", { name: "AVAILABILITY" }),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText("Historical Telemetry Visualization"),
+			).toBeInTheDocument();
 		});
 
 		it("keeps the existing metric graph experience under METRICS and opens Availability separately", () => {
@@ -117,10 +139,14 @@ describe("MetricAnalytics", () => {
 			render(<MetricAnalytics />);
 
 			expect(screen.getByRole("searchbox")).toBeInTheDocument();
-			expect(screen.queryByText("Availability MTTR/MTBF Dashboard")).not.toBeInTheDocument();
+			expect(
+				screen.queryByText("Availability MTTR/MTBF Dashboard"),
+			).not.toBeInTheDocument();
 
 			fireEvent.click(screen.getByRole("button", { name: "AVAILABILITY" }));
-			expect(screen.getByText("Availability MTTR/MTBF Dashboard")).toBeInTheDocument();
+			expect(
+				screen.getByText("Availability MTTR/MTBF Dashboard"),
+			).toBeInTheDocument();
 			expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
 
 			fireEvent.click(screen.getByRole("button", { name: "METRICS" }));

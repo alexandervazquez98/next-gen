@@ -170,6 +170,20 @@ async def get_metric_history(
     )
 
 
+@router.get("/{node_id}/{metric_id}/history-days")
+async def get_metric_history_days(
+    node_id: str,
+    metric_id: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    db: Session = Depends(get_pg_db),
+):
+    """Return YYYY-MM-DD dates that have at least one metric sample."""
+    return metric_repo.get_metric_history_days(
+        db, node_id, metric_id, start_time, end_time
+    )
+
+
 # Original single-CI history endpoint — preserved for backward compatibility
 @router.get("/{node_id}/{metric_id}/history")
 async def get_metric_history_single(

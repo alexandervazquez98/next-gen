@@ -75,7 +75,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 	const hasData = data.length > 0;
 
 	return (
-		<div className="flex h-full min-h-[250px] min-w-0 max-w-full flex-col rounded-xl border border-white/5 bg-surface-800 p-4 shadow-inner md:p-6">
+		<div className="flex h-full min-h-[300px] min-w-0 max-w-full flex-col rounded-xl border border-white/5 bg-surface-800 p-4 shadow-inner md:p-6">
 			<div className="mb-4 flex min-w-0 flex-shrink-0 items-center justify-between gap-3">
 				<div className="min-w-0">
 					<h4 className="truncate font-bold uppercase tracking-tight text-white">
@@ -119,14 +119,14 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 					className="relative min-h-0 w-full min-w-0 flex-1"
 					style={{ minWidth: 0, minHeight: 0 }}
 				>
-					<ResponsiveContainer width="99%" height="99%">
+					<ResponsiveContainer width="100%" height="100%">
 						<AreaChart
 							data={displayData}
 							margin={{
 								top: 10,
-								right: 10,
-								left: -20,
-								bottom: hasBrushApplied ? 50 : 0,
+								right: 16,
+								left: 0,
+								bottom: 54,
 							}}
 						>
 							<defs>
@@ -170,8 +170,8 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 								}}
 								itemStyle={{ color: "#fff" }}
 								labelStyle={{ color: "#a3a3a3", marginBottom: "4px" }}
-								formatter={(value) => [
-									`${formatMetricValue(value as string | number, unit)}${unit ? ` ${unit}` : ""}`,
+								formatter={(value: string | number) => [
+									`${formatMetricValue(value, unit)}${unit ? ` ${unit}` : ""}`,
 									metricName ?? "value",
 								]}
 							/>
