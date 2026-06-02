@@ -82,6 +82,29 @@ app.add_middleware(
 # Register rate limiting middleware
 app.add_middleware(RateLimitMiddleware)
 
+
+def _ensure_refresh_token_schema_migration(engine) -> None:
+    """Add backwards-compatible columns for session-policy-backed refresh tokens."""
+    try:
+        with engine.connect() as conn:
+            sql = __import__("sqlalchemy").text
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS session_id VARCHAR"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS policy_profile VARCHAR DEFAULT 'standard'"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMP"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by_token_id INTEGER REFERENCES refresh_tokens(id)"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason VARCHAR"))
+            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS stale_recovery_count INTEGER DEFAULT 0"))
+            # Backfill existing rows so runtime non-null assumptions are still safe.
+            conn.execute(sql("UPDATE refresh_tokens SET session_id = COALESCE(session_id, CONCAT('legacy-', id::text)) WHERE session_id IS NULL"))
+            conn.execute(sql("UPDATE refresh_tokens SET policy_profile = COALESCE(policy_profile, 'standard') WHERE policy_profile IS NULL"))
+            conn.execute(sql("UPDATE refresh_tokens SET last_activity_at = COALESCE(last_activity_at, created_at, NOW()) WHERE last_activity_at IS NULL"))
+            conn.execute(sql("UPDATE refresh_tokens SET stale_recovery_count = COALESCE(stale_recovery_count, 0) WHERE stale_recovery_count IS NULL"))
+            conn.execute(sql("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_session_id ON refresh_tokens (session_id)"))
+            conn.execute(sql("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_policy_profile ON refresh_tokens (policy_profile)"))
+            conn.commit()
+    except Exception as migration_err:
+        logger.warning(f"Migration warning (refresh_tokens session-policy columns): {migration_err}")
 """
 ROUTING ARCHITECTURE CONVENTIONS:
 1. Centralized Prefix: All routers are included with the '/api' prefix here in main.py.
@@ -154,6 +177,8 @@ async def startup_event():
                 conn.commit()
         except Exception as migration_err:
             logger.warning(f"Migration warning (tier column): {migration_err}")
+
+        _ensure_refresh_token_schema_migration(engine)
 
         db = SessionLocal()
         create_hypertable(db)

@@ -12,7 +12,9 @@ from sqlalchemy.pool import StaticPool
 from middleware import rate_limit
 from middleware.rate_limit import MAX_ATTEMPTS, increment_attempts, refresh_token_rate_limit_key
 from models.rate_limit_attempt import RateLimitAttempt
+from jose import jwt
 from postgres_db import Base
+from services.auth_service import SECRET_KEY, ALGORITHM
 
 # Patch Neo4j driver BEFORE importing anything
 _mock_neo4j_driver = MagicMock()
@@ -24,6 +26,20 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
 
 
 client = TestClient(app)
+
+
+def _extract_cookie_max_age(set_cookie_headers: list[str], cookie_name: str) -> int | None:
+    """Return max-age value for a named Set-Cookie header."""
+    marker = f"{cookie_name}="
+    for header in set_cookie_headers:
+        if not header.startswith(marker):
+            continue
+        for part in header.split(";"):
+            item = part.strip().lower()
+            if item.startswith("max-age="):
+                value = item.split("=", 1)[1]
+                return int(value)
+    return None
 
 
 @pytest.fixture(autouse=True)
@@ -70,8 +86,8 @@ def _make_mock_pg_user(
 class TestAuthTokenCookie:
     """Tests for POST /api/auth/token cookie behavior."""
 
-    def test_login_sets_access_token_cookie(self):
-        """Login should set HttpOnly cookie on the response."""
+    def test_login_sets_access_and_refresh_token_cookies(self):
+        """Login should set access and refresh HttpOnly cookies."""
         mock_user = _make_mock_pg_user(username="testuser", role="OPERATOR")
         mock_db = MagicMock(spec=Session)
         mock_db.query.return_value.filter.return_value.first.return_value = mock_user
@@ -82,20 +98,113 @@ class TestAuthTokenCookie:
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.auth.verify_password", return_value=True):
-            response = client.post(
-                "/api/auth/token",
-                data={"username": "testuser", "password": "correct_password"},
-            )
+            with patch("routers.auth.create_refresh_token", return_value="new_refresh_token") as mock_create_refresh:
+                response = client.post(
+                    "/api/auth/token",
+                    data={"username": "testuser", "password": "correct_password"},
+                )
 
         assert response.status_code == 200
-        # Check Set-Cookie header is present
+        # Check Set-Cookie header is present for both cookies (may appear as two Set-Cookie headers)
         set_cookie = response.headers.get("set-cookie", "")
         assert "access_token=" in set_cookie
+        assert "refresh_token=" in set_cookie or "refresh_token=new_refresh_token" in set_cookie
         assert "HttpOnly" in set_cookie or "httpOnly" in set_cookie.lower()
         assert "samesite=lax" in set_cookie.lower() or "samesite=strict" in set_cookie.lower()
+        mock_create_refresh.assert_called_once()
 
         app.dependency_overrides.pop(get_pg_db, None)
 
+    def test_login_uses_standard_profile_cookie_max_age(self):
+        """Standard profile must apply standard refresh cookie max-age."""
+        mock_user = _make_mock_pg_user(username="testuser", role="OPERATOR")
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch.dict(os.environ, {"SESSION_OPERATIONAL_ENABLED": "false", "SESSION_STANDARD_REFRESH_DAYS": "2"}):
+            with patch("routers.auth.verify_password", return_value=True):
+                response = client.post(
+                    "/api/auth/token",
+                    data={"username": "testuser", "password": "correct_password"},
+                )
+
+        assert response.status_code == 200
+        set_cookie_headers = response.headers.get_list("set-cookie")
+        refresh_max_age = _extract_cookie_max_age(set_cookie_headers, "refresh_token")
+        assert refresh_max_age == 2 * 24 * 60 * 60
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_uses_operational_profile_cookie_max_age(self):
+        """Operational profile must apply operational refresh cookie max-age."""
+        mock_user = _make_mock_pg_user(username="ops_user", role="NOC")
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch.dict(
+            os.environ,
+            {
+                "SESSION_OPERATIONAL_ENABLED": "true",
+                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                "SESSION_OPERATIONAL_REFRESH_DAYS": "4",
+            },
+        ):
+            with patch("routers.auth.verify_password", return_value=True):
+                response = client.post(
+                    "/api/auth/token",
+                    data={"username": "ops_user", "password": "correct_password"},
+                )
+
+        assert response.status_code == 200
+        set_cookie_headers = response.headers.get_list("set-cookie")
+        refresh_max_age = _extract_cookie_max_age(set_cookie_headers, "refresh_token")
+        assert refresh_max_age == 4 * 24 * 60 * 60
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_access_token_includes_session_and_profile_claims(self):
+        """Login access token should include session identifier and profile claims."""
+        mock_user = _make_mock_pg_user(username="ops_user", role="NOC", user_id=19)
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch.dict(
+            os.environ,
+            {
+                "SESSION_OPERATIONAL_ENABLED": "true",
+                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                "SESSION_OPERATIONAL_ACCESS_MINUTES": "20",
+                "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
+            },
+        ):
+            with patch("routers.auth.verify_password", return_value=True):
+                response = client.post(
+                    "/api/auth/token",
+                    data={"username": "ops_user", "password": "correct_password"},
+                )
+
+        assert response.status_code == 200
+        payload = jwt.decode(response.json()["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["sid"]
+        assert payload["profile"] == "operational"
+
+        app.dependency_overrides.pop(get_pg_db, None)
 
 class TestAuthRefresh:
     """Tests for POST /api/auth/refresh endpoint."""
@@ -119,14 +228,14 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        # Patch verify_refresh_token to return user_id
         with patch("routers.auth.verify_refresh_token", return_value=42):
-            with patch("routers.auth.create_refresh_token", return_value="new_refresh_token"):
-                with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": "old_refresh_token"},
-                    )
+            with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
+                with patch("routers.auth.create_refresh_token", return_value="new_refresh_token"):
+                    with patch("routers.auth.create_access_token", return_value="new_access_token"):
+                        response = client.post(
+                            "/api/auth/refresh",
+                            cookies={"refresh_token": "old_refresh_token"},
+                        )
 
         assert response.status_code == 200
         data = response.json()
@@ -137,6 +246,49 @@ class TestAuthRefresh:
         # Check that the new refresh token cookie was set on response
         set_cookie = response.headers.get("set-cookie", "")
         assert "refresh_token=new_refresh_token" in set_cookie
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_includes_session_claim_continuity_and_profile(self):
+        """Refresh must propagate prior session ID and policy profile into new access token."""
+        mock_user = _make_mock_pg_user(
+            username="ops_user",
+            role="NOC",
+            user_id=99,
+        )
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch.dict(
+            os.environ,
+            {
+                "SESSION_OPERATIONAL_ENABLED": "true",
+                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
+            },
+        ):
+            with patch("routers.auth.verify_refresh_token", return_value=(99, "sid-ops-001")):
+                with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
+                    response = client.post(
+                        "/api/auth/refresh",
+                        cookies={"refresh_token": "old_refresh_token"},
+                    )
+
+        assert response.status_code == 200
+        payload = jwt.decode(response.json()["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["sid"] == "sid-ops-001"
+        assert payload["profile"] == "operational"
+
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "refresh_token=" in set_cookie
 
         app.dependency_overrides.pop(get_pg_db, None)
 

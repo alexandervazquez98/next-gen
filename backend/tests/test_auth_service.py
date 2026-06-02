@@ -39,6 +39,14 @@ class TestCreateAccessToken:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         assert payload["role"] == "ADMIN"
 
+    def test_token_includes_session_and_profile_claims(self):
+        token = create_access_token(
+            data={"sub": "admin", "role": "ADMIN", "sid": "sess-123", "profile": "operational"}
+        )
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        assert payload["sid"] == "sess-123"
+        assert payload["profile"] == "operational"
+
     def test_token_contains_tier_claim(self):
         """JWT should include 'tier' claim when provided."""
         token = create_access_token(

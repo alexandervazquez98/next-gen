@@ -134,7 +134,7 @@ coverage.xml
 *.cover
 .eslintcache
 .stylelintcache
-openspec/
+# OpenSpec/SDD artifacts are repository files for this worktree.
 frontend/coverage/
 
 # Docker local overrides
