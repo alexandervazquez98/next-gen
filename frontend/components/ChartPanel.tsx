@@ -1,5 +1,5 @@
 import type React from "react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
 	AreaChart,
 	Area,
@@ -9,6 +9,7 @@ import {
 	Tooltip,
 	ResponsiveContainer,
 	Brush,
+	ReferenceArea,
 } from "recharts";
 import { formatMetricValue } from "../utils/metricFormatting";
 
@@ -32,6 +33,33 @@ interface ChartPanelProps {
 	metricName?: string;
 }
 
+const MIN_DRAG_POINTS = 2;
+const MIN_DRAG_RANGE_MS = 5 * 60 * 1000;
+
+const getActiveRawTime = (event: any): string | null => {
+	return (
+		event?.activePayload?.[0]?.payload?.rawTime ?? event?.activeLabel ?? null
+	);
+};
+
+const getRangeLabel = (startTime: string, endTime: string) => {
+	const durationMs = Math.abs(
+		new Date(endTime).getTime() - new Date(startTime).getTime(),
+	);
+	if (durationMs <= 6 * 60 * 60 * 1000) {
+		return { hour: "2-digit", minute: "2-digit" } as const;
+	}
+	if (durationMs <= 48 * 60 * 60 * 1000) {
+		return {
+			day: "numeric",
+			month: "short",
+			hour: "2-digit",
+			minute: "2-digit",
+		} as const;
+	}
+	return { day: "numeric", month: "short" } as const;
+};
+
 const ChartPanel: React.FC<ChartPanelProps> = ({
 	nodeId,
 	label,
@@ -41,6 +69,10 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 	unit,
 	metricName,
 }) => {
+	const [isSelecting, setIsSelecting] = useState(false);
+	const [selectionStart, setSelectionStart] = useState<string | null>(null);
+	const [selectionEnd, setSelectionEnd] = useState<string | null>(null);
+
 	const formattedData = useMemo(() => {
 		return data
 			.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
@@ -67,10 +99,83 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 			: formattedData;
 
 	const hasBrushApplied = brushRange !== null;
+	const xTickFormatter = useCallback(
+		(value: string) => {
+			const rangeStart = displayData[0]?.rawTime;
+			const rangeEnd = displayData[displayData.length - 1]?.rawTime;
+			if (!rangeStart || !rangeEnd) return value;
+			return new Date(value).toLocaleString(
+				[],
+				getRangeLabel(rangeStart, rangeEnd),
+			);
+		},
+		[displayData],
+	);
 
 	const handleResetView = () => {
 		onBrushChange(null);
+		setIsSelecting(false);
+		setSelectionStart(null);
+		setSelectionEnd(null);
 	};
+
+	const handleMouseDown = useCallback((event: any) => {
+		const rawTime = getActiveRawTime(event);
+		if (!rawTime) return;
+		setIsSelecting(true);
+		setSelectionStart(rawTime);
+		setSelectionEnd(rawTime);
+	}, []);
+
+	const handleMouseMove = useCallback(
+		(event: any) => {
+			const rawTime = getActiveRawTime(event);
+			if (!isSelecting || !rawTime) return;
+			setSelectionEnd(rawTime);
+		},
+		[isSelecting],
+	);
+
+	const handleMouseUp = useCallback(() => {
+		if (!isSelecting || !selectionStart || !selectionEnd) {
+			setIsSelecting(false);
+			return;
+		}
+
+		const startIdx = displayData.findIndex(
+			(point) => point.rawTime === selectionStart,
+		);
+		const endIdx = displayData.findIndex(
+			(point) => point.rawTime === selectionEnd,
+		);
+		if (startIdx !== -1 && endIdx !== -1) {
+			let [minIdx, maxIdx] =
+				startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+			const durationMs = Math.abs(
+				new Date(displayData[maxIdx].rawTime).getTime() -
+					new Date(displayData[minIdx].rawTime).getTime(),
+			);
+			if (
+				maxIdx - minIdx + 1 < MIN_DRAG_POINTS ||
+				durationMs < MIN_DRAG_RANGE_MS
+			) {
+				const centerIdx = Math.round((minIdx + maxIdx) / 2);
+				minIdx = Math.max(0, centerIdx - 1);
+				maxIdx = Math.min(displayData.length - 1, centerIdx + 1);
+			}
+			const start = displayData[minIdx]?.rawTime;
+			const end = displayData[maxIdx]?.rawTime;
+			onBrushChange(
+				start && end && end !== start
+					? { startTime: start, endTime: end }
+					: null,
+			);
+		}
+
+		setIsSelecting(false);
+		setSelectionStart(null);
+		setSelectionEnd(null);
+	}, [isSelecting, selectionStart, selectionEnd, displayData, onBrushChange]);
 
 	const hasData = data.length > 0;
 
@@ -116,9 +221,11 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 				</div>
 			) : (
 				<div
-					className="relative min-h-0 w-full min-w-0 flex-1"
-					style={{ minWidth: 0, minHeight: 0 }}
+					className="relative min-h-0 w-full min-w-0 flex-1 select-none cursor-crosshair"
+					style={{ minWidth: 0, minHeight: 0, userSelect: "none" }}
+					onMouseDown={(event) => event.preventDefault()}
 				>
+					<style>{`.recharts-cartesian-axis-tick-value{user-select:none;pointer-events:none;}`}</style>
 					<ResponsiveContainer width="100%" height="100%">
 						<AreaChart
 							data={displayData}
@@ -128,6 +235,10 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 								left: 0,
 								bottom: 54,
 							}}
+							onMouseDown={handleMouseDown}
+							onMouseMove={handleMouseMove}
+							onMouseUp={handleMouseUp}
+							onMouseLeave={() => setIsSelecting(false)}
 						>
 							<defs>
 								<linearGradient
@@ -147,12 +258,13 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 								vertical={false}
 							/>
 							<XAxis
-								dataKey="displayTime"
+								dataKey="rawTime"
 								stroke="#525252"
 								tick={{ fill: "#525252", fontSize: 10 }}
 								tickLine={false}
 								axisLine={false}
 								minTickGap={30}
+								tickFormatter={xTickFormatter}
 							/>
 							<YAxis
 								stroke="#525252"
@@ -183,8 +295,17 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
 								fillOpacity={1}
 								fill={`url(#colorValue-${nodeId})`}
 							/>
+							{isSelecting && selectionStart && selectionEnd && (
+								<ReferenceArea
+									x1={selectionStart}
+									x2={selectionEnd}
+									strokeOpacity={0.3}
+									fill="#0ea5e9"
+									fillOpacity={0.2}
+								/>
+							)}
 							<Brush
-								dataKey="displayTime"
+								dataKey="rawTime"
 								height={30}
 								stroke="#525252"
 								fill="#171717"

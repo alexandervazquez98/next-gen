@@ -21,9 +21,58 @@ describe("DateTimeRangePicker", () => {
 
 		expect(screen.getByLabelText("Time")).toBeInTheDocument();
 		expect(
-			screen.getByText("Green days contain metric history."),
+			screen.getByText("History markers not loaded yet."),
 		).toBeInTheDocument();
 		expect(screen.getByTitle("Metric history available")).toBeInTheDocument();
+	});
+
+	it("notifies when a visible month needs history markers", () => {
+		const onVisibleMonthChange = vi.fn();
+		render(
+			<DateTimeRangePicker
+				startDate="2026-06-10T08:30"
+				endDate=""
+				onStartDateChange={vi.fn()}
+				onEndDateChange={vi.fn()}
+				onReset={vi.fn()}
+				onVisibleMonthChange={onVisibleMonthChange}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: /start/i }));
+
+		expect(onVisibleMonthChange).toHaveBeenCalledWith("2026-06");
+	});
+
+	it("distinguishes loading and confirmed-empty calendar marker states", () => {
+		const { rerender } = render(
+			<DateTimeRangePicker
+				startDate="2026-06-10T08:30"
+				endDate=""
+				onStartDateChange={vi.fn()}
+				onEndDateChange={vi.fn()}
+				onReset={vi.fn()}
+				loadingMonths={new Set(["2026-06"])}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: /start/i }));
+		expect(screen.getByText("Loading history markers…")).toBeInTheDocument();
+
+		rerender(
+			<DateTimeRangePicker
+				startDate="2026-06-10T08:30"
+				endDate=""
+				onStartDateChange={vi.fn()}
+				onEndDateChange={vi.fn()}
+				onReset={vi.fn()}
+				loadedMonths={new Set(["2026-06"])}
+			/>,
+		);
+
+		expect(
+			screen.getByText("Green days contain confirmed metric history."),
+		).toBeInTheDocument();
 	});
 
 	it("updates the selected date while preserving the time", () => {

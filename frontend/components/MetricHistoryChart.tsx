@@ -29,6 +29,33 @@ interface DataPoint {
 	rawTime: string;
 }
 
+const MIN_DRAG_POINTS = 2;
+const MIN_DRAG_RANGE_MS = 5 * 60 * 1000;
+
+const getActiveRawTime = (event: any): string | null => {
+	return (
+		event?.activePayload?.[0]?.payload?.rawTime ?? event?.activeLabel ?? null
+	);
+};
+
+const getRangeLabel = (startTime: string, endTime: string) => {
+	const durationMs = Math.abs(
+		new Date(endTime).getTime() - new Date(startTime).getTime(),
+	);
+	if (durationMs <= 6 * 60 * 60 * 1000) {
+		return { hour: "2-digit", minute: "2-digit" } as const;
+	}
+	if (durationMs <= 48 * 60 * 60 * 1000) {
+		return {
+			day: "numeric",
+			month: "short",
+			hour: "2-digit",
+			minute: "2-digit",
+		} as const;
+	}
+	return { day: "numeric", month: "short" } as const;
+};
+
 const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 	nodeId,
 	metricId,
@@ -120,16 +147,18 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 
 	// Mouse handlers for drag-to-zoom
 	const handleMouseDown = useCallback((e: any) => {
-		if (!e || !e.activeLabel) return;
+		const rawTime = getActiveRawTime(e);
+		if (!rawTime) return;
 		setIsSelecting(true);
-		setSelectionStart(e.activeLabel);
-		setSelectionEnd(e.activeLabel);
+		setSelectionStart(rawTime);
+		setSelectionEnd(rawTime);
 	}, []);
 
 	const handleMouseMove = useCallback(
 		(e: any) => {
-			if (!isSelecting || !e || !e.activeLabel) return;
-			setSelectionEnd(e.activeLabel);
+			const rawTime = getActiveRawTime(e);
+			if (!isSelecting || !rawTime) return;
+			setSelectionEnd(rawTime);
 		},
 		[isSelecting],
 	);
@@ -140,15 +169,25 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 			return;
 		}
 
-		// Find indices in data
-		const startIdx = data.findIndex((d) => d.displayTime === selectionStart);
-		const endIdx = data.findIndex((d) => d.displayTime === selectionEnd);
+		const startIdx = data.findIndex((d) => d.rawTime === selectionStart);
+		const endIdx = data.findIndex((d) => d.rawTime === selectionEnd);
 
 		if (startIdx !== -1 && endIdx !== -1) {
-			const [minIdx, maxIdx] =
+			let [minIdx, maxIdx] =
 				startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-			// Only apply if selection is meaningful (at least 2 points)
-			if (maxIdx - minIdx >= 2) {
+			const durationMs = Math.abs(
+				new Date(data[maxIdx].rawTime).getTime() -
+					new Date(data[minIdx].rawTime).getTime(),
+			);
+			if (
+				maxIdx - minIdx + 1 < MIN_DRAG_POINTS ||
+				durationMs < MIN_DRAG_RANGE_MS
+			) {
+				const centerIdx = Math.round((minIdx + maxIdx) / 2);
+				minIdx = Math.max(0, centerIdx - 1);
+				maxIdx = Math.min(data.length - 1, centerIdx + 1);
+			}
+			if (maxIdx > minIdx) {
 				setBrushRange({ startIndex: minIdx, endIndex: maxIdx });
 			}
 		}
@@ -167,6 +206,18 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 			: data;
 
 	const hasBrushApplied = brushRange !== null;
+	const xTickFormatter = useCallback(
+		(value: string) => {
+			const rangeStart = displayData[0]?.rawTime;
+			const rangeEnd = displayData[displayData.length - 1]?.rawTime;
+			if (!rangeStart || !rangeEnd) return value;
+			return new Date(value).toLocaleString(
+				[],
+				getRangeLabel(rangeStart, rangeEnd),
+			);
+		},
+		[displayData],
+	);
 
 	const renderContent = () => {
 		if (loading && data.length === 0) {
@@ -193,9 +244,11 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 
 		return (
 			<div
-				className="flex-1 w-full min-h-0 relative"
-				style={{ minWidth: 0, minHeight: 0 }}
+				className="flex-1 w-full min-h-0 relative select-none cursor-crosshair"
+				style={{ minWidth: 0, minHeight: 0, userSelect: "none" }}
+				onMouseDown={(event) => event.preventDefault()}
 			>
+				<style>{`.recharts-cartesian-axis-tick-value{user-select:none;pointer-events:none;}`}</style>
 				<ResponsiveContainer width="100%" height="100%">
 					<AreaChart
 						data={displayData}
@@ -222,12 +275,13 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 							vertical={false}
 						/>
 						<XAxis
-							dataKey="displayTime"
+							dataKey="rawTime"
 							stroke="#525252"
 							tick={{ fill: "#525252", fontSize: 10 }}
 							tickLine={false}
 							axisLine={false}
 							minTickGap={30}
+							tickFormatter={xTickFormatter}
 						/>
 						<YAxis
 							stroke="#525252"
@@ -271,7 +325,7 @@ const MetricHistoryChart: React.FC<MetricHistoryChartProps> = ({
 						{/* Brush component at bottom for direct range selection */}
 						{data.length > 0 && (
 							<Brush
-								dataKey="displayTime"
+								dataKey="rawTime"
 								height={30}
 								stroke="#525252"
 								fill="#171717"

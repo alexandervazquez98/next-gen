@@ -101,7 +101,7 @@ def get_metric_history_days(
         try:
             start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
             end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-            query = query.filter(MetricValue.time >= start, MetricValue.time <= end)
+            query = query.filter(MetricValue.time >= start, MetricValue.time < end)
         except ValueError:
             pass
 

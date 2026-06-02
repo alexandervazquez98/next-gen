@@ -1,5 +1,5 @@
 import type React from "react";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GraphNode, MetricValue, NodeMetricData } from "../types";
 import MetricHistoryChart from "./MetricHistoryChart";
 import MultiSelectCIs from "./MultiSelectCIs";
@@ -20,6 +20,24 @@ interface BrushRange {
 
 type AnalyticsSection = "METRICS" | "AVAILABILITY";
 const ANALYTICS_SECTIONS: AnalyticsSection[] = ["METRICS", "AVAILABILITY"];
+
+interface MetricHistoryDayRequest {
+	nodeId: string;
+	metricId: string;
+}
+
+const getMonthRange = (monthKey: string) => {
+	const [year, month] = monthKey.split("-").map(Number);
+	const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+	const end = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+	return { start: start.toISOString(), end: end.toISOString() };
+};
+
+const shiftMonthKey = (monthKey: string, delta: number) => {
+	const [year, month] = monthKey.split("-").map(Number);
+	const shifted = new Date(Date.UTC(year, month - 1 + delta, 1));
+	return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}`;
+};
 
 const MetricAnalytics: React.FC = () => {
 	const [activeSection, setActiveSection] =
@@ -300,8 +318,8 @@ const MetricAnalytics: React.FC = () => {
 		.map((nodeId) => nodes.find((node) => node.id === nodeId))
 		.filter((node): node is GraphNode => Boolean(node));
 
-	useEffect(() => {
-		const metricRequests = hasMultipleSelected
+	const historyDayRequests = useMemo<MetricHistoryDayRequest[]>(() => {
+		return hasMultipleSelected
 			? selectedNodeIds.flatMap((nodeId) => {
 					const primaryMetric = selectedMetricByNodeId[nodeId];
 					const secondaryMetric = showSecondary
@@ -314,39 +332,6 @@ const MetricAnalytics: React.FC = () => {
 			: selectedNode && selectedMetric
 				? [{ nodeId: selectedNode.id, metricId: selectedMetric.name }]
 				: [];
-
-		if (metricRequests.length === 0) {
-			setMetricHistoryDays(new Set());
-			return;
-		}
-
-		const controller = new AbortController();
-		const end = new Date();
-		const start = new Date(end);
-		start.setFullYear(end.getFullYear() - 1);
-
-		Promise.all(
-			metricRequests.map(({ nodeId, metricId }) =>
-				fetchNodeMetricHistoryDays({
-					nodeId,
-					metricId,
-					startTime: start.toISOString(),
-					endTime: end.toISOString(),
-					signal: controller.signal,
-				}),
-			),
-		)
-			.then((dayGroups) => {
-				setMetricHistoryDays(new Set(dayGroups.flat()));
-			})
-			.catch((err) => {
-				if (err.name !== "AbortError") {
-					console.error("Failed to fetch metric history days", err);
-				}
-				setMetricHistoryDays(new Set());
-			});
-
-		return () => controller.abort();
 	}, [
 		hasMultipleSelected,
 		selectedNode,
@@ -356,6 +341,168 @@ const MetricAnalytics: React.FC = () => {
 		showSecondary,
 		secondaryMetricByNodeId,
 	]);
+
+	const historyDayRequestKey = useMemo(
+		() =>
+			historyDayRequests
+				.map(({ nodeId, metricId }) => `${nodeId}:${metricId}`)
+				.sort()
+				.join("|"),
+		[historyDayRequests],
+	);
+	const historyDayCacheRef = useRef<Map<string, Set<string>>>(new Map());
+	const historyDayInFlightRef = useRef<Set<string>>(new Set());
+	const historyDayGenerationRef = useRef(0);
+	const historyDayBackgroundTimersRef = useRef<number[]>([]);
+	const [loadedHistoryMonths, setLoadedHistoryMonths] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [loadingHistoryMonths, setLoadingHistoryMonths] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [visibleHistoryMonth, setVisibleHistoryMonth] = useState<string | null>(
+		null,
+	);
+
+	const mergeHistoryDayCache = useCallback(() => {
+		const merged = new Set<string>();
+		historyDayCacheRef.current.forEach((days) => {
+			days.forEach((day) => merged.add(day));
+		});
+		setMetricHistoryDays(merged);
+	}, []);
+
+	useEffect(() => {
+		historyDayGenerationRef.current += 1;
+		historyDayCacheRef.current.clear();
+		historyDayInFlightRef.current.clear();
+		historyDayBackgroundTimersRef.current.forEach(window.clearTimeout);
+		historyDayBackgroundTimersRef.current = [];
+		setMetricHistoryDays(new Set());
+		setLoadedHistoryMonths(new Set());
+		setLoadingHistoryMonths(new Set());
+	}, [historyDayRequestKey]);
+
+	const loadHistoryMonth = useCallback(
+		(monthKey: string) => {
+			if (historyDayRequests.length === 0) return;
+
+			const generation = historyDayGenerationRef.current;
+			const { start, end } = getMonthRange(monthKey);
+			const missingRequests = historyDayRequests.filter(
+				({ nodeId, metricId }) => {
+					const cacheKey = `${nodeId}:${metricId}:${monthKey}`;
+					return (
+						!historyDayCacheRef.current.has(cacheKey) &&
+						!historyDayInFlightRef.current.has(cacheKey)
+					);
+				},
+			);
+
+			if (missingRequests.length === 0) {
+				const hasInFlightRequests = historyDayRequests.some(
+					({ nodeId, metricId }) =>
+						historyDayInFlightRef.current.has(
+							`${nodeId}:${metricId}:${monthKey}`,
+						),
+				);
+				if (!hasInFlightRequests) {
+					setLoadedHistoryMonths((previous) => new Set(previous).add(monthKey));
+					mergeHistoryDayCache();
+				}
+				return;
+			}
+
+			setLoadingHistoryMonths((previous) => new Set(previous).add(monthKey));
+			missingRequests.forEach(({ nodeId, metricId }) => {
+				historyDayInFlightRef.current.add(`${nodeId}:${metricId}:${monthKey}`);
+			});
+
+			Promise.all(
+				missingRequests.map(({ nodeId, metricId }) =>
+					fetchNodeMetricHistoryDays({
+						nodeId,
+						metricId,
+						startTime: start,
+						endTime: end,
+					}).then((days) => ({ nodeId, metricId, days })),
+				),
+			)
+				.then((results) => {
+					if (generation !== historyDayGenerationRef.current) return;
+					results.forEach(({ nodeId, metricId, days }) => {
+						historyDayCacheRef.current.set(
+							`${nodeId}:${metricId}:${monthKey}`,
+							new Set(days),
+						);
+					});
+					mergeHistoryDayCache();
+					setLoadedHistoryMonths((previous) => new Set(previous).add(monthKey));
+				})
+				.catch((err) => {
+					if (generation !== historyDayGenerationRef.current) return;
+					console.error("Failed to fetch metric history days", err);
+				})
+				.finally(() => {
+					if (generation !== historyDayGenerationRef.current) return;
+					missingRequests.forEach(({ nodeId, metricId }) => {
+						historyDayInFlightRef.current.delete(
+							`${nodeId}:${metricId}:${monthKey}`,
+						);
+					});
+					setLoadingHistoryMonths((previous) => {
+						const next = new Set(previous);
+						next.delete(monthKey);
+						return next;
+					});
+				});
+		},
+		[historyDayRequests, mergeHistoryDayCache],
+	);
+
+	const handleVisibleHistoryMonthChange = useCallback(
+		(monthKey: string) => {
+			setVisibleHistoryMonth(monthKey);
+			historyDayBackgroundTimersRef.current.forEach(window.clearTimeout);
+			historyDayBackgroundTimersRef.current = [];
+			loadHistoryMonth(monthKey);
+
+			const backgroundMonths = [
+				shiftMonthKey(monthKey, -1),
+				shiftMonthKey(monthKey, 1),
+				...Array.from({ length: 11 }, (_, index) =>
+					shiftMonthKey(monthKey, -(index + 2)),
+				),
+			];
+
+			backgroundMonths.forEach((backgroundMonth, index) => {
+				const timer = window.setTimeout(
+					() => {
+						loadHistoryMonth(backgroundMonth);
+					},
+					300 * (index + 1),
+				);
+				historyDayBackgroundTimersRef.current.push(timer);
+			});
+		},
+		[loadHistoryMonth],
+	);
+
+	useEffect(() => {
+		if (visibleHistoryMonth) {
+			handleVisibleHistoryMonthChange(visibleHistoryMonth);
+		}
+	}, [
+		historyDayRequestKey,
+		visibleHistoryMonth,
+		handleVisibleHistoryMonthChange,
+	]);
+
+	useEffect(() => {
+		return () => {
+			historyDayBackgroundTimersRef.current.forEach(window.clearTimeout);
+		};
+	}, []);
 
 	const handleResetDateRange = () => {
 		setStartDate("");
@@ -430,6 +577,9 @@ const MetricAnalytics: React.FC = () => {
 								onEndDateChange={setEndDate}
 								onReset={handleResetDateRange}
 								availableDays={metricHistoryDays}
+								loadedMonths={loadedHistoryMonths}
+								loadingMonths={loadingHistoryMonths}
+								onVisibleMonthChange={handleVisibleHistoryMonthChange}
 							/>
 						</div>
 
