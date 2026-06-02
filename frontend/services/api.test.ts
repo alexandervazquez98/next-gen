@@ -70,6 +70,35 @@ describe('api client', () => {
       await expect(api.get('/nodes')).rejects.toHaveProperty('status', 500);
     });
 
+    it('supports structured detail payloads and surfaces message', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        headers: { get: () => 'application/json' },
+        json: () => Promise.resolve({
+          detail: {
+            message: 'Invalid permission',
+            invalid_permissions: ['BOGUS_PERMISSION'],
+          },
+        }),
+      });
+
+      await expect(api.get('/roles/')).rejects.toThrow('Invalid permission');
+    });
+
+    it('falls back to statusText when detail body is unavailable or malformed', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: { get: () => 'text/plain' },
+        json: () => Promise.reject(new Error('Malformed JSON')),
+      });
+
+      await expect(api.get('/roles/')).rejects.toThrow('Internal Server Error');
+    });
+
     it('throws ApiError with statusText when no detail in body', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,

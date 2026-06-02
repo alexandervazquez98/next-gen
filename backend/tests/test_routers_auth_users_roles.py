@@ -1049,11 +1049,76 @@ class TestRolesCreate:
                 json={
                     "name": "CustomRole",
                     "description": "A custom role",
-                    "permissions": ["EVENT_VIEW"],
+                    "permissions": ["EVENT_VIEW", "EVENT_VIEW", " EVENT_VIEW ", "METRICS_VIEW"],
                 },
             )
 
             assert response.status_code == 200
+            assert response.json()["name"] == "CustomRole"
+
+            # Create query should receive normalized, deduped, trimmed permissions
+            create_query_params = mock_neo4j_driver.execute_query.call_args_list[1].kwargs
+            assert create_query_params["permissions"] == ["EVENT_VIEW", "METRICS_VIEW"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_create_role_invalid_permission_is_rejected(self, mock_neo4j_driver):
+        """Create should reject unknown permissions and avoid persistence."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        mock_neo4j_driver.execute_query.return_value = ([], None, None)
+
+        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+            response = client.post(
+                "/api/roles/",
+                json={
+                    "name": "CustomRole",
+                    "description": "A bad role",
+                    "permissions": ["EVENT_VIEW", "BOGUS_PERMISSION"],
+                },
+            )
+
+            assert response.status_code == 400
+            error = response.json()
+            assert "invalid_permissions" in error["detail"]
+
+        # only existence check should run; create query must not run
+        assert mock_neo4j_driver.execute_query.call_count == 1
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_create_role_rejects_empty_permission(self, mock_neo4j_driver):
+        """Create should reject blank permission strings."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        mock_neo4j_driver.execute_query.return_value = ([], None, None)
+
+        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+            response = client.post(
+                "/api/roles/",
+                json={
+                    "name": "CustomRole",
+                    "description": "A bad role",
+                    "permissions": [""],
+                },
+            )
+
+            assert response.status_code == 400
+            assert "invalid_permissions" in response.json()["detail"]
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1124,13 +1189,56 @@ class TestRolesUpdate:
             override_get_current_active_user
         )
 
-        mock_node = _FakeNeo4jNode(
+        mock_record = {"r": _FakeNeo4jNode(
             {
                 "name": "CustomRole",
                 "description": "Updated description",
-                "permissions": ["EVENT_VIEW", "CI_EDIT"],
+                "permissions": ["EVENT_ACK", "METRICS_VIEW"],
                 "is_system": False,
             }
+        )}
+
+        def mock_execute(*args, **kwargs):
+            # First call: lookup by name; second call: update
+            if mock_execute.call_count == 0:
+                mock_execute.call_count += 1
+                return ([{"r": _FakeNeo4jNode({"name": "CustomRole", "is_system": False})}], None, None)
+            mock_execute.call_count += 1
+            return ([mock_record], None, None)
+
+        mock_execute.call_count = 0
+        mock_neo4j_driver.execute_query.side_effect = mock_execute
+
+        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+            response = client.put(
+                "/api/roles/CustomRole",
+                json={
+                    "description": "Updated description",
+                    "permissions": ["EVENT_ACK", " EVENT_ACK ", "METRICS_VIEW"],
+                },
+            )
+
+            assert response.status_code == 200
+
+            # Update payload should be normalized and deduped
+            update_params = mock_neo4j_driver.execute_query.call_args_list[1].kwargs
+            assert update_params["permissions"] == ["EVENT_ACK", "METRICS_VIEW"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_update_role_with_invalid_permission_rejected(self, mock_neo4j_driver):
+        """Update should reject non-string permissions and avoid write query."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        mock_node = _FakeNeo4jNode(
+            {"name": "CustomRole", "description": "Existing", "is_system": False}
         )
         mock_record = {"r": mock_node}
         mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
@@ -1138,10 +1246,50 @@ class TestRolesUpdate:
         with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
             response = client.put(
                 "/api/roles/CustomRole",
-                json={"description": "Updated description"},
+                json={"permissions": ["EVENT_VIEW", 123]},
             )
 
-            assert response.status_code == 200
+            assert response.status_code in (400, 422)
+            if response.status_code == 400:
+                assert "invalid_permissions" in response.json()["detail"]
+
+        # either route rejected by service validation (400) or schema validation (422);
+        # in neither case should an update write query run
+        assert mock_neo4j_driver.execute_query.call_count <= 1
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_update_system_role_forbidden_no_update_query(self, mock_neo4j_driver):
+        """System roles cannot be updated and should skip update write query."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        mock_node = _FakeNeo4jNode(
+            {
+                "name": "ADMIN",
+                "is_system": True,
+            }
+        )
+        mock_record = {"r": mock_node}
+
+        mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
+
+        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+            response = client.put(
+                "/api/roles/ADMIN",
+                json={"description": "Should not work"},
+            )
+
+            assert response.status_code == 400
+
+        # Only initial lookup query should execute
+        assert mock_neo4j_driver.execute_query.call_count == 1
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1173,8 +1321,10 @@ class TestRolesUpdate:
 
             assert response.status_code == 400
 
-        app.dependency_overrides.pop(get_current_active_user, None)
+        # only lookup should have run
+        assert mock_neo4j_driver.execute_query.call_count == 1
 
+        app.dependency_overrides.pop(get_current_active_user, None)
     def test_update_role_not_found(self, mock_neo4j_driver):
         """Updating non-existent role should return 404."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")

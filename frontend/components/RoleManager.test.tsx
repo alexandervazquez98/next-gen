@@ -62,17 +62,17 @@ describe('RoleManager', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
-  it('renders access denied when the user lacks role management permissions', () => {
+  it('renders access denied when the user lacks view/mutate permissions', () => {
     setAuth([]);
 
     render(<RoleManager />);
 
-    expect(screen.getByText(/access denied\. required: role_manage/i)).toBeInTheDocument();
+    expect(screen.getByText(/access denied\. required: user_manage or role_manage/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /new role/i })).not.toBeInTheDocument();
-    expect(mocks.api.get).toHaveBeenCalledWith('/roles/');
+    expect(mocks.api.get).not.toHaveBeenCalled();
   });
 
-  it('allows ADMIN permission even without explicit ROLE_MANAGE permission', async () => {
+  it('allows ADMIN permission without explicit ROLE_MANAGE permission', async () => {
     setAuth(['ADMIN']);
     mocks.api.get.mockResolvedValue([customRole]);
 
@@ -82,6 +82,21 @@ describe('RoleManager', () => {
     await waitFor(() => {
       expect(screen.getByText('Operator')).toBeInTheDocument();
     });
+  });
+
+  it('allows USER_MANAGE-only users to view roles but not mutate', async () => {
+    setAuth(['USER_MANAGE']);
+    mocks.api.get.mockResolvedValue([customRole]);
+
+    render(<RoleManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Operator')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /new role/i })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Edit')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Delete')).not.toBeInTheDocument();
   });
 
   it('starts with no role cards while the fetch is still pending and then renders data', async () => {
@@ -142,7 +157,7 @@ describe('RoleManager', () => {
     expect(screen.queryByTitle('Delete')).not.toBeInTheDocument();
   });
 
-  it('shows create, edit, and delete actions for a user with permission', async () => {
+  it('shows create, edit, and delete actions for a user with mutate permissions', async () => {
     mocks.api.get.mockResolvedValue([customRole]);
 
     render(<RoleManager />);
@@ -154,30 +169,23 @@ describe('RoleManager', () => {
     });
   });
 
-  it('does not render action buttons for a user without permission', () => {
-    setAuth([]);
+  it('does not render edit control for system roles', async () => {
+    mocks.api.get.mockResolvedValue([systemRole]);
 
     render(<RoleManager />);
 
-    expect(screen.queryByRole('button', { name: /new role/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('ADMIN')).toBeInTheDocument();
+    });
+
     expect(screen.queryByTitle('Edit')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Delete')).not.toBeInTheDocument();
   });
 
-  it('opens the create form with empty editable fields', async () => {
-    render(<RoleManager />);
-
-    fireEvent.click(screen.getByRole('button', { name: /new role/i }));
-
-    expect(screen.getByRole('heading', { name: /create role/i })).toBeInTheDocument();
-    const inputs = screen.getAllByRole('textbox');
-    expect(inputs[0]).toHaveValue('');
-    expect(inputs[0]).not.toBeDisabled();
-    expect(inputs[1]).toHaveValue('');
-  });
-
   it('creates a new role and reloads the list', async () => {
-    mocks.api.get.mockResolvedValueOnce([]).mockResolvedValueOnce([customRole]);
+    mocks.api.get
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([customRole]);
 
     render(<RoleManager />);
 
@@ -194,13 +202,23 @@ describe('RoleManager', () => {
         name: 'Operator',
         description: 'Handles incidents and diagnostics',
         permissions: ['EVENT_VIEW'],
-        is_system: false,
       });
     });
 
     await waitFor(() => {
       expect(screen.getByText('Operator')).toBeInTheDocument();
     });
+  });
+
+  it('renders explicit permission catalog options in create/edit form', async () => {
+    mocks.api.get.mockResolvedValue([]);
+
+    render(<RoleManager />);
+
+    fireEvent.click(screen.getByRole('button', { name: /new role/i }));
+
+    expect(screen.getByLabelText('EVENT_FORCED_CLOSE')).toBeInTheDocument();
+    expect(screen.getByLabelText('METRICS_VIEW')).toBeInTheDocument();
   });
 
   it('edits an existing role and keeps the name immutable', async () => {
@@ -224,7 +242,6 @@ describe('RoleManager', () => {
 
     await waitFor(() => {
       expect(mocks.api.put).toHaveBeenCalledWith('/roles/Operator', {
-        ...customRole,
         description: 'Updated operator description',
         permissions: ['EVENT_VIEW'],
       });
@@ -321,7 +338,7 @@ describe('RoleManager', () => {
     });
   });
 
-  it('returns to the role list when cancelling the edit form', async () => {
+  it('returns to the role list when cancelling the edit form', () => {
     render(<RoleManager />);
 
     fireEvent.click(screen.getByRole('button', { name: /new role/i }));
