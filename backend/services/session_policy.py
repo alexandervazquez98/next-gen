@@ -11,6 +11,8 @@ class SessionPolicy:
     access_token_minutes: int
     refresh_token_days: int
     idle_timeout_minutes: int | None
+    stale_rotation_grace_seconds: int
+    stale_rotation_max_recoveries: int
     persistent: bool = False
 
 
@@ -44,6 +46,14 @@ def _parse_int(value: str | None, *, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def get_stale_recovery_grace_seconds() -> int:
+    return _parse_int(os.getenv("SESSION_STALE_ROTATION_GRACE_SECONDS"), default=30)
+
+
+def get_stale_recovery_max_recoveries() -> int:
+    return _parse_int(os.getenv("SESSION_STALE_ROTATION_MAX_RECOVERIES"), default=3)
+
+
 def get_standard_session_policy() -> SessionPolicy:
     """Default non-operational policy."""
     return SessionPolicy(
@@ -54,6 +64,8 @@ def get_standard_session_policy() -> SessionPolicy:
             os.getenv("SESSION_STANDARD_IDLE_TIMEOUT_MINUTES"),
             default=15,
         ),
+        stale_rotation_grace_seconds=get_stale_recovery_grace_seconds(),
+        stale_rotation_max_recoveries=get_stale_recovery_max_recoveries(),
         persistent=False,
     )
 
@@ -66,6 +78,8 @@ def get_operational_session_policy() -> SessionPolicy:
         # Keep long-lived (configurable) refresh for operational users.
         refresh_token_days=_parse_int(os.getenv("SESSION_OPERATIONAL_REFRESH_DAYS"), default=30),
         idle_timeout_minutes=None,
+        stale_rotation_grace_seconds=get_stale_recovery_grace_seconds(),
+        stale_rotation_max_recoveries=get_stale_recovery_max_recoveries(),
         persistent=True,
     )
 
@@ -89,6 +103,14 @@ def _normalize_username(username: str | None) -> str:
     if username is None:
         return ""
     return str(username).strip().lower()
+
+
+def get_session_policy_by_profile(profile: str) -> SessionPolicy:
+    """Resolve policy from persisted profile string."""
+    normalized = (profile or "").strip().lower()
+    if normalized == "operational":
+        return get_operational_session_policy()
+    return get_standard_session_policy()
 
 
 def resolve_session_policy_for_user(user: object) -> SessionPolicy:
