@@ -280,28 +280,80 @@ describe('api client', () => {
   });
 
   describe('401 handling', () => {
-    it('redirects on 401 when refresh fails', async () => {
-      // Mock window.location
+    const jsonResponse = (status: number, body: any, statusText = 'Unauthorized') => ({
+      ok: status >= 200 && status < 300,
+      status,
+      statusText,
+      headers: { get: () => 'application/json' },
+      json: () => Promise.resolve(body),
+    });
+
+    it('coalesces parallel 401 requests into a single refresh and retries each original request once', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/auth/refresh') return jsonResponse(200, { access_token: 'rotated' });
+        const callsForUrl = fetchMock.mock.calls.filter(([calledUrl]) => calledUrl === url).length;
+        return callsForUrl === 1 ? jsonResponse(401, { detail: 'Unauthorized' }) : jsonResponse(200, { url });
+      });
+      global.fetch = fetchMock;
+
+      await expect(Promise.all([api.get('/nodes'), api.get('/devices')])).resolves.toEqual([
+        { url: '/api/nodes' },
+        { url: '/api/devices' },
+      ]);
+      expect(fetchMock.mock.calls.filter(([url]) => url === '/api/auth/refresh')).toHaveLength(1);
+      expect(fetchMock.mock.calls.filter(([url]) => url === '/api/nodes')).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([url]) => url === '/api/devices')).toHaveLength(2);
+    });
+
+    it('bounds failed parallel refresh attempts and redirects only once', async () => {
       const originalLocation = window.location;
       delete (window as any).location;
-      window.location = {
-        pathname: '/',
-        hash: '',
-        href: '',
-      } as any;
+      window.location = { pathname: '/', hash: '', href: '' } as any;
+      const fetchMock = vi.fn(async (url: string) => (
+        url === '/api/auth/refresh'
+          ? jsonResponse(401, { detail: 'idle_timeout' })
+          : jsonResponse(401, { detail: 'Unauthorized' })
+      ));
+      global.fetch = fetchMock;
 
-      global.fetch = vi.fn().mockResolvedValue({
-        status: 401,
-        ok: false,
-        headers: { get: () => 'application/json' },
-        json: () => Promise.resolve({ detail: 'Session expired' }),
-      });
+      await expect(Promise.all([api.get('/nodes'), api.get('/devices')])).rejects.toThrow('idle_timeout');
+      expect(fetchMock.mock.calls.filter(([url]) => url === '/api/auth/refresh')).toHaveLength(1);
+      expect(window.location.href).toBe('/login');
+      window.location = originalLocation;
+    });
+
+    it('does not recursively refresh refresh requests when skipAuthRefresh is set', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { detail: 'invalid_refresh_token' }));
+      global.fetch = fetchMock;
+
+      await expect(api.post('/auth/refresh', {}, { skipAuthRefresh: true } as RequestInit)).rejects.toThrow('invalid_refresh_token');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/refresh', expect.objectContaining({ method: 'POST' }));
+    });
+
+    it('surfaces SSE refresh failures without redirecting unexpectedly', async () => {
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { pathname: '/', hash: '', href: '' } as any;
+      global.fetch = vi.fn(async (url: string) => (
+        url === '/api/auth/refresh'
+          ? jsonResponse(401, { detail: 'session_expired' })
+          : jsonResponse(401, { detail: 'Unauthorized' })
+      ));
+
+      await expect(api.getSSE('/events')).rejects.toThrow('session_expired');
+      expect(window.location.href).toBe('');
+      window.location = originalLocation;
+    });
+
+    it('redirects on 401 when refresh fails', async () => {
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { pathname: '/', hash: '', href: '' } as any;
+      global.fetch = vi.fn().mockResolvedValue(jsonResponse(401, { detail: 'Session expired' }));
 
       await expect(api.get('/nodes')).rejects.toThrow('Session expired');
-
       expect(window.location.href).toBe('/login');
-
-      // Restore window.location
       window.location = originalLocation;
     });
   });

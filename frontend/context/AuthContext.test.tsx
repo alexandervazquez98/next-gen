@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { publishAuthSessionEvent } from '../services/sessionBus';
 
 // Mock react-router-dom for the api.ts import chain
 vi.mock('react-router-dom', () => ({
@@ -19,6 +20,7 @@ vi.mock('../services/api', () => ({
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <AuthProvider>{children}</AuthProvider>
 );
+const baseUser = { username: 'admin', role: 'USER', permissions: [], allowed_locations: [], tier: 'T1' };
 
 describe('AuthContext', () => {
   beforeEach(() => {
@@ -28,6 +30,10 @@ describe('AuthContext', () => {
     mocks.api.post.mockReset();
     // Default: resolve with null user so hydration doesn't crash
     mocks.api.get.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('initial state', () => {
@@ -51,6 +57,22 @@ describe('AuthContext', () => {
         expect(result.current.loading).toBe(false);
         expect(result.current.user).toEqual(mockUser);
         expect(result.current.isAuthenticated).toBe(true);
+      });
+    });
+
+    it('preserves session policy metadata from /auth/users/me', async () => {
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 30, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.user?.session_id).toBe('session-123');
+        expect(result.current.user?.session_policy).toEqual(mockUser.session_policy);
       });
     });
 
@@ -125,6 +147,98 @@ describe('AuthContext', () => {
         expect(result.current.user).not.toBeNull();
       });
       expect(result.current.user?.tier ?? 'T1').toBe('T1');
+    });
+  });
+
+  describe('session policy and cross-tab behavior', () => {
+    it('logs out and clears standard non-persistent sessions after the configured inactivity timeout', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(result.current.user).toEqual(mockUser);
+      expect(mocks.api.post).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(mocks.api.post).toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
+      expect(result.current.user).toBeNull();
+      expect(result.current.isAuthenticated).toBe(false);
+    });
+
+    it('does not arm inactivity logout for persistent operational sessions', async () => {
+      const mockUser = {
+        ...baseUser,
+        username: 'operator',
+        role: 'OPERATOR',
+        tier: 'T2',
+        session_policy: { profile: 'operational', idle_timeout_minutes: null, persistent: true },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.isAuthenticated).toBe(true);
+      });
+
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+
+      expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.anything());
+      expect(result.current.user).toEqual(mockUser);
+    });
+
+    it('clears local authentication when another tab broadcasts session expiration', async () => {
+      const mockUser = { ...baseUser, role: 'ADMIN', tier: 'T3' };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.isAuthenticated).toBe(true);
+      });
+
+      act(() => {
+        publishAuthSessionEvent({ type: 'session-expired', reason: 'idle_timeout' });
+      });
+
+      await waitFor(() => {
+        expect(result.current.user).toBeNull();
+        expect(result.current.isAuthenticated).toBe(false);
+      });
+    });
+
+    it('ignores stale session events for a previous session id', async () => {
+      const mockUser = { ...baseUser, session_id: 'current-session' };
+      mocks.api.get.mockResolvedValue(mockUser);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.isAuthenticated).toBe(true);
+      });
+
+      act(() => {
+        publishAuthSessionEvent({ type: 'session-expired', reason: 'idle_timeout', sessionId: 'previous-session' });
+      });
+
+      expect(result.current.user).toEqual(mockUser);
+      expect(result.current.isAuthenticated).toBe(true);
     });
   });
 
