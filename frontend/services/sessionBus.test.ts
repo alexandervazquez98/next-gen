@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AUTH_SESSION_CHANNEL, AUTH_SESSION_STORAGE_KEY, publishAuthSessionEvent, subscribeAuthSessionEvents } from './sessionBus';
+import {
+  AUTH_SESSION_CHANNEL,
+  AUTH_SESSION_DEDUPE_MAX_KEYS,
+  AUTH_SESSION_DEDUPE_TTL_MS,
+  AUTH_SESSION_STORAGE_KEY,
+  publishAuthSessionEvent,
+  subscribeAuthSessionEvents,
+} from './sessionBus';
 
 describe('sessionBus', () => {
   beforeEach(() => {
@@ -73,6 +80,71 @@ describe('sessionBus', () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(message);
+    unsubscribe();
+  });
+
+  it('expires remote-event dedupe keys after the TTL', () => {
+    vi.useFakeTimers();
+    const handler = vi.fn();
+    const unsubscribe = subscribeAuthSessionEvents(handler);
+
+    try {
+      const message = {
+        type: 'session-expired' as const,
+        eventId: 'remote-event-ttl',
+        reason: 'idle_timeout',
+        senderId: 'other-tab',
+        timestamp: Date.now(),
+      };
+
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: AUTH_SESSION_STORAGE_KEY,
+        newValue: JSON.stringify(message),
+      }));
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: AUTH_SESSION_STORAGE_KEY,
+        newValue: JSON.stringify(message),
+      }));
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(AUTH_SESSION_DEDUPE_TTL_MS + 1);
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: AUTH_SESSION_STORAGE_KEY,
+        newValue: JSON.stringify(message),
+      }));
+
+      expect(handler).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps remote-event dedupe keys to prevent unbounded growth', () => {
+    const handler = vi.fn();
+    const unsubscribe = subscribeAuthSessionEvents(handler);
+    const firstMessage = {
+      type: 'logout' as const,
+      eventId: 'remote-event-0',
+      reason: 'manual',
+      senderId: 'other-tab',
+      timestamp: Date.now(),
+    };
+
+    for (let index = 0; index <= AUTH_SESSION_DEDUPE_MAX_KEYS; index += 1) {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: AUTH_SESSION_STORAGE_KEY,
+        newValue: JSON.stringify({ ...firstMessage, eventId: `remote-event-${index}` }),
+      }));
+    }
+    expect(handler).toHaveBeenCalledTimes(AUTH_SESSION_DEDUPE_MAX_KEYS + 1);
+
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: AUTH_SESSION_STORAGE_KEY,
+      newValue: JSON.stringify(firstMessage),
+    }));
+
+    expect(handler).toHaveBeenCalledTimes(AUTH_SESSION_DEDUPE_MAX_KEYS + 2);
     unsubscribe();
   });
 });

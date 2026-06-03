@@ -53,6 +53,42 @@ function redirectToLoginOnce() {
     }
 }
 
+function base64UrlDecode(value: string): string {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), '=');
+    return atob(padded);
+}
+
+function readCookie(name: string): string | undefined {
+    if (typeof document === 'undefined') return undefined;
+    const prefix = `${name}=`;
+    return document.cookie
+        .split(';')
+        .map(cookie => cookie.trim())
+        .find(cookie => cookie.startsWith(prefix))
+        ?.slice(prefix.length);
+}
+
+function getCurrentSessionIdFromAccessToken(): string | undefined {
+    try {
+        const token = readCookie('access_token');
+        const payload = token?.split('.')[1];
+        if (!payload) return undefined;
+        const decoded = JSON.parse(base64UrlDecode(payload));
+        return typeof decoded.sid === 'string' ? decoded.sid : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function publishSessionExpired(reason: string) {
+    publishAuthSessionEvent({
+        type: 'session-expired',
+        reason,
+        sessionId: getCurrentSessionIdFromAccessToken(),
+    });
+}
+
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {
     const errorData = await response.json().catch(() => ({}));
     const detail = errorData.detail;
@@ -77,7 +113,7 @@ async function refreshSession(): Promise<void> {
 
         if (!refreshResponse.ok) {
             const message = await getErrorMessage(refreshResponse, 'Session expired');
-            publishAuthSessionEvent({ type: 'session-expired', reason: message });
+            publishSessionExpired(message);
             throw new ApiError(message, refreshResponse.status);
         }
     })().finally(() => {
@@ -147,7 +183,7 @@ async function request<T>(endpoint: string, config: ApiRequestConfig = {}): Prom
         if (skipAuthRefresh || authRetryCount >= MAX_AUTH_RETRY_COUNT) {
             const message = await getErrorMessage(response, 'Unauthorized');
             if (!isSSE && !skipAuthRefresh) {
-                publishAuthSessionEvent({ type: 'session-expired', reason: message });
+                publishSessionExpired(message);
                 redirectToLoginOnce();
             }
             throw new ApiError(message, response.status);
