@@ -17,6 +17,15 @@ const report: AvailabilityReportResponse = {
 	generated_at: "2026-01-31T00:05:00Z",
 	window_days: 30,
 	total_groups: 2,
+	snmp_coverage: {
+		total_ci_with_snmp: 2,
+		functional_ci: 1,
+		failing_ci: 1,
+		no_response_ci: 1,
+		no_response_event_count: 2,
+		functional_percentage: 50,
+		failing_percentage: 50,
+	},
 	rows: [
 		{
 			ci_id: "ci-1",
@@ -82,7 +91,7 @@ describe("AvailabilityDashboard", () => {
 		URL.revokeObjectURL = vi.fn();
 	});
 
-	it("renders availability MTTR and MTBF rows from the report", () => {
+	it("renders availability MTTR, MTBF, and SNMP coverage from the report", () => {
 		render(<AvailabilityDashboard />);
 
 		expect(screen.getByText("Availability MTTR/MTBF")).toBeInTheDocument();
@@ -90,6 +99,24 @@ describe("AvailabilityDashboard", () => {
 		expect(screen.getByText("Billing Database")).toBeInTheDocument();
 		expect(screen.getByText("15m")).toBeInTheDocument();
 		expect(screen.getAllByText("2h").length).toBeGreaterThan(0);
+		expect(screen.getByText("SNMP functional")).toBeInTheDocument();
+		expect(screen.getByText("1/2 (50.00%)")).toBeInTheDocument();
+		expect(screen.getByText("SNMP no-response")).toBeInTheDocument();
+		expect(screen.getByText("1 CIs / 2 events")).toBeInTheDocument();
+	});
+
+	it("handles older availability responses without SNMP coverage", () => {
+		mockUseAvailabilityReportQuery.mockReturnValueOnce({
+			data: { ...report, snmp_coverage: undefined },
+			isLoading: false,
+			error: null,
+		});
+
+		render(<AvailabilityDashboard />);
+
+		expect(screen.getByText("SNMP functional")).toBeInTheDocument();
+		expect(screen.getByText("SNMP no-response")).toBeInTheDocument();
+		expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
 	});
 
 	it("filters by enriched CI metadata and keeps the search after expanding a row", () => {

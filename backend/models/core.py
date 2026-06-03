@@ -217,12 +217,23 @@ class AvailabilityReportRow(BaseModel):
     ci: Optional[AvailabilityReportCI] = None
 
 
+class SnmpCoverageSummary(BaseModel):
+    total_ci_with_snmp: int = 0
+    functional_ci: int = 0
+    failing_ci: int = 0
+    no_response_ci: int = 0
+    no_response_event_count: int = 0
+    functional_percentage: Optional[float] = None
+    failing_percentage: Optional[float] = None
+
+
 class AvailabilityReportResponse(BaseModel):
     window_start: str
     window_end: str
     generated_at: str
     window_days: float
     total_groups: int
+    snmp_coverage: Optional[SnmpCoverageSummary] = None
     rows: List[AvailabilityReportRow]
 
 
