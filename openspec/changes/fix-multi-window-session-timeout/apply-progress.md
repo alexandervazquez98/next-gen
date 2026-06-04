@@ -7,7 +7,7 @@ Scope: `fix-multi-window-session-timeout` (Issue #188).
 - PR1: `fix/session-policy-foundation` -> `main`, opened as PR #245, accepted for review.
 - PR2: `fix/session-refresh-stale-recovery` -> `fix/session-policy-foundation`, backend-only stale refresh/rate-limit slice in progress.
 - PR3: `fix/session-policy-contract` -> `fix/session-refresh-stale-recovery`, backend/frontend contract bridge for session policy visibility in progress.
-- PR4: pending.
+- PR4: `fix/session-policy-contract` frontend slice implemented locally; verify report created at `verify-report-pr4.md`.
 
 ## PR1 summary
 
@@ -48,6 +48,16 @@ PR3 adds a minimal backend contract bridge for frontend inactivity decisions:
 - added router test coverage for `/auth/users/me` contract response shape
 - no frontend singleflight/cross-tab UX behavior changes in this PR
 
+## PR4 summary
+
+PR4 adds frontend session coordination and inactivity UX:
+
+- per-tab refresh singleflight with bounded original-request retry metadata
+- non-recursive refresh/logout requests via `skipAuthRefresh`
+- terminal refresh failure handling with one-time login redirect, while SSE callers receive errors without redirect
+- `sessionBus` BroadcastChannel/localStorage fallback for logout and session-expired convergence
+- AuthContext consumes `session_id`/`session_policy`, clears cross-tab session events, and arms inactivity logout only for non-persistent policies
+
 ## PR2 incident note
 
 Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth_router_refresh.py`, leaving a partial but coherent backend diff. A fresh incident audit found no conflict markers or syntax failures and recommended continuing manually. The only blocker was a test patch returning a non-JWT `access_token` while decoding it. That test was corrected by letting the real `create_access_token` run.
@@ -81,6 +91,15 @@ Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth
 | TRIANGULATE | Ran `cd backend && python -m pytest tests/test_routers_auth_users_roles.py::TestAuthUsersMe -q` and got **6 passed**. |
 | REFACTOR | Kept contract bridge limited to backend-only response shape required by frontend; no frontend UX logic included. |
 
+### PR4
+
+| Phase | Evidence |
+| --- | --- |
+| RED | Added frontend tests for refresh singleflight, bounded failed refresh, non-recursive refresh, SSE no-redirect behavior, session policy hydration, inactivity timeout, cross-tab expiry, and sessionBus BroadcastChannel/storage fallback. Initial run failed on missing `sessionBus` module and expected API/AuthContext behavior. |
+| GREEN | Implemented API refresh singleflight/bounded retry, session bus, and AuthContext policy-aware inactivity/cross-tab handling. |
+| TRIANGULATE | Ran `corepack pnpm --dir frontend run test:run` and got **43 passed / 401 tests passed**. |
+| REFACTOR | Trimmed PR4 diff to stay within the 700-line review budget while preserving focused frontend scope. |
+
 ## Verification commands
 
 ### PR1 accepted evidence
@@ -106,13 +125,12 @@ Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth
 
 ## Remaining work
 
-- PR3 contract shape is implemented and ready for SDD verify.
-- PR4: frontend singleflight, cross-tab coordination, and inactivity UX.
+- Run fresh PR4 review before opening/updating the stacked PR.
 
 ## Known risks
 
 - Stale-token recovery must remain tightly bounded to prevent replay abuse.
-- Browser cross-tab coordination is still not implemented; backend tolerance is PR2's focus.
+- Browser cross-tab coordination is covered for logout/session-expired convergence; backend tolerance remains authoritative for refresh races.
 - PostgreSQL startup migration/backfill still needs validation against a real PostgreSQL instance.
 - Contract consumers must agree on `session_policy` semantics to avoid frontend/backend drift.
 - `open-issues-triage.md` remains untracked and outside PR2 scope.

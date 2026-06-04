@@ -1,4 +1,14 @@
+import { publishAuthSessionEvent } from './sessionBus';
+
 const API_BASE = '/api';
+const MAX_AUTH_RETRY_COUNT = 1;
+
+export type ApiRequestConfig = RequestInit & {
+    responseType?: string;
+    isSSE?: boolean;
+    skipAuthRefresh?: boolean;
+    authRetryCount?: number;
+};
 
 /**
  * Custom error class for API errors
@@ -17,104 +27,71 @@ export class ApiError extends Error {
  */
 export const SSE_STREAM_HEADER = 'x-sse-stream';
 
-/**
- * Generic fetch wrapper to handle Auth and Errors
- *
- * Auth model: HttpOnly cookie is sent AUTOMATICALLY by the browser via
- * credentials: 'include'. No Authorization: Bearer header needed.
- * 401 retry: the browser re-sends the cookie automatically; we just retry once.
- */
-async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T> {
-    const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-    const responseType = (config as RequestInit & { responseType?: string }).responseType;
-    const isSSE = !!(config as RequestInit & { isSSE?: boolean }).isSSE;
+let refreshPromise: Promise<void> | null = null;
+let redirectedToLogin = false;
 
-    // Build headers — start with any caller-provided headers, then apply defaults
-    const callerHeaders = config.headers as Record<string, string> || {};
-    const headers: Record<string, string> = { ...callerHeaders };
+function normalizeEndpoint(endpoint: string): string {
+    return endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+}
 
-    // Default to JSON if no body or if body is not FormData and no Content-Type set
-    if (!(config.body instanceof FormData) && !headers['Content-Type']) {
-        headers['Content-Type'] = 'application/json';
+function isLoginPage(): boolean {
+    if (typeof window === 'undefined') return false;
+    return window.location.pathname === '/login' || window.location.hash.startsWith('#/login');
+}
+
+function redirectToLoginOnce() {
+    if (typeof window === 'undefined' || isLoginPage()) return;
+
+    const alreadyPointingAtLogin = window.location.href.endsWith('/login') || window.location.hash.startsWith('#/login');
+    if (redirectedToLogin && alreadyPointingAtLogin) return;
+
+    redirectedToLogin = true;
+    if (window.location.hash) {
+        window.location.hash = '#/login';
+    } else {
+        window.location.href = '/login';
     }
+}
 
-    const response = await fetch(url, {
-        ...config,
-        headers,
-        credentials: 'include',
-    });
+async function getErrorMessage(response: Response, fallback: string): Promise<string> {
+    const errorData = await response.json().catch(() => ({}));
+    const detail = errorData.detail;
+    if (typeof detail === 'string') return detail;
+    return detail?.message || response.statusText || fallback;
+}
 
-    // Handle 401 Unauthorized — call /auth/refresh to rotate tokens, then retry
-    if (response.status === 401) {
-        // Step 1: POST to /auth/refresh — browser sends refresh_token cookie automatically
+function shouldSkipAuthRefresh(endpoint: string, config: ApiRequestConfig): boolean {
+    const normalizedEndpoint = normalizeEndpoint(endpoint);
+    return !!config.skipAuthRefresh || normalizedEndpoint === '/auth/refresh' || normalizedEndpoint === '/auth/logout';
+}
+
+async function refreshSession(): Promise<void> {
+    if (refreshPromise) return refreshPromise;
+
+    refreshPromise = (async () => {
         const refreshResponse = await fetch(`${API_BASE}/auth/refresh`, {
             method: 'POST',
-            credentials: 'include', // Required to send the refresh_token cookie
-        });
-
-        // If refresh fails, the refresh cookie is expired — force logout
-        if (!refreshResponse.ok) {
-            if (!isSSE) {
-                const isLoginPage = window.location.pathname === '/login' || window.location.hash.startsWith('#/login');
-                if (!isLoginPage) {
-                    if (window.location.hash) {
-                        window.location.hash = '#/login';
-                    } else {
-                        window.location.href = '/login';
-                    }
-                }
-            }
-            throw new ApiError('Session expired', 401);
-        }
-
-        // Step 2: Refresh succeeded — new access_token cookie is set on the response
-        // Retry the original request; browser sends the new access_token cookie automatically
-        const retryResponse = await fetch(url, {
-            ...config,
-            headers,
             credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
         });
 
-        if (retryResponse.ok) {
-            if (responseType === 'blob') {
-                return retryResponse.blob() as unknown as T;
-            }
-            const contentType = retryResponse.headers.get("content-type");
-            if (contentType && contentType.indexOf("application/json") !== -1) {
-                return retryResponse.json();
-            }
-            return retryResponse.text() as unknown as T;
+        if (!refreshResponse.ok) {
+            const message = await getErrorMessage(refreshResponse, 'Session expired');
+            publishAuthSessionEvent({ type: 'session-expired', reason: message });
+            throw new ApiError(message, refreshResponse.status);
         }
+    })().finally(() => {
+        refreshPromise = null;
+    });
 
-        // Retry still failed — refresh cookie may have expired during the retry window
-        if (!isSSE) {
-            const isLoginPage = window.location.pathname === '/login' || window.location.hash.startsWith('#/login');
-            if (!isLoginPage) {
-                if (window.location.hash) {
-                    window.location.hash = '#/login';
-                } else {
-                    window.location.href = '/login';
-                }
-            }
-        }
-        throw new ApiError('Unauthorized', 401);
-    }
+    return refreshPromise;
+}
 
-    // Handle other errors
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const detail = errorData.detail;
-        const message = typeof detail === 'string'
-            ? detail
-            : detail?.message || response.statusText;
-        throw new ApiError(message, response.status);
-    }
-
+async function parseSuccessfulResponse<T>(response: Response, responseType?: string): Promise<T> {
     if (responseType === 'blob') {
         return response.blob() as unknown as T;
     }
 
-    // Return JSON if content exists
     const contentType = response.headers.get("content-type");
     if (contentType && contentType.indexOf("application/json") !== -1) {
         return response.json();
@@ -131,9 +108,79 @@ async function request<T>(endpoint: string, config: RequestInit = {}): Promise<T
     return response.text() as unknown as T;
 }
 
+/**
+ * Generic fetch wrapper to handle Auth and Errors
+ *
+ * Auth model: HttpOnly cookie is sent AUTOMATICALLY by the browser via
+ * credentials: 'include'. No Authorization: Bearer header needed.
+ * 401 retry: the browser re-sends the cookie automatically; we just retry once.
+ */
+async function request<T>(endpoint: string, config: ApiRequestConfig = {}): Promise<T> {
+    const normalizedEndpoint = normalizeEndpoint(endpoint);
+    const url = `${API_BASE}${normalizedEndpoint}`;
+    const {
+        responseType,
+        isSSE,
+        skipAuthRefresh: _skipAuthRefresh,
+        authRetryCount = 0,
+        ...fetchConfig
+    } = config;
+    const skipAuthRefresh = shouldSkipAuthRefresh(endpoint, config);
+
+    // Build headers — start with any caller-provided headers, then apply defaults
+    const callerHeaders = fetchConfig.headers as Record<string, string> || {};
+    const headers: Record<string, string> = { ...callerHeaders };
+
+    // Default to JSON if no body or if body is not FormData and no Content-Type set
+    if (!(fetchConfig.body instanceof FormData) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+    }
+
+    const response = await fetch(url, {
+        ...fetchConfig,
+        headers,
+        credentials: 'include',
+    });
+
+    // Handle 401 Unauthorized — call /auth/refresh to rotate tokens, then retry once.
+    if (response.status === 401) {
+        if (skipAuthRefresh || authRetryCount >= MAX_AUTH_RETRY_COUNT) {
+            const message = await getErrorMessage(response, 'Unauthorized');
+            if (!isSSE && !skipAuthRefresh) {
+                publishAuthSessionEvent({ type: 'session-expired', reason: message });
+                redirectToLoginOnce();
+            }
+            throw new ApiError(message, response.status);
+        }
+
+        try {
+            await refreshSession();
+        } catch (error) {
+            if (!isSSE) {
+                redirectToLoginOnce();
+            }
+            throw error;
+        }
+
+        return request<T>(endpoint, {
+            ...config,
+            authRetryCount: authRetryCount + 1,
+        });
+    }
+
+    // Handle other errors
+    if (!response.ok) {
+        const message = await getErrorMessage(response, response.statusText);
+        throw new ApiError(message, response.status);
+    }
+
+    redirectedToLogin = false;
+    return parseSuccessfulResponse<T>(response, responseType);
+}
+
 export const api = {
-    get: <T>(endpoint: string, config: RequestInit = {}) => request<T>(endpoint, { ...config, method: 'GET' }),
-    post: <T>(endpoint: string, body: any, config: RequestInit = {}) => {
+    get: <T>(endpoint: string, config: ApiRequestConfig = {}) => request<T>(endpoint, { ...config, method: 'GET' }),
+    post: <T>(endpoint: string, body: any, config: ApiRequestConfig = {}) => {
         let serializedBody: any = body;
         if (body instanceof FormData || body instanceof Blob || body instanceof ArrayBuffer) {
             serializedBody = body;
@@ -146,19 +193,19 @@ export const api = {
             body: serializedBody,
         });
     },
-    put: <T>(endpoint: string, body: any, config: RequestInit = {}) => request<T>(endpoint, {
+    put: <T>(endpoint: string, body: any, config: ApiRequestConfig = {}) => request<T>(endpoint, {
         ...config,
         method: 'PUT',
         body: JSON.stringify(body),
     }),
-    delete: <T>(endpoint: string, body?: any, config: RequestInit = {}) => request<T>(endpoint, {
+    delete: <T>(endpoint: string, body?: any, config: ApiRequestConfig = {}) => request<T>(endpoint, {
         ...config,
         method: 'DELETE',
         body: body ? JSON.stringify(body) : undefined
     }),
-    // SSE-aware get that marks the request so 401 triggers queue+wait instead of logout
-    getSSE: <T>(endpoint: string, config: RequestInit = {}) =>
-        request<T>(endpoint, { ...config, method: 'GET', isSSE: true } as RequestInit),
+    // SSE-aware get that marks the request so 401 surfaces terminal errors without forcing logout.
+    getSSE: <T>(endpoint: string, config: ApiRequestConfig = {}) =>
+        request<T>(endpoint, { ...config, method: 'GET', isSSE: true }),
     // Download a file with authentication (returns blob URL for download)
     download: (endpoint: string) => {
         return request<Blob>(endpoint, { responseType: 'blob', method: 'GET', credentials: 'include' })
