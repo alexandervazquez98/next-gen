@@ -128,18 +128,17 @@ Chain strategy: stacked-to-main
 
 **Scope:** `backend/services/auth_service.py`, `backend/routers/auth.py`, `backend/models/user.py`, `backend/tests/test_routers_auth_users_roles.py`.
 
-11. **[RED] Add tests for session-policy visibility to frontend**
+11. **[x] Add tests for session-policy visibility to frontend**
    - Add or extend tests for `/auth/users/me` response to include optional `session_policy`/`idle_timeout_minutes` (if/when endpoint schema includes it) and verify operational users are not forcibly timed out.
 
-12. **[GREEN] Expose minimal policy metadata (if required for UX)**
+12. **[x] Expose minimal policy metadata (if required for UX)**
    - Option A (preferred): include policy fields in `/auth/users/me` response while retaining pydantic compatibility.
    - Option B: keep API unchanged and infer operational profile in frontend conservatively; add comment contract if using B.
-   - Update AuthContext integration expectations in docs/tests accordingly.
    - **Verify:** modify/extend `backend/tests/test_routers_auth_users_roles.py` and run auth-related backend tests.
 
-13. **[TRIANGULATE/REFACTOR] Choose and lock API contract**
-   - Confirm with frontend task owner whether metadata is required in this issue cycle.
-   - Finalize one stable contract to avoid churn in PR 4.
+13. **[x] TRIANGULATE/REFACTOR — Lock contract for this slice**
+   - Chosen contract: expose `session_policy` in `/auth/users/me` and keep it the stable backend/frontend contract for PR4 inactivity UX.
+   - Update backend/frontend contract notes and proceed with PR4 using this shape.
 
 ## PR 4 — Frontend: singleflight + bounded refresh + cross-tab + inactivity UX
 

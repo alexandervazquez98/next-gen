@@ -6,7 +6,15 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from models.user import TokenData, User, UserRole, UserPermission, UserInDB, AIPermission
+from models.user import (
+    TokenData,
+    User,
+    UserRole,
+    UserPermission,
+    UserInDB,
+    CurrentUserSessionPolicy,
+    AIPermission,
+)
 from pydantic import BaseModel
 from typing import Optional
 from postgres_db import get_pg_db
@@ -22,6 +30,7 @@ from services.session_policy import (
     SessionPolicy,
     get_standard_session_policy,
     get_session_policy_by_profile,
+    resolve_session_policy_for_user,
 )
 
 # ── Secret Configuration ─────────────────────────────────────────────────────
@@ -363,6 +372,9 @@ async def get_current_user(
         raise credentials_exception
 
     # Map to Pydantic User
+    # Resolve latest policy metadata from authoritative user state.
+    policy = resolve_session_policy_for_user(user)
+
     return UserInDB(
         username=user.username,
         hashed_password=user.hashed_password,
@@ -376,6 +388,12 @@ async def get_current_user(
         disabled=not user.is_active,
         force_password_change=user.force_password_change,
         tier=user.tier or "T1",
+        session_id=payload.get("sid"),
+        session_policy=CurrentUserSessionPolicy(
+            profile=policy.profile,
+            idle_timeout_minutes=policy.idle_timeout_minutes,
+            persistent=policy.persistent,
+        ),
     )
 
 
