@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.22] — 2026-06-04
+
+### Fixed
+- **Multi-window session timeout and refresh hardening** (issue #188):
+  - Adds session policy resolution and refresh-token session metadata for standard vs operational sessions.
+  - Handles stale concurrent refresh rotations without locking out active browser tabs while keeping recovery bounded.
+  - Exposes `/api/auth/users/me` session policy metadata for frontend inactivity decisions.
+  - Adds frontend refresh singleflight, cross-tab logout/session-expired coordination, and non-persistent inactivity logout UX.
+  - Documents Docker/PostgreSQL validation evidence for the full stacked session fix.
+
 ## [1.12.21] — 2026-06-02
 
 ### Fixed
