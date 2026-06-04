@@ -15,6 +15,7 @@ from models.rate_limit_attempt import RateLimitAttempt
 from jose import jwt
 from postgres_db import Base
 from services.auth_service import SECRET_KEY, ALGORITHM
+from models.refresh_token import RefreshVerificationResult, RefreshVerificationStatus
 
 # Patch Neo4j driver BEFORE importing anything
 _mock_neo4j_driver = MagicMock()
@@ -228,9 +229,19 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_refresh_token", return_value=42):
+        verification = RefreshVerificationResult(
+            status=RefreshVerificationStatus.VALID,
+            user_id=42,
+            session_id="sid-regular-001",
+            policy_profile="standard",
+        )
+
+        with patch("routers.auth.verify_refresh_token", return_value=verification):
             with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
-                with patch("routers.auth.create_refresh_token", return_value="new_refresh_token"):
+                with patch(
+                    "routers.auth.create_refresh_token",
+                    return_value=("new_refresh_token", MagicMock(id=123)),
+                ):
                     with patch("routers.auth.create_access_token", return_value="new_access_token"):
                         response = client.post(
                             "/api/auth/refresh",
@@ -274,7 +285,15 @@ class TestAuthRefresh:
                 "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
             },
         ):
-            with patch("routers.auth.verify_refresh_token", return_value=(99, "sid-ops-001")):
+            with patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.VALID,
+                    user_id=99,
+                    session_id="sid-ops-001",
+                    policy_profile="operational",
+                ),
+            ):
                 with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
                     response = client.post(
                         "/api/auth/refresh",
@@ -302,7 +321,10 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_refresh_token", return_value=None):
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(status=RefreshVerificationStatus.MISSING),
+        ):
             response = client.post(
                 "/api/auth/refresh",
                 cookies={"refresh_token": "bad_token"},
@@ -322,7 +344,10 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_refresh_token", return_value=None) as mock_verify:
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(status=RefreshVerificationStatus.MISSING),
+        ) as mock_verify:
             responses = []
             for _ in range(MAX_ATTEMPTS + 1):  # 4th failure locks immediately
                 response = client.post(
@@ -349,7 +374,10 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_refresh_token", return_value=None):
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(status=RefreshVerificationStatus.MISSING),
+        ):
             response = client.post(
                 "/api/auth/refresh",
                 cookies={"refresh_token": raw_token},
@@ -383,7 +411,6 @@ class TestAuthRefresh:
             user_id=42,
         )
 
-        # Mock the refresh token verification to return the user_id
         mock_db = MagicMock(spec=Session)
         mock_db.query.return_value.filter.return_value.first.return_value = mock_user
         mock_db.add = MagicMock()
@@ -394,8 +421,18 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_refresh_token", return_value=42):
-            with patch("routers.auth.create_refresh_token", return_value="new_refresh_token"):
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.VALID,
+                user_id=42,
+                session_id="sid-success",
+            ),
+        ):
+            with patch(
+                "routers.auth.create_refresh_token",
+                return_value=("new_refresh_token", MagicMock(id=123)),
+            ):
                 with patch("routers.auth.create_access_token", return_value="new_access_token"):
                     response = client.post(
                         "/api/auth/refresh",
@@ -407,6 +444,64 @@ class TestAuthRefresh:
         session = rate_limit_db()
         try:
             assert session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).first() is None
+        finally:
+            session.close()
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_stale_refresh_recoverable_does_not_increment_rate_limit(self, rate_limit_db):
+        """Concurrent stale refresh should recover without adding rate-limit failures."""
+        stale_refresh_token = "stale_refresh_token"
+        rate_limit_key = refresh_token_rate_limit_key(stale_refresh_token)
+
+        # Seed one failure in DB so we can detect accidental increments.
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            user_id=42,
+        )
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                user_id=42,
+                session_id="sid-recovered",
+                token_id=99,
+            ),
+        ):
+            with patch(
+                "routers.auth.create_refresh_token",
+                return_value=("recovered-refresh-token", MagicMock(id=124)),
+            ):
+                with patch("routers.auth.try_increment_refresh_recovery_count", return_value=True) as recovery_count:
+                    response = client.post(
+                        "/api/auth/refresh",
+                        cookies={"refresh_token": stale_refresh_token},
+                    )
+
+        assert response.status_code == 200
+        # stale recovery should reuse session and keep it active
+        payload = jwt.decode(response.json()["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
+        assert payload["sid"] == "sid-recovered"
+        recovery_count.assert_called_once_with(mock_db, 99, 3)
+
+        session = rate_limit_db()
+        try:
+            row = session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).first()
+            # no extra failures were added by recoverable stale path
+            assert row is None
         finally:
             session.close()
 

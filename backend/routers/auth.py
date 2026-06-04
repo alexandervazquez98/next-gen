@@ -10,11 +10,14 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from services.auth_service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    RefreshVerificationStatus,
     create_access_token,
     create_refresh_token,
-    verify_refresh_token,
+    try_increment_refresh_recovery_count,
+    rotate_refresh_token,
     revoke_refresh_token,
     revoke_all_user_refresh_tokens,
+    verify_refresh_token,
     get_current_active_user,
 )
 from models.refresh_token import generate_opaque_token
@@ -223,8 +226,9 @@ async def refresh_tokens(
     check_rate_limit(rate_limit_key, identity_type="refresh_token")
 
     # Verify refresh token and optionally keep session lineage for refresh rotation continuity.
-    verified = verify_refresh_token(refresh_token, db, include_session_metadata=True)
-    if verified is None:
+    verification = verify_refresh_token(refresh_token, db)
+
+    if verification.status == RefreshVerificationStatus.MISSING:
         attempt_info = increment_attempts(rate_limit_key, identity_type="refresh_token")
         if attempt_info.locked_until:
             raise_rate_limit_locked(attempt_info.locked_until)
@@ -233,35 +237,89 @@ async def refresh_tokens(
             detail="Invalid or expired refresh token",
         )
 
-    if isinstance(verified, tuple):
-        user_id, session_id = verified
-    else:
-        user_id = verified
-        session_id = None
+    if verification.status == RefreshVerificationStatus.EXPIRED:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired",
+        )
 
-    # Keep stable session lineage across refreshes so authenticated requests
-    # can correlate activity to a single logical session.
-    session_id = session_id or generate_opaque_token()
+    if verification.status == RefreshVerificationStatus.REVOKED:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked",
+        )
 
-    # Revoke old refresh token (single-use rotation)
-    revoke_refresh_token(refresh_token, db)
+    if verification.status == RefreshVerificationStatus.IDLE_EXPIRED:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        _clear_access_cookie(response, domain=_COOKIE_DOMAIN)
+        _clear_refresh_cookie(response, domain=_COOKIE_DOMAIN)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session timed out",
+        )
 
-    # Get user by ID
+    if verification.status == RefreshVerificationStatus.USER_INACTIVE:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User inactive",
+        )
+
+    if verification.status == RefreshVerificationStatus.ROTATED_STALE_REJECTED:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session expired",
+        )
+
+    user_id = verification.user_id
+    if user_id is None:
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
     db_user = user_repo.get_user_by_id(db, user_id)
     if db_user is None or not db_user.is_active:
-        attempt_info = increment_attempts(rate_limit_key, identity_type="refresh_token")
-        if attempt_info.locked_until:
-            raise_rate_limit_locked(attempt_info.locked_until)
+        increment_attempts(rate_limit_key, identity_type="refresh_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
-    # Successful refresh — clear failed attempts for this token
-    clear_attempts(rate_limit_key, identity_type="refresh_token")
-
-    # Create new access token
-    # Keep existing behaviour for PR1: use standard policy for refresh flow.
-    # Policy-aware recovery logic is deferred to PR2.
     policy = resolve_session_policy_for_user(db_user)
 
+    if verification.status == RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE:
+        if verification.token_id is None or not try_increment_refresh_recovery_count(
+            db,
+            verification.token_id,
+            policy.stale_rotation_max_recoveries,
+        ):
+            increment_attempts(rate_limit_key, identity_type="refresh_token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="session expired",
+            )
+
+    # Successful refresh path, clear failed attempts.
+    clear_attempts(rate_limit_key, identity_type="refresh_token")
+
+    session_id = verification.session_id or generate_opaque_token()
+
+    # Create new refresh token first so rotation can link replacement id.
+    new_refresh_token, new_rt = create_refresh_token(
+        db_user.id,
+        db,
+        policy=policy,
+        session_id=session_id,
+        return_token_row=True,
+    )
+
+    # Rotate old token for valid single-use semantics.
+    if verification.status == RefreshVerificationStatus.VALID:
+        rotate_refresh_token(db, old_refresh_token=refresh_token, new_refresh_token_id=new_rt.id)
+
+    # Create new access token with stable session id and current policy.
     access_token_expires = timedelta(minutes=policy.access_token_minutes)
     role_value = db_user.role.value if hasattr(db_user.role, 'value') else db_user.role
     access_token = create_access_token(
@@ -273,9 +331,6 @@ async def refresh_tokens(
         },
         expires_delta=access_token_expires,
     )
-
-    # Create new refresh token
-    new_refresh_token = create_refresh_token(db_user.id, db, policy=policy, session_id=session_id)
 
     # Set new access token cookie
     _set_access_cookie(

@@ -80,7 +80,7 @@ Chain strategy: stacked-to-main
 
 **Scope:** `backend/models/refresh_token.py`, `backend/services/auth_service.py`, `backend/routers/auth.py`, `backend/middleware/rate_limit.py`, `backend/tests/test_auth_service_refresh.py`, `backend/tests/test_auth_router_refresh.py`, `backend/tests/test_rate_limit.py`.
 
-6. **[RED] Add stale-rotation and terminal-state tests**
+6. **[x] Add stale-rotation and terminal-state tests**
    - Extend `backend/tests/test_auth_service_refresh.py`:
      - recently rotated token returns recoverable status
      - stale token beyond grace is rejected
@@ -92,14 +92,14 @@ Chain strategy: stacked-to-main
    - Extend/adjust `test_rate_limit` if threshold/count changes are introduced for stale recovery.
    - **Verify:** tests fail before code changes.
 
-7. **[GREEN] Replace boolean refresh verification with status result object**
+7. **[x] Replace boolean refresh verification with status result object**
    - Add structured status model in `backend/models/refresh_token.py` or `backend/services/auth_service.py` (e.g., enum + `RefreshVerificationResult`).
    - Update `verify_refresh_token` to return terminal/recoverable distinctions:
      - `VALID`, `MISSING`, `EXPIRED`, `IDLE_EXPIRED`, `REVOKED`, `ROTATED_STALE_RECOVERABLE`, `ROTATED_STALE_REJECTED`, `USER_INACTIVE`.
    - Return `should_count_rate_limit` flag and token/session identifiers for deterministic handling.
    - **Verify:** add focused unit assertions in service tests.
 
-8. **[GREEN] Implement stale-recovery and refresh rotation logic**
+8. **[x] Implement stale-recovery and refresh rotation logic**
    - Update `backend/services/auth_service.py`:
      - `rotate_refresh_token`
      - `recover_from_stale_rotation`
@@ -112,14 +112,14 @@ Chain strategy: stacked-to-main
    - Keep single-use rotation safety for valid rotation paths.
    - **Verify:** add/extend endpoint tests for `429` and `401` edge cases after recoverability updates.
 
-9. **[TRIANGULATE] Rate-limit contract tests and verification**
+9. **[x] Rate-limit contract tests and verification**
    - Adjust `backend/middleware/rate_limit.py` integration points only if needed to preserve token hash keying and namespace semantics.
    - Confirm old raw-token leakage does not occur (`identity_key` remains hashed in DB rows).
    - **Verify:** run subset:
      - `cd backend && python -m pytest backend/tests/test_rate_limit.py backend/tests/test_auth_router_refresh.py backend/tests/test_auth_service_refresh.py`
    - **Rollback boundary:** if abuse protection regresses, revert to pre-slice behavior and isolate stale-recovery as opt-in with feature gate.
 
-10. **[REFACTOR] Hardening pass for determinism and naming**
+10. **[x] Hardening pass for determinism and naming**
     - Consolidate duplicated expiry/rotation constants into policy config reads.
     - Ensure error details emitted by refresh endpoint are stable (`session_expired`, `idle_timeout`, `session_revoked`, etc.).
     - **Verify:** execute full backend test suite.
