@@ -8,7 +8,8 @@ Scope: `fix-multi-window-session-timeout` (Issue #188).
 - PR2: `fix/session-refresh-stale-recovery` -> `fix/session-policy-foundation`, backend-only stale refresh/rate-limit slice in progress.
 - PR3: `fix/session-policy-contract` -> `fix/session-refresh-stale-recovery`, backend/frontend contract bridge for session policy visibility in progress.
 - PR4: `fix/session-inactivity-frontend` -> `fix/session-policy-contract`, opened as PR #253 for frontend session/inactivity UX.
-- PR5: `fix/session-stack-hardening` -> `fix/session-inactivity-frontend`, local hardening slice in progress; verify report created at `verify-report-pr5.md`.
+- PR5: `fix/session-stack-hardening` -> `fix/session-inactivity-frontend`, opened as PR #255 for frontend session-event hardening.
+- PR6: `fix/session-stack-validation` -> `fix/session-stack-hardening`, validation/evidence slice in progress; verify report created at `verify-report-pr6.md`.
 
 ## PR1 summary
 
@@ -67,6 +68,17 @@ PR5 hardens the PR4 frontend session-event layer without backend semantics chang
 - preserves duplicate suppression when BroadcastChannel and localStorage both deliver the same remote event
 - best-effort enriches terminal frontend `session-expired` events with the readable access-token `sid` when available
 - documents remaining manual two-tab and PostgreSQL validation plans in `verify-report-pr5.md`
+
+## PR6 summary
+
+PR6 records non-destructive deployment-readiness validation without changing application code:
+
+- Docker `postgres`, `backend`, and `frontend` containers are healthy
+- local PostgreSQL `refresh_tokens` schema includes PR1/PR2 session metadata columns and indexes
+- backend auth/session focused test matrix passed: **53 passed**
+- frontend session focused test matrix passed: **43 files passed / 407 tests passed**
+- frontend root responds **200** and unauthenticated `/api/auth/users/me` responds **401** as expected
+- manual two-tab browser smoke remains documented as pending
 
 ## PR2 incident note
 
@@ -144,13 +156,14 @@ Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth
 
 ## Remaining work
 
-- Run final full frontend validation and fresh review for PR5 before opening the stacked PR.
-- Complete manual two-tab browser smoke and PostgreSQL schema validation before merging/deploying the full issue #188 stack.
+- Run fresh review for PR6 before opening the stacked PR.
+- Complete manual two-tab browser smoke before merging/deploying the full issue #188 stack.
+- Live-row refresh token backfill was not proven locally because `refresh_tokens` has zero rows; schema/index readiness was validated.
 
 ## Known risks
 
 - Stale-token recovery must remain tightly bounded to prevent replay abuse.
 - Browser cross-tab coordination is covered for logout/session-expired convergence; backend tolerance remains authoritative for refresh races.
-- PostgreSQL startup migration/backfill still needs validation against a real PostgreSQL instance.
+- PostgreSQL schema/index readiness was validated against the running local Docker PostgreSQL; live-row backfill still needs a populated environment or fixture because local `refresh_tokens` had zero rows.
 - Contract consumers must agree on `session_policy` semantics to avoid frontend/backend drift.
 - `open-issues-triage.md` remains untracked and outside PR2 scope.
