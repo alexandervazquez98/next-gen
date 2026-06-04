@@ -25,6 +25,21 @@ describe("queryKeys", () => {
 		]);
 	});
 
+	it("scopes SNMP no-response drilldown by pagination", () => {
+		expect(queryKeys.availabilitySnmpNoResponse()).toEqual([
+			"events",
+			"availability-report",
+			"snmp-no-response",
+			{},
+		]);
+		expect(queryKeys.availabilitySnmpNoResponse({ limit: 25, offset: 0 })).toEqual([
+			"events",
+			"availability-report",
+			"snmp-no-response",
+			{ limit: 25, offset: 0 },
+		]);
+	});
+
 	it("scopes related events by ci id", () => {
 		expect(queryKeys.relatedEvents("ci-1")).toEqual([
 			"events",

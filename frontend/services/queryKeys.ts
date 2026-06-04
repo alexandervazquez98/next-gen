@@ -6,6 +6,8 @@ export const queryKeys = {
 	owners: () => ["owners"] as const,
 	activeEvents: () => ["events", "CONSOLE"] as const,
 	availabilityReport: () => ["events", "availability-report"] as const,
+	availabilitySnmpNoResponse: (params?: { limit?: number; offset?: number }) =>
+		["events", "availability-report", "snmp-no-response", params ?? {}] as const,
 	eventDetail: (eventId: string) => ["events", "detail", eventId] as const,
 	graphTopologyRoot: () => ["graph-topology"] as const,
 	graphTopology: (filters?: {

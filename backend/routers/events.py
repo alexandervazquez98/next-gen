@@ -8,7 +8,12 @@ import services.event_service as event_service
 from services.auth_service import get_current_active_user, check_permission, get_current_ai_agent, AIAgentInfo
 from services.ai_guard_service import check_all_guards, record_operation
 from services.escalation_notifier import notify_critical_event_escalation
-from models.core import AvailabilityReportResponse, EventDetailResponse, EventFeedSummary
+from models.core import (
+    AvailabilityReportResponse,
+    AvailabilitySnmpNoResponseResponse,
+    EventDetailResponse,
+    EventFeedSummary,
+)
 from models.user import User, UserPermission
 
 router = APIRouter(
@@ -48,6 +53,24 @@ async def get_availability_report(
 ):
     """Fetch additive availability MTTR/MTBF metrics for the event dashboard."""
     return event_service.get_availability_report(start=start, end=end)
+
+
+@router.get(
+    "/availability-report/snmp-no-response",
+    response_model=AvailabilitySnmpNoResponseResponse,
+)
+async def get_availability_snmp_no_response(
+    limit: int = Query(25, ge=1, le=100, description="Maximum affected CIs to return"),
+    offset: int = Query(0, ge=0, description="Affected CI pagination offset"),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch affected CIs with active SNMP no-response collection failures."""
+    if not check_permission(UserPermission.EVENT_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view events")
+    return event_service.get_availability_snmp_no_response_drilldown(
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse)

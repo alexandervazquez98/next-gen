@@ -515,6 +515,28 @@ def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
     return summary
 
 
+def _isoformat_or_none(value: Any) -> Optional[str]:
+    parsed = _parse_datetime(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    if value is None:
+        return None
+    return str(value)
+
+
+def _snmp_no_response_event_summary(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    return _clean_dict(
+        {
+            "id": event_data.get("id"),
+            "message": event_data.get("message"),
+            "status": event_data.get("status"),
+            "created_at": _isoformat_or_none(event_data.get("created_at")),
+            "last_seen": _isoformat_or_none(event_data.get("last_seen")),
+        }
+    )
+
+
+
 def _is_sensitive_ci_key(key: str) -> bool:
     normalized = key.lower()
     return any(part in normalized for part in _SENSITIVE_CI_KEY_PARTS)
@@ -805,6 +827,122 @@ def get_availability_report(
         "window_days": round(window_seconds / 86400, 4) if window_seconds else 0,
         "total_groups": len(rows),
         "snmp_coverage": snmp_coverage,
+        "rows": rows,
+    }
+
+
+def get_availability_snmp_no_response_drilldown(
+    limit: int = 25,
+    offset: int = 0,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Return affected CIs with active SNMP no-response collection failures."""
+    safe_limit = max(1, min(int(limit or 25), 100))
+    safe_offset = max(0, int(offset or 0))
+    generated_at = now or datetime.now(timezone.utc)
+    summary = {
+        "total_ci_with_no_response": 0,
+        "total_events_with_no_response": 0,
+    }
+    rows: List[Dict[str, Any]] = []
+
+    driver = get_db()
+    with driver.session() as session:
+        summary_record = session.run(
+            """
+            MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
+            WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
+            WITH DISTINCT ci
+            MATCH (ci)-[:HAS_EVENT]->(e:Event)
+            WHERE e.status IN ['OPEN', 'ACK']
+              AND e.event_type = 'COLLECTION_FAILURE'
+              AND toUpper(coalesce(e.source_protocol, '')) = 'SNMP'
+              AND e.failure_family = 'SNMP_NO_RESPONSE'
+            RETURN count(DISTINCT ci) AS total_ci_with_no_response,
+                   count(e) AS total_events_with_no_response
+            """
+        ).single()
+        if summary_record is not None:
+            summary = {
+                "total_ci_with_no_response": int(
+                    summary_record.get("total_ci_with_no_response") or 0
+                ),
+                "total_events_with_no_response": int(
+                    summary_record.get("total_events_with_no_response") or 0
+                ),
+            }
+
+        result = session.run(
+            """
+            MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
+            WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
+            WITH DISTINCT ci
+            MATCH (ci)-[:HAS_EVENT]->(e:Event)
+            WHERE e.status IN ['OPEN', 'ACK']
+              AND e.event_type = 'COLLECTION_FAILURE'
+              AND toUpper(coalesce(e.source_protocol, '')) = 'SNMP'
+              AND e.failure_family = 'SNMP_NO_RESPONSE'
+            OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
+            WITH ci, e, head(collect(DISTINCT cat.name)) AS category
+            ORDER BY e.created_at DESC
+            WITH ci,
+                 category,
+                 count(e) AS event_count,
+                 max(e.created_at) AS latest_event_at,
+                 collect(e) AS events
+            ORDER BY event_count DESC,
+                     latest_event_at DESC,
+                     coalesce(ci.name, ci.label, ci.id) ASC
+            SKIP $offset
+            LIMIT $limit
+            RETURN ci,
+                   category,
+                   event_count,
+                   latest_event_at,
+                   [event IN events[..5] | {
+                       id: event.id,
+                       message: event.message,
+                       status: event.status,
+                       created_at: event.created_at,
+                       last_seen: event.last_seen
+                   }] AS events
+            """,
+            limit=safe_limit,
+            offset=safe_offset,
+        )
+
+        for record in result:
+            ci_data = _node_to_dict(_record_value(record, "ci"))
+            event_items = _record_value(record, "events") or []
+            events = [
+                _snmp_no_response_event_summary(_node_to_dict(event))
+                for event in event_items
+            ]
+            rows.append(
+                _clean_dict(
+                    {
+                        "ci_id": ci_data.get("id"),
+                        "ci_name": ci_data.get("name") or ci_data.get("label"),
+                        "category": _record_value(record, "category"),
+                        "status": ci_data.get("status"),
+                        "ip": ci_data.get("ip"),
+                        "owner": ci_data.get("owner"),
+                        "brand": ci_data.get("brand"),
+                        "model": ci_data.get("model"),
+                        "event_count": int(_record_value(record, "event_count") or 0),
+                        "latest_event_at": _isoformat_or_none(
+                            _record_value(record, "latest_event_at")
+                        ),
+                        "events": events,
+                    }
+                )
+            )
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "summary": summary,
         "rows": rows,
     }
 

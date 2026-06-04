@@ -126,6 +126,41 @@ export interface AvailabilityReportResponse {
 	rows: AvailabilityReportRow[];
 }
 
+export interface AvailabilitySnmpNoResponseSummary {
+	total_ci_with_no_response: number;
+	total_events_with_no_response: number;
+}
+
+export interface AvailabilitySnmpNoResponseEvent {
+	id?: string | null;
+	message?: string | null;
+	status?: string | null;
+	created_at?: string | null;
+	last_seen?: string | null;
+}
+
+export interface AvailabilitySnmpNoResponseCI {
+	ci_id: string;
+	ci_name?: string | null;
+	category?: string | null;
+	status?: string | null;
+	ip?: string | null;
+	owner?: string | null;
+	brand?: string | null;
+	model?: string | null;
+	event_count: number;
+	latest_event_at?: string | null;
+	events: AvailabilitySnmpNoResponseEvent[];
+}
+
+export interface AvailabilitySnmpNoResponseResponse {
+	generated_at: string;
+	limit: number;
+	offset: number;
+	summary: AvailabilitySnmpNoResponseSummary;
+	rows: AvailabilitySnmpNoResponseCI[];
+}
+
 export interface EventSummary {
 	id: string;
 	ci_id: string;

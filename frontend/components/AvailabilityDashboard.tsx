@@ -1,7 +1,12 @@
 import type React from "react";
 import { Fragment, useMemo, useState } from "react";
 import { useAvailabilityReportQuery } from "../hooks/queries/useAvailabilityReportQuery";
-import type { AvailabilityReportRow, SnmpCoverageSummary } from "../types";
+import { useAvailabilitySnmpNoResponseQuery } from "../hooks/queries/useAvailabilitySnmpNoResponseQuery";
+import type {
+	AvailabilityReportRow,
+	AvailabilitySnmpNoResponseResponse,
+	SnmpCoverageSummary,
+} from "../types";
 import {
 	averageSeconds,
 	availabilityRowsToCsv,
@@ -51,6 +56,10 @@ const AvailabilityDashboard: React.FC = () => {
 	const [searchTerm, setSearchTerm] = useState("");
 	const [category, setCategory] = useState("ALL");
 	const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+	const [isSnmpDrilldownOpen, setIsSnmpDrilldownOpen] = useState(false);
+	const snmpDrilldown = useAvailabilitySnmpNoResponseQuery({
+		enabled: isSnmpDrilldownOpen,
+	});
 
 	const categories = useMemo(
 		() => Array.from(new Set(rows.map(getAvailabilityCategory))).sort(),
@@ -101,8 +110,21 @@ const AvailabilityDashboard: React.FC = () => {
 				<SummaryCard label="Active events" value={String(activeEvents)} />
 				<SummaryCard label="Worst availability" value={formatPercent(worstAvailability)} />
 				<SummaryCard label="SNMP functional" value={formatSnmpFunctional(snmpCoverage)} />
-				<SummaryCard label="SNMP no-response" value={formatSnmpNoResponse(snmpCoverage)} />
+				<SummaryCard
+					label="SNMP no-response"
+					value={formatSnmpNoResponse(snmpCoverage)}
+					actionLabel={isSnmpDrilldownOpen ? "Hide affected CIs" : "Review affected CIs"}
+					onAction={() => setIsSnmpDrilldownOpen((current) => !current)}
+				/>
 			</div>
+
+			{isSnmpDrilldownOpen && (
+				<SnmpNoResponseDrilldown
+					data={snmpDrilldown.data}
+					isLoading={snmpDrilldown.isLoading}
+					error={snmpDrilldown.error}
+				/>
+			)}
 
 			<div className="rounded-2xl border border-white/5 bg-surface-900 p-5">
 				<div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-[1fr_240px]">
@@ -198,10 +220,86 @@ const AvailabilityDashboard: React.FC = () => {
 	);
 };
 
-const SummaryCard: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+const SnmpNoResponseDrilldown: React.FC<{
+	data?: AvailabilitySnmpNoResponseResponse;
+	isLoading: boolean;
+	error: unknown;
+}> = ({ data, isLoading, error }) => (
+	<div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5" aria-label="SNMP no-response affected CIs">
+		<div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+			<div>
+				<p className="text-xs font-bold uppercase tracking-widest text-amber-300">SNMP no-response drilldown</p>
+				<h3 className="text-lg font-black uppercase tracking-tight text-white">Affected CIs</h3>
+				<p className="text-sm text-amber-100/70">Active or acknowledged SNMP collection failures with no response.</p>
+			</div>
+			{data && (
+				<p className="text-xs text-amber-100/70">
+					{data.summary.total_ci_with_no_response} CIs / {data.summary.total_events_with_no_response} events
+				</p>
+			)}
+		</div>
+
+		{isLoading ? (
+			<div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-amber-100">Loading affected CIs...</div>
+		) : error ? (
+			<div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-100">Could not load SNMP no-response details.</div>
+		) : !data || data.rows.length === 0 ? (
+			<div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-sm text-amber-100/70">No active SNMP no-response CIs were found.</div>
+		) : (
+			<div className="overflow-x-auto">
+				<table className="w-full min-w-[760px] text-left text-sm">
+					<thead className="text-xs uppercase tracking-widest text-amber-100/60">
+						<tr className="border-b border-white/10">
+							<th className="p-3">CI</th>
+							<th className="p-3">Category</th>
+							<th className="p-3">Status</th>
+							<th className="p-3">IP</th>
+							<th className="p-3">Owner</th>
+							<th className="p-3">Events</th>
+							<th className="p-3">Latest</th>
+						</tr>
+					</thead>
+					<tbody className="divide-y divide-white/10">
+						{data.rows.map((row) => (
+							<tr key={row.ci_id} className="text-amber-50/90">
+								<td className="p-3">
+									<p className="font-bold text-white">{row.ci_name || row.ci_id}</p>
+									<p className="font-mono text-xs text-amber-100/50">{row.ci_id}</p>
+									{row.events[0]?.message && <p className="mt-1 text-xs text-amber-100/70">{row.events[0].message}</p>}
+								</td>
+								<td className="p-3">{row.category || "—"}</td>
+								<td className="p-3">{row.status || "—"}</td>
+								<td className="p-3 font-mono text-xs">{row.ip || "—"}</td>
+								<td className="p-3">{row.owner || "—"}</td>
+								<td className="p-3">{row.event_count}</td>
+								<td className="p-3">{row.latest_event_at ? new Date(row.latest_event_at).toLocaleString() : "—"}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+		)}
+	</div>
+);
+
+const SummaryCard: React.FC<{
+	label: string;
+	value: string;
+	actionLabel?: string;
+	onAction?: () => void;
+}> = ({ label, value, actionLabel, onAction }) => (
 	<div className="rounded-xl border border-white/5 bg-surface-900 p-5">
 		<p className="text-xs font-bold uppercase tracking-widest text-neutral-500">{label}</p>
 		<p className="mt-2 text-2xl font-black text-white">{value}</p>
+		{actionLabel && onAction && (
+			<button
+				type="button"
+				onClick={onAction}
+				className="mt-3 rounded-lg border border-white/10 px-3 py-1 text-xs font-bold uppercase text-neutral-300 hover:border-brand-500 hover:text-white"
+			>
+				{actionLabel}
+			</button>
+		)}
 	</div>
 );
 
