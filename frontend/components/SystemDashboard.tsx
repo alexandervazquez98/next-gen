@@ -1,6 +1,27 @@
 import React from 'react';
 import Tooltip from './Tooltip';
 import { useSystemStatusQuery } from '../hooks/queries/useSystemStatusQuery';
+import type { DiskIoStatus } from '../services/queryResources';
+
+const formatBytesPerSecond = (value?: number | null) => {
+    if (value == null) return '—';
+    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB/s`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
+    return `${value.toFixed(0)} B/s`;
+};
+
+const formatDiskIoBusy = (diskIo?: DiskIoStatus | null) => {
+    if (!diskIo?.supported) return 'N/A';
+    return diskIo.busy_percentage == null ? 'Sampling' : `${diskIo.busy_percentage}%`;
+};
+
+const formatDiskIoRates = (diskIo?: DiskIoStatus | null) => {
+    if (!diskIo?.supported) return 'Disk I/O unsupported on this host';
+    if (diskIo.read_bytes_per_sec == null || diskIo.write_bytes_per_sec == null) {
+        return 'Collecting baseline sample';
+    }
+    return `${formatBytesPerSecond(diskIo.read_bytes_per_sec)} read / ${formatBytesPerSecond(diskIo.write_bytes_per_sec)} write`;
+};
 
 const SystemDashboard: React.FC = () => {
     const { data: status, isLoading: loading } = useSystemStatusQuery();
@@ -48,7 +69,7 @@ const SystemDashboard: React.FC = () => {
             </header>
 
             {/* Resources Grid */}
-            <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
 
                 {/* CPU Card */}
                 <div className="glass p-8 rounded-3xl relative group">
@@ -112,6 +133,29 @@ const SystemDashboard: React.FC = () => {
                         </div>
                         <div className="w-full bg-black/40 h-2 rounded-full overflow-hidden">
                             <div className={`h-full rounded-full transition-all duration-1000 ${getBarColor(status.disk)}`} style={{ width: `${status.disk}%` }}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Disk I/O Card */}
+                <div className="glass p-8 rounded-3xl relative group">
+                    <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none">
+                        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <span className="material-symbols-outlined text-9xl">speed</span>
+                        </div>
+                    </div>
+                    <div className="relative z-10">
+                        <div className="flex items-center mb-4">
+                            <h3 className="text-sm font-black text-neutral-400 uppercase tracking-widest">Disk I/O Throughput</h3>
+                            <Tooltip text="Read/write throughput and busy time sampled from the backend host diskstats." />
+                        </div>
+                        <div className="flex items-end gap-2 mb-2">
+                            <span className={`text-4xl font-black tracking-tighter ${status.disk_io?.busy_percentage == null ? 'text-neutral-400' : getStatusColor(status.disk_io.busy_percentage)}`}>{formatDiskIoBusy(status.disk_io)}</span>
+                            <span className="text-xs font-bold text-neutral-500 mb-2">BUSY</span>
+                        </div>
+                        <p className="mb-3 min-h-5 text-xs font-bold uppercase tracking-wide text-neutral-500">{formatDiskIoRates(status.disk_io)}</p>
+                        <div className="w-full bg-black/40 h-2 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-1000 ${getBarColor(status.disk_io?.busy_percentage ?? 0)}`} style={{ width: `${status.disk_io?.busy_percentage ?? 0}%` }}></div>
                         </div>
                     </div>
                 </div>
@@ -205,7 +249,7 @@ const SystemDashboard: React.FC = () => {
                         )}
 
                         {/* PostgreSQL / TimescaleDB Status */}
-                        {(status as any).postgres === 'CONNECTED' ? (
+                        {status.postgres === 'CONNECTED' ? (
                             <div className="flex gap-4">
                                 <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
                                 <span className="text-emerald-400">SUCCESS</span>

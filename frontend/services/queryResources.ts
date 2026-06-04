@@ -9,11 +9,24 @@ import type {
 	MultiMetricHistoryResponse,
 } from "../types";
 
+export interface DiskIoStatus {
+	supported: boolean;
+	read_bytes_total?: number | null;
+	write_bytes_total?: number | null;
+	read_bytes_per_sec?: number | null;
+	write_bytes_per_sec?: number | null;
+	busy_percentage?: number | null;
+	sampled_at?: string | null;
+}
+
 export interface SystemStatus {
 	cpu: number;
 	ram: number;
 	disk: number;
+	disk_io?: DiskIoStatus | null;
 	neo4j: "CONNECTED" | "DISCONNECTED" | "UNKNOWN";
+	postgres?: "CONNECTED" | "DISCONNECTED" | "UNKNOWN";
+	startup_time?: string | null;
 	collector: {
 		status: string;
 		last_run: string | null;
