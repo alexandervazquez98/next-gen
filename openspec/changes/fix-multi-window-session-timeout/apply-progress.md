@@ -7,7 +7,8 @@ Scope: `fix-multi-window-session-timeout` (Issue #188).
 - PR1: `fix/session-policy-foundation` -> `main`, opened as PR #245, accepted for review.
 - PR2: `fix/session-refresh-stale-recovery` -> `fix/session-policy-foundation`, backend-only stale refresh/rate-limit slice in progress.
 - PR3: `fix/session-policy-contract` -> `fix/session-refresh-stale-recovery`, backend/frontend contract bridge for session policy visibility in progress.
-- PR4: `fix/session-policy-contract` frontend slice implemented locally; verify report created at `verify-report-pr4.md`.
+- PR4: `fix/session-inactivity-frontend` -> `fix/session-policy-contract`, opened as PR #253 for frontend session/inactivity UX.
+- PR5: `fix/session-stack-hardening` -> `fix/session-inactivity-frontend`, local hardening slice in progress; verify report created at `verify-report-pr5.md`.
 
 ## PR1 summary
 
@@ -58,6 +59,15 @@ PR4 adds frontend session coordination and inactivity UX:
 - `sessionBus` BroadcastChannel/localStorage fallback for logout and session-expired convergence
 - AuthContext consumes `session_id`/`session_policy`, clears cross-tab session events, and arms inactivity logout only for non-persistent policies
 
+## PR5 summary
+
+PR5 hardens the PR4 frontend session-event layer without backend semantics changes:
+
+- bounds `sessionBus` remote-event dedupe with a 10-minute TTL and 256-key cap
+- preserves duplicate suppression when BroadcastChannel and localStorage both deliver the same remote event
+- best-effort enriches terminal frontend `session-expired` events with the readable access-token `sid` when available
+- documents remaining manual two-tab and PostgreSQL validation plans in `verify-report-pr5.md`
+
 ## PR2 incident note
 
 Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth_router_refresh.py`, leaving a partial but coherent backend diff. A fresh incident audit found no conflict markers or syntax failures and recommended continuing manually. The only blocker was a test patch returning a non-JWT `access_token` while decoding it. That test was corrected by letting the real `create_access_token` run.
@@ -100,6 +110,15 @@ Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth
 | TRIANGULATE | Ran `corepack pnpm --dir frontend run test:run` and got **43 passed / 401 tests passed**. |
 | REFACTOR | Trimmed PR4 diff to stay within the 700-line review budget while preserving focused frontend scope. |
 
+### PR5
+
+| Phase | Evidence |
+| --- | --- |
+| RED | Added tests for sessionBus TTL/cap dedupe and API terminal auth-failure session-id enrichment before implementation. Initial focused run failed on missing hardening behavior; a temporary test syntax typo was corrected before GREEN. |
+| GREEN | Implemented bounded/TTL remote-event dedupe and safe best-effort JWT `sid` extraction for terminal `session-expired` events. |
+| TRIANGULATE | Focused and full frontend tests passed: `corepack pnpm --dir frontend run test:run -- sessionBus.test.ts api.test.ts AuthContext.test.tsx` and `corepack pnpm --dir frontend run test:run` — **43 files passed / 407 tests passed**. |
+| REFACTOR | Kept PR5 to frontend hardening and OpenSpec verification; no backend refresh/token/rate-limit changes. |
+
 ## Verification commands
 
 ### PR1 accepted evidence
@@ -125,7 +144,8 @@ Initial PR2 `sdd-apply` failed due an ambiguous edit in `backend/tests/test_auth
 
 ## Remaining work
 
-- Run fresh PR4 review before opening/updating the stacked PR.
+- Run final full frontend validation and fresh review for PR5 before opening the stacked PR.
+- Complete manual two-tab browser smoke and PostgreSQL schema validation before merging/deploying the full issue #188 stack.
 
 ## Known risks
 

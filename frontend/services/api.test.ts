@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { api, ApiError } from './api';
+import { subscribeAuthSessionEvents } from './sessionBus';
 
 describe('api client', () => {
   beforeEach(() => {
@@ -12,6 +13,7 @@ describe('api client', () => {
         hash: '',
         href: '',
       } as any;
+      document.cookie = 'access_token=; Max-Age=0; path=/';
     }
   });
 
@@ -384,6 +386,50 @@ describe('api client', () => {
       await expect(api.get('/nodes')).rejects.toThrow('Session expired');
       expect(window.location.href).toBe('/login');
       window.location = originalLocation;
+    });
+
+    it('includes the current access-token session id on terminal refresh-failure events', async () => {
+      const payload = btoa(JSON.stringify({ sid: 'session-from-token' }))
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+      document.cookie = `access_token=header.${payload}.signature; path=/`;
+      const events: any[] = [];
+      const unsubscribe = subscribeAuthSessionEvents(event => events.push(event));
+      global.fetch = vi.fn(async (url: string) => (
+        url === '/api/auth/refresh'
+          ? jsonResponse(401, { detail: 'idle_timeout' })
+          : jsonResponse(401, { detail: 'Unauthorized' })
+      ));
+
+      await expect(api.get('/nodes')).rejects.toThrow('idle_timeout');
+
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'session-expired',
+        reason: 'idle_timeout',
+        sessionId: 'session-from-token',
+      }));
+      unsubscribe();
+    });
+
+    it('omits session id on terminal refresh-failure events when the access token is unavailable or invalid', async () => {
+      document.cookie = 'access_token=not-a-jwt; path=/';
+      const events: any[] = [];
+      const unsubscribe = subscribeAuthSessionEvents(event => events.push(event));
+      global.fetch = vi.fn(async (url: string) => (
+        url === '/api/auth/refresh'
+          ? jsonResponse(401, { detail: 'session_expired' })
+          : jsonResponse(401, { detail: 'Unauthorized' })
+      ));
+
+      await expect(api.get('/nodes')).rejects.toThrow('session_expired');
+
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'session-expired',
+        reason: 'session_expired',
+      }));
+      expect(events.some(event => event.sessionId)).toBe(false);
+      unsubscribe();
     });
   });
 
