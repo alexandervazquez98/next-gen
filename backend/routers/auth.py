@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, status, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from services.auth_service import (
@@ -16,6 +16,12 @@ from services.auth_service import (
     revoke_refresh_token,
     revoke_all_user_refresh_tokens,
     get_current_active_user,
+)
+from models.refresh_token import generate_opaque_token
+from services.session_policy import (
+    resolve_session_policy_for_user,
+    session_policy_cookie_max_age_seconds,
+    access_token_max_age_seconds,
 )
 from utils.security import verify_password, get_password_hash
 from postgres_db import get_pg_db
@@ -71,7 +77,7 @@ router = APIRouter(
 )
 
 
-def _set_access_cookie(response: Response, token: str, domain: str | None = None) -> None:
+def _set_access_cookie(response: Response, token: str, domain: str | None = None, max_age_seconds: int | None = None) -> None:
     """Set HttpOnly cookie for access token."""
     response.set_cookie(
         key="access_token",
@@ -80,7 +86,7 @@ def _set_access_cookie(response: Response, token: str, domain: str | None = None
         secure=_COOKIE_SECURE,
         samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=max_age_seconds or ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         domain=domain,
     )
 
@@ -90,7 +96,7 @@ def _clear_access_cookie(response: Response, domain: str | None = None) -> None:
     response.delete_cookie(key="access_token", path="/api", domain=domain)
 
 
-def _set_refresh_cookie(response: Response, token: str, domain: str | None = None) -> None:
+def _set_refresh_cookie(response: Response, token: str, domain: str | None = None, max_age_seconds: int | None = None) -> None:
     """Set HttpOnly cookie for refresh token."""
     response.set_cookie(
         key="refresh_token",
@@ -99,7 +105,7 @@ def _set_refresh_cookie(response: Response, token: str, domain: str | None = Non
         secure=_COOKIE_SECURE,
         samesite="lax",  # Allows cross-origin within same domain (port difference)
         path="/api",
-        max_age=7 * 24 * 60 * 60,  # 7 days
+        max_age=max_age_seconds or 7 * 24 * 60 * 60,  # 7 days
         domain=domain,
     )
 
@@ -140,16 +146,38 @@ async def login_for_access_token(
     # Successful login — clear rate limit attempts
     clear_attempts(form_data.username)
 
-    # Create access token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # Resolve policy from configured profile mapping
+    policy = resolve_session_policy_for_user(user)
+
+    # Create access and refresh tokens with policy-aware expiry
+    access_token_expires = timedelta(minutes=policy.access_token_minutes)
     role_value = user.role.value if hasattr(user.role, 'value') else user.role
+    session_id = generate_opaque_token()
     access_token = create_access_token(
-        data={"sub": user.username, "role": role_value},
+        data={
+            "sub": user.username,
+            "role": role_value,
+            "sid": session_id,
+            "profile": policy.profile,
+        },
         expires_delta=access_token_expires,
     )
 
-    # Set HttpOnly cookie
-    _set_access_cookie(response, access_token, domain=_COOKIE_DOMAIN)
+    refresh_token = create_refresh_token(user.id, db, policy=policy, session_id=session_id)
+
+    # Set HttpOnly cookies
+    _set_access_cookie(
+        response,
+        access_token,
+        domain=_COOKIE_DOMAIN,
+        max_age_seconds=access_token_max_age_seconds(policy),
+    )
+    _set_refresh_cookie(
+        response,
+        refresh_token,
+        domain=_COOKIE_DOMAIN,
+        max_age_seconds=session_policy_cookie_max_age_seconds(policy),
+    )
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -194,9 +222,9 @@ async def refresh_tokens(
     rate_limit_key = refresh_token_rate_limit_key(refresh_token)
     check_rate_limit(rate_limit_key, identity_type="refresh_token")
 
-    # Verify refresh token
-    user_id = verify_refresh_token(refresh_token, db)
-    if user_id is None:
+    # Verify refresh token and optionally keep session lineage for refresh rotation continuity.
+    verified = verify_refresh_token(refresh_token, db, include_session_metadata=True)
+    if verified is None:
         attempt_info = increment_attempts(rate_limit_key, identity_type="refresh_token")
         if attempt_info.locked_until:
             raise_rate_limit_locked(attempt_info.locked_until)
@@ -204,6 +232,16 @@ async def refresh_tokens(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+
+    if isinstance(verified, tuple):
+        user_id, session_id = verified
+    else:
+        user_id = verified
+        session_id = None
+
+    # Keep stable session lineage across refreshes so authenticated requests
+    # can correlate activity to a single logical session.
+    session_id = session_id or generate_opaque_token()
 
     # Revoke old refresh token (single-use rotation)
     revoke_refresh_token(refresh_token, db)
@@ -220,21 +258,40 @@ async def refresh_tokens(
     clear_attempts(rate_limit_key, identity_type="refresh_token")
 
     # Create new access token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # Keep existing behaviour for PR1: use standard policy for refresh flow.
+    # Policy-aware recovery logic is deferred to PR2.
+    policy = resolve_session_policy_for_user(db_user)
+
+    access_token_expires = timedelta(minutes=policy.access_token_minutes)
     role_value = db_user.role.value if hasattr(db_user.role, 'value') else db_user.role
     access_token = create_access_token(
-        data={"sub": db_user.username, "role": role_value},
+        data={
+            "sub": db_user.username,
+            "role": role_value,
+            "sid": session_id,
+            "profile": policy.profile,
+        },
         expires_delta=access_token_expires,
     )
 
     # Create new refresh token
-    new_refresh_token = create_refresh_token(db_user.id, db)
+    new_refresh_token = create_refresh_token(db_user.id, db, policy=policy, session_id=session_id)
 
     # Set new access token cookie
-    _set_access_cookie(response, access_token, domain=_COOKIE_DOMAIN)
+    _set_access_cookie(
+        response,
+        access_token,
+        domain=_COOKIE_DOMAIN,
+        max_age_seconds=access_token_max_age_seconds(policy),
+    )
 
     # Set refresh token in HTTP-only cookie (rotation)
-    _set_refresh_cookie(response, new_refresh_token, domain=_COOKIE_DOMAIN)
+    _set_refresh_cookie(
+        response,
+        new_refresh_token,
+        domain=_COOKIE_DOMAIN,
+        max_age_seconds=session_policy_cookie_max_age_seconds(policy),
+    )
 
     return RefreshTokenResponse(access_token=access_token)
 

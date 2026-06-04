@@ -8,11 +8,14 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from models.user import TokenData, User, UserRole, UserPermission, UserInDB, AIPermission
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional
 from postgres_db import get_pg_db
 from repositories import user_repo
-from utils.security import verify_password, get_password_hash
-from models.refresh_token import RefreshToken, hash_token, generate_opaque_token, REFRESH_TOKEN_EXPIRE_DAYS
+from models.refresh_token import RefreshToken, hash_token, generate_opaque_token
+from services.session_policy import (
+    SessionPolicy,
+    get_standard_session_policy,
+)
 
 # ── Secret Configuration ─────────────────────────────────────────────────────
 
@@ -42,29 +45,51 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 # ── Refresh Token Functions ───────────────────────────────────────────────────
 
-def create_refresh_token(user_id: int, db: Session) -> str:
+
+def create_refresh_token(
+    user_id: int,
+    db: Session,
+    policy: SessionPolicy | None = None,
+    *,
+    session_id: str | None = None,
+) -> str:
     """
     Create an opaque refresh token, store its SHA-256 hash in DB.
     Returns the raw opaque token (to be sent to client).
     """
-    opaque = generate_opaque_token()
-    token_hash = hash_token(opaque)
-    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    now = datetime.utcnow()
+    policy = policy or get_standard_session_policy()
+    raw_token = generate_opaque_token()
+    token_hash = hash_token(raw_token)
 
+    expires_at = now + timedelta(days=policy.refresh_token_days)
     rt = RefreshToken(
         user_id=user_id,
         token_hash=token_hash,
         expires_at=expires_at,
+        created_at=now,
+        last_activity_at=now,
+        session_id=session_id or generate_opaque_token(),
+        policy_profile=policy.profile,
+        stale_recovery_count=0,
     )
     db.add(rt)
     db.commit()
-    return opaque
+    return raw_token
 
 
-def verify_refresh_token(token: str, db: Session) -> Optional[int]:
+
+def verify_refresh_token(
+    token: str,
+    db: Session,
+    *,
+    include_session_metadata: bool = False,
+) -> Optional[int | tuple[int, str | None]]:
     """
     Verify a refresh token.
-    Returns user_id if valid and not revoked/expired.
+
+    By default, returns user_id if valid and not revoked/expired.
+    When include_session_metadata=True, returns (user_id, session_id).
     Returns None if invalid, revoked, or expired.
     """
     token_hash = hash_token(token)
@@ -78,6 +103,9 @@ def verify_refresh_token(token: str, db: Session) -> Optional[int]:
 
     if rt.expires_at < datetime.utcnow():
         return None
+
+    if include_session_metadata:
+        return rt.user_id, rt.session_id
 
     return rt.user_id
 
@@ -94,6 +122,7 @@ def revoke_refresh_token(token: str, db: Session) -> bool:
         return False
 
     rt.revoked_at = datetime.utcnow()
+    rt.revoked_reason = "revoked"
     db.commit()
     return True
 
@@ -112,6 +141,7 @@ def revoke_all_user_refresh_tokens(user_id: int, db: Session) -> int:
     count = 0
     for rt in rts:
         rt.revoked_at = now
+        rt.revoked_reason = "logout"
         count += 1
 
     db.commit()
@@ -119,6 +149,7 @@ def revoke_all_user_refresh_tokens(user_id: int, db: Session) -> int:
 
 
 # ── User Auth ────────────────────────────────────────────────────────────────
+
 
 async def get_current_user(
     request: Request, db: Session = Depends(get_pg_db)
@@ -198,6 +229,7 @@ ALLOWED_AI_PERMISSIONS = {permission.value for permission in AIPermission}
 
 class AIAgentInfo(BaseModel):
     """Info extracted from AI agent JWT."""
+
     ai_agent_id: str
     persona: str
     permissions: list[str] = []

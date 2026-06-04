@@ -1,0 +1,51 @@
+project:
+  name: next-gen
+  description: NOC/CMDB operational system for monitoring, events, metrics, availability, authentication, and operator UI.
+  artifact_store: openspec repo files
+  execution_mode: interactive
+  pr_strategy: auto-forecast
+  review_budget_changed_lines: 400
+
+sdd:
+  tdd_policy: strict_tdd
+  strict_tdd:
+    policy: Strict if tests exist or can be reasonably created; otherwise document manual evidence.
+    test_first_required: true
+    manual_evidence_allowed_when: No relevant automated test can be reasonably created.
+  phase_rules:
+    init:
+      purpose: Establish project context and detected validation commands.
+    proposal:
+      requires_problem_statement: true
+      requires_scope: true
+    design:
+      required_for_cross_cutting_or_risky_changes: true
+    tasks:
+      require_test_tasks: true
+    apply:
+      do_not_implement_without_prior_sdd_artifacts: true
+      respect_review_budget_changed_lines: 400
+    verify:
+      require_automated_tests_or_manual_evidence: true
+
+testing:
+  frontend:
+    package_manager: pnpm via Corepack
+    install: cd frontend && corepack pnpm install --frozen-lockfile
+    test: cd frontend && corepack pnpm test:run
+    watch: cd frontend && corepack pnpm test
+    coverage: cd frontend && corepack pnpm test:coverage
+    source: frontend/package.json
+  backend:
+    install: cd backend && python -m pip install -r requirements.txt -r requirements-dev.txt
+    test: cd backend && python -m pytest
+    config: backend/pytest.ini
+    markers:
+      - unit
+      - integration
+      - slow
+      - neo4j
+      - metric
+      - event
+      - auth
+      - api

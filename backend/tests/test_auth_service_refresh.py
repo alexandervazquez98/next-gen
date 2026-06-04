@@ -17,6 +17,7 @@ from services.auth_service import (
     ALGORITHM,
 )
 from models.refresh_token import hash_token, generate_opaque_token
+from services.session_policy import get_standard_session_policy, get_operational_session_policy
 
 
 class TestHashToken:
@@ -73,13 +74,14 @@ class TestGenerateOpaqueToken:
 class TestVerifyRefreshToken:
     """Tests for refresh token verification with mocked DB."""
 
-    def _mock_rt(self, token_hash: str, user_id: int, expires_at: datetime, revoked_at: datetime | None = None):
+    def _mock_rt(self, token_hash: str, user_id: int, expires_at: datetime, revoked_at: datetime | None = None, session_id: str | None = None):
         """Create a mock RefreshToken object."""
         rt = MagicMock()
         rt.token_hash = token_hash
         rt.user_id = user_id
         rt.expires_at = expires_at
         rt.revoked_at = revoked_at
+        rt.session_id = session_id
         return rt
 
     def test_returns_user_id_for_valid_token(self):
@@ -128,6 +130,20 @@ class TestVerifyRefreshToken:
 
         result = verify_refresh_token(token, mock_db)
         assert result is None
+
+    def test_returns_session_metadata_when_requested(self):
+        token = "token-with-session"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=77,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-77",
+        )
+
+        result = verify_refresh_token(token, mock_db, include_session_metadata=True)
+        assert result == (77, "sess-77")
 
 
 class TestRevokeRefreshToken:
@@ -224,3 +240,49 @@ class TestCreateRefreshToken:
 
         # The stored hash should match what hash_token produces
         assert added_rt.token_hash == hash_token(raw_token)
+
+    def test_standard_policy_metadata_stored(self):
+        mock_db = MagicMock()
+        added_rt = None
+
+        def capture_add(rt):
+            nonlocal added_rt
+            added_rt = rt
+
+        policy = get_standard_session_policy()
+        mock_db.add = capture_add
+        mock_db.commit = MagicMock()
+
+        session_id = "sess-standard-123"
+        token = create_refresh_token(user_id=11, db=mock_db, policy=policy, session_id=session_id)
+
+        assert token is not None
+        assert added_rt is not None
+        assert added_rt.user_id == 11
+        assert added_rt.session_id == session_id
+        assert added_rt.policy_profile == "standard"
+        assert added_rt.last_activity_at is not None
+        assert added_rt.expires_at is not None
+        assert added_rt.revoked_reason is None
+
+    def test_operational_policy_stored_with_profile(self):
+        mock_db = MagicMock()
+        added_rt = None
+
+        def capture_add(rt):
+            nonlocal added_rt
+            added_rt = rt
+
+        policy = get_operational_session_policy()
+        mock_db.add = capture_add
+        mock_db.commit = MagicMock()
+
+        session_id = "sess-op-456"
+        token = create_refresh_token(user_id=22, db=mock_db, policy=policy, session_id=session_id)
+
+        assert token is not None
+        assert added_rt is not None
+        assert added_rt.session_id == session_id
+        assert added_rt.policy_profile == "operational"
+        assert added_rt.last_activity_at is not None
+        assert isinstance(added_rt.expires_at, datetime)
