@@ -11,10 +11,17 @@ from pydantic import BaseModel
 from typing import Optional
 from postgres_db import get_pg_db
 from repositories import user_repo
-from models.refresh_token import RefreshToken, hash_token, generate_opaque_token
+from models.refresh_token import (
+    RefreshToken,
+    RefreshVerificationResult,
+    RefreshVerificationStatus,
+    hash_token,
+    generate_opaque_token,
+)
 from services.session_policy import (
     SessionPolicy,
     get_standard_session_policy,
+    get_session_policy_by_profile,
 )
 
 # ── Secret Configuration ─────────────────────────────────────────────────────
@@ -52,10 +59,13 @@ def create_refresh_token(
     policy: SessionPolicy | None = None,
     *,
     session_id: str | None = None,
-) -> str:
+    return_token_row: bool = False,
+) -> str | tuple[str, RefreshToken]:
     """
     Create an opaque refresh token, store its SHA-256 hash in DB.
-    Returns the raw opaque token (to be sent to client).
+
+    By default, returns the raw opaque token.
+    Set `return_token_row=True` to return a tuple of `(raw_token, refresh_token_row)`.
     """
     now = datetime.utcnow()
     policy = policy or get_standard_session_policy()
@@ -74,9 +84,42 @@ def create_refresh_token(
         stale_recovery_count=0,
     )
     db.add(rt)
+    db.flush()
     db.commit()
+
+    if return_token_row:
+        return raw_token, rt
+
     return raw_token
 
+
+
+def _now_utc() -> datetime:
+    return datetime.utcnow()
+
+
+def _is_token_idle_expired(rt: RefreshToken, now: datetime, policy: SessionPolicy) -> bool:
+    if policy.idle_timeout_minutes is None:
+        return False
+
+    if rt.last_activity_at is None:
+        return False
+
+    return now - rt.last_activity_at > timedelta(minutes=policy.idle_timeout_minutes)
+
+
+def _format_refresh_verification_result(
+    result: RefreshVerificationResult,
+    include_session_metadata: bool,
+) -> RefreshVerificationResult | int | tuple[int, str | None] | None:
+    """Preserve PR1 legacy return shape until router status handling lands."""
+    if not include_session_metadata:
+        return result
+
+    if result.status != RefreshVerificationStatus.VALID or result.user_id is None:
+        return None
+
+    return result.user_id, result.session_id
 
 
 def verify_refresh_token(
@@ -84,33 +127,163 @@ def verify_refresh_token(
     db: Session,
     *,
     include_session_metadata: bool = False,
-) -> Optional[int | tuple[int, str | None]]:
+) -> RefreshVerificationResult | int | tuple[int, str | None] | None:
     """
-    Verify a refresh token.
+    Verify a refresh token and return a structured status result.
 
-    By default, returns user_id if valid and not revoked/expired.
-    When include_session_metadata=True, returns (user_id, session_id).
-    Returns None if invalid, revoked, or expired.
+    `include_session_metadata=True` preserves the PR1 legacy return shape for
+    stacked compatibility until router status handling is applied in the next PR.
     """
     token_hash = hash_token(token)
     rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
 
     if rt is None:
-        return None
+        return _format_refresh_verification_result(
+            RefreshVerificationResult(status=RefreshVerificationStatus.MISSING),
+            include_session_metadata,
+        )
+
+    policy = get_session_policy_by_profile(rt.policy_profile)
+
+    if rt.expires_at is not None and rt.expires_at < _now_utc():
+        return _format_refresh_verification_result(
+            RefreshVerificationResult(
+                status=RefreshVerificationStatus.EXPIRED,
+                user_id=rt.user_id,
+                session_id=rt.session_id,
+                policy_profile=rt.policy_profile,
+                token_id=rt.id,
+            ),
+            include_session_metadata,
+        )
+
+    if _is_token_idle_expired(rt, _now_utc(), policy):
+        return _format_refresh_verification_result(
+            RefreshVerificationResult(
+                status=RefreshVerificationStatus.IDLE_EXPIRED,
+                user_id=rt.user_id,
+                session_id=rt.session_id,
+                policy_profile=rt.policy_profile,
+                token_id=rt.id,
+            ),
+            include_session_metadata,
+        )
 
     if rt.revoked_at is not None:
-        return None
+        # Distinguish stale rotation overlap from terminal revocation.
+        if rt.revoked_reason == "rotated":
+            grace_seconds = policy.stale_rotation_grace_seconds
+            if rt.rotated_at is None or (_now_utc() - rt.rotated_at).total_seconds() > grace_seconds:
+                return _format_refresh_verification_result(
+                    RefreshVerificationResult(
+                        status=RefreshVerificationStatus.ROTATED_STALE_REJECTED,
+                        user_id=rt.user_id,
+                        session_id=rt.session_id,
+                        policy_profile=rt.policy_profile,
+                        token_id=rt.id,
+                    ),
+                    include_session_metadata,
+                )
 
-    if rt.expires_at < datetime.utcnow():
-        return None
+            max_recoveries = policy.stale_rotation_max_recoveries
+            if rt.stale_recovery_count >= max_recoveries:
+                return _format_refresh_verification_result(
+                    RefreshVerificationResult(
+                        status=RefreshVerificationStatus.ROTATED_STALE_REJECTED,
+                        user_id=rt.user_id,
+                        session_id=rt.session_id,
+                        policy_profile=rt.policy_profile,
+                        token_id=rt.id,
+                    ),
+                    include_session_metadata,
+                )
 
-    if include_session_metadata:
-        return rt.user_id, rt.session_id
+            return _format_refresh_verification_result(
+                RefreshVerificationResult(
+                    status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                    user_id=rt.user_id,
+                    session_id=rt.session_id,
+                    policy_profile=rt.policy_profile,
+                    token_id=rt.id,
+                    should_count_rate_limit=False,
+                ),
+                include_session_metadata,
+            )
 
-    return rt.user_id
+        return _format_refresh_verification_result(
+            RefreshVerificationResult(
+                status=RefreshVerificationStatus.REVOKED,
+                user_id=rt.user_id,
+                session_id=rt.session_id,
+                policy_profile=rt.policy_profile,
+                token_id=rt.id,
+            ),
+            include_session_metadata,
+        )
+
+    return _format_refresh_verification_result(
+        RefreshVerificationResult(
+            status=RefreshVerificationStatus.VALID,
+            user_id=rt.user_id,
+            session_id=rt.session_id,
+            policy_profile=rt.policy_profile,
+            token_id=rt.id,
+            should_count_rate_limit=False,
+        ),
+        include_session_metadata,
+    )
 
 
-def revoke_refresh_token(token: str, db: Session) -> bool:
+def increment_refresh_recovery_count(db: Session, token_id: int) -> None:
+    """Backward-compatible stale recovery increment helper."""
+    try_increment_refresh_recovery_count(db, token_id, max_recoveries=10**9)
+
+
+def try_increment_refresh_recovery_count(
+    db: Session,
+    token_id: int,
+    max_recoveries: int,
+) -> bool:
+    """Atomically reserve one stale-recovery attempt for a refresh token row."""
+    updated = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.id == token_id,
+            RefreshToken.stale_recovery_count < max_recoveries,
+        )
+        .update(
+            {RefreshToken.stale_recovery_count: RefreshToken.stale_recovery_count + 1},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return updated == 1
+
+
+def rotate_refresh_token(
+    db: Session,
+    old_refresh_token: str | None,
+    new_refresh_token_id: int,
+) -> None:
+    """Mark an old refresh token as rotated and link replacement id."""
+    if old_refresh_token is None:
+        return
+
+    token_hash = hash_token(old_refresh_token)
+    old_rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+    if old_rt is None:
+        return
+
+    now = _now_utc()
+    old_rt.revoked_at = now
+    old_rt.revoked_reason = "rotated"
+    old_rt.rotated_at = now
+    old_rt.replaced_by_token_id = new_refresh_token_id
+    old_rt.stale_recovery_count = old_rt.stale_recovery_count or 0
+    db.commit()
+
+
+def revoke_refresh_token(token: str, db: Session, reason: str = "revoked") -> bool:
     """
     Revoke a refresh token by setting revoked_at.
     Returns True if token was revoked, False if not found.
@@ -122,7 +295,7 @@ def revoke_refresh_token(token: str, db: Session) -> bool:
         return False
 
     rt.revoked_at = datetime.utcnow()
-    rt.revoked_reason = "revoked"
+    rt.revoked_reason = reason
     db.commit()
     return True
 

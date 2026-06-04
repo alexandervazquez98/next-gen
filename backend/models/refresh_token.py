@@ -1,6 +1,7 @@
 import secrets
 import hashlib
 from datetime import datetime
+from enum import Enum
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel
@@ -52,10 +53,28 @@ class RefreshTokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class RefreshTokenVerifyResult(BaseModel):
+class RefreshVerificationStatus(str, Enum):
+    """Refresh verification terminal/recoverable status codes."""
+
+    VALID = "valid"
+    MISSING = "missing"
+    EXPIRED = "expired"
+    IDLE_EXPIRED = "idle_expired"
+    REVOKED = "revoked"
+    ROTATED_STALE_REJECTED = "rotated_stale_rejected"
+    ROTATED_STALE_RECOVERABLE = "rotated_stale_recoverable"
+    USER_INACTIVE = "user_inactive"
+
+
+class RefreshVerificationResult(BaseModel):
     """Result of verify_refresh_token."""
 
-    user_id: int
+    status: RefreshVerificationStatus
+    user_id: int | None = None
+    session_id: str | None = None
+    policy_profile: str | None = None
+    token_id: int | None = None
+    should_count_rate_limit: bool = True
 
 
 def hash_token(token: str) -> str:

@@ -13,11 +13,20 @@ from services.auth_service import (
     revoke_refresh_token,
     revoke_all_user_refresh_tokens,
     create_refresh_token,
+    try_increment_refresh_recovery_count,
     SECRET_KEY,
     ALGORITHM,
 )
-from models.refresh_token import hash_token, generate_opaque_token
-from services.session_policy import get_standard_session_policy, get_operational_session_policy
+from models.refresh_token import (
+    RefreshVerificationStatus,
+    hash_token,
+    generate_opaque_token,
+)
+from services.session_policy import (
+    get_standard_session_policy,
+    get_operational_session_policy,
+    get_stale_recovery_grace_seconds,
+)
 
 
 class TestHashToken:
@@ -74,17 +83,36 @@ class TestGenerateOpaqueToken:
 class TestVerifyRefreshToken:
     """Tests for refresh token verification with mocked DB."""
 
-    def _mock_rt(self, token_hash: str, user_id: int, expires_at: datetime, revoked_at: datetime | None = None, session_id: str | None = None):
+    def _mock_rt(
+        self,
+        token_hash: str,
+        user_id: int,
+        expires_at: datetime,
+        revoked_at: datetime | None = None,
+        session_id: str | None = None,
+        *,
+        revoked_reason: str | None = None,
+        rotated_at: datetime | None = None,
+        stale_recovery_count: int = 0,
+        policy_profile: str = "standard",
+        last_activity_at: datetime | None = None,
+    ):
         """Create a mock RefreshToken object."""
         rt = MagicMock()
+        rt.id = 1
         rt.token_hash = token_hash
         rt.user_id = user_id
         rt.expires_at = expires_at
         rt.revoked_at = revoked_at
-        rt.session_id = session_id
+        rt.session_id = session_id or "sess-default"
+        rt.revoked_reason = revoked_reason
+        rt.rotated_at = rotated_at
+        rt.stale_recovery_count = stale_recovery_count
+        rt.policy_profile = policy_profile
+        rt.last_activity_at = last_activity_at or datetime.utcnow() - timedelta(minutes=1)
         return rt
 
-    def test_returns_user_id_for_valid_token(self):
+    def test_valid_token_returns_valid_status(self):
         token = "valid-refresh-token"
         token_hash = hash_token(token)
         mock_db = MagicMock()
@@ -92,19 +120,23 @@ class TestVerifyRefreshToken:
             token_hash=token_hash,
             user_id=42,
             expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-valid",
+            policy_profile="standard",
         )
 
         result = verify_refresh_token(token, mock_db)
-        assert result == 42
+        assert result.status == RefreshVerificationStatus.VALID
+        assert result.user_id == 42
+        assert result.session_id == "sess-valid"
 
-    def test_returns_none_for_unknown_token(self):
+    def test_unknown_token_returns_missing(self):
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
         result = verify_refresh_token("unknown-token", mock_db)
-        assert result is None
+        assert result.status == RefreshVerificationStatus.MISSING
 
-    def test_returns_none_for_revoked_token(self):
+    def test_revoked_token_returns_revoked(self):
         token = "revoked-token"
         token_hash = hash_token(token)
         mock_db = MagicMock()
@@ -116,9 +148,9 @@ class TestVerifyRefreshToken:
         )
 
         result = verify_refresh_token(token, mock_db)
-        assert result is None
+        assert result.status == RefreshVerificationStatus.REVOKED
 
-    def test_returns_none_for_expired_token(self):
+    def test_expired_token_returns_expired(self):
         token = "expired-token"
         token_hash = hash_token(token)
         mock_db = MagicMock()
@@ -129,21 +161,107 @@ class TestVerifyRefreshToken:
         )
 
         result = verify_refresh_token(token, mock_db)
-        assert result is None
+        assert result.status == RefreshVerificationStatus.EXPIRED
 
-    def test_returns_session_metadata_when_requested(self):
-        token = "token-with-session"
+    def test_standard_session_idles_out(self):
+        token = "idle-token"
         token_hash = hash_token(token)
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
             token_hash=token_hash,
-            user_id=77,
+            user_id=1,
             expires_at=datetime.utcnow() + timedelta(days=7),
-            session_id="sess-77",
+            last_activity_at=datetime.utcnow() - timedelta(minutes=25),
+            policy_profile="standard",
         )
 
-        result = verify_refresh_token(token, mock_db, include_session_metadata=True)
-        assert result == (77, "sess-77")
+        result = verify_refresh_token(token, mock_db)
+        assert result.status == RefreshVerificationStatus.IDLE_EXPIRED
+
+    def test_recently_rotated_token_is_recoverable(self):
+        token = "stale-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=88,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-88",
+            revoked_at=datetime.utcnow() - timedelta(seconds=1),
+            revoked_reason="rotated",
+            rotated_at=datetime.utcnow() - timedelta(seconds=10),
+            stale_recovery_count=0,
+            policy_profile="standard",
+            last_activity_at=datetime.utcnow(),
+        )
+
+        result = verify_refresh_token(token, mock_db)
+        assert result.status == RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE
+        assert result.should_count_rate_limit is False
+
+    def test_rotated_token_beyond_grace_is_rejected(self):
+        token = "late-stale-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=88,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-88",
+            revoked_at=datetime.utcnow() - timedelta(seconds=1),
+            revoked_reason="rotated",
+            rotated_at=datetime.utcnow() - timedelta(seconds=get_stale_recovery_grace_seconds() + 1),
+            stale_recovery_count=0,
+            policy_profile="standard",
+            last_activity_at=datetime.utcnow(),
+        )
+
+        result = verify_refresh_token(token, mock_db)
+        assert result.status == RefreshVerificationStatus.ROTATED_STALE_REJECTED
+
+    def test_recovery_count_cap_rejects_stale_token(self):
+        token = "stale-token-cap"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=88,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-88",
+            revoked_at=datetime.utcnow() - timedelta(seconds=1),
+            revoked_reason="rotated",
+            rotated_at=datetime.utcnow() - timedelta(seconds=1),
+            stale_recovery_count=3,
+            policy_profile="standard",
+            last_activity_at=datetime.utcnow(),
+        )
+
+        result = verify_refresh_token(token, mock_db)
+        assert result.status == RefreshVerificationStatus.ROTATED_STALE_REJECTED
+
+
+class TestTryIncrementRefreshRecoveryCount:
+    """Tests for atomic stale recovery reservation."""
+
+    def test_returns_true_when_atomic_update_reserves_recovery(self):
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 1
+
+        result = try_increment_refresh_recovery_count(mock_db, token_id=123, max_recoveries=3)
+
+        assert result is True
+        mock_db.query.return_value.filter.return_value.update.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    def test_returns_false_when_recovery_cap_is_already_consumed(self):
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 0
+
+        result = try_increment_refresh_recovery_count(mock_db, token_id=123, max_recoveries=3)
+
+        assert result is False
+        mock_db.query.return_value.filter.return_value.update.assert_called_once()
+        mock_db.commit.assert_called_once()
 
 
 class TestRevokeRefreshToken:
