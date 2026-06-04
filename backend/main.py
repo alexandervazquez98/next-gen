@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -9,7 +9,7 @@ import re
 import shutil
 import platform
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import get_db, verify_connection
 
 # Global start time to track system reboots/restarts
@@ -17,6 +17,9 @@ STARTUP_TIME = datetime.now().isoformat()
 _DISK_SECTOR_SIZE_BYTES = 512
 _DISK_IO_PREVIOUS_SAMPLE = None
 _DISK_IO_SAMPLE_LOCK = threading.Lock()
+_SYSTEM_STATUS_HISTORY_RETENTION_DAYS = 7
+_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS = 300
+_SYSTEM_STATUS_HISTORY_LOCK = threading.Lock()
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
@@ -167,8 +170,9 @@ async def startup_event():
         from repositories.metric_repo import create_hypertable
         from models.timescale_models import MetricValue  # Import to register model
         from models.rate_limit_attempt import RateLimitAttempt  # Import to register model
+        from models.system_status_history import SystemStatusSnapshot  # Import to register model
 
-        # Create Tables (includes backup_config, backup_history, and rate_limit_attempts)
+        # Create Tables (includes backup_config, backup_history, rate_limit_attempts, and system status history)
         Base.metadata.create_all(bind=engine)
 
         # Inline migration: add 'tier' column if it doesn't exist (safe for existing DBs)
@@ -355,6 +359,137 @@ def _get_disk_io_status():
         return status
 
 
+def _safe_float(value):
+    return None if value is None else float(value)
+
+
+def _safe_int(value):
+    return None if value is None else int(value)
+
+
+def _should_record_system_status_snapshot(latest_snapshot, now: datetime) -> bool:
+    """Return true when the latest persisted snapshot is outside the throttle window."""
+    if latest_snapshot is None or latest_snapshot.recorded_at is None:
+        return True
+    return (
+        now - latest_snapshot.recorded_at
+    ).total_seconds() >= _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS
+
+
+def _build_system_status_snapshot(status: dict, recorded_at: datetime):
+    """Convert the live `/api/system/status` payload into a compact persisted row."""
+    from models.system_status_history import SystemStatusSnapshot
+
+    collector = status.get("collector") or {}
+    collector_stats = collector.get("stats") or {}
+    disk_io = status.get("disk_io") or {}
+    return SystemStatusSnapshot(
+        recorded_at=recorded_at,
+        cpu=_safe_float(status.get("cpu")),
+        ram=_safe_float(status.get("ram")),
+        disk=_safe_float(status.get("disk")),
+        disk_io_supported=bool(disk_io.get("supported")),
+        disk_read_bytes_per_sec=_safe_float(disk_io.get("read_bytes_per_sec")),
+        disk_write_bytes_per_sec=_safe_float(disk_io.get("write_bytes_per_sec")),
+        disk_busy_percentage=_safe_float(disk_io.get("busy_percentage")),
+        neo4j_status=status.get("neo4j"),
+        postgres_status=status.get("postgres"),
+        collector_status=collector.get("status"),
+        collector_cis_monitored=_safe_int(collector_stats.get("cis_monitored")),
+        collector_metrics_collected=_safe_int(collector_stats.get("metrics_collected")),
+        collector_metrics_failed=_safe_int(collector_stats.get("metrics_failed")),
+        collector_jobs_per_min=_safe_float(collector_stats.get("jobs_per_min")),
+        collector_cycle_duration=_safe_float(collector_stats.get("cycle_duration")),
+    )
+
+
+def _serialize_system_status_snapshot(snapshot):
+    """Serialize a persisted status snapshot into the history API row contract."""
+    return {
+        "recorded_at": snapshot.recorded_at.isoformat(),
+        "cpu": snapshot.cpu,
+        "ram": snapshot.ram,
+        "disk": snapshot.disk,
+        "disk_io": {
+            "supported": snapshot.disk_io_supported,
+            "read_bytes_per_sec": snapshot.disk_read_bytes_per_sec,
+            "write_bytes_per_sec": snapshot.disk_write_bytes_per_sec,
+            "busy_percentage": snapshot.disk_busy_percentage,
+        },
+        "neo4j": snapshot.neo4j_status,
+        "postgres": snapshot.postgres_status,
+        "collector": {
+            "status": snapshot.collector_status,
+            "stats": {
+                "cis_monitored": snapshot.collector_cis_monitored,
+                "metrics_collected": snapshot.collector_metrics_collected,
+                "metrics_failed": snapshot.collector_metrics_failed,
+                "jobs_per_min": snapshot.collector_jobs_per_min,
+                "cycle_duration": snapshot.collector_cycle_duration,
+            },
+        },
+    }
+
+
+def _record_system_status_snapshot(status: dict, now: datetime | None = None) -> bool:
+    """Persist a throttled operational snapshot and prune data older than 7 days."""
+    from postgres_db import SessionLocal
+    from models.system_status_history import SystemStatusSnapshot
+
+    recorded_at = now or datetime.utcnow()
+    with _SYSTEM_STATUS_HISTORY_LOCK:
+        db = SessionLocal()
+        try:
+            latest = (
+                db.query(SystemStatusSnapshot)
+                .order_by(SystemStatusSnapshot.recorded_at.desc())
+                .first()
+            )
+            if not _should_record_system_status_snapshot(latest, recorded_at):
+                return False
+
+            db.add(_build_system_status_snapshot(status, recorded_at))
+            cutoff = recorded_at - timedelta(days=_SYSTEM_STATUS_HISTORY_RETENTION_DAYS)
+            db.query(SystemStatusSnapshot).filter(
+                SystemStatusSnapshot.recorded_at < cutoff
+            ).delete(synchronize_session=False)
+            db.commit()
+            return True
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to record system status snapshot: %s", exc)
+            return False
+        finally:
+            db.close()
+
+
+def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = None):
+    """Read compact system status history rows newest-first."""
+    from postgres_db import SessionLocal
+    from models.system_status_history import SystemStatusSnapshot
+
+    generated_at = now or datetime.utcnow()
+    cutoff = generated_at - timedelta(hours=hours)
+    db = SessionLocal()
+    try:
+        snapshots = (
+            db.query(SystemStatusSnapshot)
+            .filter(SystemStatusSnapshot.recorded_at >= cutoff)
+            .order_by(SystemStatusSnapshot.recorded_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return {
+            "generated_at": generated_at.isoformat(),
+            "hours": hours,
+            "limit": limit,
+            "retention_days": _SYSTEM_STATUS_HISTORY_RETENTION_DAYS,
+            "rows": [_serialize_system_status_snapshot(row) for row in snapshots],
+        }
+    finally:
+        db.close()
+
+
 @app.get("/api/system/status")
 def get_system_status():
     """
@@ -413,7 +548,7 @@ def get_system_status():
 
     collector = get_collector_status()
 
-    return {
+    payload = {
         "cpu": round(cpu_percent, 1),
         "ram": round(ram_percent, 1),
         "disk": round(disk_percent, 1),
@@ -421,5 +556,20 @@ def get_system_status():
         "neo4j": neo4j_status,
         "postgres": postgres_status,
         "collector": collector,
-        "startup_time": STARTUP_TIME
+        "startup_time": STARTUP_TIME,
     }
+    _record_system_status_snapshot(payload)
+    return payload
+
+
+@app.get("/api/system/status/history")
+def get_system_status_history(
+    hours: int = Query(168, ge=1, le=168, description="History window in hours"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum snapshots to return"),
+):
+    """Fetch persisted operational system status snapshots, newest first."""
+    try:
+        return _fetch_system_status_history(hours=hours, limit=limit)
+    except Exception as exc:
+        logger.error("Failed to fetch system status history: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="System status history unavailable") from exc

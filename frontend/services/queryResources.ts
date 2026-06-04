@@ -41,6 +41,34 @@ export interface SystemStatus {
 	};
 }
 
+export interface SystemStatusHistoryRow {
+	recorded_at: string;
+	cpu?: number | null;
+	ram?: number | null;
+	disk?: number | null;
+	disk_io?: Pick<DiskIoStatus, "supported" | "read_bytes_per_sec" | "write_bytes_per_sec" | "busy_percentage"> | null;
+	neo4j?: "CONNECTED" | "DISCONNECTED" | "UNKNOWN" | string | null;
+	postgres?: "CONNECTED" | "DISCONNECTED" | "UNKNOWN" | string | null;
+	collector: {
+		status?: string | null;
+		stats: {
+			cis_monitored?: number | null;
+			metrics_collected?: number | null;
+			metrics_failed?: number | null;
+			cycle_duration?: number | null;
+			jobs_per_min?: number | null;
+		};
+	};
+}
+
+export interface SystemStatusHistoryResponse {
+	generated_at: string;
+	hours: number;
+	limit: number;
+	retention_days: number;
+	rows: SystemStatusHistoryRow[];
+}
+
 export interface OwnerRecord {
 	name: string;
 }
@@ -56,6 +84,22 @@ export interface GraphTopologyResponse {
 
 export const fetchSystemStatus = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<SystemStatus>("/system/status", { signal });
+
+export interface FetchSystemStatusHistoryOptions {
+	hours?: number;
+	limit?: number;
+	signal?: AbortSignal;
+}
+
+export const fetchSystemStatusHistory = ({
+	hours = 168,
+	limit = 24,
+	signal,
+}: FetchSystemStatusHistoryOptions = {}) =>
+	api.get<SystemStatusHistoryResponse>("/system/status/history", {
+		params: { hours, limit },
+		signal,
+	});
 
 export const fetchNodes = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<GraphNode[]>("/nodes", { signal });

@@ -1,14 +1,56 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SystemDashboard from './SystemDashboard';
 
 const mockUseSystemStatusQuery = vi.fn();
+const mockUseSystemStatusHistoryQuery = vi.fn();
 
 vi.mock('../hooks/queries/useSystemStatusQuery', () => ({
   useSystemStatusQuery: () => mockUseSystemStatusQuery(),
 }));
 
+vi.mock('../hooks/queries/useSystemStatusHistoryQuery', () => ({
+  useSystemStatusHistoryQuery: () => mockUseSystemStatusHistoryQuery(),
+}));
+
+const historyResponse = {
+  generated_at: '2026-04-04T10:05:00.000Z',
+  hours: 168,
+  limit: 24,
+  retention_days: 7,
+  rows: [
+    {
+      recorded_at: '2026-04-04T10:05:00.000Z',
+      cpu: 24,
+      ram: 61,
+      disk: 40,
+      disk_io: {
+        supported: true,
+        read_bytes_per_sec: 1048576,
+        write_bytes_per_sec: 524288,
+        busy_percentage: 12.5,
+      },
+      neo4j: 'CONNECTED',
+      postgres: 'CONNECTED',
+      collector: {
+        status: 'RUNNING',
+        stats: {
+          cis_monitored: 8,
+          metrics_collected: 120,
+          metrics_failed: 1,
+          cycle_duration: 3,
+          jobs_per_min: 44,
+        },
+      },
+    },
+  ],
+};
+
 describe('SystemDashboard', () => {
+  beforeEach(() => {
+    mockUseSystemStatusHistoryQuery.mockReturnValue({ data: historyResponse, isLoading: false, error: null });
+  });
+
   it('shows the loading state while the shared status query is pending', () => {
     mockUseSystemStatusQuery.mockReturnValue({ data: null, isLoading: true });
 
@@ -58,12 +100,51 @@ describe('SystemDashboard', () => {
     expect(screen.getByText('40%')).toBeInTheDocument();
     expect(screen.getByText('Disk I/O Throughput')).toBeInTheDocument();
     expect(screen.getByText('12.5%')).toBeInTheDocument();
-    expect(screen.getByText('1.0 MB/s read / 512.0 KB/s write')).toBeInTheDocument();
+    expect(screen.getAllByText('1.0 MB/s read / 512.0 KB/s write').length).toBeGreaterThan(0);
     expect(screen.getAllByText('CONNECTED').length).toBeGreaterThan(0);
-    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(screen.getAllByText('RUNNING').length).toBeGreaterThan(0);
+    expect(screen.getByText('7-Day Operational History')).toBeInTheDocument();
+    expect(screen.getByText(/Persisted system health snapshots/i)).toBeInTheDocument();
+    expect(screen.getAllByText('1.0 MB/s read / 512.0 KB/s write').length).toBeGreaterThan(0);
+    expect(screen.getByText(/120 metrics · 1 failed/i)).toBeInTheDocument();
     expect(screen.getByText('Active Monitored CIs')).toBeInTheDocument();
     expect(screen.getByText('8')).toBeInTheDocument();
     expect(screen.queryByText('173')).not.toBeInTheDocument();
+  });
+
+  it('shows persisted history empty and error states', () => {
+    const statusData = {
+      cpu: 24,
+      ram: 61,
+      disk: 40,
+      disk_io: null,
+      neo4j: 'CONNECTED',
+      postgres: 'CONNECTED',
+      collector: {
+        status: 'RUNNING',
+        last_run: null,
+        stats: {
+          cis_monitored: 8,
+          metrics_collected: 120,
+          metrics_failed: 1,
+          cycle_duration: 3,
+          jobs_per_min: 44,
+        },
+      },
+    };
+
+    mockUseSystemStatusQuery.mockReturnValue({ data: statusData, isLoading: false });
+    mockUseSystemStatusHistoryQuery.mockReturnValueOnce({
+      data: { ...historyResponse, rows: [] },
+      isLoading: false,
+      error: null,
+    });
+    const { rerender } = render(<SystemDashboard />);
+    expect(screen.getByText(/No persisted operational snapshots yet/i)).toBeInTheDocument();
+
+    mockUseSystemStatusHistoryQuery.mockReturnValueOnce({ data: undefined, isLoading: false, error: new Error('boom') });
+    rerender(<SystemDashboard />);
+    expect(screen.getByText(/Operational history unavailable/i)).toBeInTheDocument();
   });
 
   it('shows a graceful fallback when disk I/O is unsupported', () => {
