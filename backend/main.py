@@ -47,8 +47,9 @@ def schedule_daily_backup() -> None:
     hour = int(schedule_parts[0])
     minute = int(schedule_parts[1])
 
-    # Clear existing jobs and add new one
-    backup_scheduler.remove_all_jobs()
+    # Replace only the backup job so unrelated scheduler jobs (audit cleanup) survive reschedules.
+    if backup_scheduler.get_job("daily_backup"):
+        backup_scheduler.remove_job("daily_backup")
 
     if config.get("enabled", True):
         backup_scheduler.add_job(
@@ -64,7 +65,7 @@ def schedule_daily_backup() -> None:
 
 
 # Router Imports
-from routers import auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli
+from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,7 @@ ROUTING ARCHITECTURE CONVENTIONS:
 """
 
 # Include Routers with global /api prefix
+app.include_router(audit.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
@@ -169,10 +171,11 @@ async def startup_event():
         from postgres_db import SessionLocal, engine, Base
         from repositories.metric_repo import create_hypertable
         from models.timescale_models import MetricValue  # Import to register model
+        from models.audit_event import AuditEvent  # Import to register model
         from models.rate_limit_attempt import RateLimitAttempt  # Import to register model
         from models.system_status_history import SystemStatusSnapshot  # Import to register model
 
-        # Create Tables (includes backup_config, backup_history, rate_limit_attempts, and system status history)
+        # Create Tables (includes backup_config, backup_history, rate_limit_attempts, system status history, and audit events)
         Base.metadata.create_all(bind=engine)
 
         # Inline migration: add 'tier' column if it doesn't exist (safe for existing DBs)
@@ -220,6 +223,19 @@ async def startup_event():
 
     # Start Backup Scheduler
     schedule_daily_backup()
+    try:
+        from services.audit_service import run_audit_retention_cleanup
+
+        backup_scheduler.add_job(
+            run_audit_retention_cleanup,
+            trigger=CronTrigger(hour=3, minute=30),
+            id="audit_retention_cleanup",
+            name="Audit Event Retention Cleanup",
+            replace_existing=True,
+        )
+        logger.info("Scheduled audit retention cleanup at 03:30")
+    except Exception as e:
+        logger.error(f"Failed to schedule audit retention cleanup: {e}")
     backup_scheduler.start()
     logger.info("Backup scheduler started")
 
