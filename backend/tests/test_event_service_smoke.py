@@ -35,6 +35,7 @@ class TestEventServiceImports:
         assert hasattr(event_service, "prune_recovered_events")
         assert hasattr(event_service, "run_event_diagnostic")
         assert hasattr(event_service, "get_availability_report")
+        assert hasattr(event_service, "get_availability_snmp_no_response_drilldown")
 
 
 class TestEventServiceSmoke:
@@ -201,6 +202,106 @@ class TestEventServiceSmoke:
             "functional_percentage": 75.0,
             "failing_percentage": 25.0,
         }
+
+    def test_get_availability_snmp_no_response_drilldown_returns_affected_cis(
+        self, mock_neo4j_session
+    ):
+        get_drilldown = (
+            _load_event_service_module().get_availability_snmp_no_response_drilldown
+        )
+        now = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "return count(distinct ci) as total_ci_with_no_response",
+            [
+                {
+                    "total_ci_with_no_response": 2,
+                    "total_events_with_no_response": 3,
+                }
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "return ci,",
+            [
+                {
+                    "ci": {
+                        "id": "ci-1",
+                        "name": "Core Router",
+                        "status": "DEGRADED",
+                        "ip": "10.0.0.1",
+                        "owner": "NOC",
+                        "brand": "Cisco",
+                        "model": "ISR4331",
+                    },
+                    "category": "Routers",
+                    "event_count": 2,
+                    "latest_event_at": now,
+                    "events": [
+                        {
+                            "id": "evt-1",
+                            "message": "SNMP no response",
+                            "status": "OPEN",
+                            "created_at": now,
+                            "last_seen": now,
+                        }
+                    ],
+                }
+            ],
+        )
+
+        report = get_drilldown(limit=10, offset=5, now=now)
+
+        assert report["generated_at"] == now.isoformat()
+        assert report["limit"] == 10
+        assert report["offset"] == 5
+        assert report["summary"] == {
+            "total_ci_with_no_response": 2,
+            "total_events_with_no_response": 3,
+        }
+        assert report["rows"] == [
+            {
+                "ci_id": "ci-1",
+                "ci_name": "Core Router",
+                "category": "Routers",
+                "status": "DEGRADED",
+                "ip": "10.0.0.1",
+                "owner": "NOC",
+                "brand": "Cisco",
+                "model": "ISR4331",
+                "event_count": 2,
+                "latest_event_at": now.isoformat(),
+                "events": [
+                    {
+                        "id": "evt-1",
+                        "message": "SNMP no response",
+                        "status": "OPEN",
+                        "created_at": now.isoformat(),
+                        "last_seen": now.isoformat(),
+                    }
+                ],
+            }
+        ]
+        assert mock_neo4j_session.queries[1]["params"] == {"limit": 10, "offset": 5}
+        query = mock_neo4j_session.queries[1]["query"]
+        assert "toUpper(coalesce(m.protocol, '')) = 'SNMP'" in query
+        assert "e.status IN ['OPEN', 'ACK']" in query
+        assert "e.event_type = 'COLLECTION_FAILURE'" in query
+        assert "toUpper(coalesce(e.source_protocol, '')) = 'SNMP'" in query
+        assert "e.failure_family = 'SNMP_NO_RESPONSE'" in query
+        assert "SKIP $offset" in query
+        assert "LIMIT $limit" in query
+
+    def test_get_availability_snmp_no_response_drilldown_bounds_pagination(
+        self, mock_neo4j_session
+    ):
+        get_drilldown = (
+            _load_event_service_module().get_availability_snmp_no_response_drilldown
+        )
+
+        report = get_drilldown(limit=500, offset=-4)
+
+        assert report["limit"] == 100
+        assert report["offset"] == 0
+        assert mock_neo4j_session.queries[1]["params"] == {"limit": 100, "offset": 0}
 
     def test_get_availability_report_includes_active_failure_starts_in_mtbf(
         self, mock_neo4j_session

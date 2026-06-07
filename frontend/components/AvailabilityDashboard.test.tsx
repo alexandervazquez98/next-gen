@@ -1,14 +1,22 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AvailabilityDashboard from "./AvailabilityDashboard";
-import type { AvailabilityReportResponse } from "../types";
+import type {
+	AvailabilityReportResponse,
+	AvailabilitySnmpNoResponseResponse,
+} from "../types";
 
-const { mockUseAvailabilityReportQuery } = vi.hoisted(() => ({
+const { mockUseAvailabilityReportQuery, mockUseAvailabilitySnmpNoResponseQuery } = vi.hoisted(() => ({
 	mockUseAvailabilityReportQuery: vi.fn(),
+	mockUseAvailabilitySnmpNoResponseQuery: vi.fn(),
 }));
 
 vi.mock("../hooks/queries/useAvailabilityReportQuery", () => ({
 	useAvailabilityReportQuery: mockUseAvailabilityReportQuery,
+}));
+
+vi.mock("../hooks/queries/useAvailabilitySnmpNoResponseQuery", () => ({
+	useAvailabilitySnmpNoResponseQuery: mockUseAvailabilitySnmpNoResponseQuery,
 }));
 
 const report: AvailabilityReportResponse = {
@@ -80,10 +88,48 @@ const report: AvailabilityReportResponse = {
 	],
 };
 
+const snmpNoResponseReport: AvailabilitySnmpNoResponseResponse = {
+	generated_at: "2026-01-31T00:06:00Z",
+	limit: 25,
+	offset: 0,
+	summary: {
+		total_ci_with_no_response: 1,
+		total_events_with_no_response: 2,
+	},
+	rows: [
+		{
+			ci_id: "ci-1",
+			ci_name: "Core Router",
+			category: "Network",
+			status: "DEGRADED",
+			ip: "10.0.0.1",
+			owner: "NOC",
+			brand: "Cisco",
+			model: "ISR4331",
+			event_count: 2,
+			latest_event_at: "2026-01-31T00:04:00Z",
+			events: [
+				{
+					id: "evt-snmp-1",
+					message: "SNMP no response from Core Router",
+					status: "OPEN",
+					created_at: "2026-01-31T00:01:00Z",
+					last_seen: "2026-01-31T00:04:00Z",
+				},
+			],
+		},
+	],
+};
+
 describe("AvailabilityDashboard", () => {
 	beforeEach(() => {
 		mockUseAvailabilityReportQuery.mockReturnValue({
 			data: report,
+			isLoading: false,
+			error: null,
+		});
+		mockUseAvailabilitySnmpNoResponseQuery.mockReturnValue({
+			data: undefined,
 			isLoading: false,
 			error: null,
 		});
@@ -103,6 +149,53 @@ describe("AvailabilityDashboard", () => {
 		expect(screen.getByText("1/2 (50.00%)")).toBeInTheDocument();
 		expect(screen.getByText("SNMP no-response")).toBeInTheDocument();
 		expect(screen.getByText("1 CIs / 2 events")).toBeInTheDocument();
+	});
+
+	it("loads SNMP no-response affected CIs only after the card action", () => {
+		mockUseAvailabilitySnmpNoResponseQuery.mockReturnValue({
+			data: snmpNoResponseReport,
+			isLoading: false,
+			error: null,
+		});
+
+		render(<AvailabilityDashboard />);
+
+		expect(mockUseAvailabilitySnmpNoResponseQuery).toHaveBeenCalledWith({ enabled: false });
+		fireEvent.click(screen.getByRole("button", { name: /review affected cis/i }));
+
+		expect(mockUseAvailabilitySnmpNoResponseQuery).toHaveBeenLastCalledWith({ enabled: true });
+		expect(screen.getByLabelText("SNMP no-response affected CIs")).toBeInTheDocument();
+		expect(screen.getByText("Affected CIs")).toBeInTheDocument();
+		expect(screen.getAllByText("Core Router").length).toBeGreaterThan(0);
+		expect(screen.getByText("SNMP no response from Core Router")).toBeInTheDocument();
+		expect(screen.getByText("DEGRADED")).toBeInTheDocument();
+	});
+
+	it("shows SNMP drilldown loading, error, and empty states", () => {
+		mockUseAvailabilitySnmpNoResponseQuery.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			error: null,
+		});
+		const { rerender } = render(<AvailabilityDashboard />);
+		fireEvent.click(screen.getByRole("button", { name: /review affected cis/i }));
+		expect(screen.getByText(/loading affected cis/i)).toBeInTheDocument();
+
+		mockUseAvailabilitySnmpNoResponseQuery.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			error: new Error("boom"),
+		});
+		rerender(<AvailabilityDashboard />);
+		expect(screen.getByText(/could not load snmp no-response details/i)).toBeInTheDocument();
+
+		mockUseAvailabilitySnmpNoResponseQuery.mockReturnValue({
+			data: { ...snmpNoResponseReport, rows: [] },
+			isLoading: false,
+			error: null,
+		});
+		rerender(<AvailabilityDashboard />);
+		expect(screen.getByText(/no active snmp no-response cis/i)).toBeInTheDocument();
 	});
 
 	it("handles older availability responses without SNMP coverage", () => {

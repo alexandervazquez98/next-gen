@@ -237,6 +237,41 @@ class AvailabilityReportResponse(BaseModel):
     rows: List[AvailabilityReportRow]
 
 
+class AvailabilitySnmpNoResponseSummary(BaseModel):
+    total_ci_with_no_response: int = 0
+    total_events_with_no_response: int = 0
+
+
+class AvailabilitySnmpNoResponseEvent(BaseModel):
+    id: Optional[str] = None
+    message: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+class AvailabilitySnmpNoResponseCI(BaseModel):
+    ci_id: str
+    ci_name: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+    ip: Optional[str] = None
+    owner: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    event_count: int
+    latest_event_at: Optional[str] = None
+    events: List[AvailabilitySnmpNoResponseEvent] = []
+
+
+class AvailabilitySnmpNoResponseResponse(BaseModel):
+    generated_at: str
+    limit: int
+    offset: int
+    summary: AvailabilitySnmpNoResponseSummary
+    rows: List[AvailabilitySnmpNoResponseCI]
+
+
 class MetricDictionary(BaseModel):
     """A reusable OID bundle for a specific brand+model combination."""
     id: str

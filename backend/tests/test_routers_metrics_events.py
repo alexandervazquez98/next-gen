@@ -1305,6 +1305,113 @@ class TestEventsList:
         assert get_report.call_args.kwargs["start"] == start
         assert get_report.call_args.kwargs["end"] == end
 
+    def test_availability_snmp_no_response_endpoint_returns_drilldown(self):
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        generated_at = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        payload = {
+            "generated_at": generated_at.isoformat(),
+            "limit": 25,
+            "offset": 0,
+            "summary": {
+                "total_ci_with_no_response": 1,
+                "total_events_with_no_response": 2,
+            },
+            "rows": [
+                {
+                    "ci_id": "ci-001",
+                    "ci_name": "Router-01",
+                    "category": "Routers",
+                    "status": "DEGRADED",
+                    "ip": "10.0.0.1",
+                    "owner": "NOC",
+                    "brand": "Cisco",
+                    "model": "ISR4331",
+                    "event_count": 2,
+                    "latest_event_at": generated_at.isoformat(),
+                    "events": [
+                        {
+                            "id": "evt-001",
+                            "message": "SNMP no response",
+                            "status": "OPEN",
+                            "created_at": generated_at.isoformat(),
+                            "last_seen": generated_at.isoformat(),
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with patch(
+            "routers.events.event_service.get_availability_snmp_no_response_drilldown",
+            return_value=payload,
+        ) as get_drilldown:
+            response = client.get(
+                "/api/events/availability-report/snmp-no-response",
+                params={"limit": 25, "offset": 0},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body == payload
+        get_drilldown.assert_called_once_with(limit=25, offset=0)
+
+    def test_availability_snmp_no_response_endpoint_requires_authentication(self):
+        response = client.get("/api/events/availability-report/snmp-no-response")
+
+        assert response.status_code == 401
+
+    def test_availability_snmp_no_response_endpoint_forbidden_without_event_view_permission(self):
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            permissions=[UserPermission.EVENT_ACK],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get("/api/events/availability-report/snmp-no-response")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to view events"
+
+    def test_availability_snmp_no_response_endpoint_bounds_limit(self):
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[UserPermission.EVENT_VIEW],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        response = client.get(
+            "/api/events/availability-report/snmp-no-response",
+            params={"limit": 101},
+        )
+
+        assert response.status_code == 422
+
     def test_availability_report_endpoint_keeps_old_rows_valid(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         payload = {

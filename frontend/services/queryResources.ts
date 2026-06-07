@@ -1,6 +1,7 @@
 import { api } from "./api";
 import type {
 	AvailabilityReportResponse,
+	AvailabilitySnmpNoResponseResponse,
 	EventDetail,
 	EventSummary,
 	GraphLink,
@@ -72,6 +73,26 @@ export const fetchAvailabilityReport = ({
 	const query = params.toString();
 	return api.get<AvailabilityReportResponse>(
 		`/events/availability-report${query ? `?${query}` : ""}`,
+		{ signal },
+	);
+};
+
+export interface FetchSnmpNoResponseOptions {
+	limit?: number;
+	offset?: number;
+	signal?: AbortSignal;
+}
+
+export const fetchAvailabilitySnmpNoResponse = ({
+	limit = 25,
+	offset = 0,
+	signal,
+}: FetchSnmpNoResponseOptions = {}) => {
+	const params = new URLSearchParams();
+	params.set("limit", String(limit));
+	params.set("offset", String(offset));
+	return api.get<AvailabilitySnmpNoResponseResponse>(
+		`/events/availability-report/snmp-no-response?${params.toString()}`,
 		{ signal },
 	);
 };
