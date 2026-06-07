@@ -106,12 +106,23 @@ export interface AvailabilityReportRow {
 	ci?: AvailabilityReportCI | null;
 }
 
+export interface SnmpCoverageSummary {
+	total_ci_with_snmp: number;
+	functional_ci: number;
+	failing_ci: number;
+	no_response_ci: number;
+	no_response_event_count: number;
+	functional_percentage?: number | null;
+	failing_percentage?: number | null;
+}
+
 export interface AvailabilityReportResponse {
 	window_start: string;
 	window_end: string;
 	generated_at: string;
 	window_days: number;
 	total_groups: number;
+	snmp_coverage?: SnmpCoverageSummary | null;
 	rows: AvailabilityReportRow[];
 }
 

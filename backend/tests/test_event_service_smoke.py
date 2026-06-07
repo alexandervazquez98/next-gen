@@ -171,6 +171,37 @@ class TestEventServiceSmoke:
         assert row["active_downtime_seconds"] == 3600
         assert row["availability_percentage"] == 70.0
 
+    def test_get_availability_report_includes_snmp_coverage_summary(
+        self, mock_neo4j_session
+    ):
+        get_availability_report = _load_event_service_module().get_availability_report
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "return count(ci) as total_ci_with_snmp",
+            [
+                {
+                    "total_ci_with_snmp": 4,
+                    "functional_ci": 3,
+                    "failing_ci": 1,
+                    "no_response_ci": 1,
+                    "no_response_event_count": 2,
+                }
+            ],
+        )
+
+        report = get_availability_report(start=start, end=end, now=end)
+
+        assert report["snmp_coverage"] == {
+            "total_ci_with_snmp": 4,
+            "functional_ci": 3,
+            "failing_ci": 1,
+            "no_response_ci": 1,
+            "no_response_event_count": 2,
+            "functional_percentage": 75.0,
+            "failing_percentage": 25.0,
+        }
+
     def test_get_availability_report_includes_active_failure_starts_in_mtbf(
         self, mock_neo4j_session
     ):
@@ -354,6 +385,11 @@ class TestEventServiceSmoke:
             if "e.status IN ['OPEN', 'ACK']" in query["query"]
             and "NOT e.status IN ['OPEN', 'ACK']" not in query["query"]
         )["query"]
+        snmp_query = next(
+            query
+            for query in mock_neo4j_session.queries
+            if "total_ci_with_snmp" in query["query"]
+        )["query"]
 
         assert "e.event_type = 'AVAILABILITY'" in recovered_query
         assert "e.event_type = 'AVAILABILITY'" in active_query
@@ -361,6 +397,11 @@ class TestEventServiceSmoke:
         assert "e.availability_source IN ['PING', 'ICMP']" in active_query
         assert "toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'" in recovered_query
         assert "toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'" in active_query
+        assert "MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)" in snmp_query
+        assert "toUpper(coalesce(m.protocol, '')) = 'SNMP'" in snmp_query
+        assert "e.event_type = 'COLLECTION_FAILURE'" in snmp_query
+        assert "toUpper(coalesce(e.source_protocol, '')) = 'SNMP'" in snmp_query
+        assert "e.failure_family = 'SNMP_NO_RESPONSE'" in snmp_query
 
     def test_get_availability_report_excludes_non_availability_event_types(
         self, mock_neo4j_session

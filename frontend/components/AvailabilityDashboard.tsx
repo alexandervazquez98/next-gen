@@ -1,7 +1,7 @@
 import type React from "react";
 import { Fragment, useMemo, useState } from "react";
 import { useAvailabilityReportQuery } from "../hooks/queries/useAvailabilityReportQuery";
-import type { AvailabilityReportRow } from "../types";
+import type { AvailabilityReportRow, SnmpCoverageSummary } from "../types";
 import {
 	averageSeconds,
 	availabilityRowsToCsv,
@@ -12,6 +12,16 @@ import {
 
 const formatPercent = (value?: number | null) =>
 	value == null ? "—" : `${value.toFixed(2)}%`;
+
+const formatSnmpFunctional = (summary?: SnmpCoverageSummary | null) => {
+	if (!summary) return "—";
+	return `${summary.functional_ci}/${summary.total_ci_with_snmp} (${formatPercent(summary.functional_percentage)})`;
+};
+
+const formatSnmpNoResponse = (summary?: SnmpCoverageSummary | null) => {
+	if (!summary) return "—";
+	return `${summary.no_response_ci} CIs / ${summary.no_response_event_count} events`;
+};
 
 const metadataEntries = (row: AvailabilityReportRow) => {
 	const metadata = row.ci?.metadata ?? {};
@@ -53,6 +63,7 @@ const AvailabilityDashboard: React.FC = () => {
 	const averageMttr = averageSeconds(filteredRows.map((row) => row.mttr_seconds));
 	const averageMtbf = averageSeconds(filteredRows.map((row) => row.mtbf_seconds));
 	const activeEvents = filteredRows.reduce((sum, row) => sum + row.active_events, 0);
+	const snmpCoverage = data?.snmp_coverage;
 	const worstAvailability = filteredRows.reduce<number | null>((worst, row) => {
 		if (row.availability_percentage == null) return worst;
 		return worst == null ? row.availability_percentage : Math.min(worst, row.availability_percentage);
@@ -84,11 +95,13 @@ const AvailabilityDashboard: React.FC = () => {
 				</button>
 			</div>
 
-			<div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+			<div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
 				<SummaryCard label="Average MTTR" value={formatDurationSeconds(averageMttr)} />
 				<SummaryCard label="Average MTBF" value={formatDurationSeconds(averageMtbf)} />
 				<SummaryCard label="Active events" value={String(activeEvents)} />
 				<SummaryCard label="Worst availability" value={formatPercent(worstAvailability)} />
+				<SummaryCard label="SNMP functional" value={formatSnmpFunctional(snmpCoverage)} />
+				<SummaryCard label="SNMP no-response" value={formatSnmpNoResponse(snmpCoverage)} />
 			</div>
 
 			<div className="rounded-2xl border border-white/5 bg-surface-900 p-5">

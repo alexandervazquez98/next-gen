@@ -478,6 +478,43 @@ def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, s
     return str(ci_id), str(event_type)
 
 
+def _empty_snmp_coverage_summary() -> Dict[str, Any]:
+    return {
+        "total_ci_with_snmp": 0,
+        "functional_ci": 0,
+        "failing_ci": 0,
+        "no_response_ci": 0,
+        "no_response_event_count": 0,
+        "functional_percentage": None,
+        "failing_percentage": None,
+    }
+
+
+def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
+    summary = _empty_snmp_coverage_summary()
+    if record is None:
+        return summary
+
+    total = int(record.get("total_ci_with_snmp") or 0)
+    functional = int(record.get("functional_ci") or 0)
+    failing = int(record.get("failing_ci") or 0)
+    no_response = int(record.get("no_response_ci") or 0)
+    no_response_events = int(record.get("no_response_event_count") or 0)
+    summary.update(
+        {
+            "total_ci_with_snmp": total,
+            "functional_ci": functional,
+            "failing_ci": failing,
+            "no_response_ci": no_response,
+            "no_response_event_count": no_response_events,
+        }
+    )
+    if total > 0:
+        summary["functional_percentage"] = round(functional / total * 100, 4)
+        summary["failing_percentage"] = round(failing / total * 100, 4)
+    return summary
+
+
 def _is_sensitive_ci_key(key: str) -> bool:
     normalized = key.lower()
     return any(part in normalized for part in _SENSITIVE_CI_KEY_PARTS)
@@ -579,6 +616,7 @@ def get_availability_report(
     )
     window_seconds = max((window_end - window_start).total_seconds(), 0)
     groups: Dict[tuple[str, str], Dict[str, Any]] = {}
+    snmp_coverage = _empty_snmp_coverage_summary()
 
     def ensure_group(
         key: tuple[str, str],
@@ -691,6 +729,26 @@ def get_availability_report(
                 0.0, (window_end - clipped_start).total_seconds()
             )
 
+        snmp_result = session.run(
+            """
+            MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
+            WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
+            WITH DISTINCT ci
+            OPTIONAL MATCH (ci)-[:HAS_EVENT]->(e:Event)
+            WHERE e.status IN ['OPEN', 'ACK']
+              AND e.event_type = 'COLLECTION_FAILURE'
+              AND toUpper(coalesce(e.source_protocol, '')) = 'SNMP'
+              AND e.failure_family = 'SNMP_NO_RESPONSE'
+            WITH ci, count(e) AS open_no_response_events
+            RETURN count(ci) AS total_ci_with_snmp,
+                   sum(CASE WHEN open_no_response_events = 0 THEN 1 ELSE 0 END) AS functional_ci,
+                   sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS failing_ci,
+                   sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS no_response_ci,
+                   sum(open_no_response_events) AS no_response_event_count
+            """
+        )
+        snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
+
     rows: List[Dict[str, Any]] = []
     for row in groups.values():
         failure_starts = sorted(row["failure_starts"])
@@ -746,6 +804,7 @@ def get_availability_report(
         "generated_at": generated_at.isoformat(),
         "window_days": round(window_seconds / 86400, 4) if window_seconds else 0,
         "total_groups": len(rows),
+        "snmp_coverage": snmp_coverage,
         "rows": rows,
     }
 

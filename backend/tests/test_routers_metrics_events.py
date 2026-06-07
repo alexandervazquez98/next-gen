@@ -1237,6 +1237,15 @@ class TestEventsList:
             "generated_at": end.isoformat(),
             "window_days": 30,
             "total_groups": 1,
+            "snmp_coverage": {
+                "total_ci_with_snmp": 2,
+                "functional_ci": 1,
+                "failing_ci": 1,
+                "no_response_ci": 1,
+                "no_response_event_count": 3,
+                "functional_percentage": 50.0,
+                "failing_percentage": 50.0,
+            },
             "rows": [
                 {
                     "ci_id": "ci-001",
@@ -1279,6 +1288,7 @@ class TestEventsList:
         assert body["generated_at"] == payload["generated_at"]
         assert body["window_days"] == 30.0
         assert body["total_groups"] == 1
+        assert body["snmp_coverage"] == payload["snmp_coverage"]
         row = body["rows"][0]
         assert row["ci_id"] == "ci-001"
         assert row["ci_name"] == "Router-01"
