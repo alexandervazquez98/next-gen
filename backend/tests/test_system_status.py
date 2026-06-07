@@ -1,6 +1,13 @@
 from datetime import datetime, timedelta
 
-from main import _build_disk_io_status, _collect_disk_io_sample, _is_diskstats_device
+from main import (
+    _build_disk_io_status,
+    _build_system_status_snapshot,
+    _collect_disk_io_sample,
+    _serialize_system_status_snapshot,
+    _should_record_system_status_snapshot,
+    _is_diskstats_device,
+)
 
 
 def test_collect_disk_io_sample_aggregates_supported_devices_only(tmp_path):
@@ -74,3 +81,68 @@ def test_build_disk_io_status_returns_unsupported_payload_without_sample():
         "busy_percentage": None,
         "sampled_at": None,
     }
+
+
+def test_system_status_snapshot_serializes_compact_operational_history_row():
+    recorded_at = datetime(2026, 1, 1, 12, 5, 0)
+    status = {
+        "cpu": 24.5,
+        "ram": 61.2,
+        "disk": 40.0,
+        "disk_io": {
+            "supported": True,
+            "read_bytes_per_sec": 1024.0,
+            "write_bytes_per_sec": 2048.0,
+            "busy_percentage": 12.5,
+        },
+        "neo4j": "CONNECTED",
+        "postgres": "CONNECTED",
+        "collector": {
+            "status": "RUNNING",
+            "stats": {
+                "cis_monitored": 8,
+                "metrics_collected": 120,
+                "metrics_failed": 1,
+                "jobs_per_min": 44,
+                "cycle_duration": 3,
+            },
+        },
+    }
+
+    snapshot = _build_system_status_snapshot(status, recorded_at)
+    row = _serialize_system_status_snapshot(snapshot)
+
+    assert row == {
+        "recorded_at": recorded_at.isoformat(),
+        "cpu": 24.5,
+        "ram": 61.2,
+        "disk": 40.0,
+        "disk_io": {
+            "supported": True,
+            "read_bytes_per_sec": 1024.0,
+            "write_bytes_per_sec": 2048.0,
+            "busy_percentage": 12.5,
+        },
+        "neo4j": "CONNECTED",
+        "postgres": "CONNECTED",
+        "collector": {
+            "status": "RUNNING",
+            "stats": {
+                "cis_monitored": 8,
+                "metrics_collected": 120,
+                "metrics_failed": 1,
+                "jobs_per_min": 44.0,
+                "cycle_duration": 3.0,
+            },
+        },
+    }
+
+
+def test_should_record_system_status_snapshot_honors_five_minute_throttle():
+    now = datetime(2026, 1, 1, 12, 5, 0)
+    latest = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=4)})()
+    stale = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=5)})()
+
+    assert _should_record_system_status_snapshot(None, now) is True
+    assert _should_record_system_status_snapshot(latest, now) is False
+    assert _should_record_system_status_snapshot(stale, now) is True

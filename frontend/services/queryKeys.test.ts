@@ -4,6 +4,16 @@ import { queryKeys } from "./queryKeys";
 describe("queryKeys", () => {
 	it("returns stable keys for shared polled resources", () => {
 		expect(queryKeys.systemStatus()).toEqual(["system-status"]);
+		expect(queryKeys.systemStatusHistory()).toEqual([
+			"system-status",
+			"history",
+			{ hours: 168, limit: 24 },
+		]);
+		expect(queryKeys.systemStatusHistory({ hours: 168, limit: 24 })).toEqual([
+			"system-status",
+			"history",
+			{ hours: 168, limit: 24 },
+		]);
 		expect(queryKeys.nodes()).toEqual(["nodes"]);
 		expect(queryKeys.links()).toEqual(["links"]);
 		expect(queryKeys.categories()).toEqual(["categories"]);

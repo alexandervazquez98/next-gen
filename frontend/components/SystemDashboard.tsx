@@ -1,6 +1,7 @@
 import React from 'react';
 import Tooltip from './Tooltip';
 import { useSystemStatusQuery } from '../hooks/queries/useSystemStatusQuery';
+import { useSystemStatusHistoryQuery } from '../hooks/queries/useSystemStatusHistoryQuery';
 import type { DiskIoStatus } from '../services/queryResources';
 
 const formatBytesPerSecond = (value?: number | null) => {
@@ -23,8 +24,19 @@ const formatDiskIoRates = (diskIo?: DiskIoStatus | null) => {
     return `${formatBytesPerSecond(diskIo.read_bytes_per_sec)} read / ${formatBytesPerSecond(diskIo.write_bytes_per_sec)} write`;
 };
 
+const formatMetricPercent = (value?: number | null) => value == null ? '—' : `${value.toFixed(1)}%`;
+
+const formatHistoryTimestamp = (value: string) => new Date(value).toLocaleString();
+
+const getServiceBadgeClass = (status?: string | null) => {
+    if (status === 'CONNECTED' || status === 'RUNNING') return 'text-emerald-400';
+    if (status === 'UNKNOWN') return 'text-amber-400';
+    return 'text-red-500';
+};
+
 const SystemDashboard: React.FC = () => {
     const { data: status, isLoading: loading } = useSystemStatusQuery();
+    const { data: history, isLoading: historyLoading, error: historyError } = useSystemStatusHistoryQuery({ hours: 168, limit: 24 });
 
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';
@@ -194,91 +206,58 @@ const SystemDashboard: React.FC = () => {
                 </div>
             </section>
 
-            {/* System Details / Logs */}
+            {/* Operational History */}
             <section className="flex-1 glass rounded-3xl p-8 border border-white/5 flex flex-col">
-                <h3 className="text-sm font-black text-white uppercase tracking-widest mb-6 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-lg text-brand-400">terminal</span>
-                    System Messages & Logs
-                </h3>
-
-                <div className="flex-1 bg-black/40 rounded-xl p-4 font-mono text-xs overflow-y-auto custom-scrollbar border border-white/5">
-                    <div className="space-y-2">
-                        {/* System Reboot / Startup Event */}
-                        {status.startup_time && (
-                            <div className="flex gap-4 border-b border-white/5 pb-2 mb-2">
-                                <span className="text-neutral-500">{new Date(status.startup_time).toLocaleTimeString()}</span>
-                                <span className="text-blue-400 font-bold">SYSTEM_REBOOT</span>
-                                <span>Platform Engine Started (v3.2)</span>
-                            </div>
-                        )}
-
-                        <div className="flex gap-4 opacity-50">
-                            <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                            <span className="text-blue-400">INFO</span>
-                            <span>System Dashboard Initialized.</span>
-                        </div>
-
-                        {/* SNMP Collector Status */}
-                        {status.collector.last_run ? (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date(status.collector.last_run).toLocaleTimeString()}</span>
-                                <span className="text-emerald-400">SUCCESS</span>
-                                <span>SNMP Collector Cycle Completed.</span>
-                            </div>
-                        ) : status.collector.status === 'ERROR' && (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-red-500 font-bold">CRITICAL</span>
-                                <span>SNMP Collector Loop Error.</span>
-                            </div>
-                        )}
-
-                        {/* Neo4j Status */}
-                        {status.neo4j === 'CONNECTED' ? (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-emerald-400">SUCCESS</span>
-                                <span>Neo4j Graph Database Connected.</span>
-                            </div>
-                        ) : (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-red-500 font-bold">CRITICAL</span>
-                                <span>Neo4j Graph Database Connection Failed.</span>
-                            </div>
-                        )}
-
-                        {/* PostgreSQL / TimescaleDB Status */}
-                        {status.postgres === 'CONNECTED' ? (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-emerald-400">SUCCESS</span>
-                                <span>PostgreSQL/TimescaleDB Connected.</span>
-                            </div>
-                        ) : (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-red-500 font-bold">CRITICAL</span>
-                                <span>PostgreSQL/TimescaleDB Connection Failed.</span>
-                            </div>
-                        )}
-
-                        {/* Resource Alerts */}
-                        {status.cpu > 80 && (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-orange-500 font-bold">WARNING</span>
-                                <span>High CPU Usage Detected ({status.cpu}%).</span>
-                            </div>
-                        )}
-                        {status.ram > 85 && (
-                            <div className="flex gap-4">
-                                <span className="text-neutral-500">{new Date().toLocaleTimeString()}</span>
-                                <span className="text-orange-500 font-bold">WARNING</span>
-                                <span>High Memory Usage Detected ({status.ram}%).</span>
-                            </div>
-                        )}
+                <div className="mb-6 flex items-start justify-between gap-4">
+                    <div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                            <span className="material-symbols-outlined text-lg text-brand-400">history</span>
+                            7-Day Operational History
+                        </h3>
+                        <p className="mt-1 text-xs text-neutral-500">Persisted system health snapshots, newest first.</p>
                     </div>
+                    <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                        {history?.rows.length ?? 0} snapshots
+                    </span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto rounded-xl border border-white/5 bg-black/40 custom-scrollbar">
+                    {historyLoading && !history ? (
+                        <div className="p-4 font-mono text-xs text-neutral-500">Loading operational history...</div>
+                    ) : historyError ? (
+                        <div className="p-4 font-mono text-xs text-red-300">Operational history unavailable.</div>
+                    ) : !history?.rows.length ? (
+                        <div className="p-4 font-mono text-xs text-neutral-500">No persisted operational snapshots yet. A snapshot is recorded at most every five minutes.</div>
+                    ) : (
+                        <div className="divide-y divide-white/5 font-mono text-xs">
+                            {history.rows.map((row) => (
+                                <div key={row.recorded_at} className="grid gap-3 p-4 text-neutral-300 md:grid-cols-[190px_1fr]">
+                                    <div>
+                                        <p className="font-bold text-neutral-100">{formatHistoryTimestamp(row.recorded_at)}</p>
+                                        <p className="mt-1 text-[10px] uppercase tracking-widest text-neutral-600">Snapshot</p>
+                                    </div>
+                                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-widest text-neutral-600">Resources</p>
+                                            <p>CPU {formatMetricPercent(row.cpu)} / RAM {formatMetricPercent(row.ram)} / Disk {formatMetricPercent(row.disk)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-widest text-neutral-600">Disk I/O</p>
+                                            <p>{formatDiskIoRates(row.disk_io)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-widest text-neutral-600">Services</p>
+                                            <p><span className={getServiceBadgeClass(row.neo4j)}>Neo4j {row.neo4j ?? 'UNKNOWN'}</span> / <span className={getServiceBadgeClass(row.postgres)}>PG {row.postgres ?? 'UNKNOWN'}</span></p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-widest text-neutral-600">Collector</p>
+                                            <p><span className={getServiceBadgeClass(row.collector.status)}>{row.collector.status ?? 'UNKNOWN'}</span> · {row.collector.stats.metrics_collected ?? 0} metrics · {row.collector.stats.metrics_failed ?? 0} failed</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </section>
         </div>

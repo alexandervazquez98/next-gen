@@ -1,5 +1,7 @@
 export const queryKeys = {
 	systemStatus: () => ["system-status"] as const,
+	systemStatusHistory: (params: { hours?: number; limit?: number } = {}) =>
+		["system-status", "history", { hours: params.hours ?? 168, limit: params.limit ?? 24 }] as const,
 	nodes: () => ["nodes"] as const,
 	links: () => ["links"] as const,
 	categories: () => ["categories"] as const,
