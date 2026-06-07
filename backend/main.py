@@ -5,13 +5,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 import asyncio
 import os
+import re
 import shutil
 import platform
+import threading
 from datetime import datetime
 from database import get_db, verify_connection
 
 # Global start time to track system reboots/restarts
 STARTUP_TIME = datetime.now().isoformat()
+_DISK_SECTOR_SIZE_BYTES = 512
+_DISK_IO_PREVIOUS_SAMPLE = None
+_DISK_IO_SAMPLE_LOCK = threading.Lock()
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
@@ -234,6 +239,122 @@ def read_root():
     return {"status": "System Operational", "module": "Backend API v1.4 (Refactored)"}
 
 
+def _is_diskstats_device(device_name: str) -> bool:
+    """Return true for base disk devices while excluding common partitions."""
+    if device_name.startswith(("loop", "ram", "fd", "sr")):
+        return False
+    if re.fullmatch(r"sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+", device_name):
+        return True
+    if re.fullmatch(r"nvme\d+n\d+", device_name):
+        return True
+    if re.fullmatch(r"mmcblk\d+", device_name):
+        return True
+    return False
+
+
+def _collect_disk_io_sample(path: str = "/proc/diskstats", sampled_at: datetime | None = None):
+    """Collect a lightweight aggregate disk I/O sample from Linux /proc/diskstats."""
+    read_bytes = 0
+    write_bytes = 0
+    busy_ms = 0
+
+    try:
+        with open(path, "r", encoding="utf-8") as diskstats:
+            lines = diskstats.readlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 14:
+            continue
+        device_name = parts[2]
+        if not _is_diskstats_device(device_name):
+            continue
+        try:
+            read_bytes += int(parts[5]) * _DISK_SECTOR_SIZE_BYTES
+            write_bytes += int(parts[9]) * _DISK_SECTOR_SIZE_BYTES
+            busy_ms += int(parts[12])
+        except ValueError:
+            continue
+
+    if read_bytes == 0 and write_bytes == 0 and busy_ms == 0:
+        return None
+
+    return {
+        "read_bytes": read_bytes,
+        "write_bytes": write_bytes,
+        "busy_ms": busy_ms,
+        "sampled_at": sampled_at or datetime.now(),
+    }
+
+
+def _empty_disk_io_status(supported: bool = False):
+    return {
+        "supported": supported,
+        "read_bytes_total": None,
+        "write_bytes_total": None,
+        "read_bytes_per_sec": None,
+        "write_bytes_per_sec": None,
+        "busy_percentage": None,
+        "sampled_at": None,
+    }
+
+
+def _build_disk_io_status(current, previous=None):
+    """Build the API disk I/O payload, including rates when a previous sample exists."""
+    if current is None:
+        return _empty_disk_io_status(supported=False)
+
+    sampled_at = current["sampled_at"]
+    status = {
+        "supported": True,
+        "read_bytes_total": current["read_bytes"],
+        "write_bytes_total": current["write_bytes"],
+        "read_bytes_per_sec": None,
+        "write_bytes_per_sec": None,
+        "busy_percentage": None,
+        "sampled_at": sampled_at.isoformat(),
+    }
+
+    if previous is None:
+        return status
+
+    elapsed_seconds = (sampled_at - previous["sampled_at"]).total_seconds()
+    if elapsed_seconds <= 0:
+        return status
+
+    read_delta = current["read_bytes"] - previous["read_bytes"]
+    write_delta = current["write_bytes"] - previous["write_bytes"]
+    busy_delta = current["busy_ms"] - previous["busy_ms"]
+    if read_delta < 0 or write_delta < 0 or busy_delta < 0:
+        return status
+
+    status["read_bytes_per_sec"] = round(read_delta / elapsed_seconds, 2)
+    status["write_bytes_per_sec"] = round(write_delta / elapsed_seconds, 2)
+    status["busy_percentage"] = round(
+        min((busy_delta / (elapsed_seconds * 1000)) * 100, 100), 1
+    )
+    return status
+
+
+def _get_disk_io_status():
+    """Return disk I/O health with graceful unsupported/null behavior."""
+    global _DISK_IO_PREVIOUS_SAMPLE
+    if platform.system() != "Linux":
+        _DISK_IO_PREVIOUS_SAMPLE = None
+        return _empty_disk_io_status(supported=False)
+
+    with _DISK_IO_SAMPLE_LOCK:
+        current = _collect_disk_io_sample()
+        if current is None:
+            _DISK_IO_PREVIOUS_SAMPLE = None
+            return _empty_disk_io_status(supported=False)
+        status = _build_disk_io_status(current, _DISK_IO_PREVIOUS_SAMPLE)
+        _DISK_IO_PREVIOUS_SAMPLE = current
+        return status
+
+
 @app.get("/api/system/status")
 def get_system_status():
     """
@@ -296,6 +417,7 @@ def get_system_status():
         "cpu": round(cpu_percent, 1),
         "ram": round(ram_percent, 1),
         "disk": round(disk_percent, 1),
+        "disk_io": _get_disk_io_status(),
         "neo4j": neo4j_status,
         "postgres": postgres_status,
         "collector": collector,
