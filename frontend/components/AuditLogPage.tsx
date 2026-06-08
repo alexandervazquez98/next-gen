@@ -53,7 +53,11 @@ const normalizeIso = (value: string) => {
 const formatCell = (value: string | null | undefined) => (value?.trim() ? value : PLACEHOLDER);
 const formatTs = (value: string) => {
 	const date = new Date(value);
-	return Number.isNaN(date.getTime()) ? PLACEHOLDER : date.toLocaleString();
+	if (Number.isNaN(date.getTime())) return PLACEHOLDER;
+	return {
+		date: date.toLocaleDateString(),
+		time: date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+	};
 };
 const targetLabel = (event: AuditEvent) => event.target_label || event.target_id || PLACEHOLDER;
 const contextText = (event: AuditEvent) => {
@@ -105,11 +109,17 @@ const AuditLogPage: React.FC = () => {
 		if (canViewAudit) fetchEvents();
 	}, [canViewAudit, fetchEvents]);
 
+	const resetFilters = () => {
+		const nextFilters = { ...EMPTY, page: 1, pageSize: EMPTY.pageSize, sort: EMPTY.sort };
+		setDraft({ ...EMPTY });
+		setFilters(nextFilters);
+	};
+
 	if (!canViewAudit) return <div className="p-8 text-neutral-400">Access denied. Required: AUDIT_VIEW</div>;
 	if (accessDenied) return <div className="p-8 text-red-400">Access denied by permission policy</div>;
 
 	return (
-		<div className="p-6 lg:p-8 space-y-6">
+		<div className="h-full w-full min-w-0 overflow-auto custom-scrollbar p-6 lg:p-8 space-y-6">
 			<header className="flex items-center justify-between gap-4 flex-wrap">
 				<div>
 					<h1 className="text-2xl font-black uppercase tracking-tight text-white">Audit Log</h1>
@@ -171,39 +181,58 @@ const AuditLogPage: React.FC = () => {
 							<option value="created_at_asc">Oldest first</option>
 						</select>
 					</label>
-					<button
-						type="button"
-						className="self-end bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider"
-						onClick={() => setFilters({ ...draft, page: 1 })}
-					>
-						Apply filters
-					</button>
+					<div className="self-end grid grid-cols-1 sm:grid-cols-2 gap-2">
+						<button
+							type="button"
+							className="border border-white/10 bg-white/5 hover:bg-white/10 text-neutral-200 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider"
+							onClick={resetFilters}
+						>
+							Reset filters
+						</button>
+						<button
+							type="button"
+							className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider"
+							onClick={() => setFilters({ ...draft, page: 1 })}
+						>
+							Apply filters
+						</button>
+					</div>
 				</div>
 			</section>
 
 			{error && <p className="text-red-400 text-sm">{error}</p>}
-			<section className="glass border border-white/10 rounded-2xl overflow-auto">
-				<table className="w-full text-left text-sm text-neutral-300">
+			<section className="glass border border-white/10 rounded-2xl w-full max-w-full overflow-x-scroll custom-scrollbar">
+				<table className="w-full min-w-[1240px] table-fixed text-left text-sm text-neutral-300">
 					<thead className="bg-white/5 text-xs uppercase tracking-wide text-neutral-400">
 						<tr>
-							<th className="p-4">Timestamp</th><th className="p-4">Actor</th><th className="p-4">Event Type</th><th className="p-4">Target</th><th className="p-4">Outcome</th><th className="p-4">IP / Context</th><th className="p-4">Source</th>
+							<th className="w-32 p-3">Timestamp</th><th className="w-28 p-3">Actor</th><th className="w-36 p-3">Event Type</th><th className="w-40 p-3">Target</th><th className="w-32 p-3">Outcome</th><th className="p-3">IP / Context</th><th className="w-24 p-3">Source</th>
 						</tr>
 					</thead>
 					<tbody>
 						{events.length === 0 && !loading ? (
 						<tr><td className="p-6 text-center text-neutral-500" colSpan={7}>No audit events found.</td></tr>
 						) : (
-							events.map(event => (
-								<tr key={event.id} className="border-b border-white/5">
-									<td className="p-4 text-xs">{formatTs(event.created_at)}</td>
-									<td className="p-4">{formatCell(event.actor_username)}</td>
-									<td className="p-4">{formatCell(event.event_type)}</td>
-									<td className="p-4">{targetLabel(event)} ({formatCell(event.target_type)})</td>
-									<td className="p-4 uppercase">{formatCell(event.outcome)}</td>
-									<td className="p-4 text-xs break-all">{contextText(event)}</td>
-									<td className="p-4">{formatCell(event.source)}</td>
-								</tr>
-							))
+							events.map(event => {
+								const timestamp = formatTs(event.created_at);
+								return (
+									<tr key={event.id} className="border-b border-white/5 align-top">
+										<td className="p-3 text-xs leading-tight text-neutral-400">
+											{typeof timestamp === "string" ? timestamp : (
+												<span className="block max-w-28 whitespace-normal break-words">
+													<span className="block">{timestamp.date}</span>
+													<span className="block text-neutral-500">{timestamp.time}</span>
+												</span>
+											)}
+										</td>
+										<td className="p-3 break-words">{formatCell(event.actor_username)}</td>
+										<td className="p-3 break-words">{formatCell(event.event_type)}</td>
+										<td className="p-3 break-words">{targetLabel(event)} ({formatCell(event.target_type)})</td>
+										<td className="p-3 break-words uppercase">{formatCell(event.outcome)}</td>
+										<td className="p-3 text-xs break-words">{contextText(event)}</td>
+										<td className="p-3 break-words">{formatCell(event.source)}</td>
+									</tr>
+								);
+							})
 						)}
 					</tbody>
 				</table>

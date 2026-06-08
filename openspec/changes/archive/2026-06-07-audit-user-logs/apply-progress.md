@@ -101,3 +101,10 @@
 
 ### Verification (PR4)
 - `corepack pnpm --dir frontend run test:run` ✅ (44 files, 421 tests)
+
+## Task reconciliation / de-scope
+
+- **PR3 stale parent task**: reconciled in planning by marking user/role broad RED task as complete; scope was intentionally split across PR3A-1 (users-only) and PR3A-2 (roles-only), both completed and verified.
+- **Shared helper refactor** (`backend/services/audit_service.py`): explicitly de-scoped for first-slice delivery. Context shaping is currently explicit in router-level code; this refactor is non-functional churn and was deferred as optional technical debt cleanup.
+- **PR5 optional CI-adjacent scope**: formally de-scoped for first release. Optional catalog/links/dictionaries capture is not part of current audit-log slice and remains a future optional PR subject to product scope.
+- **Archive readiness**: no product code/test changes were made in this task; only OpenSpec planning artifacts were updated to make archive intent explicit.

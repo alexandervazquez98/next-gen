@@ -113,7 +113,7 @@ def test_system_status_snapshot_serializes_compact_operational_history_row():
     row = _serialize_system_status_snapshot(snapshot)
 
     assert row == {
-        "recorded_at": recorded_at.isoformat(),
+        "recorded_at": "2026-01-01T12:05:00Z",
         "cpu": 24.5,
         "ram": 61.2,
         "disk": 40.0,

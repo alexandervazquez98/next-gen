@@ -9,7 +9,7 @@ import re
 import shutil
 import platform
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from database import get_db, verify_connection
 
 # Global start time to track system reboots/restarts
@@ -419,10 +419,17 @@ def _build_system_status_snapshot(status: dict, recorded_at: datetime):
     )
 
 
+def _utc_isoformat(value: datetime) -> str:
+    """Serialize stored UTC datetimes with an explicit timezone marker for clients."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _serialize_system_status_snapshot(snapshot):
     """Serialize a persisted status snapshot into the history API row contract."""
     return {
-        "recorded_at": snapshot.recorded_at.isoformat(),
+        "recorded_at": _utc_isoformat(snapshot.recorded_at),
         "cpu": snapshot.cpu,
         "ram": snapshot.ram,
         "disk": snapshot.disk,
@@ -452,7 +459,9 @@ def _record_system_status_snapshot(status: dict, now: datetime | None = None) ->
     from postgres_db import SessionLocal
     from models.system_status_history import SystemStatusSnapshot
 
-    recorded_at = now or datetime.utcnow()
+    recorded_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    if recorded_at.tzinfo is not None:
+        recorded_at = recorded_at.astimezone(timezone.utc).replace(tzinfo=None)
     with _SYSTEM_STATUS_HISTORY_LOCK:
         db = SessionLocal()
         try:
@@ -484,7 +493,9 @@ def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = 
     from postgres_db import SessionLocal
     from models.system_status_history import SystemStatusSnapshot
 
-    generated_at = now or datetime.utcnow()
+    generated_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    if generated_at.tzinfo is not None:
+        generated_at = generated_at.astimezone(timezone.utc).replace(tzinfo=None)
     cutoff = generated_at - timedelta(hours=hours)
     db = SessionLocal()
     try:
@@ -496,7 +507,7 @@ def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = 
             .all()
         )
         return {
-            "generated_at": generated_at.isoformat(),
+            "generated_at": _utc_isoformat(generated_at),
             "hours": hours,
             "limit": limit,
             "retention_days": _SYSTEM_STATUS_HISTORY_RETENTION_DAYS,

@@ -109,10 +109,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
 - **3A Users + Roles capture (preferred if split):** keep in one PR.
 - **3B CI core + `backup.config` capture (remaining):** second PR if split is needed.
 
-- [ ] **RED:** Extend `backend/tests/test_routers_auth_users_roles.py` with user/role success, denied, and failure-path expectations for audit calls/events:
-   - `POST /api/users/`, `PUT /api/users/{username}`, `DELETE /api/users/{username}`, `POST /api/users/{username}/reset`
-   - `POST /api/roles/`, `PUT /api/roles/{name}`, `DELETE /api/roles/{name}`
-   - denied attempts before `403` and validation attempts where actionable.
+- [x] **RECONCILED:** Parent user/role test task is complete in this split PR shape via PR3A-1/PR3A-2 subtask lines that were explicitly completed and verified. This broad RED parent is now closed as scope-split completion.
 - [x] **RED (PR3A-1 users-only):** Added minimal targeted assertions for user mutating endpoints in `backend/tests/test_routers_auth_users_roles.py` for success, denied, and validation/failure branches:
    - `USER_CREATE` success + duplicate username + forbidden
    - `USER_UPDATE` success + not found + forbidden
@@ -145,7 +142,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
   - event naming per design (`CI_CREATE_OR_UPDATE`, `CI_DELETE`, `CI_UPDATE_METADATA`) with safe target fields.
 - [x] In `backend/routers/backup.py`, added capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) with denied-attempt capture before admin-only refusal and validation failure capture.
 - [x] **TRIANGULATE (PR3B-1):** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
-- [ ] **REFACTOR:** Extract a small shared helper in `backend/services/audit_service.py` for standard target/context shaping used across nodes/users/roles/backup.
+- [x] **DE-SCOPED (first-slice):** Shared helper extraction in `backend/services/audit_service.py` was reviewed and deferred for this delivery because existing per-router shaping/localized calls already satisfy scope and behavior requirements without introducing non-functional churn. Tracked as future refactor if warranted.
 
 **PR 3 validation (backend):**
 - `cd backend && python -m pytest tests/test_routers_auth_users_roles.py`
@@ -201,16 +198,10 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
 
 **Purpose:** Capture remaining CI-adjacent critical mutations only if product scope confirms they are required in first release.
 
-- [ ] **RED:** Add tests for each CI-adjacent router selected for inclusion:
-   - `backend/tests/test_routers_catalog.py`
-   - `backend/tests/test_routers_links.py`
-   - `backend/tests/test_routers_dictionaries.py` (if present)
-- [ ] Add capture hooks in:
-   - `backend/routers/catalog.py` (`/categories`, `/hardware` mutators)
-   - `backend/routers/links.py` (link mutation endpoints)
-   - `backend/routers/dictionaries.py` (mutators) as approved in-scope.
-- [ ] Preserve PR3 event semantics (`DENIED`/`VALIDATION_FAILURE`/`SUCCESS`) and keep context allow-listed.
-- [ ] Validate only added paths do not regress existing router behavior; run targeted backend command.
+- [x] **DE-SCOPED:** PR5 CI-adjacent test additions were explicitly out of scope for first release and are deferred: `backend/tests/test_routers_catalog.py`, `backend/tests/test_routers_links.py`, `backend/tests/test_routers_dictionaries.py`.
+- [x] **DE-SCOPED:** PR5 CI-adjacent capture hooks in `backend/routers/catalog.py` (`/categories`, `/hardware` mutators), `backend/routers/links.py`, and `backend/routers/dictionaries.py` were not implemented in this slice; deferred to a future optional PR if product scope expands.
+- [x] **DE-SCOPED:** PR3 event semantics (`DENIED`/`VALIDATION_FAILURE`/`SUCCESS`) and allow-listed context preservation for catalog/links/dictionaries are out-of-scope in this PR, to be addressed if PR5 is re-scoped.
+- [x] **DE-SCOPED:** Targeted backend regression checks for optional catalog/links/dictionaries paths were deferred with PR5 de-scope and remain future-work validation, not implemented here.
 
 **PR 5 validation (backend):** `cd backend && python -m pytest tests/test_routers_catalog.py tests/test_routers_links.py`
 

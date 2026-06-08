@@ -80,6 +80,29 @@ describe("AuditLogPage", () => {
 		expect(params.get("end_time")).toBeTruthy();
 	});
 
+	it("resets draft and applied filters", async () => {
+		const user = userEvent.setup();
+		render(<AuditLogPage />);
+		await waitFor(() => expect(mocks.api.get).toHaveBeenCalledTimes(1));
+		await user.type(screen.getByRole("textbox", { name: /actor/i }), "alice");
+		await user.selectOptions(screen.getByLabelText(/event type/i), "LOGIN_SUCCESS");
+		await user.selectOptions(screen.getByLabelText(/page size/i), "50");
+		await user.click(screen.getByRole("button", { name: /apply filters/i }));
+		await waitFor(() => expect(mocks.api.get).toHaveBeenCalledTimes(2));
+
+		await user.click(screen.getByRole("button", { name: /reset filters/i }));
+		await waitFor(() => expect(mocks.api.get).toHaveBeenCalledTimes(3));
+
+		expect(screen.getByRole("textbox", { name: /actor/i })).toHaveValue("");
+		expect(screen.getByLabelText(/event type/i)).toHaveValue("");
+		expect(screen.getByLabelText(/page size/i)).toHaveValue("25");
+		const lastUrl = (mocks.api.get.mock.calls.at(-1) as string[])[0];
+		const params = new URLSearchParams(lastUrl.split("?")[1]);
+		expect(params.get("actor")).toBeNull();
+		expect(params.get("event_type")).toBeNull();
+		expect(params.get("page_size")).toBe("25");
+	});
+
 	it("handles empty and 403 responses", async () => {
 		const user = userEvent.setup();
 		mocks.api.get.mockResolvedValueOnce(emptyResponse);

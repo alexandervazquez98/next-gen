@@ -1,11 +1,21 @@
 import React from 'react';
+import {
+    CartesianGrid,
+    Legend,
+    Line,
+    LineChart,
+    ResponsiveContainer,
+    Tooltip as ChartTooltip,
+    XAxis,
+    YAxis,
+} from 'recharts';
 import Tooltip from './Tooltip';
 import { useSystemStatusQuery } from '../hooks/queries/useSystemStatusQuery';
 import { useSystemStatusHistoryQuery } from '../hooks/queries/useSystemStatusHistoryQuery';
 import type { DiskIoStatus } from '../services/queryResources';
 
 const formatBytesPerSecond = (value?: number | null) => {
-    if (value == null) return '—';
+    if (value == null || !Number.isFinite(value)) return '—';
     if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB/s`;
     if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
     return `${value.toFixed(0)} B/s`;
@@ -26,7 +36,19 @@ const formatDiskIoRates = (diskIo?: DiskIoStatus | null) => {
 
 const formatMetricPercent = (value?: number | null) => value == null ? '—' : `${value.toFixed(1)}%`;
 
+const formatCompactNumber = (value?: number | null) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+};
+
 const formatHistoryTimestamp = (value: string) => new Date(value).toLocaleString();
+
+const formatHistoryChartTimestamp = (value: string) => new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+});
 
 const getServiceBadgeClass = (status?: string | null) => {
     if (status === 'CONNECTED' || status === 'RUNNING') return 'text-emerald-400';
@@ -34,9 +56,71 @@ const getServiceBadgeClass = (status?: string | null) => {
     return 'text-red-500';
 };
 
+interface OperationalHistoryChartProps {
+    title: string;
+    subtitle: string;
+    data: Array<Record<string, number | string | null | undefined>>;
+    lines: Array<{ key: string; name: string; color: string }>;
+    yAxisFormatter?: (value: number) => string;
+    tooltipFormatter?: (value: number, name: string) => [string, string];
+}
+
+const OperationalHistoryChart: React.FC<OperationalHistoryChartProps> = ({
+    title,
+    subtitle,
+    data,
+    lines,
+    yAxisFormatter = (value) => String(value),
+    tooltipFormatter,
+}) => (
+    <div className="min-h-[260px] rounded-2xl border border-white/5 bg-black/30 p-4">
+        <div className="mb-4">
+            <h4 className="text-xs font-black uppercase tracking-widest text-white">{title}</h4>
+            <p className="mt-1 text-[11px] text-neutral-500">{subtitle}</p>
+        </div>
+        <div className="h-48 min-w-0">
+            <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fill: '#737373', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={18} />
+                    <YAxis tick={{ fill: '#737373', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={yAxisFormatter} width={42} />
+                    <ChartTooltip
+                        contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, color: '#e5e5e5' }}
+                        labelStyle={{ color: '#a3a3a3' }}
+                        formatter={tooltipFormatter}
+                    />
+                    <Legend wrapperStyle={{ color: '#a3a3a3', fontSize: 11 }} />
+                    {lines.map(line => (
+                        <Line key={line.key} type="monotone" dataKey={line.key} name={line.name} stroke={line.color} strokeWidth={2} dot={false} />
+                    ))}
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    </div>
+);
+
 const SystemDashboard: React.FC = () => {
     const { data: status, isLoading: loading } = useSystemStatusQuery();
-    const { data: history, isLoading: historyLoading, error: historyError } = useSystemStatusHistoryQuery({ hours: 168, limit: 24 });
+    const { data: history, isLoading: historyLoading, error: historyError } = useSystemStatusHistoryQuery({ hours: 168, limit: 500 });
+    const historyChartData = React.useMemo(() => {
+        return (history?.rows ?? [])
+            .slice()
+            .reverse()
+            .map(row => ({
+                label: formatHistoryChartTimestamp(row.recorded_at),
+                recorded_at: row.recorded_at,
+                cpu: row.cpu ?? null,
+                ram: row.ram ?? null,
+                disk: row.disk ?? null,
+                metrics_collected: row.collector.stats.metrics_collected ?? null,
+                metrics_failed: row.collector.stats.metrics_failed ?? null,
+                jobs_per_min: row.collector.stats.jobs_per_min ?? null,
+                cycle_duration: row.collector.stats.cycle_duration ?? null,
+                disk_read: row.disk_io?.read_bytes_per_sec ?? null,
+                disk_write: row.disk_io?.write_bytes_per_sec ?? null,
+            }));
+    }, [history?.rows]);
+    const hasHistoryChartData = historyChartData.length > 0;
 
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';
@@ -214,12 +298,60 @@ const SystemDashboard: React.FC = () => {
                             <span className="material-symbols-outlined text-lg text-brand-400">history</span>
                             7-Day Operational History
                         </h3>
-                        <p className="mt-1 text-xs text-neutral-500">Persisted system health snapshots, newest first.</p>
+                        <p className="mt-1 text-xs text-neutral-500">Persisted system health snapshots from the last 7 days, newest first. Charts show up to the latest 500 snapshots.</p>
                     </div>
                     <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-neutral-500">
                         {history?.rows.length ?? 0} snapshots
                     </span>
                 </div>
+
+                {hasHistoryChartData && (
+                    <div className="mb-6 grid gap-4 xl:grid-cols-2">
+                        <OperationalHistoryChart
+                            title="Resources over time"
+                            subtitle="CPU, RAM, and disk utilization from persisted snapshots."
+                            data={historyChartData}
+                            lines={[
+                                { key: 'cpu', name: 'CPU', color: '#22c55e' },
+                                { key: 'ram', name: 'RAM', color: '#38bdf8' },
+                                { key: 'disk', name: 'Disk', color: '#f59e0b' },
+                            ]}
+                            yAxisFormatter={(value) => `${value}%`}
+                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—', name]}
+                        />
+                        <OperationalHistoryChart
+                            title="Collector throughput"
+                            subtitle="Polling volume, failed metrics, and jobs per minute."
+                            data={historyChartData}
+                            lines={[
+                                { key: 'metrics_collected', name: 'Collected', color: '#345bf2' },
+                                { key: 'metrics_failed', name: 'Failed', color: '#ef4444' },
+                                { key: 'jobs_per_min', name: 'Jobs/min', color: '#00f2ff' },
+                            ]}
+                            yAxisFormatter={formatCompactNumber}
+                            tooltipFormatter={(value, name) => [formatCompactNumber(Number(value)), name]}
+                        />
+                        <OperationalHistoryChart
+                            title="Disk I/O throughput"
+                            subtitle="Read and write throughput sampled from backend diskstats."
+                            data={historyChartData}
+                            lines={[
+                                { key: 'disk_read', name: 'Read', color: '#a78bfa' },
+                                { key: 'disk_write', name: 'Write', color: '#fb7185' },
+                            ]}
+                            yAxisFormatter={formatBytesPerSecond}
+                            tooltipFormatter={(value, name) => [formatBytesPerSecond(Number(value)), name]}
+                        />
+                        <OperationalHistoryChart
+                            title="Collector cycle duration"
+                            subtitle="Duration of each collector polling cycle in seconds."
+                            data={historyChartData}
+                            lines={[{ key: 'cycle_duration', name: 'Cycle time', color: '#10b981' }]}
+                            yAxisFormatter={(value) => `${value}s`}
+                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : '—', name]}
+                        />
+                    </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto rounded-xl border border-white/5 bg-black/40 custom-scrollbar">
                     {historyLoading && !history ? (
