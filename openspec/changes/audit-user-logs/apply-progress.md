@@ -1,9 +1,9 @@
-# Apply Progress: audit-user-logs — PR3A-2 (Roles-only)
+# Apply Progress: audit-user-logs — PR3B-2 (Backup-only, after PR3B-1)
 
 ## Session context
-- Branch: `feat/audit-user-logs-roles` (base `1f0e31a`)
+- Branch: `feat/audit-user-logs-nodes-backup` (base `ada9d38`)
 - Scope: `audit-user-logs` (OpenSpec)
-- Slice: **PR3A-2 roles-only** (no users/nodes/backup/frontend changes; users baseline from PR3A-1 retained)
+- Slice: **PR3B-2 backup-only** (after PR3B-1)
 - Working style: **strict TDD**
 - Review/line budget: kept near/under review-safe threshold for this slice
 
@@ -40,17 +40,12 @@
   - Kept broader PR3 nodes/backup/frontend and PR4/PR5 items pending for later slices.
 
 ## Files changed
-- `backend/routers/roles.py`
-- `backend/tests/test_routers_auth_users_roles.py`
+- `backend/routers/backup.py`
+- `backend/tests/test_backup_router.py`
 - `openspec/changes/audit-user-logs/tasks.md`
 - `openspec/changes/audit-user-logs/apply-progress.md`
 
 ## Remaining tasks
-- PR3 nodes/backup scope still pending:
-  - `backend/tests/test_routers_nodes.py`
-  - `backend/tests/test_backup_router.py`
-  - `backend/routers/nodes.py`
-  - `backend/routers/backup.py`
 - PR4 frontend + optional CI-adjacent slices still pending:
   - `frontend/components/AuditLogPage.test.tsx`
   - `frontend/components/AuditLogPage.tsx`
@@ -58,15 +53,15 @@
   - `backend/tests/test_routers_links.py`
 
 ## PR boundary / workload
-- This is **PR3A-2 (roles-only)** atop PR3A-1.
-- No non-role/mutations files modified beyond `users.py`-adjacent test module already touched in prior slice.
-- Scope constrained to stay reviewable.
+- This is **PR3B-2 (backup-only)** atop PR3B-1.
+- Scope constrained to `backup.py` and `test_backup_router.py`.
+- Reviewable size maintained for this work unit.
 
 ## Fresh review follow-up
-- Scope remains roles-only and aligned with prior user-role sequencing.
-- Notable implementation risk handled: role mutator audit calls use request-level DB session via `Depends(get_pg_db)` to keep existing audit persistence behavior consistent.
-- Added validation-failure audit assertions for invalid permission create/update branches after fresh review.
-- Current acceptance scope confirms contract for this slice, while PR3B/PR4 remain explicitly out-of-scope in this PR.
+- Scope now includes backup-only after PR3B-1 nodes coverage.
+- Risk handled: explicit payload validation and allow-listed audit context were added before success path; backup re-scheduling remains untouched behaviorally.
+- Added validation-failure capture for invalid payload values with actor/target attribution.
+- Current acceptance scope confirms contract for this slice, while PR4/PR5 remain out-of-scope in this PR.
 
 
 ## PR3B-1 (nodes-only) implementation progress
@@ -77,3 +72,15 @@
 - REFACTOR: Consolidated audit recording through `nodes.py` helper functions and kept slice confined to nodes router/tests.
 - Verification: `cd backend && python -m pytest tests/test_routers_nodes.py` -> **39 passed**.
 - Remaining: PR3B-2 backup slice (`backend/routers/backup.py`, `backend/tests/test_backup_router.py`) and PR4/PR5 continue.
+
+
+## PR3B-2 (backup-only) implementation progress
+- Scope: `PUT /api/backup/config` only.
+- RED: Added focused `backend/tests/test_backup_router.py` cases for denied, validation-failure, and success outcomes on backup config update before implementation.
+- GREEN: Implemented `backend/routers/backup.py` with `SYSTEM_CONFIG_UPDATE` audit capture for:
+  - `DENIED` outcome before admin-only refusal via `record_denied`
+  - `VALIDATION_FAILURE` outcome for invalid `schedule_type` / `retention_days` payloads
+  - `SUCCESS` outcome when update succeeds
+- TRIANGULATE: Added mixed outcome assertions on allow-listed context (`changed_fields`, `required_permission`) in router-level tests.
+- REFACTOR: Added local payload validation helper to keep route logic explicit and minimize audit-path branching.
+- Verification (PR3B-2): `cd backend && python -m pytest tests/test_backup_router.py` -> **14 passed**.

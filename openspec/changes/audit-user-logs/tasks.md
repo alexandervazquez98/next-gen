@@ -129,7 +129,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `DELETE /api/nodes/{node_id}`
    - `PUT /api/nodes/{node_id}/metadata`
    - denied-path and validation-failure branches where possible.
-- [ ] **RED:** Extend `backend/tests/test_backup_router.py` with `PUT /api/backup/config` denied and success assertions.
+- [x] **RED:** Extend `backend/tests/test_backup_router.py` with `PUT /api/backup/config` denied, validation, and success assertions.
 - [x] In `backend/routers/users.py`, add audit calls around each mutating action:
    - denied-path capture before permission `HTTPException` (`DENIED`)
    - success-path captures with `event_type` (`USER_CREATE`, `USER_UPDATE`, `USER_DELETE`, `USER_PASSWORD_RESET`)
@@ -143,7 +143,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
 - [x] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
   - `POST /nodes`, `DELETE /nodes/{node_id}`, `PUT /nodes/{node_id}/metadata`.
   - event naming per design (`CI_CREATE_OR_UPDATE`, `CI_DELETE`, `CI_UPDATE_METADATA`) with safe target fields.
-- [ ] In `backend/routers/backup.py`, add capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) and denied attempt capture before admin-only refusal.
+- [x] In `backend/routers/backup.py`, added capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) with denied-attempt capture before admin-only refusal and validation failure capture.
 - [x] **TRIANGULATE (PR3B-1):** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
 - [ ] **REFACTOR:** Extract a small shared helper in `backend/services/audit_service.py` for standard target/context shaping used across nodes/users/roles/backup.
 

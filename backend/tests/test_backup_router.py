@@ -5,9 +5,60 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+from services.auth_service import get_current_active_user
+from models.user import User
+
+
+# Patch Neo4j driver before importing app (main imports database connections at import time)
+_mock_neo4j_driver = MagicMock()
+with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
+    from main import app
+    from postgres_db import get_pg_db
+
+
+# TestClient
+client = TestClient(app)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_pydantic_user(
+    username: str = "admin",
+    role: str = "OPERATOR",
+    permissions: list[str] | None = None,
+    allowed_locations: list[str] | None = None,
+) -> User:
+    return User(
+        username=username,
+        role=role,
+        permissions=permissions or [],
+        allowed_locations=allowed_locations or [],
+    )
+
+
+def _mock_db_session():
+    return MagicMock(spec=Session)
+
+
+def _install_user_override(user: User):
+    async def override() -> User:
+        return user
+
+    app.dependency_overrides[get_current_active_user] = override
+    db = _mock_db_session()
+    app.dependency_overrides[get_pg_db] = lambda: db
+    return db
+
+
+def _clear_overrides():
+    app.dependency_overrides.pop(get_current_active_user, None)
+    app.dependency_overrides.pop(get_pg_db, None)
 
 
 class TestBackupRouterImports:
@@ -58,6 +109,7 @@ class TestBackupConfigEndpoints:
         from services.backup_service import update_backup_config, DEFAULT_CONFIG
 
         saved_values = {}
+
         def capture_save(**kwargs):
             saved_values.update(kwargs)
             return {**DEFAULT_CONFIG, **kwargs}
@@ -76,6 +128,91 @@ class TestBackupConfigEndpoints:
         assert saved_values["schedule_type"] == "daily"
         assert saved_values["retention_days"] == 21
         assert saved_values["updated_by"] == "admin"
+
+
+class TestUpdateBackupConfigAudit:
+    """Tests for PUT /api/backup/config focused on audit behavior."""
+
+    def test_update_backup_config_denied_records_access_denied_audit(self):
+        """Non-admin users should receive 403 and emit ACCESS_DENIED audit."""
+        operator = _make_pydantic_user(username="operator", role="OPERATOR")
+        _install_user_override(operator)
+
+        with patch("routers.backup.audit_service.record_denied") as mock_record_denied:
+            response = client.put(
+                "/api/backup/config",
+                json={"enabled": True},
+            )
+
+            assert response.status_code == 403
+            assert "Only admins can update backup configuration" in response.json()["detail"]
+            mock_record_denied.assert_called_once()
+            kwargs = mock_record_denied.call_args.kwargs
+            assert kwargs["required_permission"] == "ADMIN"
+            assert kwargs["target_type"] == "system_config"
+            assert kwargs["target_id"] == "backup_config"
+            assert kwargs["source"] == "backup"
+            assert kwargs["reason"] == "missing_permission:ADMIN"
+
+        _clear_overrides()
+
+    def test_update_backup_config_validation_failure_records_audit(self):
+        """Invalid payload values should be captured as validation failures."""
+        admin = _make_pydantic_user(username="admin", role="ADMIN")
+        _install_user_override(admin)
+
+        with patch("routers.backup.audit_service.record_critical_change") as mock_record_critical:
+            response = client.put(
+                "/api/backup/config",
+                json={"schedule_type": "quarterly"},
+            )
+
+            assert response.status_code == 400
+            assert "schedule_type must be one of" in response.json()["detail"]
+            mock_record_critical.assert_called_once()
+            kwargs = mock_record_critical.call_args.kwargs
+            assert kwargs["event_type"] == "SYSTEM_CONFIG_UPDATE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
+            assert kwargs["reason"] == "invalid_schedule_type"
+            assert kwargs["target_type"] == "system_config"
+
+        _clear_overrides()
+
+    def test_update_backup_config_success_records_audit(self):
+        """Admins should get SUCCESS audit entry after config update."""
+        admin = _make_pydantic_user(username="admin", role="ADMIN")
+        _install_user_override(admin)
+
+        update_result = {
+            "schedule_type": "manual",
+            "scheduled_time": "03:30",
+            "enabled": True,
+            "retention_days": 14,
+            "storage_path": "/custom/backups",
+            "updated_by": "admin",
+        }
+
+        with patch("routers.backup.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.backup.backup_service.update_backup_config", return_value=update_result), \
+             patch("main.reschedule_backup"):
+            response = client.put(
+                "/api/backup/config",
+                json={"schedule_type": "manual", "retention_days": 14},
+            )
+
+            assert response.status_code == 200
+            assert response.json() == update_result
+            mock_record_critical.assert_called_once()
+            kwargs = mock_record_critical.call_args.kwargs
+            assert kwargs["event_type"] == "SYSTEM_CONFIG_UPDATE"
+            assert kwargs["outcome"] == "SUCCESS"
+            assert kwargs["target_type"] == "system_config"
+            assert kwargs["target_id"] == "backup_config"
+            assert kwargs["reason"] == "backup_config_updated"
+            assert kwargs["context"]["changed_fields"] == ["schedule_type", "retention_days"]
+            assert kwargs["context"]["required_permission"] == "ADMIN"
+
+        _clear_overrides()
 
 
 class TestManualBackupEndpoint:
