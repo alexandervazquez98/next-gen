@@ -118,13 +118,19 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `USER_UPDATE` success + not found + forbidden
    - `USER_DELETE` success + not found + forbidden
    - `USER_PASSWORD_RESET` success + forbidden
+- [x] **RED (PR3A-2 roles-only):** Extended `backend/tests/test_routers_auth_users_roles.py` for role mutator success, denied, and failure-path expectations:
+   - `ROLE_CREATE` success + duplicate + forbidden
+   - `ROLE_UPDATE` success + system-role guard + not found + forbidden
+   - `ROLE_DELETE` success + not found + system-role/role-assignment failures + forbidden
+- [x] **RED:** In `backend/routers/roles.py`, added audit calls for role mutator denied/success/failure paths:
+   - `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE` on create/update/delete endpoints.
 - [ ] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
    - `POST /api/nodes` (create/update path)
    - `DELETE /api/nodes/{node_id}`
    - `PUT /api/nodes/{node_id}/metadata`
    - denied-path and validation-failure branches where possible.
 - [ ] **RED:** Extend `backend/tests/test_backup_router.py` with `PUT /api/backup/config` denied and success assertions.
-- [ ] In `backend/routers/users.py`, add audit calls around each mutating action:
+- [x] In `backend/routers/users.py`, add audit calls around each mutating action:
    - denied-path capture before permission `HTTPException` (`DENIED`)
    - success-path captures with `event_type` (`USER_CREATE`, `USER_UPDATE`, `USER_DELETE`, `USER_PASSWORD_RESET`)
 - [x] In `backend/routers/users.py` (PR3A-1 users-only), added user mutating endpoint audit calls for denied + `VALIDATION_FAILURE` + success paths on:
@@ -132,7 +138,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `PUT /api/users/{username}`
    - `DELETE /api/users/{username}`
    - `POST /api/users/{username}/reset`
-- [ ] In `backend/routers/roles.py`, add the same denied/success capture pattern:
+- [x] In `backend/routers/roles.py`, add the same denied/success capture pattern:
    - `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE` with changed permission names in allow-listed context where needed.
 - [ ] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
    - `POST /nodes`, `DELETE /nodes/{node_id}`, `PUT /nodes/{node_id}/metadata`.
