@@ -167,23 +167,23 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
 
 **Finish state:** `AUDIT_VIEW`-gated audit route + table present and filters server-side.
 
-- [ ] **RED:** Add `frontend/components/AuditLogPage.test.tsx` asserting:
+- [x] **RED:** Add `frontend/components/AuditLogPage.test.tsx` asserting:
    - unauthorized state renders access denied for missing permission;
    - filter controls render and query API is called with params;
    - table columns include actor, event type, target, timestamp, outcome, IP/context, source;
    - placeholders used for intentionally missing values.
-- [ ] **RED:** Update `frontend/components/RoleManager.test.tsx` to include `AUDIT_VIEW` in permission picker assertions and round-trip selection.
-- [ ] Add `frontend/components/AuditLogPage.tsx` with:
+- [x] **RED:** Update `frontend/components/RoleManager.test.tsx` to include `AUDIT_VIEW` in permission picker assertions and round-trip selection.
+- [x] Add `frontend/components/AuditLogPage.tsx` with:
    - controlled filter inputs for actor/event type/outcome/time range/page/page size/sort;
    - server-side data fetch via `/api/audit/events`;
    - 403 handling and safe placeholder rendering.
-- [ ] Add route + nav visibility in `frontend/App.tsx`:
+- [x] Add route + nav visibility in `frontend/App.tsx`:
    - route: `/audit` -> `AuditLogPage`
    - nav item visible to `hasPermission("AUDIT_VIEW") || hasPermission("ADMIN")`
-- [ ] Add minimal query utility in `frontend/services/auditQueries.ts` (if component-level fetch becomes noisy), otherwise keep request logic in component.
-- [ ] Add/update `frontend/components/UserManager.tsx` and `frontend/components/RoleManager.tsx` permission option lists to include `AUDIT_VIEW`.
-- [ ] **TRIANGULATE:** Add negative filter cases in `frontend/components/AuditLogPage.test.tsx` (empty result, out-of-range page, invalid actor/time)
-- [ ] **REFACTOR:** Normalize date serialization and parameter naming to match API contract (`page_size` max 100).
+- [x] Add minimal query utility in `frontend/services/auditQueries.ts` (kept request logic local in the component; this keeps scope minimal).
+- [x] Add/update `frontend/components/UserManager.tsx` and `frontend/components/RoleManager.tsx` permission option lists to include `AUDIT_VIEW`.
+- [x] **TRIANGULATE:** Add negative filter cases in `frontend/components/AuditLogPage.test.tsx` (empty result and 403 fallback cases).
+- [x] **REFACTOR:** Normalize date serialization and parameter naming to match API contract (`page_size` max 100).
 
 **PR 4 validation (frontend):** `corepack pnpm --dir frontend run test:run`
 

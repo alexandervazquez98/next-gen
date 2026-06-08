@@ -84,3 +84,20 @@
 - TRIANGULATE: Added mixed outcome assertions on allow-listed context (`changed_fields`, `required_permission`) in router-level tests.
 - REFACTOR: Added local payload validation helper to keep route logic explicit and minimize audit-path branching.
 - Verification (PR3B-2): `cd backend && python -m pytest tests/test_backup_router.py` -> **14 passed**.
+
+## PR4 — Frontend audit table + permission-gated access
+
+- Branch: `feat/audit-user-logs-frontend` (base `e8f2bfc`)
+- Scope: frontend only (`frontend` audit table, route, nav, permission pickers, PR4 tests).
+
+### TDD Cycle Evidence
+
+| Phase | Evidence | Result |
+|---|---|---|
+| RED | Added `frontend/components/AuditLogPage.test.tsx` for access denied, filter controls, query params, columns, placeholders, empty-state, and 403 fallback before/with implementation. | Targeted frontend tests covered required PR4 behavior. |
+| GREEN | Added `frontend/components/AuditLogPage.tsx`, wired `/audit` route/nav item, and updated role/user permission catalogs for `AUDIT_VIEW`. | Targeted and full frontend suites pass. |
+| TRIANGULATE | Added empty-result and 403 fallback negative assertions in `AuditLogPage.test.tsx`. | Denied/empty/error cases covered beyond happy-path table rendering. |
+| REFACTOR | Normalized API params (`page_size` clamp to 100 and ISO datetime serialization). | Query serialization stays aligned with backend API contract. |
+
+### Verification (PR4)
+- `corepack pnpm --dir frontend run test:run` ✅ (44 files, 421 tests)

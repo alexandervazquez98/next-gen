@@ -31,7 +31,7 @@ type Role = {
 const customRole: Role = {
   name: 'Operator',
   description: 'Handles incidents and diagnostics',
-  permissions: ['EVENT_VIEW', 'EVENT_ACK', 'RUN_DIAGNOSTICS'],
+  permissions: ['EVENT_VIEW', 'EVENT_ACK', 'RUN_DIAGNOSTICS', 'AUDIT_VIEW'],
   is_system: false,
 };
 
@@ -218,7 +218,31 @@ describe('RoleManager', () => {
     fireEvent.click(screen.getByRole('button', { name: /new role/i }));
 
     expect(screen.getByLabelText('EVENT_FORCED_CLOSE')).toBeInTheDocument();
+    expect(screen.getByLabelText('AUDIT_VIEW')).toBeInTheDocument();
     expect(screen.getByLabelText('METRICS_VIEW')).toBeInTheDocument();
+  });
+
+  it('allows selecting AUDIT_VIEW in role permissions and sends it in payload', async () => {
+    mocks.api.get.mockResolvedValue([]);
+
+    render(<RoleManager />);
+
+    fireEvent.click(screen.getByRole('button', { name: /new role/i }));
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Auditor' } });
+    fireEvent.change(inputs[1], { target: { value: 'Read-only audit profile' } });
+    fireEvent.click(screen.getByLabelText('AUDIT_VIEW'));
+
+    fireEvent.click(screen.getByRole('button', { name: /save role/i }));
+
+    await waitFor(() => {
+      expect(mocks.api.post).toHaveBeenCalledWith('/roles/', {
+        name: 'Auditor',
+        description: 'Read-only audit profile',
+        permissions: ['AUDIT_VIEW'],
+      });
+    });
   });
 
   it('edits an existing role and keeps the name immutable', async () => {
@@ -243,7 +267,7 @@ describe('RoleManager', () => {
     await waitFor(() => {
       expect(mocks.api.put).toHaveBeenCalledWith('/roles/Operator', {
         description: 'Updated operator description',
-        permissions: ['EVENT_VIEW'],
+        permissions: ['EVENT_VIEW', 'AUDIT_VIEW'],
       });
     });
 

@@ -23,7 +23,7 @@ const ALL_PERMISSIONS = [
     { category: "Event Management", perms: ["EVENT_VIEW", "EVENT_ACK", "EVENT_CLOSE"] },
     { category: "CI Management", perms: ["CI_VIEW", "CI_EDIT", "CI_DELETE"] },
     { category: "Diagnostics", perms: ["RUN_DIAGNOSTICS"] },
-    { category: "System", perms: ["USER_MANAGE", "ROLE_MANAGE"] }
+    { category: "System", perms: ["USER_MANAGE", "ROLE_MANAGE", "AUDIT_VIEW"] }
 ];
 
 const UserManager: React.FC = () => {
