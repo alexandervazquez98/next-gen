@@ -40,6 +40,7 @@ class UserPermission(str, Enum):
     # System
     USER_MANAGE = "USER_MANAGE"
     ROLE_MANAGE = "ROLE_MANAGE"
+    AUDIT_VIEW = "AUDIT_VIEW"
 
     # Visualization
     METRICS_VIEW = "METRICS_VIEW"

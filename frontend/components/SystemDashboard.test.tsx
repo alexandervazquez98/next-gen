@@ -104,7 +104,11 @@ describe('SystemDashboard', () => {
     expect(screen.getAllByText('CONNECTED').length).toBeGreaterThan(0);
     expect(screen.getAllByText('RUNNING').length).toBeGreaterThan(0);
     expect(screen.getByText('7-Day Operational History')).toBeInTheDocument();
-    expect(screen.getByText(/Persisted system health snapshots/i)).toBeInTheDocument();
+    expect(screen.getByText(/Persisted system health snapshots from the last 7 days/i)).toBeInTheDocument();
+    expect(screen.getByText('Resources over time')).toBeInTheDocument();
+    expect(screen.getByText('Collector throughput')).toBeInTheDocument();
+    expect(screen.getByText('Disk I/O throughput')).toBeInTheDocument();
+    expect(screen.getByText('Collector cycle duration')).toBeInTheDocument();
     expect(screen.getAllByText('1.0 MB/s read / 512.0 KB/s write').length).toBeGreaterThan(0);
     expect(screen.getByText(/120 metrics · 1 failed/i)).toBeInTheDocument();
     expect(screen.getByText('Active Monitored CIs')).toBeInTheDocument();

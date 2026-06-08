@@ -25,6 +25,7 @@ import SystemDashboard from "./components/SystemDashboard";
 import GlobalInventory from "./components/GlobalInventory";
 import ChangePasswordPage from "./components/ChangePasswordPage";
 import UserManager from "./components/UserManager";
+import AuditLogPage from "./components/AuditLogPage";
 import CIDetailModal from "./components/CIDetailModal";
 import MetricAnalytics from "./components/MetricAnalytics";
 import VisualRelationshipEditorPage from "./components/VisualRelationshipEditorPage";
@@ -155,6 +156,13 @@ const MainLayout: React.FC = () => {
 							label="User Management"
 						/>
 					)}
+					{(hasPermission("AUDIT_VIEW") || hasPermission("ADMIN")) && (
+						<NavItem
+							to="/audit"
+							icon="history"
+							label="Audit Log"
+						/>
+					)}
 					{(hasPermission("ADMIN") || hasPermission("USER_MANAGE")) && (
 						<NavItem
 							to="/admin"
@@ -236,6 +244,7 @@ const MainLayout: React.FC = () => {
 								element={<VisualRelationshipEditorPage />}
 							/>
 							<Route path="users" element={<UserManager />} />
+							<Route path="audit" element={<AuditLogPage />} />
 							<Route
 								path="cmdb"
 								element={<GraphCMDB onNodeClick={handleGraphNodeClick} />}

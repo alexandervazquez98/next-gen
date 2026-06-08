@@ -22,6 +22,8 @@ Strategy:
 """
 
 import pytest
+from datetime import datetime, timedelta
+from fastapi import HTTPException
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -54,6 +56,19 @@ from services.auth_service import get_current_active_user
 from repositories import user_repo
 from middleware import rate_limit
 from models.rate_limit_attempt import RateLimitAttempt
+from routers.auth import (
+    AUDIT_OUTCOME_DENIED,
+    AUDIT_OUTCOME_FAILURE,
+    AUDIT_OUTCOME_SUCCESS,
+    AUTH_EVENT_LOGIN_FAILURE,
+    AUTH_EVENT_LOGIN_SUCCESS,
+    AUTH_EVENT_LOGOUT,
+    AUTH_REASON_INCORRECT_CREDENTIALS,
+    AUTH_REASON_INACTIVE_USER,
+    AUTH_REASON_RATE_LIMITED,
+    AUTH_REASON_LOGIN_SUCCESS,
+    AUTH_REASON_LOGOUT_SUCCESS,
+)
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -153,6 +168,17 @@ def _make_mock_pg_user(
     mock.email = None
     mock.force_password_change = False
     return mock
+
+
+def _assert_audit_request_context(kwargs: dict, user_agent: str | None = None, request_id: str | None = None) -> None:
+    """Assert auth audit calls receive a Request with context needed for IP/UA enrichment."""
+    request = kwargs["request"]
+    if user_agent:
+        assert request.headers["user-agent"] == user_agent
+    if request_id:
+        assert request.headers["x-request-id"] == request_id
+    assert request.client is not None
+    assert request.client.host
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +348,257 @@ class TestAuthToken:
         assert response.status_code == 400
 
         app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_wrong_credentials_records_audit_failure(self, mock_db):
+        # Failed login should emit a LOGIN_FAILURE audit event with safe context.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=False),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-1"},
+            )
+
+        assert response.status_code == 401
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_INCORRECT_CREDENTIALS
+        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-1")
+        context = kwargs.get("context") or {}
+        assert "password" not in context
+        assert "token" not in context
+        assert "raw_body" not in context
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_precheck_rate_limit_records_audit_denied(self, mock_db):
+        # Already locked identities should emit audit before the pre-check 429 response.
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch(
+                "routers.auth.check_rate_limit",
+                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts."),
+            ),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-precheck"},
+            )
+
+        assert response.status_code == 429
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
+        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-precheck")
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_rate_limit_locked_records_audit_denied(self, mock_db):
+        # Rate-limited login should emit a denied audit event before 429.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        lock_time = datetime.utcnow() + timedelta(minutes=15)
+        attempt_info = type("AttemptInfo", (), {"locked_until": lock_time, "count": 4})
+
+        with (
+            patch("routers.auth.verify_password", return_value=False),
+            patch("routers.auth.increment_attempts", return_value=attempt_info),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+            patch(
+                "routers.auth.raise_rate_limit_locked",
+                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts. Account temporarily locked.", headers={"Retry-After": "900"}),
+            ),
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+            )
+
+        assert response.status_code == 429
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_inactive_user_records_audit_denied(self, mock_db):
+        # Inactive users should emit denied login audits before 400 response.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=False,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=True),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
+
+        assert response.status_code == 400
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_INACTIVE_USER
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_success_records_audit_success(self, mock_db):
+        # Successful login should emit LOGIN_SUCCESS audit event.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=True),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-2"},
+            )
+
+        assert response.status_code == 200
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_SUCCESS
+        assert kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_LOGIN_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_mixed_outcome_sequence_records_distinct_audit_events(self, mock_db):
+        # Mixed failure/success login attempts should capture both outcomes.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch(
+                "routers.auth.verify_password",
+                side_effect=[False, True],
+            ),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            failure = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong"},
+            )
+            success = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "right"},
+            )
+
+        assert failure.status_code == 401
+        assert success.status_code == 200
+        assert len(mock_record.call_args_list) >= 2
+        calls = mock_record.call_args_list
+        assert calls[0].kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert calls[0].kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
+        assert calls[1].kwargs["event_type"] == AUTH_EVENT_LOGIN_SUCCESS
+        assert calls[1].kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_logout_records_audit_event(self, mock_db):
+        # Successful logout should emit LOGOUT audit event.
+        fake_user = _make_pydantic_user(username="testuser", role="OPERATOR")
+
+        def override_get_db():
+            yield mock_db
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+        with patch("routers.auth.audit_service.record_auth_event") as mock_record:
+            response = client.post(
+                "/api/auth/logout",
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-3"},
+            )
+
+        assert response.status_code == 200
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGOUT
+        assert kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_LOGOUT_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +946,10 @@ class TestUsersCreate:
         # user.disabled and user.force_password_change which don't exist
         # on UserCreate. We must mock the repo call entirely.
         with patch.object(user_repo, "get_user_by_username", return_value=None):
-            with patch.object(user_repo, "create_user", return_value=new_pg_user):
+            with (
+                patch.object(user_repo, "create_user", return_value=new_pg_user),
+                patch("routers.users.audit_service.record_critical_change") as mock_record,
+            ):
                 app.dependency_overrides[get_current_active_user] = (
                     override_get_current_active_user
                 )
@@ -685,13 +965,18 @@ class TestUsersCreate:
                     },
                 )
 
-                assert response.status_code == 200
-                data = response.json()
-                assert data["username"] == "newuser"
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "newuser"
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_CREATE"
+        assert kwargs["outcome"] == "SUCCESS"
+        assert kwargs["target_type"] == "user"
+        assert kwargs["target_id"] == "newuser"
 
-                app.dependency_overrides.pop(get_current_active_user, None)
-                app.dependency_overrides.pop(get_pg_db, None)
-
+        app.dependency_overrides.pop(get_current_active_user, None)
+        app.dependency_overrides.pop(get_pg_db, None)
     def test_create_user_duplicate_username(self, mock_db):
         """Creating a user with existing username should return 400."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
@@ -712,15 +997,20 @@ class TestUsersCreate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.post(
-            "/api/users/",
-            json={
-                "username": "existing_user",
-                "password": "SecureP@ss123",
-            },
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post(
+                "/api/users/",
+                json={
+                    "username": "existing_user",
+                    "password": "SecureP@ss123",
+                },
+            )
 
         assert response.status_code == 400
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_CREATE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -740,15 +1030,17 @@ class TestUsersCreate:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/users/",
-            json={
-                "username": "newuser",
-                "password": "SecureP@ss123",
-            },
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.post(
+                "/api/users/",
+                json={
+                    "username": "newuser",
+                    "password": "SecureP@ss123",
+                },
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -781,12 +1073,17 @@ class TestUsersUpdate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.put(
-            "/api/users/testuser",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.put(
+                "/api/users/testuser",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 200
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_UPDATE"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -808,12 +1105,17 @@ class TestUsersUpdate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.put(
-            "/api/users/nonexistent",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.put(
+                "/api/users/nonexistent",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 404
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_UPDATE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -833,12 +1135,14 @@ class TestUsersUpdate:
             override_get_current_active_user
         )
 
-        response = client.put(
-            "/api/users/testuser",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.put(
+                "/api/users/testuser",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -866,11 +1170,16 @@ class TestUsersDelete:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.delete("/api/users/testuser")
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.delete("/api/users/testuser")
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_DELETE"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -892,9 +1201,14 @@ class TestUsersDelete:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.delete("/api/users/nonexistent")
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.delete("/api/users/nonexistent")
 
         assert response.status_code == 404
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_DELETE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -914,9 +1228,11 @@ class TestUsersDelete:
             override_get_current_active_user
         )
 
-        response = client.delete("/api/users/testuser")
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.delete("/api/users/testuser")
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -947,14 +1263,19 @@ class TestUsersResetPassword:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.post(
-            "/api/users/target_user/reset",
-            json={"new_password": "ResetP@ss123"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post(
+                "/api/users/target_user/reset",
+                json={"new_password": "ResetP@ss123"},
+            )
 
         assert response.status_code == 200
         data = response.json()
         assert "Password reset" in data["message"]
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_PASSWORD_RESET"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -976,14 +1297,41 @@ class TestUsersResetPassword:
 
         # Sending empty JSON body triggers Pydantic validation error (422)
         # because UserResetRequest requires new_password.
-        # The endpoint's own check (reset_data is None -> 400) is unreachable
-        # via JSON body since Pydantic rejects it first.
         response = client.post(
             "/api/users/target_user/reset",
             json={},
         )
 
         assert response.status_code == 422
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_reset_password_missing_body_records_validation_audit(self, mock_db):
+        """Reset without a body should exercise the handler validation audit branch."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        def override_get_db():
+            yield mock_db
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post("/api/users/target_user/reset")
+
+        assert response.status_code == 400
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_PASSWORD_RESET"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
+        assert kwargs["reason"] == "password_required"
+        assert kwargs["target_id"] == "target_user"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1003,12 +1351,14 @@ class TestUsersResetPassword:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/users/target_user/reset",
-            json={"new_password": "ResetP@ss123"},
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.post(
+                "/api/users/target_user/reset",
+                json={"new_password": "ResetP@ss123"},
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1125,6 +1475,17 @@ class TestRolesList:
         app.dependency_overrides.pop(get_current_active_user, None)
 
 
+@pytest.fixture(autouse=True)
+def _override_roles_db_for_tests(mock_db):
+    def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_pg_db] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_pg_db, None)
+
+
+@pytest.mark.usefixtures("_override_roles_db_for_tests")
 class TestRolesCreate:
     """Tests for POST /api/roles/ — create role."""
 
@@ -1161,7 +1522,10 @@ class TestRolesCreate:
 
         mock_neo4j_driver.execute_query.side_effect = mock_execute
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.post(
                 "/api/roles/",
                 json={
@@ -1178,6 +1542,8 @@ class TestRolesCreate:
             create_query_params = mock_neo4j_driver.execute_query.call_args_list[1].kwargs
             assert create_query_params["permissions"] == ["EVENT_VIEW", "METRICS_VIEW"]
 
+            mock_record.assert_called_once()
+
         app.dependency_overrides.pop(get_current_active_user, None)
 
     def test_create_role_invalid_permission_is_rejected(self, mock_neo4j_driver):
@@ -1193,7 +1559,10 @@ class TestRolesCreate:
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.post(
                 "/api/roles/",
                 json={
@@ -1206,6 +1575,11 @@ class TestRolesCreate:
             assert response.status_code == 400
             error = response.json()
             assert "invalid_permissions" in error["detail"]
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_CREATE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
+            assert kwargs["target_id"] == "CustomRole"
 
         # only existence check should run; create query must not run
         assert mock_neo4j_driver.execute_query.call_count == 1
@@ -1255,7 +1629,10 @@ class TestRolesCreate:
         mock_record = {"r": mock_existing_node}
         mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.post(
                 "/api/roles/",
                 json={
@@ -1265,6 +1642,7 @@ class TestRolesCreate:
             )
 
             assert response.status_code == 400
+            mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1283,16 +1661,19 @@ class TestRolesCreate:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/roles/",
-            json={"name": "NewRole", "permissions": ["EVENT_VIEW"]},
-        )
+        with patch("routers.roles.audit_service.record_denied") as mock_record:
+            response = client.post(
+                "/api/roles/",
+                json={"name": "NewRole", "permissions": ["EVENT_VIEW"]},
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
 
+@pytest.mark.usefixtures("_override_roles_db_for_tests")
 class TestRolesUpdate:
     """Tests for PUT /api/roles/{name} — update role."""
 
@@ -1327,7 +1708,10 @@ class TestRolesUpdate:
         mock_execute.call_count = 0
         mock_neo4j_driver.execute_query.side_effect = mock_execute
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_audit_record,
+        ):
             response = client.put(
                 "/api/roles/CustomRole",
                 json={
@@ -1342,10 +1726,15 @@ class TestRolesUpdate:
             update_params = mock_neo4j_driver.execute_query.call_args_list[1].kwargs
             assert update_params["permissions"] == ["EVENT_ACK", "METRICS_VIEW"]
 
+            mock_audit_record.assert_called_once()
+            kwargs = mock_audit_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_UPDATE"
+            assert kwargs["outcome"] == "SUCCESS"
+
         app.dependency_overrides.pop(get_current_active_user, None)
 
     def test_update_role_with_invalid_permission_rejected(self, mock_neo4j_driver):
-        """Update should reject non-string permissions and avoid write query."""
+        """Update should reject invalid permissions, audit validation, and avoid write query."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
 
         async def override_get_current_active_user():
@@ -1361,19 +1750,51 @@ class TestRolesUpdate:
         mock_record = {"r": mock_node}
         mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.put(
                 "/api/roles/CustomRole",
-                json={"permissions": ["EVENT_VIEW", 123]},
+                json={"permissions": ["EVENT_VIEW", "BOGUS_PERMISSION"]},
             )
 
-            assert response.status_code in (400, 422)
-            if response.status_code == 400:
-                assert "invalid_permissions" in response.json()["detail"]
+            assert response.status_code == 400
+            assert "invalid_permissions" in response.json()["detail"]
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_UPDATE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
+            assert kwargs["target_id"] == "CustomRole"
 
-        # either route rejected by service validation (400) or schema validation (422);
-        # in neither case should an update write query run
-        assert mock_neo4j_driver.execute_query.call_count <= 1
+        # route should only read existing role before rejecting; update write query must not run
+        assert mock_neo4j_driver.execute_query.call_count == 1
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_update_role_viewer_forbidden(self, mock_neo4j_driver):
+        """Viewer should get 403 on role update."""
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.roles.audit_service.record_denied") as mock_record:
+            response = client.put(
+                "/api/roles/CustomRole",
+                json={"description": "Should not work"},
+            )
+
+        assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1398,51 +1819,27 @@ class TestRolesUpdate:
 
         mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.put(
                 "/api/roles/ADMIN",
                 json={"description": "Should not work"},
             )
 
             assert response.status_code == 400
+
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_UPDATE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         # Only initial lookup query should execute
         assert mock_neo4j_driver.execute_query.call_count == 1
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_update_system_role_forbidden(self, mock_neo4j_driver):
-        """Updating a system role should return 400."""
-        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
-
-        async def override_get_current_active_user():
-            return fake_user
-
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
-
-        mock_node = _FakeNeo4jNode(
-            {
-                "name": "ADMIN",
-                "is_system": True,
-            }
-        )
-        mock_record = {"r": mock_node}
-        mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
-
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
-            response = client.put(
-                "/api/roles/ADMIN",
-                json={"description": "Should not work"},
-            )
-
-            assert response.status_code == 400
-
-        # only lookup should have run
-        assert mock_neo4j_driver.execute_query.call_count == 1
-
-        app.dependency_overrides.pop(get_current_active_user, None)
     def test_update_role_not_found(self, mock_neo4j_driver):
         """Updating non-existent role should return 404."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
@@ -1456,7 +1853,10 @@ class TestRolesUpdate:
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.put(
                 "/api/roles/NonExistent",
                 json={"description": "Should fail"},
@@ -1464,9 +1864,15 @@ class TestRolesUpdate:
 
             assert response.status_code == 404
 
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "ROLE_UPDATE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
+
         app.dependency_overrides.pop(get_current_active_user, None)
 
 
+@pytest.mark.usefixtures("_override_roles_db_for_tests")
 class TestRolesDelete:
     """Tests for DELETE /api/roles/{name} — delete role."""
 
@@ -1501,10 +1907,17 @@ class TestRolesDelete:
 
         mock_neo4j_driver.execute_query.side_effect = mock_execute
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.delete("/api/roles/CustomRole")
 
             assert response.status_code == 200
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_DELETE"
+            assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1523,10 +1936,18 @@ class TestRolesDelete:
         mock_record = {"r": mock_node}
         mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.delete("/api/roles/ADMIN")
 
             assert response.status_code == 400
+
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_DELETE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1559,11 +1980,19 @@ class TestRolesDelete:
 
         mock_neo4j_driver.execute_query.side_effect = mock_execute
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.delete("/api/roles/CustomRole")
 
             assert response.status_code == 400
             assert "assigned to users" in response.json()["detail"]
+
+            mock_record.assert_called_once()
+            kwargs = mock_record.call_args.kwargs
+            assert kwargs["event_type"] == "ROLE_DELETE"
+            assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1580,9 +2009,40 @@ class TestRolesDelete:
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
-        with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
+        with (
+            patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver),
+            patch("routers.roles.audit_service.record_critical_change") as mock_record,
+        ):
             response = client.delete("/api/roles/NonExistent")
 
             assert response.status_code == 404
+
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "ROLE_DELETE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_delete_role_viewer_forbidden(self, mock_neo4j_driver):
+        """Viewer should get 403 on role deletion."""
+        fake_user = _make_pydantic_user(
+            username="viewer",
+            role="VIEWER",
+            permissions=[],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.roles.audit_service.record_denied") as mock_record:
+            response = client.delete("/api/roles/CustomRole")
+
+        assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)

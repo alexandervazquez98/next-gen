@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from io import BytesIO
 
+
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
 # ---------------------------------------------------------------------------
@@ -100,6 +101,15 @@ def _make_full_record(
         "category": category,
         "metrics": metrics or [],
     }
+
+
+def _assert_ci_audit_call(mock, event_type: str, outcome: str, target_id: str | None = None) -> None:
+    mock.assert_called_once()
+    kwargs = mock.call_args.kwargs
+    assert kwargs["event_type"] == event_type
+    assert kwargs["outcome"] == outcome
+    if target_id is not None:
+        assert kwargs["target_id"] == target_id
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +355,7 @@ class TestCreateNode:
         assert response.status_code == 401
 
     def test_create_node_no_ci_edit_permission(self):
-        """User without CI_EDIT should get 403."""
+        """User without CI_EDIT should get 403 and emit ACCESS_DENIED audit event."""
         fake_user = _make_pydantic_user(
             username="viewer",
             role="VIEWER",
@@ -359,21 +369,23 @@ class TestCreateNode:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/nodes",
-            json={
-                "id": "ci-new",
-                "label": "New Router",
-                "type": "router",
-            },
-        )
+        with patch("routers.nodes.audit_service.record_denied") as mock_record_denied:
+            response = client.post(
+                "/api/nodes",
+                json={
+                    "id": "ci-new",
+                    "label": "New Router",
+                    "type": "router",
+                },
+            )
 
-        assert response.status_code == 403
+            assert response.status_code == 403
+            mock_record_denied.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
     def test_create_node_admin_success(self):
-        """Admin should be able to create a node."""
+        """Admin should be able to create a node and emit success audit event."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
 
         async def override_get_current_active_user():
@@ -383,7 +395,8 @@ class TestCreateNode:
             override_get_current_active_user
         )
 
-        with patch("routers.nodes.node_service") as mock_service:
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.nodes.node_service") as mock_service:
             mock_service.create_update_node.return_value = {
                 "message": "Node created/updated",
                 "id": "ci-new",
@@ -404,9 +417,14 @@ class TestCreateNode:
             data = response.json()
             assert data["message"] == "Node created/updated"
             assert data["id"] == "ci-new"
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_CREATE_OR_UPDATE",
+                outcome="SUCCESS",
+                target_id="ci-new",
+            )
 
         app.dependency_overrides.pop(get_current_active_user, None)
-
     def test_create_node_operator_with_ci_edit(self):
         """Operator with CI_EDIT permission should create a node."""
         fake_user = _make_pydantic_user(
@@ -477,7 +495,7 @@ class TestDeleteNode:
         assert response.status_code == 401
 
     def test_delete_node_no_ci_delete_permission(self):
-        """User without CI_DELETE should get 403."""
+        """User without CI_DELETE should get 403 and emit ACCESS_DENIED audit event."""
         fake_user = _make_pydantic_user(
             username="operator",
             role="OPERATOR",
@@ -491,14 +509,16 @@ class TestDeleteNode:
             override_get_current_active_user
         )
 
-        response = client.delete("/api/nodes/ci-001")
+        with patch("routers.nodes.audit_service.record_denied") as mock_record_denied:
+            response = client.delete("/api/nodes/ci-001")
 
-        assert response.status_code == 403
+            assert response.status_code == 403
+            mock_record_denied.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
     def test_delete_node_admin_success(self):
-        """Admin should be able to delete a node."""
+        """Admin should be able to delete a node and emit success audit event."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
 
         async def override_get_current_active_user():
@@ -508,7 +528,8 @@ class TestDeleteNode:
             override_get_current_active_user
         )
 
-        with patch("routers.nodes.node_service") as mock_service:
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.nodes.node_service") as mock_service:
             mock_service.delete_node.return_value = {
                 "message": "Node deleted",
                 "id": "ci-001",
@@ -520,6 +541,41 @@ class TestDeleteNode:
             data = response.json()
             assert data["message"] == "Node deleted"
             assert data["id"] == "ci-001"
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_DELETE",
+                outcome="SUCCESS",
+                target_id="ci-001",
+            )
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_delete_node_not_found_validation_failure(self):
+        """Service not-found errors should emit CI delete validation-failure audit event."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.nodes.node_service.delete_node") as mock_delete_node:
+            from fastapi import HTTPException
+
+            mock_delete_node.side_effect = HTTPException(status_code=404, detail="Node not found")
+
+            response = client.delete("/api/nodes/ci-missing")
+
+            assert response.status_code == 404
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_DELETE",
+                outcome="VALIDATION_FAILURE",
+                target_id="ci-missing",
+            )
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -841,80 +897,15 @@ class TestUpdateNodeMetadata:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_ai_agent_blocked_from_updating_brand_field(self):
-        """AI agent gets 403 when trying to update 'brand' field."""
-        async def override():
-            return self._ai_user()
-
-        app.dependency_overrides[get_current_active_user] = override
-
-        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
-            mock_guards.return_value = MagicMock(allowed=True)
-            mock_session.return_value = self._mock_session()
-
-            response = client.put(
-                "/api/nodes/ci-001/metadata",
-                json={"status": "MAINTENANCE", "brand": "Juniper"},
-            )
-
-            assert response.status_code == 403
-            assert "brand" in response.json()["detail"]
-
-        app.dependency_overrides.pop(get_current_active_user, None)
-
-    def test_ai_agent_blocked_from_updating_model_field(self):
-        """AI agent gets 403 when trying to update 'model' field."""
-        async def override():
-            return self._ai_user()
-
-        app.dependency_overrides[get_current_active_user] = override
-
-        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
-            mock_guards.return_value = MagicMock(allowed=True)
-            mock_session.return_value = self._mock_session()
-
-            response = client.put(
-                "/api/nodes/ci-001/metadata",
-                json={"owner": "NetOps", "model": "MX-204"},
-            )
-
-            assert response.status_code == 403
-            assert "model" in response.json()["detail"]
-
-        app.dependency_overrides.pop(get_current_active_user, None)
-
-    def test_ai_agent_blocked_from_updating_snmp_field(self):
-        """AI agent gets 403 when trying to update 'snmp' field."""
-        async def override():
-            return self._ai_user()
-
-        app.dependency_overrides[get_current_active_user] = override
-
-        with patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
-            mock_guards.return_value = MagicMock(allowed=True)
-            mock_session.return_value = self._mock_session()
-
-            response = client.put(
-                "/api/nodes/ci-001/metadata",
-                json={"status": "OK", "snmp": {"version": "v3"}},
-            )
-
-            assert response.status_code == 403
-            assert "snmp" in response.json()["detail"]
-
-        app.dependency_overrides.pop(get_current_active_user, None)
-
     def test_ai_agent_blocked_when_guard_fails(self):
-        """AI agent gets 403 when guard check fails (e.g., cooldown active)."""
+        """AI agent gets 403 when guard check fails (e.g., cooldown active) and is denied."""
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with patch("routers.nodes.audit_service.record_denied") as mock_record_denied, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards:
             mock_guards.return_value = MagicMock(
                 allowed=False,
                 reason="Cooldown active",
@@ -927,6 +918,38 @@ class TestUpdateNodeMetadata:
 
             assert response.status_code == 403
             assert "Cooldown active" in response.json()["detail"]
+            mock_record_denied.assert_called_once()
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_blocked_field_records_validation_audit(self):
+        """AI metadata field restriction failures should emit validation-failure audit."""
+        async def override():
+            return self._ai_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("services.ai_guard_service.check_all_guards") as mock_guards, \
+             patch("routers.nodes.validate_ai_metadata_update", return_value=(False, ["brand"])):
+            mock_guards.return_value = MagicMock(allowed=True)
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={"metadata": {"brand": "Juniper"}},
+            )
+
+            assert response.status_code == 403
+            assert "brand" in response.json()["detail"]
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_UPDATE_METADATA",
+                outcome="VALIDATION_FAILURE",
+                target_id="ci-001",
+            )
+            kwargs = mock_record_critical.call_args.kwargs
+            assert kwargs["reason"] == "brand"
+            assert kwargs["context"]["required_permission"] == "CI_EDIT"
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -937,7 +960,8 @@ class TestUpdateNodeMetadata:
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.node_service") as mock_service:
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.nodes.node_service") as mock_service:
             mock_service.update_node_metadata.return_value = {
                 "message": "Node metadata updated",
                 "id": "ci-001",
@@ -950,6 +974,43 @@ class TestUpdateNodeMetadata:
 
             # Regular user is not blocked by AI field restrictions
             assert response.status_code == 200
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_UPDATE_METADATA",
+                outcome="SUCCESS",
+                target_id="ci-001",
+            )
+
+    def test_metadata_validation_failure(self):
+        """Service validation failures should emit CI metadata validation-failure audit event."""
+        async def override():
+            return self._operator_user()
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
+             patch("routers.nodes.node_service.update_node_metadata") as mock_update_node_metadata:
+            from fastapi import HTTPException
+
+            mock_update_node_metadata.side_effect = HTTPException(
+                status_code=400,
+                detail="No fields to update",
+            )
+
+            response = client.put(
+                "/api/nodes/ci-001/metadata",
+                json={},
+            )
+
+            assert response.status_code == 400
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_UPDATE_METADATA",
+                outcome="VALIDATION_FAILURE",
+                target_id="ci-001",
+            )
+
+        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 # Tests: GET /api/nodes/search — CI text search

@@ -3,11 +3,26 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import services.backup_service as backup_service
-from models.user import User, UserRole, UserPermission
-from services.auth_service import get_current_active_user, check_permission
+from models.user import User, UserRole
+from postgres_db import get_pg_db
+from services import audit_service
+from services.auth_service import get_current_active_user
+
+
+# Audit constants
+AUDIT_TARGET_TYPE_SYSTEM_CONFIG = "system_config"
+AUDIT_SOURCE_BACKUP = "backup"
+
+AUDIT_OUTCOME_SUCCESS = "SUCCESS"
+AUDIT_OUTCOME_VALIDATION_FAILURE = "VALIDATION_FAILURE"
+
+AUDIT_EVENT_SYSTEM_CONFIG_UPDATE = "SYSTEM_CONFIG_UPDATE"
+
+ALLOWED_BACKUP_SCHEDULE_TYPES = {"daily", "manual"}
 
 router = APIRouter(
     prefix="/backup",
@@ -39,10 +54,27 @@ async def get_backup_config_endpoint() -> dict:
     return backup_service.get_backup_config()
 
 
+def _validate_backup_config_update(config: BackupConfigUpdate) -> tuple[str | None, str | None]:
+    """Return (validation_error_key, error_message) for unsupported payload values."""
+
+    if config.schedule_type is not None and config.schedule_type not in ALLOWED_BACKUP_SCHEDULE_TYPES:
+        return "invalid_schedule_type", f"schedule_type must be one of {sorted(ALLOWED_BACKUP_SCHEDULE_TYPES)}"
+
+    if config.retention_days is not None and config.retention_days < 0:
+        return "invalid_retention_days", "retention_days must be non-negative"
+
+    if config.retention_days is not None and config.retention_days > 3650:
+        return "invalid_retention_days", "retention_days must be <= 3650"
+
+    return None, None
+
+
 @router.put("/config")
 async def update_backup_config_endpoint(
+    request: Request,
     config: BackupConfigUpdate,
     current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_pg_db),
 ) -> dict:
     """
     Update backup configuration. Admin only.
@@ -50,11 +82,46 @@ async def update_backup_config_endpoint(
     enabled flag, retention period, and storage path.
     """
     if current_user.role != UserRole.ADMIN and current_user.role != "ADMIN":
+        audit_service.record_denied(
+            db=db,
+            request=request,
+            actor=current_user,
+            required_permission=UserRole.ADMIN.value,
+            target_type=AUDIT_TARGET_TYPE_SYSTEM_CONFIG,
+            target_id="backup_config",
+            source=AUDIT_SOURCE_BACKUP,
+            reason="missing_permission:ADMIN",
+        )
         raise HTTPException(
             status_code=403,
             detail="Only admins can update backup configuration",
         )
 
+    validation_error, validation_message = _validate_backup_config_update(config)
+    if validation_error:
+        changed_fields = [field for field, value in config.model_dump(exclude_unset=True).items() if value is not None]
+        audit_service.record_critical_change(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_SYSTEM_CONFIG_UPDATE,
+            outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+            target_type=AUDIT_TARGET_TYPE_SYSTEM_CONFIG,
+            target_id="backup_config",
+            target_label="Backup Configuration",
+            reason=validation_error,
+            source=AUDIT_SOURCE_BACKUP,
+            context={
+                "changed_fields": changed_fields,
+                "required_permission": UserRole.ADMIN.value,
+            },
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=validation_message,
+        )
+
+    changed_fields = [field for field, value in config.model_dump(exclude_unset=True).items() if value is not None]
     result = backup_service.update_backup_config(
         schedule_type=config.schedule_type,
         scheduled_time=config.scheduled_time,
@@ -62,6 +129,23 @@ async def update_backup_config_endpoint(
         retention_days=config.retention_days,
         storage_path=config.storage_path,
         updated_by=current_user.username,
+    )
+
+    audit_service.record_critical_change(
+        db=db,
+        request=request,
+        actor=current_user,
+        event_type=AUDIT_EVENT_SYSTEM_CONFIG_UPDATE,
+        outcome=AUDIT_OUTCOME_SUCCESS,
+        target_type=AUDIT_TARGET_TYPE_SYSTEM_CONFIG,
+        target_id="backup_config",
+        target_label="Backup Configuration",
+        reason="backup_config_updated",
+        source=AUDIT_SOURCE_BACKUP,
+        context={
+            "changed_fields": changed_fields,
+            "required_permission": UserRole.ADMIN.value,
+        },
     )
 
     # Reschedule the daily backup job with new config
