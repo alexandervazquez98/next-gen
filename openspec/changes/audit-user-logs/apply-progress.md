@@ -1,72 +1,66 @@
-# Apply Progress: audit-user-logs — PR 2 Auth capture
+# Apply Progress: audit-user-logs — PR3A-1 (Users-only)
 
 ## Session context
-- Branch: `feat/audit-user-logs-auth`
-- Scope: SDD change `audit-user-logs`
-- Slice: **PR 2 — Auth capture**
+- Branch: `feat/audit-user-logs-users-roles` (base `8943167`)
+- Scope: `audit-user-logs` (OpenSpec)
+- Slice: **PR3A-1 users-only** (no roles/nodes/backup/frontend, no non-user files)
 - Working style: **strict TDD**
+- Review/line budget: kept under ~400 changed lines and PR3A-1 boundary
 
 ## TDD Cycle Evidence
 
 | Phase | Evidence | Result |
 |---|---|---|
-| RED | Added failing auth lifecycle audit assertions in `backend/tests/test_routers_auth_users_roles.py` before production-side audit instrumentation/refinements. | Initial failures exposed patch-target mismatch and lockout-raise behavior gaps. |
-| GREEN | Implemented `record_auth_event` calls in `backend/routers/auth.py` for login failure/denied/success and logout; targeted auth router suite passes. | `53 passed`. |
-| TRIANGULATE | Added mixed success/failure regression, direct pre-check rate-limit coverage, threshold lockout coverage, inactive-user coverage, logout coverage, and sensitive-context assertions. | Edge branches covered for PR2 auth capture. |
-| REFACTOR | Centralized auth audit event/outcome/reason constants in `backend/routers/auth.py` and reused them from tests. | Duplication reduced without broadening PR2 scope. |
+| RED (PR2 baseline) | Added auth lifecycle audit assertions in `backend/tests/test_routers_auth_users_roles.py` and validated auth capture in previous PR. | PR2 completed (`53` passed). |
+| GREEN (PR2 baseline) | Implemented auth instrumentation in `backend/routers/auth.py` for lifecycle success/denied/failure cases. | PR2 previously verified (`53` passed). |
+| TRIANGULATE (PR2 baseline) | Added mixed success/failure and denied-rate-limit regression coverage with context-safety checks. | PR2 accepted and merged. |
+| REFACTOR (PR2 baseline) | Centralized auth outcomes/reasons and kept PR2 scope isolated. | Completed in prior PR artifact state. |
+| RED (PR3A-1) | Added focused assertions in `backend/tests/test_routers_auth_users_roles.py` for user mutators: `USER_CREATE`, `USER_UPDATE`, `USER_DELETE`, and `USER_PASSWORD_RESET` success/denied/validation paths. | Initial targeted runs exposed missing handler audit branches and reset-password validation coverage gap. |
+| GREEN (PR3A-1) | Implemented localized user-mutator audit capture in `backend/routers/users.py` with denied-path `record_denied`, validation-failure `record_critical_change`, and success `record_critical_change` for create/update/delete/reset endpoints. | Targeted users/auth/roles router suite passes. |
+| TRIANGULATE (PR3A-1) | Added reset-password missing-body validation audit coverage after fresh review; preserved existing role/node/frontend tests and kept assertions minimal to avoid broad rewrites. | Branch coverage improved without broadening scope. |
+| REFACTOR (PR3A-1) | No structural refactor required; inserted localized instrumentation + lightweight test assertions only. |
 
-### RED
-- Added auth lifecycle assertions in `backend/tests/test_routers_auth_users_roles.py` for:
-  - wrong credentials audit failure
-  - lockout branch audit denial
-  - inactive user audit denial
-  - login success audit emission
-  - mixed success/failure regression
-  - logout audit emission
-- Initial test pass (before production-side refinements) exposed failures due test patching target mismatch and lockout-raise behavior.
+## Completed implementation
+- Added/updated user-endpoint test assertions in `backend/tests/test_routers_auth_users_roles.py` for PR3A-1 scope.
+- Added audit-event emission in `backend/routers/users.py` for:
+  - `POST /api/users/` (`USER_CREATE`)
+  - `PUT /api/users/{username}` (`USER_UPDATE`)
+  - `DELETE /api/users/{username}` (`USER_DELETE`)
+  - `POST /api/users/{username}/reset` (`USER_PASSWORD_RESET`)
+- Scope bounded: no changes to roles/nodes/backup/frontend files.
 
-### GREEN
-- Implemented auth request instrumentation in `backend/routers/auth.py`:
-  - injected `Request` into `/api/auth/token` and `/api/logout` handlers
-  - added `record_auth_event` calls for:
-    - wrong credentials (`LOGIN_FAILURE`, `FAILURE`)
-    - locked/rate-limited branch (`LOGIN_FAILURE`, `DENIED`)
-    - inactive user (`LOGIN_FAILURE`, `DENIED`)
-    - successful login (`LOGIN_SUCCESS`, `SUCCESS`)
-    - logout (`LOGOUT`, `SUCCESS`)
-  - added standardized auth constants for outcomes/events/reasons.
-- Targeted command: `cd backend && python -m pytest tests/test_routers_auth_users_roles.py` => **53 passed**.
+## Verification
+- Command: `cd .worktrees/audit-user-logs-users-roles/backend && python -m pytest tests/test_routers_auth_users_roles.py`
+- Result: **54 passed**.
 
-### TRIANGULATE
-- Added regression test for mixed success/failure sequence in the same test file to ensure event outcomes remain correct per flow.
-- Added explicit assertions that no sensitive keys (`password`, `token`, `raw_body`) are passed through audit context.
-- Added focused direct pre-check rate-limit coverage and request-context assertions so audit calls receive `Request` data needed for IP/user-agent/request-id enrichment.
+## Persisted task updates
+- `openspec/changes/audit-user-logs/tasks.md` updated:
+  - Added completed PR3A-1 users-only test coverage bullets as `- [x]`.
+  - Added completed PR3A-1 users-only users.py instrumentation bullets as `- [x]`.
+  - Kept broader PR3 roles/nodes/backup items pending.
 
-### REFACTOR
-- Centralized auth outcomes/reasons in `backend/routers/auth.py` constants and reused them in tests.
-- Kept PR2 scope limited to auth capture only; no PR3/PR4/PR5 files modified.
-
-## Validation Command(s)
-- `cd .worktrees/audit-user-logs-auth/backend && python -m pytest tests/test_routers_auth_users_roles.py` **(pass: 53/53)**
-
-## Changed files
-- `backend/routers/auth.py`
+## Files changed
+- `backend/routers/users.py`
 - `backend/tests/test_routers_auth_users_roles.py`
 - `openspec/changes/audit-user-logs/tasks.md`
 - `openspec/changes/audit-user-logs/apply-progress.md`
 
-## Completed tasks (PR2)
-- PR2 auth checklist items 1–6 marked complete in tasks:
-  1. Extend auth test coverage for auth lifecycle
-  2. Inject `Request` and call `record_auth_event` in auth/login/logout
-  3. Emit audit on denied/failure branches before exceptions
-  4. Emit success/failure with standardized reasons
-  5. Triangulation mixed-outcome regression
-  6. Refactor constants for outcomes/reasons
-
 ## Remaining tasks
-- PR3+ scopes remain unchecked and unchanged.
+- PR3 users + roles (roles still pending):
+  - `backend/tests/test_routers_auth_users_roles.py` role mutation audits
+  - `backend/routers/roles.py` role mutation audits
+- PR3B CI/system scope still pending:
+  - `backend/tests/test_routers_nodes.py`
+  - `backend/tests/test_backup_router.py`
+  - `backend/routers/nodes.py`
+  - `backend/routers/backup.py`
+
+## PR boundary / workload
+- This is **PR3A-1 (Users-only)** only, as requested.
+- No non-user scope files modified.
+- Diff is within review-budget target.
 
 ## Fresh review follow-up
-- Fresh reviewer found no blockers.
-- Addressed minor review feedback by adding request-context assertions for audit enrichment and direct pre-check rate-limit denied coverage.
+- Fresh reviewer found no blockers or majors and confirmed users-only scope.
+- Addressed the minor reset-password validation coverage gap with `test_reset_password_missing_body_records_validation_audit`.
+- Removed unused user-audit import/constant nits.

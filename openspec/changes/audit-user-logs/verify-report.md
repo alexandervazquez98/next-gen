@@ -1,152 +1,167 @@
-# Verify Report: audit-user-logs — PR2 Auth capture
+# Verify Report: audit-user-logs — PR3A-1 Users-only audit capture
 
 ## Status
 
-**PR2 verification status:** PASS for the scoped PR2 auth-capture slice.
+**PR3A-1 scoped verification status:** PASS for the approved users-only slice.
 
-**Archive status:** NOT READY. PR3/PR4/PR5 implementation tasks remain intentionally unchecked and out of scope for this verification.
+**Archive status:** NOT READY. Broader PR3 roles/nodes/backup, PR4 frontend, and PR5 optional CI-adjacent implementation tasks remain intentionally unchecked and out of scope for this users-only slice.
 
 **Blockers / critical findings:**
-- None for the scoped PR2 auth-capture slice.
-- Remaining unchecked implementation scope exists for PR3/PR4/PR5; exact unchecked task lines are listed below. This blocks archive readiness, but is expected for the approved PR2-only slice.
+- None for the scoped PR3A-1 users-only implementation.
+- Remaining unchecked implementation task markers are archive blockers for the overall OpenSpec change; they are expected remaining scope for future approved slices and are listed below.
+- Full backend suite is not green in this worktree (`98 failed, 925 passed, 1 skipped`), with failures outside the PR3A-1 changed files. Targeted PR3A-1 validation is green.
 
 ## Structured status and actionContext findings
 
-- Change: `audit-user-logs`
-- Change root: `openspec/changes/audit-user-logs`
-- Artifact store: OpenSpec
-- Artifacts present: proposal, spec, design, tasks, apply-progress
-- Verify report: created by this verification
-- Action context mode: repo-local
-- Workspace root: `C:/Users/polop/OneDrive/PROGRAMMING/next-gen/.worktrees/audit-user-logs-auth`
-- Allowed edit root: current worktree
-- Verification scope honored: PR2 auth capture only; no PR3/PR4/PR5 implementation performed.
+- Change: `audit-user-logs` (explicitly selected by parent/user task; native status preflight was ambiguous before this instruction).
+- Change root: `openspec/changes/audit-user-logs`.
+- Artifact store: OpenSpec.
+- Artifacts present: proposal, spec, design, tasks, apply-progress, verify-report.
+- Action context mode: repo-local.
+- Workspace root: `C:/Users/polop/OneDrive/PROGRAMMING/next-gen/.worktrees/audit-user-logs-users-roles`.
+- Allowed edit root: current worktree.
+- Verification artifact write only: this report was updated; no implementation edits were made by verification.
 
 ## Changed files / diff summary
 
 Observed working-tree changes before writing this report:
 
-- `backend/routers/auth.py`
+- `backend/routers/users.py`
 - `backend/tests/test_routers_auth_users_roles.py`
 - `openspec/changes/audit-user-logs/tasks.md`
-- `openspec/changes/audit-user-logs/apply-progress.md` (untracked before verify)
+- `openspec/changes/audit-user-logs/apply-progress.md`
 
-Diff size before this report:
+`git diff --numstat` before this report:
 
-- `backend/routers/auth.py`: +74 / -2
-- `backend/tests/test_routers_auth_users_roles.py`: +277 / -0
-- `openspec/changes/audit-user-logs/tasks.md`: +40 / -40 formatting/checklist updates
+```text
+201	14	backend/routers/users.py
+119	46	backend/tests/test_routers_auth_users_roles.py
+47	53	openspec/changes/audit-user-logs/apply-progress.md
+10	0	openspec/changes/audit-user-logs/tasks.md
+```
 
-Behavior changed in PR2: auth login and logout handlers now pass `Request` to audit emission and record `LOGIN_FAILURE`, `LOGIN_SUCCESS`, and `LOGOUT` events with standardized outcomes/reasons before relevant denied/failure exceptions and after successful auth lifecycle actions. Tests assert safe audit side effects and no password/token/raw-body context persistence.
+Behavior changed in PR3A-1: `backend/routers/users.py` now emits audit events for users-only mutating endpoints:
+
+- `POST /api/users/` => `USER_CREATE` for success, duplicate username validation failure, and denied attempts.
+- `PUT /api/users/{username}` => `USER_UPDATE` for success, not-found validation failure, and denied attempts.
+- `DELETE /api/users/{username}` => `USER_DELETE` for success, not-found validation failure, and denied attempts.
+- `POST /api/users/{username}/reset` => `USER_PASSWORD_RESET` for success, not-found/missing-body validation failure, and denied attempts.
+
+The implementation uses allow-listed target/context fields and does not pass submitted user passwords or reset passwords to audit context. Endpoint status codes and existing response behavior are preserved by the targeted suite.
 
 ## Spec coverage
 
-| Requirement / scenario | PR2 evidence | Result |
+| Requirement / scenario | PR3A-1 evidence | Result |
 |---|---|---|
-| Authentication lifecycle event capture | `backend/routers/auth.py` emits `LOGIN_FAILURE`, `LOGIN_SUCCESS`, and `LOGOUT`; targeted tests cover wrong credentials, inactive user, pre-check lockout, threshold lockout, success, logout, and mixed success/failure. | Covered for PR2 |
-| Auth failure redacts sensitive inputs | Auth router does not pass password/token/raw body into `record_auth_event`; tests assert absent `password`, `token`, `raw_body` in audit context for wrong credentials. Foundation `audit_service` sanitizes sensitive keys. | Covered for PR2 |
-| Request metadata IP/user-agent/request-id | Tests assert `Request` is passed with client, user-agent, and request-id headers for representative login failure and pre-check denial paths; success/logout paths also pass `Request` to `record_auth_event`, and `audit_service.record_auth_event` extracts IP and user-agent. | Covered for PR2 |
-| Critical change capture | PR3 scope, intentionally unchecked and unimplemented. | Deferred |
-| Frontend audit UI | PR4 scope, intentionally unchecked and unimplemented. | Deferred |
-| Optional CI-adjacent completion | PR5 scope, intentionally unchecked and unimplemented. | Deferred |
+| Critical change attempts are captured with outcomes | Users mutator endpoints call `record_critical_change` for `SUCCESS` and `VALIDATION_FAILURE`, and `record_denied` before existing `403` branches. Targeted tests assert event types/outcomes for success/failure and audit side effects for denied branches. | Covered for users-only slice |
+| Sensitive-data exclusion | `users.py` passes changed field names and permission metadata only; create/reset password values are not included in audit context. Tests mock audit calls without asserting password propagation. | Covered for users-only slice; foundation service redaction remains PR1 coverage |
+| Endpoint behavior preservation | Targeted auth/users/roles router suite passes: `54 passed`. Existing user mutator status codes remain green. | Covered |
+| Roles/permissions capture | Intentionally pending for PR3A-2. | Deferred |
+| CI/nodes and backup config capture | Intentionally pending for PR3B. | Deferred |
+| Frontend audit table / route | Intentionally pending for PR4. | Deferred |
 
 ## Task completion status
 
-PR2 tasks are checked complete in `tasks.md` and match observed code/test changes:
+PR3A-1 users-only completed task bullets in `tasks.md` match observed code/test changes:
 
-- RED auth lifecycle tests added in `backend/tests/test_routers_auth_users_roles.py`.
-- `Request` injected into `login_for_access_token` and `logout` in `backend/routers/auth.py`.
-- Failure/denied branches emit audit before exceptions for incorrect credentials, inactive user, and rate-limit branches.
-- Success paths emit `LOGIN_SUCCESS` / `LOGOUT` with standardized safe reasons.
-- Mixed outcome regression test added.
-- Outcome/reason/event constants centralized in `backend/routers/auth.py` and imported by tests.
+- Completed PR3A-1 RED users-only test bullet is checked and backed by modifications in `backend/tests/test_routers_auth_users_roles.py`.
+- Completed PR3A-1 users.py instrumentation bullet is checked and backed by modifications in `backend/routers/users.py`.
+- Broader PR3 parent bullets remain unchecked because roles/nodes/backup are intentionally not completed in this slice.
 
 Remaining unchecked implementation task lines from `tasks.md`:
 
 ```text
-112:- [ ] **RED:** Extend `backend/tests/test_routers_auth_users_roles.py` with user/role success, denied, and failure-path expectations for audit calls/events:
-116:- [ ] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
-121:- [ ] **RED:** Extend `backend/tests/test_backup_router.py` with `PUT /api/backup/config` denied and success assertions.
-122:- [ ] In `backend/routers/users.py`, add audit calls around each mutating action:
-125:- [ ] In `backend/routers/roles.py`, add the same denied/success capture pattern:
-127:- [ ] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
-130:- [ ] In `backend/routers/backup.py`, add capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) and denied attempt capture before admin-only refusal.
-131:- [ ] **TRIANGULATE:** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
-132:- [ ] **REFACTOR:** Extract a small shared helper in `backend/services/audit_service.py` for standard target/context shaping used across nodes/users/roles/backup.
-154:- [ ] **RED:** Add `frontend/components/AuditLogPage.test.tsx` asserting:
-159:- [ ] **RED:** Update `frontend/components/RoleManager.test.tsx` to include `AUDIT_VIEW` in permission picker assertions and round-trip selection.
-160:- [ ] Add `frontend/components/AuditLogPage.tsx` with:
-164:- [ ] Add route + nav visibility in `frontend/App.tsx`:
-167:- [ ] Add minimal query utility in `frontend/services/auditQueries.ts` (if component-level fetch becomes noisy), otherwise keep request logic in component.
-168:- [ ] Add/update `frontend/components/UserManager.tsx` and `frontend/components/RoleManager.tsx` permission option lists to include `AUDIT_VIEW`.
-169:- [ ] **TRIANGULATE:** Add negative filter cases in `frontend/components/AuditLogPage.test.tsx` (empty result, out-of-range page, invalid actor/time)
-170:- [ ] **REFACTOR:** Normalize date serialization and parameter naming to match API contract (`page_size` max 100).
-188:- [ ] **RED:** Add tests for each CI-adjacent router selected for inclusion:
-192:- [ ] Add capture hooks in:
-196:- [ ] Preserve PR3 event semantics (`DENIED`/`VALIDATION_FAILURE`/`SUCCESS`) and keep context allow-listed.
-197:- [ ] Validate only added paths do not regress existing router behavior; run targeted backend command.
+tasks.md:112: - [ ] **RED:** Extend `backend/tests/test_routers_auth_users_roles.py` with user/role success, denied, and failure-path expectations for audit calls/events:
+tasks.md:121: - [ ] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
+tasks.md:126: - [ ] **RED:** Extend `backend/tests/test_backup_router.py` with `PUT /api/backup/config` denied and success assertions.
+tasks.md:127: - [ ] In `backend/routers/users.py`, add audit calls around each mutating action:
+tasks.md:135: - [ ] In `backend/routers/roles.py`, add the same denied/success capture pattern:
+tasks.md:137: - [ ] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
+tasks.md:140: - [ ] In `backend/routers/backup.py`, add capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) and denied attempt capture before admin-only refusal.
+tasks.md:141: - [ ] **TRIANGULATE:** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
+tasks.md:142: - [ ] **REFACTOR:** Extract a small shared helper in `backend/services/audit_service.py` for standard target/context shaping used across nodes/users/roles/backup.
+tasks.md:164: - [ ] **RED:** Add `frontend/components/AuditLogPage.test.tsx` asserting:
+tasks.md:169: - [ ] **RED:** Update `frontend/components/RoleManager.test.tsx` to include `AUDIT_VIEW` in permission picker assertions and round-trip selection.
+tasks.md:170: - [ ] Add `frontend/components/AuditLogPage.tsx` with:
+tasks.md:174: - [ ] Add route + nav visibility in `frontend/App.tsx`:
+tasks.md:177: - [ ] Add minimal query utility in `frontend/services/auditQueries.ts` (if component-level fetch becomes noisy), otherwise keep request logic in component.
+tasks.md:178: - [ ] Add/update `frontend/components/UserManager.tsx` and `frontend/components/RoleManager.tsx` permission option lists to include `AUDIT_VIEW`.
+tasks.md:179: - [ ] **TRIANGULATE:** Add negative filter cases in `frontend/components/AuditLogPage.test.tsx` (empty result, out-of-range page, invalid actor/time)
+tasks.md:180: - [ ] **REFACTOR:** Normalize date serialization and parameter naming to match API contract (`page_size` max 100).
+tasks.md:198: - [ ] **RED:** Add tests for each CI-adjacent router selected for inclusion:
+tasks.md:202: - [ ] Add capture hooks in:
+tasks.md:206: - [ ] Preserve PR3 event semantics (`DENIED`/`VALIDATION_FAILURE`/`SUCCESS`) and keep context allow-listed.
+tasks.md:207: - [ ] Validate only added paths do not regress existing router behavior; run targeted backend command.
 ```
 
-These are remaining scope for future PR3/PR4/PR5 slices and are archive blockers.
+These are critical completeness blockers for archive readiness, but expected remaining scope for the approved partial slice.
 
 ## Test / validation commands
 
 | Command | Result | Evidence |
 |---|---:|---|
-| `cd backend && python -m pytest tests/test_routers_auth_users_roles.py` | PASS | 53 passed, 42 warnings in 2.86s |
-| `git diff --check` | PASS | No whitespace errors |
-| `git diff --name-only` | PASS | Changed files limited to PR2 auth/test/tasks/apply-progress before verify report |
-| `grep -nE '^\\s*- \\[ \\]' openspec/changes/audit-user-logs/tasks.md` | PASS/INFO | Confirmed PR3/PR4/PR5 unchecked lines remain |
+| `cd backend && python -m pytest tests/test_routers_auth_users_roles.py` | PASS | `54 passed, 44 warnings in 2.38s` |
+| `git diff --check` | PASS | No whitespace errors; Git emitted only LF-to-CRLF warning for `apply-progress.md`. |
+| `git diff --name-only` | PASS/INFO | Changed files limited to users router, shared auth/users/roles router test file, tasks, and apply-progress before verify report. |
+| `git diff --name-only \| grep -E '(^frontend/|backend/routers/(roles|nodes|backup)\.py|backend/tests/(test_routers_nodes|test_backup_router)\.py)' \|\| true` | PASS | No roles/nodes/backup/frontend path changes reported. |
+| `grep -nE '^\s*- \[ \]' openspec/changes/audit-user-logs/tasks.md` | INFO | Confirmed broader PR3/PR4/PR5 unchecked lines remain. |
+| `cd backend && python -m pytest` | FAIL | `98 failed, 925 passed, 1 skipped, 259 warnings in 8.62s`; failures are outside PR3A-1 changed files and include auth permission enum/cookie config, CLI worker, dictionaries/events/links/metrics/nodes/RTU suites. |
 
-Warnings from pytest are pre-existing style/deprecation warnings (SQLAlchemy `declarative_base`, FastAPI `on_event`, `datetime.utcnow`, Pydantic `.dict()`); no test failures.
+Warnings from targeted pytest are deprecation warnings (`declarative_base`, FastAPI `on_event`, `datetime.utcnow`, Pydantic `.dict()`), plus a Pydantic deprecation warning from the changed `users.py` update path. They did not fail targeted validation.
 
 ## Strict TDD compliance
 
+Strict TDD is active via `openspec/config.yaml` (`sdd.tdd_policy: strict_tdd`) and the parent prompt.
+
 | Check | Result | Details |
 |---|---|---|
-| Strict TDD active | ✅ | `openspec/config.yaml` has `sdd.tdd_policy: strict_tdd`; parent prompt also declared strict TDD. |
-| External support loaded | ✅ | Global `~/.pi/agent/gentle-ai/support/strict-tdd-verify.md` loaded; no project-local override found. |
-| TDD evidence reported | ✅ | `apply-progress.md` now contains a RED/GREEN/TRIANGULATE/REFACTOR evidence table plus narrative details. |
-| RED cross-reference | ✅ | Reported test file `backend/tests/test_routers_auth_users_roles.py` exists and contains added auth lifecycle audit tests. Historical failing output was not available in the artifact; named RED cases are present. |
-| GREEN confirmed | ✅ | Targeted command passes now: 53/53. |
-| TRIANGULATE confirmed | ✅ | Mixed success/failure regression, pre-check rate-limit, threshold lockout, inactive user, success, logout, and sensitive-context assertions exist. |
-| REFACTOR evidence | ✅ | Constants for event names, outcomes, and reasons are centralized in `backend/routers/auth.py` and reused by tests. |
-| Safety net | ✅ | Existing `test_routers_auth_users_roles.py` suite still passes after modification. |
+| External guidance loaded | ✅ | Global `~/.pi/agent/gentle-ai/support/strict-tdd-verify.md` loaded; project-local override was not present. |
+| TDD evidence table present | ✅ | `apply-progress.md` contains `## TDD Cycle Evidence` with RED/GREEN/TRIANGULATE/REFACTOR rows for PR3A-1. |
+| RED evidence cross-referenced | ✅ | Reported test file `backend/tests/test_routers_auth_users_roles.py` exists and contains added users audit assertions for create/update/delete/reset success, denied, and validation paths. Historical failing output was summarized but not preserved as raw output. |
+| GREEN confirmed | ✅ | Targeted PR3A-1 command passes now: `54 passed`. |
+| TRIANGULATE adequate | ✅ | User mutators cover multiple outcomes (`SUCCESS`, `VALIDATION_FAILURE`, denied/403) across four endpoint families; reset missing-body validation gap was added per fresh review follow-up. |
+| REFACTOR evidence | ✅ | Implementation stayed localized in `users.py`; no shared helper extraction was required for the users-only slice, and broader helper task remains pending. |
+| Safety net | ✅ scoped / ⚠️ full | Targeted modified test file passes; full backend suite fails outside this slice and should be handled separately or baselined by parent. |
 
-**TDD compliance conclusion:** Runtime behavior, tests, and strict-TDD artifact evidence are green for the scoped PR2 auth-capture slice.
+**TDD compliance conclusion:** Scoped PR3A-1 strict-TDD evidence is present and current targeted GREEN is confirmed. No strict-TDD blocker for the users-only slice.
 
 ## Test layer distribution
 
 | Layer | Tests | Files | Tools |
 |---|---:|---:|---|
-| Backend API/router integration with mocked dependencies | 53 total in targeted file; 7 new PR2 auth-audit cases observed | 1 | pytest + FastAPI TestClient |
+| Backend API/router integration with mocked repositories/audit service | 54 total targeted tests; PR3A-1 users audit assertions added within existing users test classes | 1 | pytest + FastAPI TestClient |
 | E2E | 0 | 0 | Not used |
+
+Coverage analysis skipped; no changed-file coverage command was configured for this verification.
 
 ## Assertion quality
 
-**Assertion quality:** ✅ No tautologies, ghost loops, smoke-only tests, CSS assertions, or type-only assertions were found in the PR2-added tests. The audit tests invoke production routes and assert HTTP outcomes plus audit side-effect arguments. Mock call counts are paired with semantic assertions on event type, outcome, actor, reason, and request context.
+**Assertion quality:** ✅ No tautologies, ghost loops, type-only-only assertions, CSS assertions, or assertions without production route calls were found in the PR3A-1 changed tests. The added tests call real FastAPI routes and assert HTTP outcomes plus audit side effects. Note: denied-path tests mainly assert `record_denied` call occurrence with the HTTP 403 outcome; this is acceptable for the slice but future roles/nodes/backup tests should also assert target/reason fields where practical.
 
-## Security / redaction / error behavior findings
+## Security / redaction / endpoint behavior findings
 
-- No raw password, token, Authorization header, cookies, or request body is passed by PR2 auth hooks to `record_auth_event`.
-- Failure reasons are standardized safe strings: `incorrect_credentials`, `inactive_user`, `rate_limited`.
-- Audit capture is performed before raising for wrong credentials, inactive user, and rate-limit/lockout branches.
-- Successful login and logout emit success events after relevant auth/session operations.
-- Fresh review evidence from `apply-progress.md` was incorporated: reviewer found no blockers; request-context and pre-check rate-limit coverage were addressed.
+- No roles/nodes/backup/frontend files are changed in this slice.
+- Users mutator audit context is allow-listed; it includes changed field names and permission metadata, not raw request bodies.
+- Create and reset password values are not passed to `record_critical_change` context.
+- Denied attempts are captured before existing `403` raises.
+- Validation/not-found/missing-password handler branches emit `VALIDATION_FAILURE` before raising existing errors.
+- Successful user mutations emit `SUCCESS` after repository/database mutation paths.
 
 ## Review workload / PR boundary findings
 
-- Tasks forecast chained PRs and `auto-chain`; PR2 implementation respected the slice boundary.
-- Observed diff before this verify report was limited to auth router, auth/users/roles test file, tasks, and apply-progress.
-- No implementation changes were observed in PR3 routers (`users.py`, `roles.py`, `nodes.py`, `backup.py`) or PR4 frontend files.
-- PR2 code/test diff is approximately 351 inserted / 2 deleted lines plus task formatting, within the 400-line review budget for the focused slice before adding this verify artifact.
+- Tasks forecast chained PRs with `Delivery strategy: auto-chain` and `Chain strategy: stacked-to-main`.
+- PR3 was split further into PR3A-1 users-only, which is consistent with the line-gate intent to keep reviewable slices under budget.
+- Observed implementation/test diff is 201+119 inserted lines plus artifact updates; total changed code/test insertions are within the 400-line review budget target.
+- Scope boundary respected: no changed paths under frontend, roles router, nodes router, backup router, nodes tests, or backup tests.
+- Fresh review evidence from `apply-progress.md` incorporated: no blockers/majors, users-only scope confirmed, minor reset-password validation coverage and unused import/constant nits addressed by parent before this verification.
 
 ## Residual risks
 
-- Audit write failures are intentionally swallowed by `audit_service._persist_event` per design; PR2 tests mock audit calls and do not simulate persistence failure effects on auth flow.
-- Full backend suite was not run in this PR2-scoped verification; targeted auth router suite passed.
-- PR3/PR4/PR5 remain incomplete by design and block archive readiness.
+- Full backend suite is currently failing outside the PR3A-1 changed files; this is a repo/worktree health risk but not a targeted users-only blocker based on current evidence.
+- Broad PR3 parent task checkboxes remain unchecked even though PR3A-1 sub-bullets are checked; archive is not ready until roles/nodes/backup (and later frontend/optional scope) are completed or formally reconciled.
+- Denied-path assertions are intentionally lightweight; future slices should assert semantic denied target/reason fields more deeply where budget allows.
+- The changed `users.py` uses Pydantic `.dict()`, matching existing style but producing a deprecation warning under Pydantic v2.
 
 ## Next recommended action
 
-Proceed to parent review of the PR2 verification outcome. If accepted, continue with the next approved SDD phase/slice only: PR3 critical change capture. Do not archive until PR3/PR4/PR5 scope is completed or formally de-scoped/reconciled.
+Proceed with parent review of PR3A-1 users-only. If accepted, the next implementation slice should be PR3A-2 roles audit capture or the next approved chained slice; do not archive `audit-user-logs` yet and do not broaden this PR3A-1 slice into roles/nodes/backup/frontend.

@@ -946,7 +946,10 @@ class TestUsersCreate:
         # user.disabled and user.force_password_change which don't exist
         # on UserCreate. We must mock the repo call entirely.
         with patch.object(user_repo, "get_user_by_username", return_value=None):
-            with patch.object(user_repo, "create_user", return_value=new_pg_user):
+            with (
+                patch.object(user_repo, "create_user", return_value=new_pg_user),
+                patch("routers.users.audit_service.record_critical_change") as mock_record,
+            ):
                 app.dependency_overrides[get_current_active_user] = (
                     override_get_current_active_user
                 )
@@ -962,13 +965,18 @@ class TestUsersCreate:
                     },
                 )
 
-                assert response.status_code == 200
-                data = response.json()
-                assert data["username"] == "newuser"
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "newuser"
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_CREATE"
+        assert kwargs["outcome"] == "SUCCESS"
+        assert kwargs["target_type"] == "user"
+        assert kwargs["target_id"] == "newuser"
 
-                app.dependency_overrides.pop(get_current_active_user, None)
-                app.dependency_overrides.pop(get_pg_db, None)
-
+        app.dependency_overrides.pop(get_current_active_user, None)
+        app.dependency_overrides.pop(get_pg_db, None)
     def test_create_user_duplicate_username(self, mock_db):
         """Creating a user with existing username should return 400."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
@@ -989,15 +997,20 @@ class TestUsersCreate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.post(
-            "/api/users/",
-            json={
-                "username": "existing_user",
-                "password": "SecureP@ss123",
-            },
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post(
+                "/api/users/",
+                json={
+                    "username": "existing_user",
+                    "password": "SecureP@ss123",
+                },
+            )
 
         assert response.status_code == 400
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_CREATE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1017,15 +1030,17 @@ class TestUsersCreate:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/users/",
-            json={
-                "username": "newuser",
-                "password": "SecureP@ss123",
-            },
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.post(
+                "/api/users/",
+                json={
+                    "username": "newuser",
+                    "password": "SecureP@ss123",
+                },
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1058,12 +1073,17 @@ class TestUsersUpdate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.put(
-            "/api/users/testuser",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.put(
+                "/api/users/testuser",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 200
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_UPDATE"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1085,12 +1105,17 @@ class TestUsersUpdate:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.put(
-            "/api/users/nonexistent",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.put(
+                "/api/users/nonexistent",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 404
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_UPDATE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1110,12 +1135,14 @@ class TestUsersUpdate:
             override_get_current_active_user
         )
 
-        response = client.put(
-            "/api/users/testuser",
-            json={"role": "ADMIN"},
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.put(
+                "/api/users/testuser",
+                json={"role": "ADMIN"},
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1143,11 +1170,16 @@ class TestUsersDelete:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.delete("/api/users/testuser")
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.delete("/api/users/testuser")
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_DELETE"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1169,9 +1201,14 @@ class TestUsersDelete:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.delete("/api/users/nonexistent")
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.delete("/api/users/nonexistent")
 
         assert response.status_code == 404
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_DELETE"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1191,9 +1228,11 @@ class TestUsersDelete:
             override_get_current_active_user
         )
 
-        response = client.delete("/api/users/testuser")
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.delete("/api/users/testuser")
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1224,14 +1263,19 @@ class TestUsersResetPassword:
         )
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        response = client.post(
-            "/api/users/target_user/reset",
-            json={"new_password": "ResetP@ss123"},
-        )
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post(
+                "/api/users/target_user/reset",
+                json={"new_password": "ResetP@ss123"},
+            )
 
         assert response.status_code == 200
         data = response.json()
         assert "Password reset" in data["message"]
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_PASSWORD_RESET"
+        assert kwargs["outcome"] == "SUCCESS"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1253,14 +1297,41 @@ class TestUsersResetPassword:
 
         # Sending empty JSON body triggers Pydantic validation error (422)
         # because UserResetRequest requires new_password.
-        # The endpoint's own check (reset_data is None -> 400) is unreachable
-        # via JSON body since Pydantic rejects it first.
         response = client.post(
             "/api/users/target_user/reset",
             json={},
         )
 
         assert response.status_code == 422
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_reset_password_missing_body_records_validation_audit(self, mock_db):
+        """Reset without a body should exercise the handler validation audit branch."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        def override_get_db():
+            yield mock_db
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = (
+            override_get_current_active_user
+        )
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch("routers.users.audit_service.record_critical_change") as mock_record:
+            response = client.post("/api/users/target_user/reset")
+
+        assert response.status_code == 400
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == "USER_PASSWORD_RESET"
+        assert kwargs["outcome"] == "VALIDATION_FAILURE"
+        assert kwargs["reason"] == "password_required"
+        assert kwargs["target_id"] == "target_user"
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
@@ -1280,12 +1351,14 @@ class TestUsersResetPassword:
             override_get_current_active_user
         )
 
-        response = client.post(
-            "/api/users/target_user/reset",
-            json={"new_password": "ResetP@ss123"},
-        )
+        with patch("routers.users.audit_service.record_denied") as mock_record:
+            response = client.post(
+                "/api/users/target_user/reset",
+                json={"new_password": "ResetP@ss123"},
+            )
 
         assert response.status_code == 403
+        mock_record.assert_called_once()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 

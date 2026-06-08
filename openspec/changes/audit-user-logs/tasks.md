@@ -113,6 +113,11 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `POST /api/users/`, `PUT /api/users/{username}`, `DELETE /api/users/{username}`, `POST /api/users/{username}/reset`
    - `POST /api/roles/`, `PUT /api/roles/{name}`, `DELETE /api/roles/{name}`
    - denied attempts before `403` and validation attempts where actionable.
+- [x] **RED (PR3A-1 users-only):** Added minimal targeted assertions for user mutating endpoints in `backend/tests/test_routers_auth_users_roles.py` for success, denied, and validation/failure branches:
+   - `USER_CREATE` success + duplicate username + forbidden
+   - `USER_UPDATE` success + not found + forbidden
+   - `USER_DELETE` success + not found + forbidden
+   - `USER_PASSWORD_RESET` success + forbidden
 - [ ] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
    - `POST /api/nodes` (create/update path)
    - `DELETE /api/nodes/{node_id}`
@@ -122,6 +127,11 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
 - [ ] In `backend/routers/users.py`, add audit calls around each mutating action:
    - denied-path capture before permission `HTTPException` (`DENIED`)
    - success-path captures with `event_type` (`USER_CREATE`, `USER_UPDATE`, `USER_DELETE`, `USER_PASSWORD_RESET`)
+- [x] In `backend/routers/users.py` (PR3A-1 users-only), added user mutating endpoint audit calls for denied + `VALIDATION_FAILURE` + success paths on:
+   - `POST /api/users/`
+   - `PUT /api/users/{username}`
+   - `DELETE /api/users/{username}`
+   - `POST /api/users/{username}/reset`
 - [ ] In `backend/routers/roles.py`, add the same denied/success capture pattern:
    - `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE` with changed permission names in allow-listed context where needed.
 - [ ] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
