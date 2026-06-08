@@ -67,3 +67,13 @@
 - Notable implementation risk handled: role mutator audit calls use request-level DB session via `Depends(get_pg_db)` to keep existing audit persistence behavior consistent.
 - Added validation-failure audit assertions for invalid permission create/update branches after fresh review.
 - Current acceptance scope confirms contract for this slice, while PR3B/PR4 remain explicitly out-of-scope in this PR.
+
+
+## PR3B-1 (nodes-only) implementation progress
+- Scope: nodes mutators only (`POST /api/nodes`, `DELETE /api/nodes/{node_id}`, `PUT /api/nodes/{node_id}/metadata`).
+- RED: Added failing-path and success-path audit assertions for nodes mutator endpoints before/with implementation.
+- GREEN: Implemented audit capture in `backend/routers/nodes.py` for denied/success/validation outcomes.
+- TRIANGULATE: Added mixed outcomes across create, delete, metadata mutator tests, and AI metadata field-restriction validation audit after fresh review.
+- REFACTOR: Consolidated audit recording through `nodes.py` helper functions and kept slice confined to nodes router/tests.
+- Verification: `cd backend && python -m pytest tests/test_routers_nodes.py` -> **39 passed**.
+- Remaining: PR3B-2 backup slice (`backend/routers/backup.py`, `backend/tests/test_backup_router.py`) and PR4/PR5 continue.

@@ -124,7 +124,7 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `ROLE_DELETE` success + not found + system-role/role-assignment failures + forbidden
 - [x] **RED:** In `backend/routers/roles.py`, added audit calls for role mutator denied/success/failure paths:
    - `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE` on create/update/delete endpoints.
-- [ ] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
+- [x] **RED:** Extend `backend/tests/test_routers_nodes.py` with audit assertions for:
    - `POST /api/nodes` (create/update path)
    - `DELETE /api/nodes/{node_id}`
    - `PUT /api/nodes/{node_id}/metadata`
@@ -140,11 +140,11 @@ If this PR is projected to exceed ~400 changed lines, split by moving **users/ro
    - `POST /api/users/{username}/reset`
 - [x] In `backend/routers/roles.py`, add the same denied/success capture pattern:
    - `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE` with changed permission names in allow-listed context where needed.
-- [ ] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
-   - `POST /nodes`, `DELETE /nodes/{node_id}`, `PUT /nodes/{node_id}/metadata`.
-   - event naming per design (`CI_CREATE_OR_UPDATE`, `CI_DELETE`, `CI_UPDATE_METADATA`) with safe target fields.
+- [x] In `backend/routers/nodes.py`, add critical CI mutator capture at router boundary:
+  - `POST /nodes`, `DELETE /nodes/{node_id}`, `PUT /nodes/{node_id}/metadata`.
+  - event naming per design (`CI_CREATE_OR_UPDATE`, `CI_DELETE`, `CI_UPDATE_METADATA`) with safe target fields.
 - [ ] In `backend/routers/backup.py`, add capture for `PUT /api/backup/config` (`SYSTEM_CONFIG_UPDATE`) and denied attempt capture before admin-only refusal.
-- [ ] **TRIANGULATE:** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
+- [x] **TRIANGULATE (PR3B-1):** Add/adjust tests for denied + validation outcomes (`DENIED` vs `VALIDATION_FAILURE`) for each domain capture.
 - [ ] **REFACTOR:** Extract a small shared helper in `backend/services/audit_service.py` for standard target/context shaping used across nodes/users/roles/backup.
 
 **PR 3 validation (backend):**
