@@ -22,6 +22,8 @@ Strategy:
 """
 
 import pytest
+from datetime import datetime, timedelta
+from fastapi import HTTPException
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -54,6 +56,19 @@ from services.auth_service import get_current_active_user
 from repositories import user_repo
 from middleware import rate_limit
 from models.rate_limit_attempt import RateLimitAttempt
+from routers.auth import (
+    AUDIT_OUTCOME_DENIED,
+    AUDIT_OUTCOME_FAILURE,
+    AUDIT_OUTCOME_SUCCESS,
+    AUTH_EVENT_LOGIN_FAILURE,
+    AUTH_EVENT_LOGIN_SUCCESS,
+    AUTH_EVENT_LOGOUT,
+    AUTH_REASON_INCORRECT_CREDENTIALS,
+    AUTH_REASON_INACTIVE_USER,
+    AUTH_REASON_RATE_LIMITED,
+    AUTH_REASON_LOGIN_SUCCESS,
+    AUTH_REASON_LOGOUT_SUCCESS,
+)
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -153,6 +168,17 @@ def _make_mock_pg_user(
     mock.email = None
     mock.force_password_change = False
     return mock
+
+
+def _assert_audit_request_context(kwargs: dict, user_agent: str | None = None, request_id: str | None = None) -> None:
+    """Assert auth audit calls receive a Request with context needed for IP/UA enrichment."""
+    request = kwargs["request"]
+    if user_agent:
+        assert request.headers["user-agent"] == user_agent
+    if request_id:
+        assert request.headers["x-request-id"] == request_id
+    assert request.client is not None
+    assert request.client.host
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +348,257 @@ class TestAuthToken:
         assert response.status_code == 400
 
         app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_wrong_credentials_records_audit_failure(self, mock_db):
+        # Failed login should emit a LOGIN_FAILURE audit event with safe context.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=False),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-1"},
+            )
+
+        assert response.status_code == 401
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_INCORRECT_CREDENTIALS
+        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-1")
+        context = kwargs.get("context") or {}
+        assert "password" not in context
+        assert "token" not in context
+        assert "raw_body" not in context
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_precheck_rate_limit_records_audit_denied(self, mock_db):
+        # Already locked identities should emit audit before the pre-check 429 response.
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch(
+                "routers.auth.check_rate_limit",
+                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts."),
+            ),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-precheck"},
+            )
+
+        assert response.status_code == 429
+        mock_record.assert_called_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
+        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-precheck")
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_rate_limit_locked_records_audit_denied(self, mock_db):
+        # Rate-limited login should emit a denied audit event before 429.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        lock_time = datetime.utcnow() + timedelta(minutes=15)
+        attempt_info = type("AttemptInfo", (), {"locked_until": lock_time, "count": 4})
+
+        with (
+            patch("routers.auth.verify_password", return_value=False),
+            patch("routers.auth.increment_attempts", return_value=attempt_info),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+            patch(
+                "routers.auth.raise_rate_limit_locked",
+                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts. Account temporarily locked.", headers={"Retry-After": "900"}),
+            ),
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong_password"},
+            )
+
+        assert response.status_code == 429
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_inactive_user_records_audit_denied(self, mock_db):
+        # Inactive users should emit denied login audits before 400 response.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            is_active=False,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=True),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
+
+        assert response.status_code == 400
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_INACTIVE_USER
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_success_records_audit_success(self, mock_db):
+        # Successful login should emit LOGIN_SUCCESS audit event.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch("routers.auth.verify_password", return_value=True),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-2"},
+            )
+
+        assert response.status_code == 200
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGIN_SUCCESS
+        assert kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_LOGIN_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_login_mixed_outcome_sequence_records_distinct_audit_events(self, mock_db):
+        # Mixed failure/success login attempts should capture both outcomes.
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$29000$abc",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with (
+            patch(
+                "routers.auth.verify_password",
+                side_effect=[False, True],
+            ),
+            patch("routers.auth.audit_service.record_auth_event") as mock_record,
+        ):
+            failure = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "wrong"},
+            )
+            success = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "right"},
+            )
+
+        assert failure.status_code == 401
+        assert success.status_code == 200
+        assert len(mock_record.call_args_list) >= 2
+        calls = mock_record.call_args_list
+        assert calls[0].kwargs["event_type"] == AUTH_EVENT_LOGIN_FAILURE
+        assert calls[0].kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
+        assert calls[1].kwargs["event_type"] == AUTH_EVENT_LOGIN_SUCCESS
+        assert calls[1].kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_logout_records_audit_event(self, mock_db):
+        # Successful logout should emit LOGOUT audit event.
+        fake_user = _make_pydantic_user(username="testuser", role="OPERATOR")
+
+        def override_get_db():
+            yield mock_db
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+        with patch("routers.auth.audit_service.record_auth_event") as mock_record:
+            response = client.post(
+                "/api/auth/logout",
+                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-3"},
+            )
+
+        assert response.status_code == 200
+        assert mock_record.call_count == 1
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["event_type"] == AUTH_EVENT_LOGOUT
+        assert kwargs["outcome"] == AUDIT_OUTCOME_SUCCESS
+        assert kwargs["actor_username"] == "testuser"
+        assert kwargs["reason"] == AUTH_REASON_LOGOUT_SUCCESS
+
+        app.dependency_overrides.pop(get_pg_db, None)
+        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 # ---------------------------------------------------------------------------

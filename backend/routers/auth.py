@@ -26,6 +26,7 @@ from services.session_policy import (
     session_policy_cookie_max_age_seconds,
     access_token_max_age_seconds,
 )
+from services import audit_service
 from utils.security import verify_password, get_password_hash
 from postgres_db import get_pg_db
 from repositories import user_repo
@@ -80,6 +81,22 @@ router = APIRouter(
 )
 
 
+# Standardized audit outcomes and event names for auth lifecycle capture.
+AUDIT_OUTCOME_SUCCESS = "SUCCESS"
+AUDIT_OUTCOME_FAILURE = "FAILURE"
+AUDIT_OUTCOME_DENIED = "DENIED"
+
+AUTH_EVENT_LOGIN_SUCCESS = "LOGIN_SUCCESS"
+AUTH_EVENT_LOGIN_FAILURE = "LOGIN_FAILURE"
+AUTH_EVENT_LOGOUT = "LOGOUT"
+
+AUTH_REASON_INCORRECT_CREDENTIALS = "incorrect_credentials"
+AUTH_REASON_INACTIVE_USER = "inactive_user"
+AUTH_REASON_RATE_LIMITED = "rate_limited"
+AUTH_REASON_LOGIN_SUCCESS = "login_success"
+AUTH_REASON_LOGOUT_SUCCESS = "logout_success"
+
+
 def _set_access_cookie(response: Response, token: str, domain: str | None = None, max_age_seconds: int | None = None) -> None:
     """Set HttpOnly cookie for access token."""
     response.set_cookie(
@@ -120,12 +137,24 @@ def _clear_refresh_cookie(response: Response, domain: str | None = None) -> None
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
+    request: Request,
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_pg_db),
 ):
-    # Check rate limit before processing
-    check_rate_limit(form_data.username)
+    try:
+        # Check rate limit before processing
+        check_rate_limit(form_data.username)
+    except HTTPException:
+        audit_service.record_auth_event(
+            db=db,
+            request=request,
+            event_type=AUTH_EVENT_LOGIN_FAILURE,
+            outcome=AUDIT_OUTCOME_DENIED,
+            actor_username=form_data.username,
+            reason=AUTH_REASON_RATE_LIMITED,
+        )
+        raise
 
     # Verify user in Postgres
     user = user_repo.get_user_by_username(db, form_data.username)
@@ -134,7 +163,24 @@ async def login_for_access_token(
         # Increment failed attempts and return 429 as soon as this failure locks the identity.
         attempt_info = increment_attempts(form_data.username)
         if attempt_info.locked_until:
+            audit_service.record_auth_event(
+                db=db,
+                request=request,
+                event_type=AUTH_EVENT_LOGIN_FAILURE,
+                outcome=AUDIT_OUTCOME_DENIED,
+                actor_username=form_data.username,
+                reason=AUTH_REASON_RATE_LIMITED,
+            )
             raise_rate_limit_locked(attempt_info.locked_until)
+
+        audit_service.record_auth_event(
+            db=db,
+            request=request,
+            event_type=AUTH_EVENT_LOGIN_FAILURE,
+            outcome=AUDIT_OUTCOME_FAILURE,
+            actor_username=form_data.username,
+            reason=AUTH_REASON_INCORRECT_CREDENTIALS,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -142,6 +188,14 @@ async def login_for_access_token(
         )
 
     if not user.is_active:
+        audit_service.record_auth_event(
+            db=db,
+            request=request,
+            event_type=AUTH_EVENT_LOGIN_FAILURE,
+            outcome=AUDIT_OUTCOME_DENIED,
+            actor_username=form_data.username,
+            reason=AUTH_REASON_INACTIVE_USER,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
@@ -180,6 +234,15 @@ async def login_for_access_token(
         refresh_token,
         domain=_COOKIE_DOMAIN,
         max_age_seconds=session_policy_cookie_max_age_seconds(policy),
+    )
+
+    audit_service.record_auth_event(
+        db=db,
+        request=request,
+        event_type=AUTH_EVENT_LOGIN_SUCCESS,
+        outcome=AUDIT_OUTCOME_SUCCESS,
+        actor_username=user.username,
+        reason=AUTH_REASON_LOGIN_SUCCESS,
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
@@ -353,6 +416,7 @@ async def refresh_tokens(
 
 @router.post("/logout")
 async def logout(
+    request: Request,
     response: Response,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db),
@@ -366,6 +430,14 @@ async def logout(
         revoke_all_user_refresh_tokens(db_user.id, db)
     _clear_access_cookie(response, domain=_COOKIE_DOMAIN)
     _clear_refresh_cookie(response, domain=_COOKIE_DOMAIN)
+    audit_service.record_auth_event(
+        db=db,
+        request=request,
+        event_type=AUTH_EVENT_LOGOUT,
+        outcome=AUDIT_OUTCOME_SUCCESS,
+        actor_username=current_user.username,
+        reason=AUTH_REASON_LOGOUT_SUCCESS,
+    )
     return {"status": "success", "message": "Logged out"}
 
 
