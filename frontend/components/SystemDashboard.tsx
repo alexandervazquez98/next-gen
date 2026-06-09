@@ -43,6 +43,38 @@ const formatCompactNumber = (value?: number | null) => {
 
 const formatHistoryTimestamp = (value: string) => new Date(value).toLocaleString();
 
+const DEFAULT_HISTORY_STALE_THRESHOLD_SECONDS = 1800;
+const DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 900;
+
+const formatSnapshotInterval = (seconds?: number | null) => {
+    const safeSeconds = seconds && Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_SNAPSHOT_INTERVAL_SECONDS;
+    const minutes = Math.round(safeSeconds / 60);
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+    const hours = Math.round(minutes / 60);
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+};
+
+const isHistoryStale = (history?: {
+    generated_at?: string;
+    latest_recorded_at?: string | null;
+    is_stale?: boolean;
+    stale_threshold_seconds?: number;
+    rows: Array<{ recorded_at: string }>;
+} | null) => {
+    if (!history) return false;
+    if (typeof history.is_stale === 'boolean') return history.is_stale;
+
+    const latestRecordedAt = history.latest_recorded_at ?? history.rows[0]?.recorded_at;
+    if (!latestRecordedAt) return true;
+
+    const generatedAt = history.generated_at ? new Date(history.generated_at).getTime() : Date.now();
+    const latestAt = new Date(latestRecordedAt).getTime();
+    if (!Number.isFinite(generatedAt) || !Number.isFinite(latestAt)) return false;
+
+    const thresholdSeconds = history.stale_threshold_seconds ?? DEFAULT_HISTORY_STALE_THRESHOLD_SECONDS;
+    return (generatedAt - latestAt) / 1000 > thresholdSeconds;
+};
+
 const formatHistoryChartTimestamp = (value: string) => new Date(value).toLocaleString([], {
     month: 'short',
     day: 'numeric',
@@ -121,6 +153,9 @@ const SystemDashboard: React.FC = () => {
             }));
     }, [history?.rows]);
     const hasHistoryChartData = historyChartData.length > 0;
+    const historyIsStale = isHistoryStale(history);
+    const latestHistorySnapshot = history?.latest_recorded_at ?? history?.rows[0]?.recorded_at ?? null;
+    const snapshotIntervalLabel = formatSnapshotInterval(history?.snapshot_interval_seconds);
 
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';
@@ -305,6 +340,20 @@ const SystemDashboard: React.FC = () => {
                     </span>
                 </div>
 
+                {historyIsStale && (
+                    <div role="alert" className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                        <div className="flex items-start gap-3">
+                            <span className="material-symbols-outlined text-lg text-amber-300">warning</span>
+                            <div>
+                                <p className="font-black uppercase tracking-widest text-amber-200">Operational history snapshots are stale</p>
+                                <p className="mt-1 text-xs text-amber-100/80">
+                                    Latest persisted snapshot: {latestHistorySnapshot ? formatHistoryTimestamp(latestHistorySnapshot) : 'none'}. Live cards may still be current, but the 7-day history pipeline is behind.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {hasHistoryChartData && (
                     <div className="mb-6 grid gap-4 xl:grid-cols-2">
                         <OperationalHistoryChart
@@ -359,7 +408,7 @@ const SystemDashboard: React.FC = () => {
                     ) : historyError ? (
                         <div className="p-4 font-mono text-xs text-red-300">Operational history unavailable.</div>
                     ) : !history?.rows.length ? (
-                        <div className="p-4 font-mono text-xs text-neutral-500">No persisted operational snapshots yet. A snapshot is recorded at most every five minutes.</div>
+                        <div className="p-4 font-mono text-xs text-neutral-500">No persisted operational snapshots yet. A snapshot is recorded at most every {snapshotIntervalLabel}.</div>
                     ) : (
                         <div className="divide-y divide-white/5 font-mono text-xs">
                             {history.rows.map((row) => (

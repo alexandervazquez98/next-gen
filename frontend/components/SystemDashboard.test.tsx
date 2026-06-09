@@ -18,6 +18,10 @@ const historyResponse = {
   hours: 168,
   limit: 24,
   retention_days: 7,
+  snapshot_interval_seconds: 900,
+  stale_threshold_seconds: 1800,
+  latest_recorded_at: '2026-04-04T10:05:00.000Z',
+  is_stale: false,
   rows: [
     {
       recorded_at: '2026-04-04T10:05:00.000Z',
@@ -114,6 +118,84 @@ describe('SystemDashboard', () => {
     expect(screen.getByText('Active Monitored CIs')).toBeInTheDocument();
     expect(screen.getByText('8')).toBeInTheDocument();
     expect(screen.queryByText('173')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Operational history snapshots are stale/i)).not.toBeInTheDocument();
+  });
+
+  it('shows an operational history stale warning when backend metadata reports stale snapshots', () => {
+    mockUseSystemStatusQuery.mockReturnValue({
+      data: {
+        cpu: 24,
+        ram: 61,
+        disk: 40,
+        disk_io: null,
+        neo4j: 'CONNECTED',
+        postgres: 'CONNECTED',
+        collector: {
+          status: 'RUNNING',
+          last_run: null,
+          stats: {
+            cis_monitored: 8,
+            metrics_collected: 120,
+            metrics_failed: 1,
+            cycle_duration: 3,
+            jobs_per_min: 44,
+          },
+        },
+      },
+      isLoading: false,
+    });
+    mockUseSystemStatusHistoryQuery.mockReturnValue({
+      data: {
+        ...historyResponse,
+        generated_at: '2026-04-04T10:45:00.000Z',
+        latest_recorded_at: '2026-04-04T10:05:00.000Z',
+        is_stale: true,
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<SystemDashboard />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Operational history snapshots are stale/i);
+    expect(screen.getByText(/Live cards may still be current/i)).toBeInTheDocument();
+    expect(screen.getByText('Resources over time')).toBeInTheDocument();
+    expect(screen.getByText(/120 metrics · 1 failed/i)).toBeInTheDocument();
+  });
+
+  it('derives stale state defensively when backend metadata is absent', () => {
+    mockUseSystemStatusQuery.mockReturnValue({
+      data: {
+        cpu: 24,
+        ram: 61,
+        disk: 40,
+        disk_io: null,
+        neo4j: 'CONNECTED',
+        postgres: 'CONNECTED',
+        collector: {
+          status: 'RUNNING',
+          last_run: null,
+          stats: {
+            cis_monitored: 8,
+            metrics_collected: 120,
+            metrics_failed: 1,
+            cycle_duration: 3,
+            jobs_per_min: 44,
+          },
+        },
+      },
+      isLoading: false,
+    });
+    const { is_stale, latest_recorded_at, stale_threshold_seconds, ...legacyHistory } = historyResponse;
+    mockUseSystemStatusHistoryQuery.mockReturnValue({
+      data: { ...legacyHistory, generated_at: '2026-04-04T10:45:00.000Z' },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<SystemDashboard />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Operational history snapshots are stale/i);
   });
 
   it('shows persisted history empty and error states', () => {
@@ -145,6 +227,11 @@ describe('SystemDashboard', () => {
     });
     const { rerender } = render(<SystemDashboard />);
     expect(screen.getByText(/No persisted operational snapshots yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/every 15 minutes/i)).toBeInTheDocument();
+
+    mockUseSystemStatusHistoryQuery.mockReturnValueOnce({ data: { ...historyResponse, rows: [], snapshot_interval_seconds: 3600 }, isLoading: false, error: null });
+    rerender(<SystemDashboard />);
+    expect(screen.getByText(/every 1 hour/i)).toBeInTheDocument();
 
     mockUseSystemStatusHistoryQuery.mockReturnValueOnce({ data: undefined, isLoading: false, error: new Error('boom') });
     rerender(<SystemDashboard />);
