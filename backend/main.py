@@ -12,25 +12,101 @@ import threading
 from datetime import datetime, timedelta, timezone
 from database import get_db, verify_connection
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Global start time to track system reboots/restarts
 STARTUP_TIME = datetime.now().isoformat()
 _DISK_SECTOR_SIZE_BYTES = 512
 _DISK_IO_PREVIOUS_SAMPLE = None
 _DISK_IO_SAMPLE_LOCK = threading.Lock()
-_SYSTEM_STATUS_HISTORY_RETENTION_DAYS = 7
-_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS = 300
 _SYSTEM_STATUS_HISTORY_LOCK = threading.Lock()
+
+
+_SYSTEM_STATUS_SNAPSHOTS_ENABLED = True
+_SYSTEM_STATUS_HISTORY_RETENTION_DAYS = 7
+_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS = 900
+_SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS = 1800
+
+
+def _parse_system_status_bool(value: str) -> bool | None:
+    if value.strip().lower() in ("1", "true", "yes", "on", "enabled", "enable"):
+        return True
+    if value.strip().lower() in ("0", "false", "no", "off", "disabled", "disable"):
+        return False
+    return None
+
+
+def _parse_system_status_int(env_var: str, default_value: int, minimum: int | None = None) -> int:
+    raw_value = os.getenv(env_var)
+    if raw_value is None:
+        return default_value
+
+    try:
+        parsed_value = int(raw_value.strip())
+        if minimum is not None and parsed_value < minimum:
+            raise ValueError(f"{env_var} cannot be lower than {minimum}: {parsed_value}")
+        return parsed_value
+    except Exception as exc:
+        logger.warning(
+            "Invalid value for %s=%r, using default %s: %s",
+            env_var,
+            raw_value,
+            default_value,
+            exc,
+        )
+        return default_value
+
+
+def _reload_system_status_env_settings() -> None:
+    """Load system-status snapshot behavior from environment with safe defaults."""
+    global _SYSTEM_STATUS_SNAPSHOTS_ENABLED
+    global _SYSTEM_STATUS_HISTORY_RETENTION_DAYS
+    global _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS
+    global _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS
+
+    enabled = os.getenv("SYSTEM_STATUS_SNAPSHOTS_ENABLED", "true")
+    parsed_enabled = _parse_system_status_bool(enabled)
+    if parsed_enabled is None:
+        logger.warning(
+            "Invalid value for SYSTEM_STATUS_SNAPSHOTS_ENABLED=%r, using default true",
+            enabled,
+        )
+        parsed_enabled = True
+    _SYSTEM_STATUS_SNAPSHOTS_ENABLED = parsed_enabled
+
+    _SYSTEM_STATUS_HISTORY_RETENTION_DAYS = _parse_system_status_int(
+        "SYSTEM_STATUS_HISTORY_RETENTION_DAYS",
+        default_value=7,
+        minimum=1,
+    )
+    _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS = _parse_system_status_int(
+        "SYSTEM_STATUS_SNAPSHOT_INTERVAL_SECONDS",
+        default_value=900,
+        minimum=60,
+    )
+    _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS = _parse_system_status_int(
+        "SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS",
+        default_value=1800,
+        minimum=60,
+    )
+
 from services.snmp_service import snmp_collector_loop, get_collector_status
 from seed_admin import seed_admin
 from seed_roles import seed_roles
 from middleware.rate_limit import RateLimitMiddleware
 
-# APScheduler for backup scheduling
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-
 # Global scheduler instance
 backup_scheduler = AsyncIOScheduler()
+
+
+# Initialize system-status snapshot settings from environment now and again during startup.
+_reload_system_status_env_settings()
 
 
 def schedule_daily_backup() -> None:
@@ -66,10 +142,6 @@ def schedule_daily_backup() -> None:
 
 # Router Imports
 from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli
-
-# Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="NEX-GEN API",
@@ -199,7 +271,7 @@ async def startup_event():
         logger.error(f"Failed to initialize TimescaleDB: {e}")
 
     # Ensure Defaults
-    pass
+    _reload_system_status_env_settings()
 
     # Seed Admin
     try:
@@ -236,6 +308,14 @@ async def startup_event():
         logger.info("Scheduled audit retention cleanup at 03:30")
     except Exception as e:
         logger.error(f"Failed to schedule audit retention cleanup: {e}")
+
+    # Start System Status Snapshot Scheduler (background ownership for persisted history)
+    if _SYSTEM_STATUS_SNAPSHOTS_ENABLED:
+        try:
+            _register_system_status_snapshot_job()
+        except Exception as e:
+            logger.error("Failed to schedule system status snapshot job: %s", e)
+
     backup_scheduler.start()
     logger.info("Backup scheduler started")
 
@@ -392,6 +472,18 @@ def _should_record_system_status_snapshot(latest_snapshot, now: datetime) -> boo
     ).total_seconds() >= _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS
 
 
+def _is_system_status_history_stale(
+    latest_recorded_at: datetime | None,
+    generated_at: datetime,
+    stale_threshold_seconds: int | None = None,
+) -> bool:
+    """Return whether persisted history is stale."""
+    threshold = stale_threshold_seconds or _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS
+    if latest_recorded_at is None:
+        return True
+    return (generated_at - latest_recorded_at).total_seconds() > threshold
+
+
 def _build_system_status_snapshot(status: dict, recorded_at: datetime):
     """Convert the live `/api/system/status` payload into a compact persisted row."""
     from models.system_status_history import SystemStatusSnapshot
@@ -454,8 +546,104 @@ def _serialize_system_status_snapshot(snapshot):
     }
 
 
+def _build_system_status_payload() -> dict:
+    """Build live system telemetry payload for dashboard cards."""
+    # 1. System Resources (OS Independent if possible, or Linux specific)
+    cpu_percent = 0.0
+    ram_percent = 0.0
+    disk_percent = 0.0
+
+    try:
+        # Load Average (Unix)
+        if hasattr(os, "getloadavg"):
+            load = os.getloadavg()
+            # Approximation: Load / Cores * 100 (Simplified)
+            cpu_percent = min((load[0] / os.cpu_count()) * 100, 100)
+    except:
+        pass
+
+    try:
+        # Disk Usage
+        total, used, free = shutil.disk_usage("/")
+        disk_percent = (used / total) * 100
+    except:
+        pass
+
+    # RAM (Linux /proc/meminfo parsing)
+    if platform.system() == "Linux":
+        try:
+            with open("/proc/meminfo", "r") as f:
+                lines = f.readlines()
+                mem_total = int(lines[0].split()[1])
+                mem_available = int(lines[2].split()[1])  # MemAvailable usually
+                ram_percent = ((mem_total - mem_available) / mem_total) * 100
+        except:
+            pass
+
+    # 2. Service Status
+    neo4j_status = "UNKNOWN"
+    try:
+        verify_connection(max_retries=1, retry_delay=0)
+        neo4j_status = "CONNECTED"
+    except:
+        neo4j_status = "DISCONNECTED"
+
+    postgres_status = "UNKNOWN"
+    try:
+        from postgres_db import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        postgres_status = "CONNECTED"
+    except:
+        postgres_status = "DISCONNECTED"
+
+    collector = get_collector_status()
+
+    return {
+        "cpu": round(cpu_percent, 1),
+        "ram": round(ram_percent, 1),
+        "disk": round(disk_percent, 1),
+        "disk_io": _get_disk_io_status(),
+        "neo4j": neo4j_status,
+        "postgres": postgres_status,
+        "collector": collector,
+        "startup_time": STARTUP_TIME,
+    }
+
+
+def _record_system_status_snapshot_job() -> bool:
+    try:
+        payload = _build_system_status_payload()
+        return _record_system_status_snapshot(payload)
+    except Exception as exc:
+        logger.warning("Failed to run system status snapshot job: %s", exc)
+        return False
+
+
+def _register_system_status_snapshot_job() -> bool:
+    if not _SYSTEM_STATUS_SNAPSHOTS_ENABLED:
+        logger.info("System status snapshot scheduler is disabled")
+        return False
+
+    backup_scheduler.add_job(
+        _record_system_status_snapshot_job,
+        trigger=IntervalTrigger(seconds=_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS),
+        id="system_status_snapshot",
+        name="System Status Snapshot",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled system status snapshot job every %ss",
+        _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS,
+    )
+    return True
+
+
 def _record_system_status_snapshot(status: dict, now: datetime | None = None) -> bool:
-    """Persist a throttled operational snapshot and prune data older than 7 days."""
+    """Persist a throttled operational snapshot and prune data older than configured retention."""
     from postgres_db import SessionLocal
     from models.system_status_history import SystemStatusSnapshot
 
@@ -506,11 +694,21 @@ def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = 
             .limit(limit)
             .all()
         )
+        latest_recorded_at = snapshots[0].recorded_at if snapshots else None
+        is_stale = _is_system_status_history_stale(
+            latest_recorded_at=latest_recorded_at,
+            generated_at=generated_at,
+        )
+
         return {
             "generated_at": _utc_isoformat(generated_at),
             "hours": hours,
             "limit": limit,
             "retention_days": _SYSTEM_STATUS_HISTORY_RETENTION_DAYS,
+            "snapshot_interval_seconds": _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS,
+            "stale_threshold_seconds": _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS,
+            "latest_recorded_at": _utc_isoformat(latest_recorded_at) if latest_recorded_at else None,
+            "is_stale": is_stale,
             "rows": [_serialize_system_status_snapshot(row) for row in snapshots],
         }
     finally:
@@ -522,71 +720,7 @@ def get_system_status():
     """
     Get internal system health metrics (CPU, RAM, Disk, Services).
     """
-    # 1. System Resources (OS Independent if possible, or Linux specific)
-    cpu_percent = 0.0
-    ram_percent = 0.0
-    disk_percent = 0.0
-
-    try:
-        # Load Average (Unix)
-        if hasattr(os, "getloadavg"):
-            load = os.getloadavg()
-            # Approximation: Load / Cores * 100 (Simplified)
-            cpu_percent = min((load[0] / os.cpu_count()) * 100, 100)
-    except:
-        pass
-
-    try:
-        # Disk Usage
-        total, used, free = shutil.disk_usage("/")
-        disk_percent = (used / total) * 100
-    except:
-        pass
-
-    # RAM (Linux /proc/meminfo parsing)
-    if platform.system() == "Linux":
-        try:
-            with open("/proc/meminfo", "r") as f:
-                lines = f.readlines()
-                mem_total = int(lines[0].split()[1])
-                mem_free = int(lines[1].split()[1])  # MemFree
-                mem_available = int(lines[2].split()[1])  # MemAvailable usually
-                ram_percent = ((mem_total - mem_available) / mem_total) * 100
-        except:
-            pass
-
-    # 2. Service Status
-    neo4j_status = "UNKNOWN"
-    try:
-        verify_connection(max_retries=1, retry_delay=0)
-        neo4j_status = "CONNECTED"
-    except:
-        neo4j_status = "DISCONNECTED"
-
-    postgres_status = "UNKNOWN"
-    try:
-        from postgres_db import engine
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        postgres_status = "CONNECTED"
-    except:
-        postgres_status = "DISCONNECTED"
-
-    collector = get_collector_status()
-
-    payload = {
-        "cpu": round(cpu_percent, 1),
-        "ram": round(ram_percent, 1),
-        "disk": round(disk_percent, 1),
-        "disk_io": _get_disk_io_status(),
-        "neo4j": neo4j_status,
-        "postgres": postgres_status,
-        "collector": collector,
-        "startup_time": STARTUP_TIME,
-    }
-    _record_system_status_snapshot(payload)
-    return payload
+    return _build_system_status_payload()
 
 
 @app.get("/api/system/status/history")
