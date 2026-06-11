@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.12.24] — 2026-06-09
+## [1.12.24] — 2026-06-11
 
 ### Fixed
+- **Analytics calendar markers and chart interactions** (PR #251, issue #250):
+  - Loads metric-history calendar markers by visible month and backfills nearby months in the background.
+  - Distinguishes days with data, confirmed-empty days, loading months, and unknown months in the range picker.
+  - Stabilizes chart brush/drag selection with raw timestamps and adds drag-to-zoom coverage for multi-CI charts.
+- **ICMP packet-loss polling telemetry** (PR #266, issue #265):
+  - Derives `packet_loss_pct` sidecar samples from ICMP ping measurements.
+  - Preserves debounce suppression in the legacy worker path while expanding packet-loss sidecars in queue writer mode.
+  - Adds focused regression coverage for ICMP sidecars, executor metadata, and writer expansion.
 - **Server KPI operational history snapshots** (issue #262):
   - Moves system-status snapshot persistence to a backend-owned 15-minute scheduler so history continues when the dashboard is closed.
   - Keeps `/api/system/status` side-effect-free for live cards while `/api/system/status/history` exposes freshness metadata.
