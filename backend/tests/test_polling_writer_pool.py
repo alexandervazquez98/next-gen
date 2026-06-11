@@ -65,7 +65,10 @@ def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monke
     row.envelope.update({
         "protocol": "ICMP",
         "metric_id": "PING-CHECK",
-        "metadata": {"metric_kind": "availability", "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms"]}},
+        "metadata": {
+            "metric_kind": "availability",
+            "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
+        },
     })
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
@@ -76,11 +79,42 @@ def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monke
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
 
-    assert stats["inserted"] == 3
+    assert stats["inserted"] == 4
     assert persisted[0][1] == [
         {"node_id": "ci-1", "metric_id": "PING-CHECK", "value": 1.0, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "icmp_latency_ms", "value": 20.0, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
+        {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 0.0, "time": row.observed_at},
+    ]
+    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK"]
+
+
+def test_writer_expands_failed_icmp_availability_to_packet_loss_sidecar(monkeypatch):
+    from polling import writer_pool
+
+    persisted = []
+    event_rows = []
+    row = _row(key="icmp-failed", numeric=0.0)
+    row.protocol = "ICMP"
+    row.metric_id = "PING-CHECK"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "PING-CHECK",
+        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]}},
+    })
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: (_ for _ in ()).throw(AssertionError("latency lookup not expected")))
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    assert stats["inserted"] == 2
+    assert persisted[0][1] == [
+        {"node_id": "ci-1", "metric_id": "PING-CHECK", "value": 0.0, "time": row.observed_at},
+        {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 100.0, "time": row.observed_at},
     ]
     assert [event["metric_id"] for event in event_rows] == ["PING-CHECK"]
 
@@ -97,7 +131,11 @@ def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatc
     row.envelope.update({
         "protocol": "ICMP",
         "metric_id": "icmp_availability",
-        "metadata": {"metric_kind": "availability", "internal": True, "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms"]}},
+        "metadata": {
+            "metric_kind": "availability",
+            "internal": True,
+            "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
+        },
     })
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
@@ -108,10 +146,11 @@ def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatc
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
 
-    assert stats["inserted"] == 2
+    assert stats["inserted"] == 3
     assert persisted[0][1] == [
         {"node_id": "ci-1", "metric_id": "icmp_latency_ms", "value": 20.0, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
+        {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 0.0, "time": row.observed_at},
     ]
     assert event_rows == []
     assert completed == [row.result_id]
