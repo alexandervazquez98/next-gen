@@ -66,6 +66,10 @@ export interface SystemStatusHistoryResponse {
 	hours: number;
 	limit: number;
 	retention_days: number;
+	snapshot_interval_seconds?: number;
+	stale_threshold_seconds?: number;
+	latest_recorded_at?: string | null;
+	is_stale?: boolean;
 	rows: SystemStatusHistoryRow[];
 }
 
@@ -95,11 +99,10 @@ export const fetchSystemStatusHistory = ({
 	hours = 168,
 	limit = 24,
 	signal,
-}: FetchSystemStatusHistoryOptions = {}) =>
-	api.get<SystemStatusHistoryResponse>("/system/status/history", {
-		params: { hours, limit },
-		signal,
-	});
+}: FetchSystemStatusHistoryOptions = {}) => {
+	const params = new URLSearchParams({ hours: String(hours), limit: String(limit) });
+	return api.get<SystemStatusHistoryResponse>(`/system/status/history?${params.toString()}`, { signal });
+};
 
 export const fetchNodes = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<GraphNode[]>("/nodes", { signal });

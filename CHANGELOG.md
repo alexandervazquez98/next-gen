@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.24] — 2026-06-09
+
+### Fixed
+- **Server KPI operational history snapshots** (issue #262):
+  - Moves system-status snapshot persistence to a backend-owned 15-minute scheduler so history continues when the dashboard is closed.
+  - Keeps `/api/system/status` side-effect-free for live cards while `/api/system/status/history` exposes freshness metadata.
+  - Adds a System Dashboard stale-history warning that preserves existing charts/rows and uses the backend snapshot interval for empty-state copy.
+
 ## [1.12.22] — 2026-06-04
 
 ### Fixed
