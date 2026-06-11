@@ -8,6 +8,9 @@ interface DateTimeRangePickerProps {
 	onEndDateChange: (value: string) => void;
 	onReset: () => void;
 	availableDays?: Set<string>;
+	loadedMonths?: Set<string>;
+	loadingMonths?: Set<string>;
+	onVisibleMonthChange?: (monthKey: string) => void;
 }
 
 type PickerTarget = "start" | "end";
@@ -24,6 +27,12 @@ const toDateKey = (date: Date) => {
 const toMonthStart = (value?: string) => {
 	const base = value ? new Date(value) : new Date();
 	return new Date(base.getFullYear(), base.getMonth(), 1);
+};
+
+const toMonthKey = (date: Date) => {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	return `${year}-${month}`;
 };
 
 const formatButtonLabel = (value: string, fallback: string) => {
@@ -60,6 +69,9 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 	onEndDateChange,
 	onReset,
 	availableDays = new Set(),
+	loadedMonths = new Set(),
+	loadingMonths = new Set(),
+	onVisibleMonthChange,
 }) => {
 	const [openTarget, setOpenTarget] = useState<PickerTarget | null>(null);
 	const [visibleMonth, setVisibleMonth] = useState(() =>
@@ -72,8 +84,16 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 			setVisibleMonth(toMonthStart(endDate || startDate));
 	}, [openTarget, startDate, endDate]);
 
+	useEffect(() => {
+		if (!openTarget) return;
+		onVisibleMonthChange?.(toMonthKey(visibleMonth));
+	}, [openTarget, visibleMonth, onVisibleMonthChange]);
+
 	const selectedValue = openTarget === "end" ? endDate : startDate;
 	const selectedDay = selectedValue.split("T")[0];
+	const visibleMonthKey = toMonthKey(visibleMonth);
+	const isVisibleMonthLoaded = loadedMonths.has(visibleMonthKey);
+	const isVisibleMonthLoading = loadingMonths.has(visibleMonthKey);
 	const monthLabel = visibleMonth.toLocaleDateString([], {
 		month: "long",
 		year: "numeric",
@@ -147,6 +167,13 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 
 			{openTarget && (
 				<div className="rounded-xl border border-white/10 bg-black/70 p-3 shadow-2xl">
+					<div className="mb-2 rounded-lg border border-white/5 bg-white/[0.03] px-2 py-1 text-[10px] text-neutral-500">
+						{isVisibleMonthLoading
+							? "Loading history markers…"
+							: isVisibleMonthLoaded
+								? "Green days contain confirmed metric history."
+								: "History markers not loaded yet."}
+					</div>
 					<div className="mb-3 flex items-center justify-between gap-2">
 						<button
 							type="button"
@@ -177,10 +204,22 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 					<div className="grid grid-cols-7 gap-1">
 						{calendarDays.map((date) => {
 							const dayKey = toDateKey(date);
+							const dayMonthKey = toMonthKey(date);
 							const isCurrentMonth =
 								date.getMonth() === visibleMonth.getMonth();
+							const isMonthLoaded = loadedMonths.has(dayMonthKey);
+							const isMonthLoading = loadingMonths.has(dayMonthKey);
 							const hasHistory = availableDays.has(dayKey);
 							const isSelected = selectedDay === dayKey;
+							const dayClass = isSelected
+								? "bg-brand-600 text-white"
+								: hasHistory
+									? "bg-emerald-500/25 text-emerald-100 ring-1 ring-emerald-500/40"
+									: isMonthLoaded
+										? "bg-white/[0.02] text-neutral-600"
+										: isMonthLoading
+											? "animate-pulse bg-white/[0.05] text-neutral-500"
+											: "border border-dashed border-white/10 bg-transparent text-neutral-500 hover:bg-white/10";
 							return (
 								<button
 									key={dayKey}
@@ -189,7 +228,7 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 										updateValue(setDatePart(selectedValue, dayKey))
 									}
 									title={hasHistory ? "Metric history available" : undefined}
-									className={`relative rounded-md px-0 py-1.5 text-[10px] transition-colors ${isSelected ? "bg-brand-600 text-white" : hasHistory ? "bg-emerald-500/25 text-emerald-100 ring-1 ring-emerald-500/40" : "bg-white/[0.03] text-neutral-400 hover:bg-white/10"} ${!isCurrentMonth ? "opacity-35" : ""}`}
+									className={`relative rounded-md px-0 py-1.5 text-[10px] transition-colors ${dayClass} ${!isCurrentMonth ? "opacity-35" : ""}`}
 								>
 									{date.getDate()}
 									{hasHistory && (
@@ -212,7 +251,7 @@ const DateTimeRangePicker: React.FC<DateTimeRangePickerProps> = ({
 						/>
 					</label>
 					<p className="mt-2 text-[10px] text-neutral-500">
-						Green days contain metric history.
+						Unmarked days may still be loading; gray days are confirmed empty.
 					</p>
 				</div>
 			)}
