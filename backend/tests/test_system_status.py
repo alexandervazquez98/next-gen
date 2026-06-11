@@ -1,12 +1,18 @@
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
+import main
 from main import (
     _build_disk_io_status,
     _build_system_status_snapshot,
     _collect_disk_io_sample,
+    _fetch_system_status_history,
+    _is_diskstats_device,
+    _is_system_status_history_stale,
+    _register_system_status_snapshot_job,
+    _reload_system_status_env_settings,
     _serialize_system_status_snapshot,
     _should_record_system_status_snapshot,
-    _is_diskstats_device,
 )
 
 
@@ -138,11 +144,149 @@ def test_system_status_snapshot_serializes_compact_operational_history_row():
     }
 
 
-def test_should_record_system_status_snapshot_honors_five_minute_throttle():
-    now = datetime(2026, 1, 1, 12, 5, 0)
-    latest = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=4)})()
-    stale = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=5)})()
+def test_should_record_system_status_snapshot_honors_fifteen_minute_throttle():
+    now = datetime(2026, 1, 1, 12, 15, 0)
+    latest = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=14)})()
+    stale = type("Snapshot", (), {"recorded_at": now - timedelta(minutes=15)})()
 
     assert _should_record_system_status_snapshot(None, now) is True
     assert _should_record_system_status_snapshot(latest, now) is False
     assert _should_record_system_status_snapshot(stale, now) is True
+
+
+def test_system_status_history_staleness_calculation():
+    now = datetime(2026, 1, 1, 12, 0, 0)
+
+    assert _is_system_status_history_stale(now - timedelta(minutes=29), now, stale_threshold_seconds=1800) is False
+    assert _is_system_status_history_stale(now - timedelta(minutes=31), now, stale_threshold_seconds=1800) is True
+    assert _is_system_status_history_stale(None, now, stale_threshold_seconds=1800) is True
+
+
+def test_get_system_status_does_not_record_snapshot_on_request(monkeypatch):
+    payload = {
+        "cpu": 1.1,
+        "ram": 2.2,
+        "disk": 3.3,
+        "disk_io": {"supported": False},
+        "neo4j": "CONNECTED",
+        "postgres": "CONNECTED",
+        "collector": {"status": "RUNNING", "stats": {}},
+        "startup_time": "startup",
+    }
+    record_calls = []
+
+    monkeypatch.setattr(main, "_build_system_status_payload", lambda: payload)
+    monkeypatch.setattr(main, "_record_system_status_snapshot", lambda *args, **kwargs: record_calls.append((args, kwargs)))
+
+    status = main.get_system_status()
+
+    assert status == payload
+    assert len(record_calls) == 0
+
+
+def _patch_status_history_rows(monkeypatch, rows):
+    class FakeQuery:
+        def filter(self, *_args, **_kwargs): return self
+        def order_by(self, *_args, **_kwargs): return self
+        def limit(self, *_args, **_kwargs): return self
+        def all(self): return rows
+
+    class FakeDb:
+        def query(self, *_args, **_kwargs): return FakeQuery()
+        def close(self): pass
+
+    monkeypatch.setattr("postgres_db.SessionLocal", lambda: FakeDb())
+
+
+def test_fetch_system_status_history_includes_freshness_metadata(monkeypatch):
+    snapshot = type("Snapshot", (), {
+        "recorded_at": datetime(2026, 1, 1, 11, 31, 0),
+        "cpu": 24.5, "ram": 61.2, "disk": 40.0,
+        "disk_io_supported": True,
+        "disk_read_bytes_per_sec": 1024.0,
+        "disk_write_bytes_per_sec": 2048.0,
+        "disk_busy_percentage": 12.5,
+        "neo4j_status": "CONNECTED", "postgres_status": "CONNECTED",
+        "collector_status": "RUNNING", "collector_cis_monitored": 8,
+        "collector_metrics_collected": 120, "collector_metrics_failed": 1,
+        "collector_jobs_per_min": 44.0, "collector_cycle_duration": 3.0,
+    })()
+    _patch_status_history_rows(monkeypatch, [snapshot])
+    monkeypatch.setattr(main, "_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS", 900)
+    monkeypatch.setattr(main, "_SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS", 1800)
+
+    history = _fetch_system_status_history(
+        hours=168,
+        limit=500,
+        now=datetime(2026, 1, 1, 12, 0, 0),
+    )
+
+    assert history["snapshot_interval_seconds"] == 900
+    assert history["stale_threshold_seconds"] == 1800
+    assert history["latest_recorded_at"] == "2026-01-01T11:31:00Z"
+    assert history["is_stale"] is False
+    assert history["rows"][0]["recorded_at"] == "2026-01-01T11:31:00Z"
+
+
+def test_fetch_system_status_history_marks_missing_rows_stale(monkeypatch):
+    _patch_status_history_rows(monkeypatch, [])
+
+    history = _fetch_system_status_history(
+        hours=168,
+        limit=500,
+        now=datetime(2026, 1, 1, 12, 0, 0),
+    )
+
+    assert history["latest_recorded_at"] is None
+    assert history["is_stale"] is True
+    assert history["rows"] == []
+
+
+def test_reload_system_status_env_settings_uses_safe_defaults(monkeypatch):
+    monkeypatch.setenv("SYSTEM_STATUS_SNAPSHOTS_ENABLED", "off")
+    monkeypatch.setenv("SYSTEM_STATUS_SNAPSHOT_INTERVAL_SECONDS", "30")
+    monkeypatch.setenv("SYSTEM_STATUS_HISTORY_RETENTION_DAYS", "invalid")
+    monkeypatch.setenv("SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS", "1801")
+
+    _reload_system_status_env_settings()
+
+    assert main._SYSTEM_STATUS_SNAPSHOTS_ENABLED is False
+    assert main._SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS == 900
+    assert main._SYSTEM_STATUS_HISTORY_RETENTION_DAYS == 7
+    assert main._SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS == 1801
+
+    monkeypatch.setenv("SYSTEM_STATUS_SNAPSHOTS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_STATUS_SNAPSHOT_INTERVAL_SECONDS", "900")
+    monkeypatch.setenv("SYSTEM_STATUS_HISTORY_RETENTION_DAYS", "7")
+    monkeypatch.setenv("SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS", "1800")
+    _reload_system_status_env_settings()
+
+
+def test_register_system_status_snapshot_job_is_noop_when_disabled(monkeypatch):
+    fake_scheduler = MagicMock()
+    monkeypatch.setattr(main, "backup_scheduler", fake_scheduler)
+    monkeypatch.setattr(main, "_SYSTEM_STATUS_SNAPSHOTS_ENABLED", False)
+
+    result = _register_system_status_snapshot_job()
+
+    assert result is False
+    fake_scheduler.add_job.assert_not_called()
+
+
+def test_register_system_status_snapshot_job_registers_interval_job(monkeypatch):
+    fake_scheduler = MagicMock()
+    monkeypatch.setattr(main, "backup_scheduler", fake_scheduler)
+    monkeypatch.setattr(main, "_SYSTEM_STATUS_SNAPSHOTS_ENABLED", True)
+    monkeypatch.setattr(main, "_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS", 900)
+
+    result = _register_system_status_snapshot_job()
+
+    assert result is True
+    fake_scheduler.add_job.assert_called_once()
+    _, kwargs = fake_scheduler.add_job.call_args
+    assert kwargs["id"] == "system_status_snapshot"
+    assert kwargs["replace_existing"] is True
+    assert kwargs["max_instances"] == 1
+    assert kwargs["coalesce"] is True
+    trigger = kwargs["trigger"]
+    assert trigger.interval.total_seconds() == 900
