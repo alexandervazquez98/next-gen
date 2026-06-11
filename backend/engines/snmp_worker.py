@@ -484,14 +484,6 @@ def poll_snmp():
                     ))
                     val = measurement.availability_value
                     sample_time = datetime.utcnow()
-                    if measurement.available:
-                        previous_latency = _previous_latency_ms(db, node_id, sample_time)
-                        sidecar_samples = build_icmp_sidecar_samples(
-                            node_id,
-                            measurement,
-                            previous_latency_ms=previous_latency,
-                            observed_at=sample_time,
-                        )
                     # Debounce logic: track consecutive failures per node
                     if val == 0:
                         _consecutive_failures[node_id] = _consecutive_failures.get(node_id, 0) + 1
@@ -508,6 +500,18 @@ def poll_snmp():
                     else:
                         # Success: reset counter and proceed normally
                         _consecutive_failures[node_id] = 0
+                    if val is not None:
+                        previous_latency = (
+                            _previous_latency_ms(db, node_id, sample_time)
+                            if measurement.available
+                            else None
+                        )
+                        sidecar_samples = build_icmp_sidecar_samples(
+                            node_id,
+                            measurement,
+                            previous_latency_ms=previous_latency,
+                            observed_at=sample_time,
+                        )
                 snmp_status = "OK"
                 snmp_error = None
                 if protocol == SOURCE_PROTOCOL_SNMP and record["oid"]:

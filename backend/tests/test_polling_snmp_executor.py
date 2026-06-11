@@ -95,7 +95,7 @@ def test_icmp_executor_maps_ping_success_and_failure_statuses():
     assert success.metric_id == "PING-CHECK"
     assert success.metadata["metric_kind"] == "availability"
     assert success.metadata["icmp"]["latency_ms"] == 18.25
-    assert success.metadata["icmp"]["sidecar_metric_ids"] == ["icmp_latency_ms", "icmp_jitter_ms"]
+    assert success.metadata["icmp"]["sidecar_metric_ids"] == ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]
     assert failure.status == PollingResultStatus.CRITICAL
     assert failure.value["numeric"] == 0.0
     assert "latency_ms" not in failure.metadata["icmp"]

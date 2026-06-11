@@ -12,7 +12,12 @@ from sqlalchemy import text
 
 from models.timescale_models import MetricValue
 from polling import event_writer, pg_queue
-from polling.icmp_measurements import ICMP_AVAILABILITY_METRIC_ID, ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
+from polling.icmp_measurements import (
+    ICMP_AVAILABILITY_METRIC_ID,
+    ICMP_JITTER_METRIC_ID,
+    ICMP_LATENCY_METRIC_ID,
+    ICMP_PACKET_LOSS_METRIC_ID,
+)
 
 
 def _utc_now() -> datetime:
@@ -98,14 +103,24 @@ def previous_metric_value(db, node_id: str, metric_id: str, before: datetime) ->
 
 def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
     icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
-    if "latency_ms" not in icmp:
+    sidecar_ids = set(icmp.get("sidecar_metric_ids") or [])
+    if not sidecar_ids:
         return []
     observed = _timestamp(envelope["observed_at"])
-    latency = float(icmp["latency_ms"])
-    samples = [{"node_id": envelope["ci_id"], "metric_id": ICMP_LATENCY_METRIC_ID, "value": latency, "time": observed}]
-    previous = previous_metric_value(db, envelope["ci_id"], ICMP_LATENCY_METRIC_ID, observed)
-    if previous is not None:
+    samples = []
+    numeric = _numeric(envelope)
+    if ICMP_LATENCY_METRIC_ID in sidecar_ids and "latency_ms" in icmp:
+        latency = float(icmp["latency_ms"])
+        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_LATENCY_METRIC_ID, "value": latency, "time": observed})
+        previous = previous_metric_value(db, envelope["ci_id"], ICMP_LATENCY_METRIC_ID, observed)
+    else:
+        latency = None
+        previous = None
+    if ICMP_JITTER_METRIC_ID in sidecar_ids and latency is not None and previous is not None:
         samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_JITTER_METRIC_ID, "value": abs(latency - previous), "time": observed})
+    if ICMP_PACKET_LOSS_METRIC_ID in sidecar_ids and numeric is not None:
+        packet_loss = 0.0 if numeric > 0 else 100.0
+        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_PACKET_LOSS_METRIC_ID, "value": packet_loss, "time": observed})
     return samples
 
 

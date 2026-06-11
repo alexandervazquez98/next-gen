@@ -9,7 +9,8 @@ from typing import Any
 ICMP_AVAILABILITY_METRIC_ID = "icmp_availability"
 ICMP_LATENCY_METRIC_ID = "icmp_latency_ms"
 ICMP_JITTER_METRIC_ID = "icmp_jitter_ms"
-ICMP_SIDECAR_METRIC_IDS = [ICMP_LATENCY_METRIC_ID, ICMP_JITTER_METRIC_ID]
+ICMP_PACKET_LOSS_METRIC_ID = "packet_loss_pct"
+ICMP_SIDECAR_METRIC_IDS = [ICMP_LATENCY_METRIC_ID, ICMP_JITTER_METRIC_ID, ICMP_PACKET_LOSS_METRIC_ID]
 
 
 @dataclass(frozen=True)
@@ -63,9 +64,18 @@ def build_icmp_sidecar_samples(
     previous_latency_ms: float | None = None,
     observed_at: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Build latency and optional jitter sidecar samples for a successful ping."""
+    """Build derived ICMP telemetry samples from a recorded ping result."""
+    packet_loss = 0.0 if measurement.available else 100.0
+    packet_loss_sample = {
+        "node_id": node_id,
+        "metric_id": ICMP_PACKET_LOSS_METRIC_ID,
+        "value": packet_loss,
+    }
     if not measurement.available or measurement.latency_ms is None:
-        return []
+        samples = [packet_loss_sample]
+        if observed_at is not None:
+            samples[0]["time"] = observed_at
+        return samples
     samples: list[dict[str, Any]] = [{
         "node_id": node_id,
         "metric_id": ICMP_LATENCY_METRIC_ID,
@@ -77,6 +87,7 @@ def build_icmp_sidecar_samples(
             "metric_id": ICMP_JITTER_METRIC_ID,
             "value": abs(float(measurement.latency_ms) - float(previous_latency_ms)),
         })
+    samples.append(packet_loss_sample)
     if observed_at is not None:
         for sample in samples:
             sample["time"] = observed_at
