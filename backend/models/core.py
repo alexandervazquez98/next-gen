@@ -41,6 +41,7 @@ class Link(BaseModel):
 
 class Category(BaseModel):
     name: str
+    icon_key: Optional[str] = None
 
 
 class MetricDef(BaseModel):

@@ -37,3 +37,15 @@ def test_get_nodes_keeps_location_scope_for_non_admin(monkeypatch):
     params = session.run.call_args.kwargs
     assert "n.location_name IN $allowed_locations" in query
     assert params["allowed_locations"] == ["HQ-Madrid"]
+
+
+def test_get_nodes_returns_category_icon_key_field(monkeypatch):
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.get_nodes(allowed_locations=None, is_admin=True)
+
+    query = session.run.call_args.args[0]
+    assert "c.icon_key as category_icon_key" in query

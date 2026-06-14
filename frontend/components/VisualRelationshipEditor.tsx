@@ -1,8 +1,10 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import * as d3 from "d3";
 import type { GraphNode } from "../types";
 import { api } from "../services/api";
+import CategoryIcon from "./CategoryIcon";
 import type { LinkData } from "./RelationshipManager";
 import {
 	canDeleteRelationship,
@@ -706,11 +708,34 @@ const VisualRelationshipEditor: React.FC<VisualRelationshipEditorProps> = ({
 			.attr("class", "node-circle transition-all duration-300");
 
 		nodeSelection
+			.append("foreignObject")
+			.attr("x", (node) => -((statusVisualMap.get(node.id)?.radius ?? 24) - 7))
+			.attr("y", (node) => -((statusVisualMap.get(node.id)?.radius ?? 24) - 7))
+			.attr(
+				"width",
+				(node) => ((statusVisualMap.get(node.id)?.radius ?? 24) - 7) * 2,
+			)
+			.attr(
+				"height",
+				(node) => ((statusVisualMap.get(node.id)?.radius ?? 24) - 7) * 2,
+			)
+			.attr("class", "pointer-events-none")
+			.each(function (node) {
+				this.innerHTML = `<div class="flex h-full w-full items-center justify-center">${renderToStaticMarkup(
+					<CategoryIcon
+						iconKey={node.sourceNode.category_icon_key}
+						categoryName={node.sourceNode.category ?? node.sourceNode.type}
+						className="text-[18px] leading-none text-white pointer-events-none select-none"
+					/>,
+				)}</div>`;
+			});
+
+		nodeSelection
 			.append("text")
-			.attr("dy", "0.35em")
+			.attr("dy", "-1.8em")
 			.attr("text-anchor", "middle")
 			.attr("fill", "#f5f5f5")
-			.attr("font-size", 11)
+			.attr("font-size", 9)
 			.attr("font-weight", 900)
 			.attr("pointer-events", "none")
 			.text((node) => node.label.slice(0, 2).toUpperCase());

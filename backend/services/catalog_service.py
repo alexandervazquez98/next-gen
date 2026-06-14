@@ -2,17 +2,61 @@ import json
 from typing import List, Dict, Any, Optional
 from database import get_db
 from models.core import Category, HardwareModel, OwnerGroup
+from services.category_icons import (
+    get_default_category_icon,
+    normalize_icon_key,
+    is_valid_icon_key,
+    resolve_category_icon,
+)
+from fastapi import HTTPException
 
 def get_categories() -> List[Dict[str, str]]:
     driver = get_db()
     with driver.session() as session:
-        result = session.run("MATCH (c:Category) RETURN c.name as name")
-        return [{"name": record["name"]} for record in result]
+        result = session.run(
+            "MATCH (c:Category) RETURN c.name as name, c.icon_key as icon_key"
+        )
+        return [
+            {
+                "name": record["name"],
+                "icon_key": resolve_category_icon(record["name"], record.get("icon_key")),
+            }
+            for record in result
+        ]
 
 def create_category(category: Category) -> Dict[str, str]:
     driver = get_db()
+    if category.icon_key is not None and not is_valid_icon_key(category.icon_key):
+        # Unknown icon values are rejected at API level, but keep defense in depth.
+        raise HTTPException(status_code=400, detail="Invalid icon_key")
+
+    icon_key = normalize_icon_key(category.icon_key) or get_default_category_icon(category.name)
+
+    # Respect default catalog mapping for known technologies while avoiding overriding
+    # unknown/custom metadata.
+    default_icon = get_default_category_icon(category.name)
+
     with driver.session() as session:
-        session.run("MERGE (c:Category {name: $name})", name=category.name)
+        if icon_key is not None:
+            session.run(
+                """
+                MERGE (c:Category {name: $name})
+                ON CREATE SET c.icon_key = $icon_key
+                ON MATCH SET c.icon_key = COALESCE(c.icon_key, $default_icon_key)
+                """,
+                name=category.name,
+                icon_key=icon_key,
+                default_icon_key=default_icon,
+            )
+        else:
+            session.run(
+                """
+                MERGE (c:Category {name: $name})
+                ON MATCH SET c.icon_key = COALESCE(c.icon_key, $default_icon_key)
+                """,
+                name=category.name,
+                default_icon_key=default_icon,
+            )
     return {"message": "Category created"}
 
 def delete_category(name: str) -> Dict[str, str]:
@@ -21,13 +65,43 @@ def delete_category(name: str) -> Dict[str, str]:
         session.run("MATCH (c:Category {name: $name}) DETACH DELETE c", name=name)
     return {"message": "Category deleted"}
 
-def update_category(name: str, new_name: str) -> Dict[str, str]:
+def update_category(
+    name: str,
+    new_name: str,
+    icon_key: Optional[str] = None,
+) -> Dict[str, str]:
+    if icon_key is not None and not is_valid_icon_key(icon_key):
+        raise HTTPException(status_code=400, detail="Invalid icon_key")
+
+    # Always keep legacy behavior even if icon_key is omitted.
+    default_icon = get_default_category_icon(new_name)
+
     driver = get_db()
     with driver.session() as session:
-        session.run("""
+        query = """
             MATCH (c:Category {name: $name})
             SET c.name = $new_name
-        """, name=name, new_name=new_name)
+            """
+
+        if icon_key is None:
+            # Preserve stored metadata for unknown categories; only set default for
+            # known technologies when absent.
+            if default_icon:
+                query += " SET c.icon_key = COALESCE(c.icon_key, $default_icon_key)"
+            session.run(
+                query,
+                name=name,
+                new_name=new_name,
+                default_icon_key=default_icon,
+            )
+            return {"message": "Category updated"}
+
+        session.run(
+            query + " SET c.icon_key = $icon_key",
+            name=name,
+            new_name=new_name,
+            icon_key=resolve_category_icon(new_name, icon_key),
+        )
     return {"message": "Category updated"}
 
 def get_category_usage(name: str) -> Dict[str, int]:

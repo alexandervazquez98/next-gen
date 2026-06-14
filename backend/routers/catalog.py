@@ -16,10 +16,11 @@ router = APIRouter(
 
 
 class CategoryUpdate(BaseModel):
-    name: str
+    name: Optional[str] = None
+    icon_key: Optional[str] = None
 
 
-@router.get("/categories", response_model=List[Dict[str, str]])
+@router.get("/categories", response_model=List[Dict[str, Any]])
 async def get_categories(current_user: User = Depends(get_current_active_user)):
     """Fetch all available CI Categories."""
     return catalog_service.get_categories()
@@ -62,7 +63,8 @@ async def update_category(
         raise HTTPException(
             status_code=403, detail="Not authorized to update categories"
         )
-    return catalog_service.update_category(name, update.name)
+    new_name = update.name or name
+    return catalog_service.update_category(name, new_name, update.icon_key)
 
 
 @router.get("/categories/{name}/usage")

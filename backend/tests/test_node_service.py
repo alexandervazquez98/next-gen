@@ -366,6 +366,55 @@ class TestGetNodes:
 
             assert result[0]["type"] == "core-router"
 
+    def test_category_field_is_exposed_and_type_remains_compatible(self):
+        """Nodes must include category metadata while preserving type semantics."""
+        admin = _make_user(username="admin", role="ADMIN")
+        node_record = _make_full_record(
+            node_props=_make_node_record(layer="router"),
+            category="Core Router",
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [
+                {
+                    **node_record,
+                    "category_icon_key": "router",
+                }
+            ]
+
+            from services.node_service import get_nodes
+
+            result = get_nodes(admin)
+
+            assert result[0]["type"] == "Core Router"
+            assert result[0]["category"] == "Core Router"
+            assert result[0]["category_icon_key"] == "router"
+
+    def test_category_icon_key_defaults_to_generic_when_missing(self):
+        """Missing icon metadata should default to generic in node payloads."""
+        admin = _make_user(username="admin", role="ADMIN")
+        node_record = _make_full_record(
+            node_props=_make_node_record(layer="firewall"),
+            category="Legacy Device",
+            metrics=[],
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [
+                {
+                    **node_record,
+                    "category_icon_key": None,
+                }
+            ]
+
+            from services.node_service import get_nodes
+
+            result = get_nodes(admin)
+
+            assert result[0]["type"] == "Legacy Device"
+            assert result[0]["category"] == "Legacy Device"
+            assert result[0]["category_icon_key"] == "generic"
+
     def test_empty_nodes_list_returns_empty(self):
         """When repo returns no nodes, result should be empty list."""
         admin = _make_user(username="admin", role="ADMIN")

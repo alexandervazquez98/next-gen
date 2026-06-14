@@ -14,6 +14,7 @@ import {
 	fireEvent,
 	render,
 	screen,
+	within,
 	waitFor,
 } from "@testing-library/react";
 import type React from "react";
@@ -232,6 +233,258 @@ describe("MonitoringConsole smoke tests", () => {
 		expect(endpointCalls["/categories"]).toBe(1);
 		expect(endpointCalls["/events?status=CONSOLE"]).toBe(2);
 		expect(endpointCalls["/events/availability-report"]).toBeUndefined();
+	});
+
+	it("GIVEN an event CI has category_icon_key WHEN the stream renders THEN it shows the shared technology icon separate from status", async () => {
+		const { default: MonitoringConsole } = await import("../MonitoringConsole");
+
+		mockApiGet.mockImplementation((url: string) => {
+			if (url === "/nodes") {
+				return Promise.resolve([
+					{
+						id: "ci-router",
+						label: "Router-01",
+						type: "Network",
+						status: "OK",
+						metadata: {},
+						category: "Router",
+						category_icon_key: "router",
+						ip: "10.0.0.1",
+						location: { lat: 40.4, long: -3.7 },
+					},
+				]);
+			}
+			if (url === "/links") return Promise.resolve([]);
+			if (url === "/categories") return Promise.resolve([{ name: "Router", icon_key: "router" }]);
+			if (url === "/events?status=CONSOLE") {
+				return Promise.resolve([
+					{
+						id: "evt-router",
+						ci_id: "ci-router",
+						ci_name: "Router-01",
+						metric_id: "metric-cpu",
+						metric_name: "CPU",
+						metric_protocol: "SNMP",
+						status: "OPEN",
+						severity: "CRITICAL",
+						message: "CPU over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: false,
+						comments: [],
+					},
+				]);
+			}
+			return Promise.resolve([]);
+		});
+
+		renderWithQueryClient(<MonitoringConsole />);
+
+		expect(await screen.findByLabelText("Router technology icon")).toHaveTextContent("router");
+		expect(screen.getByText("Router-01")).toBeInTheDocument();
+		expect(screen.getByText("OPEN")).toBeInTheDocument();
+	});
+
+	it("GIVEN an event CI lacks category_icon_key WHEN the stream renders THEN it falls back by category name", async () => {
+		const { default: MonitoringConsole } = await import("../MonitoringConsole");
+
+		mockApiGet.mockImplementation((url: string) => {
+			if (url === "/nodes") {
+				return Promise.resolve([
+					{
+						id: "ci-switch",
+						label: "Access-SW-01",
+						type: "Layer 2 Switch",
+						status: "OK",
+						metadata: {},
+						category: "Layer 2 Switch",
+						category_icon_key: null,
+						ip: "10.0.0.2",
+						location: { lat: 40.4, long: -3.7 },
+					},
+				]);
+			}
+			if (url === "/links") return Promise.resolve([]);
+			if (url === "/categories") return Promise.resolve([{ name: "Layer 2 Switch" }]);
+			if (url === "/events?status=CONSOLE") {
+				return Promise.resolve([
+					{
+						id: "evt-switch",
+						ci_id: "ci-switch",
+						ci_name: "Access-SW-01",
+						metric_id: "metric-latency",
+						metric_name: "Latency",
+						metric_protocol: "SNMP",
+						status: "ACK",
+						severity: "WARNING",
+						message: "Latency over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: true,
+						comments: [],
+					},
+				]);
+			}
+			return Promise.resolve([]);
+		});
+
+		renderWithQueryClient(<MonitoringConsole />);
+
+		expect(await screen.findByLabelText("Layer 2 Switch technology icon")).toHaveTextContent("lan");
+		expect(screen.getByText("Access-SW-01")).toBeInTheDocument();
+		expect(screen.getByText("ACK")).toBeInTheDocument();
+	});
+
+	it("GIVEN event detail opens for a CI with category_icon_key WHEN the category strip renders THEN it shows the shared technology icon separate from severity", async () => {
+		const { default: MonitoringConsole } = await import("../MonitoringConsole");
+
+		mockApiGet.mockImplementation((url: string) => {
+			if (url === "/nodes") {
+				return Promise.resolve([
+					{
+						id: "ci-detail-router",
+						label: "Edge-Router-01",
+						type: "Network",
+						status: "OK",
+						metadata: {},
+						category: "Router",
+						category_icon_key: "router",
+						ip: "10.0.0.1",
+						location: { lat: 40.4, long: -3.7 },
+					},
+				]);
+			}
+			if (url === "/links") return Promise.resolve([]);
+			if (url === "/categories") return Promise.resolve([{ name: "Router", icon_key: "router" }]);
+			if (url === "/events?status=CONSOLE") {
+				return Promise.resolve([
+					{
+						id: "evt-detail-router",
+						ci_id: "ci-detail-router",
+						ci_name: "Edge-Router-01",
+						metric_id: "metric-cpu",
+						metric_name: "CPU",
+						metric_protocol: "SNMP",
+						status: "OPEN",
+						severity: "CRITICAL",
+						message: "CPU over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: false,
+						comments: [],
+					},
+				]);
+			}
+			if (url === "/events/evt-detail-router") {
+				return Promise.resolve({
+					event: {
+						id: "evt-detail-router",
+						ci_ref: { id: "ci-detail-router", label: "Edge-Router-01" },
+						metric_name: "CPU",
+						metric_protocol: "SNMP",
+						status: "OPEN",
+						severity: "CRITICAL",
+						message: "CPU over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						comments: [],
+					},
+					business_context: {
+						source: "catalog",
+						service_catalog: { category: "Router" },
+					},
+					itsm_context: {},
+				});
+			}
+			return Promise.resolve([]);
+		});
+
+		renderWithQueryClient(<MonitoringConsole />);
+
+		expect(await screen.findByText("CPU over threshold")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+
+		const categoryLabel = await screen.findByText("Categoría CI");
+		const categoryStrip = categoryLabel.closest("div")?.parentElement;
+		expect(categoryStrip).not.toBeNull();
+		expect(within(categoryStrip as HTMLElement).getByLabelText("Router technology icon")).toHaveTextContent("router");
+		expect(within(categoryStrip as HTMLElement).getByText("Router")).toBeInTheDocument();
+		expect(screen.getAllByText("CRITICAL").length).toBeGreaterThan(0);
+	});
+
+	it("GIVEN event detail opens for a CI without category_icon_key WHEN the category strip renders THEN it falls back by category name", async () => {
+		const { default: MonitoringConsole } = await import("../MonitoringConsole");
+
+		mockApiGet.mockImplementation((url: string) => {
+			if (url === "/nodes") {
+				return Promise.resolve([
+					{
+						id: "ci-detail-switch",
+						label: "Access-SW-01",
+						type: "Layer 2 Switch",
+						status: "OK",
+						metadata: {},
+						category: "Layer 2 Switch",
+						category_icon_key: null,
+						ip: "10.0.0.2",
+						location: { lat: 40.4, long: -3.7 },
+					},
+				]);
+			}
+			if (url === "/links") return Promise.resolve([]);
+			if (url === "/categories") return Promise.resolve([{ name: "Layer 2 Switch" }]);
+			if (url === "/events?status=CONSOLE") {
+				return Promise.resolve([
+					{
+						id: "evt-detail-switch",
+						ci_id: "ci-detail-switch",
+						ci_name: "Access-SW-01",
+						metric_id: "metric-latency",
+						metric_name: "Latency",
+						metric_protocol: "SNMP",
+						status: "ACK",
+						severity: "WARNING",
+						message: "Latency over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: true,
+						comments: [],
+					},
+				]);
+			}
+			if (url === "/events/evt-detail-switch") {
+				return Promise.resolve({
+					event: {
+						id: "evt-detail-switch",
+						ci_ref: { id: "ci-detail-switch", label: "Access-SW-01" },
+						metric_name: "Latency",
+						metric_protocol: "SNMP",
+						status: "ACK",
+						severity: "WARNING",
+						message: "Latency over threshold",
+						created_at: "2026-04-04T20:00:00.000Z",
+						comments: [],
+					},
+					business_context: {
+						source: "catalog",
+						service_catalog: { category: "Layer 2 Switch" },
+					},
+					itsm_context: {},
+				});
+			}
+			return Promise.resolve([]);
+		});
+
+		renderWithQueryClient(<MonitoringConsole />);
+
+		expect(await screen.findByText("Latency over threshold")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+
+		const categoryLabel = await screen.findByText("Categoría CI");
+		const categoryStrip = categoryLabel.closest("div")?.parentElement;
+		expect(categoryStrip).not.toBeNull();
+		expect(within(categoryStrip as HTMLElement).getByLabelText("Layer 2 Switch technology icon")).toHaveTextContent("lan");
+		expect(within(categoryStrip as HTMLElement).getByText("Layer 2 Switch")).toBeInTheDocument();
+		expect(screen.getAllByText("ACK").length).toBeGreaterThan(0);
 	});
 
 	it("GIVEN monitoring dashboard renders THEN it does not fetch or show the full availability report", async () => {

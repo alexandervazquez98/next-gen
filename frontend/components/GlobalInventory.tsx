@@ -6,6 +6,7 @@ import { getStatusClasses } from '../utils/status';
 import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 import { useNodesQuery } from '../hooks/queries/useNodesQuery';
 import { formatMetricValue } from '../utils/metricFormatting';
+import CategoryIcon from './CategoryIcon';
 
 /**
  * GlobalInventory Component
@@ -97,7 +98,12 @@ const GlobalInventory: React.FC = () => {
                                     </div>
                                     <div className="flex gap-2 mt-1">
                                         <span className="text-[10px] font-mono text-neutral-500">{item.ip || 'NO IP'}</span>
-                                        {item.category && <span className="text-[10px] font-bold text-brand-400 bg-brand-500/10 px-1.5 rounded">{item.category}</span>}
+                                        {(item.category || item.type) && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-brand-400 bg-brand-500/10 px-1.5 rounded">
+                                                <CategoryIcon iconKey={item.category_icon_key} categoryName={item.category || item.type} className="text-[0.75rem]" />
+                                                {item.category || item.type}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                                 <span className="material-symbols-outlined text-neutral-600 text-lg group-hover:text-white transition-colors">chevron_right</span>
@@ -115,7 +121,12 @@ const GlobalInventory: React.FC = () => {
                                     <h2 className="text-3xl font-black text-white uppercase">{selectedItem.label || selectedItem.id}</h2>
                                     <div className="flex gap-4 mt-2">
                                         <span className="text-xs font-mono text-neutral-400 bg-black/20 px-2 py-1 rounded">ID: {selectedItem.id}</span>
-                                        {(selectedItem.category || selectedItem.type) && <span className="text-xs font-bold text-brand-400 bg-brand-500/10 px-2 py-1 rounded">{selectedItem.category || selectedItem.type}</span>}
+                                        {(selectedItem.category || selectedItem.type) && (
+                                            <span className="inline-flex items-center gap-1 text-xs font-bold text-brand-400 bg-brand-500/10 px-2 py-1 rounded">
+                                                <CategoryIcon iconKey={selectedItem.category_icon_key} categoryName={selectedItem.category || selectedItem.type} className="text-sm" />
+                                                {selectedItem.category || selectedItem.type}
+                                            </span>
+                                        )}
                                         <span className="text-xs font-mono text-accent-cyan bg-accent-cyan/10 px-2 py-1 rounded">{selectedItem.ip}</span>
                                     </div>
                                 </div>

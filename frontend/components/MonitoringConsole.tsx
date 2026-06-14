@@ -27,6 +27,7 @@ import { useEventMutations } from "../hooks/queries/useEventMutations";
 import { useEventDetailQuery } from "../hooks/queries/useEventDetailQuery";
 import { useMonitoringConsoleData } from "../hooks/queries/useMonitoringConsoleData";
 import { useRelatedEventsQuery } from "../hooks/queries/useRelatedEventsQuery";
+import CategoryIcon from "./CategoryIcon";
 
 /**
  * Configure Leaflet Default Icon
@@ -1056,6 +1057,10 @@ const MonitoringConsole: React.FC = () => {
 			}),
 		[nodes, events, filterCategory],
 	);
+	const nodeById = useMemo(
+		() => new Map(nodesWithEvents.map((node) => [node.id, node])),
+		[nodesWithEvents],
+	);
 
 	// Smart culling hook — returns top-n nodes when threshold exceeded
 	const { culledNodes, isActive: isSmartMode } = useSmartCulling(
@@ -1400,7 +1405,11 @@ const MonitoringConsole: React.FC = () => {
 												</td>
 											</tr>
 										) : (
-											filteredEventStream.map((evt) => (
+											filteredEventStream.map((evt) => {
+												const eventNode = nodeById.get(evt.ci_id);
+												const categoryName = eventNode?.category ?? eventNode?.type ?? null;
+
+												return (
 												<tr
 													key={evt.id}
 													className="hover:bg-white/5 transition-colors group"
@@ -1430,7 +1439,14 @@ const MonitoringConsole: React.FC = () => {
 														{formatOpenAge(evt)}
 													</td>
 													<td className="p-3 font-bold text-white">
-														{evt.ci_name || evt.ci_id}
+														<div className="flex items-center gap-2">
+															<CategoryIcon
+																iconKey={eventNode?.category_icon_key}
+																categoryName={categoryName}
+																className="text-base text-brand-300 shrink-0"
+															/>
+															<span>{evt.ci_name || evt.ci_id}</span>
+														</div>
 													</td>
 													<td className="p-3 text-neutral-300">
 														<div className="flex flex-col">
@@ -1480,7 +1496,8 @@ const MonitoringConsole: React.FC = () => {
 														</div>
 													</td>
 												</tr>
-											))
+												);
+											})
 										)}
 									</tbody>
 								</table>
@@ -2019,7 +2036,14 @@ const MonitoringConsole: React.FC = () => {
 											<div className="text-neutral-500 uppercase font-bold tracking-wider mb-0.5">
 												Categoría CI
 											</div>
-											<div className="text-white font-semibold">
+											<div className="text-white font-semibold flex items-center gap-2">
+												{category && (
+													<CategoryIcon
+														iconKey={node?.category_icon_key}
+														categoryName={category}
+														className="text-base text-brand-300 shrink-0"
+													/>
+												)}
 												{category || (
 													<span className="text-neutral-600 italic">
 														No configurado

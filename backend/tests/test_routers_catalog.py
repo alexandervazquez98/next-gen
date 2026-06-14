@@ -98,6 +98,23 @@ class TestCategoriesRouter:
         assert len(data) == 2
         assert data[0]["name"] == "Router"
 
+    def test_get_categories_returns_icon_metadata_and_generic_default(self):
+        _override_current_user(_make_pydantic_user())
+        with patch("routers.catalog.catalog_service") as mock_service:
+            mock_service.get_categories.return_value = [
+                {"name": "Layer 2 switch", "icon_key": "switch_l2"},
+                {"name": "Legacy Device", "icon_key": "generic"},
+            ]
+
+            response = client.get("/api/categories")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["name"] == "Layer 2 switch"
+        assert data[0]["icon_key"] == "switch_l2"
+        assert data[1]["name"] == "Legacy Device"
+        assert data[1]["icon_key"] == "generic"
+
     def test_get_categories_requires_authentication(self):
         # Clear any global overrides to simulate no-token/invalid-token
         app.dependency_overrides.clear()
@@ -168,6 +185,22 @@ class TestCategoriesRouter:
         sent_category = mock_service.create_category.call_args.args[0]
         assert sent_category.name == "Router"
 
+    def test_create_category_saves_icon_key_when_provided(self):
+        _override_current_user(
+            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        )
+        with patch("routers.catalog.catalog_service") as mock_service:
+            mock_service.create_category.return_value = {"message": "Category created"}
+
+            response = client.post(
+                "/api/categories",
+                json={"name": "Router", "icon_key": "router"},
+            )
+
+        assert response.status_code == 200
+        sent_category = mock_service.create_category.call_args.args[0]
+        assert sent_category.icon_key == "router"
+
     def test_create_category_conflict(self):
         _override_current_user(
             _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
@@ -190,6 +223,23 @@ class TestCategoriesRouter:
         response = client.post("/api/categories", json={})
 
         assert response.status_code == 422
+
+    def test_create_category_rejects_invalid_icon_key(self):
+        _override_current_user(
+            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        )
+        with patch("routers.catalog.catalog_service") as mock_service:
+            mock_service.create_category.side_effect = HTTPException(
+                status_code=400, detail="Invalid icon_key"
+            )
+
+            response = client.post(
+                "/api/categories",
+                json={"name": "Router", "icon_key": "not-a-key"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid icon_key"
 
     def test_delete_category_success(self):
         _override_current_user(
@@ -218,7 +268,39 @@ class TestCategoriesRouter:
 
         assert response.status_code == 200
         assert response.json()["message"] == "Category updated"
-        mock_service.update_category.assert_called_once_with("Router", "Edge Router")
+        mock_service.update_category.assert_called_once_with("Router", "Edge Router", None)
+
+    def test_update_category_accepts_icon_key(self):
+        _override_current_user(
+            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        )
+        with patch("routers.catalog.catalog_service") as mock_service:
+            mock_service.update_category.return_value = {"message": "Category updated"}
+
+            response = client.put(
+                "/api/categories/Router",
+                json={"icon_key": "router"},
+            )
+
+        assert response.status_code == 200
+        mock_service.update_category.assert_called_once_with("Router", "Router", "router")
+
+    def test_update_category_rejects_invalid_icon_key(self):
+        _override_current_user(
+            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
+        )
+        with patch("routers.catalog.catalog_service") as mock_service:
+            mock_service.update_category.side_effect = HTTPException(
+                status_code=400, detail="Invalid icon_key"
+            )
+
+            response = client.put(
+                "/api/categories/Router",
+                json={"icon_key": "not-a-key"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid icon_key"
 
     def test_get_category_usage_success(self):
         with patch("routers.catalog.catalog_service") as mock_service:

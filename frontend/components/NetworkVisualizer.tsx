@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { GraphNode, GraphLink } from '../types';
+import CategoryIcon from './CategoryIcon';
 // import SpriteText from 'three-spritetext'; // Optional for text labels if needed
 
 
@@ -49,6 +50,16 @@ const NetworkVisualizer: React.FC = () => {
 
         return { nodes: activeNodes, links: activeLinks };
     }, [nodes, links, showCIs]);
+
+    const technologyNodes = useMemo(() => {
+        return graphData.nodes.filter(node => node.category_icon_key || node.category || node.type === 'Category' || node.type === 'CI');
+    }, [graphData.nodes]);
+
+    const getTechnologyCategoryName = (node: any) => {
+        if (node.category) return node.category;
+        if (node.type === 'Category') return node.label;
+        return node.type;
+    };
 
     // Apply custom forces when graph loads
     useEffect(() => {
@@ -171,6 +182,26 @@ const NetworkVisualizer: React.FC = () => {
                         <span className="w-3 h-3 rounded-full bg-[#ff00aa] shadow-[0_0_10px_#ff00aa]"></span>
                         <span className="text-[10px] font-bold text-neutral-300 uppercase">Metric Def</span>
                     </div>
+
+                    {technologyNodes.length > 0 && (
+                        <div className="mt-3 border-t border-white/10 pt-2">
+                            <h5 className="mb-2 text-[10px] font-bold uppercase text-cyan-300">Technology Icons</h5>
+                            <div className="flex max-h-32 flex-col gap-1 overflow-hidden">
+                                {technologyNodes.map((node) => (
+                                    <div key={`technology-${node.id}`} className="flex items-center justify-end gap-2">
+                                        <span className="max-w-28 truncate text-[10px] font-bold uppercase text-neutral-300">
+                                            {node.label}
+                                        </span>
+                                        <CategoryIcon
+                                            iconKey={node.category_icon_key}
+                                            categoryName={getTechnologyCategoryName(node)}
+                                            className="text-[16px] leading-none text-cyan-300"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

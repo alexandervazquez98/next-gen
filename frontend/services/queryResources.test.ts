@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fetchActiveEvents, fetchNodeMetricHistory, fetchNodesSearch } from "./queryResources";
+import { fetchActiveEvents, fetchCategories, fetchNodeMetricHistory, fetchNodesSearch } from "./queryResources";
 
 const { mockApiGet } = vi.hoisted(() => ({
 	mockApiGet: vi.fn(),
@@ -25,6 +25,39 @@ describe("fetchActiveEvents", () => {
 		expect(mockApiGet).toHaveBeenCalledWith("/events?status=CONSOLE", {
 			signal,
 		});
+	});
+});
+
+describe("fetchCategories", () => {
+	beforeEach(() => {
+		mockApiGet.mockReset();
+	});
+
+	it("fetches categories with icon metadata", async () => {
+		const signal = new AbortController().signal;
+		const mockCategories = [
+			{ name: "Router", icon_key: "router" },
+			{ name: "Storage", icon_key: "storage" },
+		];
+		mockApiGet.mockResolvedValue(mockCategories);
+
+		const result = await fetchCategories({ signal });
+
+		expect(mockApiGet).toHaveBeenCalledWith("/categories", {
+			signal,
+		});
+		expect(result).toEqual(mockCategories);
+		expect(result[0].icon_key).toBe("router");
+	});
+
+	it("supports missing icon metadata from older API responses", async () => {
+		const mockCategories = [{ name: "Network" }];
+		mockApiGet.mockResolvedValue(mockCategories);
+
+		const result = await fetchCategories({});
+
+		expect(mockApiGet).toHaveBeenCalledWith("/categories", { signal: undefined });
+		expect(result).toEqual(mockCategories);
 	});
 });
 

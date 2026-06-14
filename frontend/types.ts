@@ -5,6 +5,17 @@ export type NodeType =
 	| "USER"
 	| "CLOUD_RESOURCE";
 
+export type CategoryIconKey =
+	| "generic"
+	| "switch_l2"
+	| "switch_l3"
+	| "router"
+	| "server"
+	| "saas"
+	| "storage"
+	| "camera"
+	| "video_analytics";
+
 export interface SNMPConfig {
 	version: "v2c" | "v3";
 	readCommunity?: string;
@@ -33,9 +44,10 @@ export interface MetricValue {
 export interface GraphNode {
 	id: string;
 	label: string;
-	type: NodeType;
+	type: NodeType | string;
 	status: "ACTIVE" | "EXCEPTION" | "MAINTENANCE" | "OK";
 	metadata: Record<string, any>;
+	category_icon_key?: CategoryIconKey | null;
 	snmp?: SNMPConfig;
 	pollingInterval?: number; // seconds
 	thresholds?: MonitoringThresholds;

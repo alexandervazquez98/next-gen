@@ -4,6 +4,7 @@ import type {
 	AvailabilitySnmpNoResponseResponse,
 	EventDetail,
 	EventSummary,
+	CategoryIconKey,
 	GraphLink,
 	GraphNode,
 	MultiMetricHistoryResponse,
@@ -79,6 +80,7 @@ export interface OwnerRecord {
 
 export interface CategoryRecord {
 	name: string;
+	icon_key?: CategoryIconKey | null;
 }
 
 export interface GraphTopologyResponse {

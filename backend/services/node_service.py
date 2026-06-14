@@ -13,6 +13,7 @@ from models.user import User, UserRole, UserPermission
 from models.core import Node
 from services.auth_service import check_permission
 from fastapi.responses import StreamingResponse, JSONResponse
+from services.category_icons import resolve_category_icon
 from repositories import topology_repo
 
 logger = logging.getLogger(__name__)
@@ -102,10 +103,15 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
                         pass
                 metrics.append(m_data)
 
+        category = record["category"]
         node_data = {
             "id": node.get("id"),
             "label": node.get("name"),
-            "type": record["category"] or node.get("layer", "Unknown"),
+            "type": category or node.get("layer", "Unknown"),
+            "category": category,
+            "category_icon_key": resolve_category_icon(
+                category, record.get("category_icon_key")
+            ),
             "status": node.get("status", "OK"),
             "ip": node.get("ip"),
             "owner": node.get("owner"),

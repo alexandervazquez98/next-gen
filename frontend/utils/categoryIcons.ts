@@ -1,0 +1,175 @@
+import type { CategoryIconKey } from "../types";
+
+export type CategoryIconEntry = {
+	key: CategoryIconKey;
+	label: string;
+	materialSymbol: string;
+	aliases?: string[];
+};
+
+const CATEGORY_ICON_KEY_SET = new Set<string>([
+	"generic",
+	"switch_l2",
+	"switch_l3",
+	"router",
+	"server",
+	"saas",
+	"storage",
+	"camera",
+	"video_analytics",
+]);
+
+export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
+	{
+		key: "generic",
+		label: "Generic",
+		materialSymbol: "category",
+		aliases: ["default", "default icon", "general"],
+	},
+	{
+		key: "switch_l2",
+		label: "Layer 2 Switch",
+		materialSymbol: "lan",
+		aliases: ["l2", "layer 2", "switch"],
+	},
+	{
+		key: "switch_l3",
+		label: "Layer 3 Switch",
+		materialSymbol: "hub",
+		aliases: ["l3", "layer 3", "router switch", "layer3"],
+	},
+	{
+		key: "router",
+		label: "Router",
+		materialSymbol: "router",
+		aliases: ["gateway", "routing"],
+	},
+	{
+		key: "server",
+		label: "Server",
+		materialSymbol: "dns",
+		aliases: ["compute", "host"],
+	},
+	{
+		key: "saas",
+		label: "SaaS",
+		materialSymbol: "cloud",
+		aliases: ["software as a service", "managed service"],
+	},
+	{
+		key: "storage",
+		label: "Storage",
+		materialSymbol: "storage",
+		aliases: ["nas", "san", "backup"],
+	},
+	{
+		key: "camera",
+		label: "Cameras",
+		materialSymbol: "videocam",
+		aliases: ["cctv", "video"],
+	},
+	{
+		key: "video_analytics",
+		label: "Video Analytics",
+		materialSymbol: "analytics",
+		aliases: ["analytics", "video analysis", "ai video"],
+	},
+];
+
+const DEFAULT_ICON_KEY: CategoryIconKey = "generic";
+
+const CATEGORY_NAME_TO_ICON: Record<string, CategoryIconKey> = {
+	"layer2 switch": "switch_l2",
+	"l2 switch": "switch_l2",
+	"switch l2": "switch_l2",
+	"layer3 switch": "switch_l3",
+	"l3 switch": "switch_l3",
+	"switch l3": "switch_l3",
+	"router": "router",
+	"server": "server",
+	"saas": "saas",
+	"storage": "storage",
+	"camera": "camera",
+	"cameras": "camera",
+	"video analytics": "video_analytics",
+	"video_analytics": "video_analytics",
+};
+
+const INDEXED_CATALOG = new Map<string, CategoryIconEntry>(
+	CATEGORY_ICON_CATALOG.map((entry) => [entry.key, entry]),
+);
+
+export const isCategoryIconKey = (value?: string | null): value is CategoryIconKey =>
+	typeof value === "string" && CATEGORY_ICON_KEY_SET.has(value);
+
+export const getCategoryIconEntry = (iconKey: string): CategoryIconEntry => {
+	if (isCategoryIconKey(iconKey)) {
+		return INDEXED_CATALOG.get(iconKey) ?? INDEXED_CATALOG.get(DEFAULT_ICON_KEY)!;
+	}
+	return INDEXED_CATALOG.get(DEFAULT_ICON_KEY)!;
+};
+
+export const normalizeCategoryName = (categoryName: string): string => {
+	return categoryName
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.replace(/\blayer\s+2\b/g, "layer2")
+		.replace(/\blayer\s+3\b/g, "layer3")
+		.replace(/\s+/g, " ")
+		.trim();
+};
+
+export const resolveCategoryIconKey = ({
+	iconKey,
+	categoryName,
+}: {
+	iconKey?: string | null;
+	categoryName?: string | null;
+}): CategoryIconKey => {
+	if (isCategoryIconKey(iconKey)) {
+		return iconKey;
+	}
+
+	if (categoryName) {
+		const normalized = normalizeCategoryName(categoryName);
+		if (CATEGORY_NAME_TO_ICON[normalized]) {
+			return CATEGORY_NAME_TO_ICON[normalized];
+		}
+
+		for (const [name, key] of Object.entries(CATEGORY_NAME_TO_ICON)) {
+			if (name.includes(normalized) || normalized.includes(name)) {
+				return key;
+			}
+		}
+	}
+
+	return DEFAULT_ICON_KEY;
+};
+
+const includesQuery = (value: string, query: string): boolean => {
+	const normalizedValue = normalizeCategoryName(value);
+	const normalizedQuery = normalizeCategoryName(query);
+	return normalizedValue.includes(normalizedQuery);
+};
+
+export const findCategoryIcons = (query: string): CategoryIconEntry[] => {
+	const normalizedQuery = normalizeCategoryName(query);
+	if (!normalizedQuery) {
+		return CATEGORY_ICON_CATALOG;
+	}
+
+	return CATEGORY_ICON_CATALOG.filter((entry) => {
+		const aliasText = (entry.aliases ?? []).join(" ");
+		return (
+			includesQuery(entry.label, normalizedQuery) ||
+			includesQuery(entry.key, normalizedQuery) ||
+			includesQuery(aliasText, normalizedQuery)
+		);
+	});
+};
+
+export type ResolveCategoryIconArgs = {
+	iconKey?: string | null;
+	categoryName?: string | null;
+};
