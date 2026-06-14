@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.25] — 2026-06-14
+
+### Added
+- **Category technology icon system** (PR #269, issue #268):
+  - Adds controlled `icon_key` metadata for catalog categories with backend validation, defaults, and generic fallback behavior.
+  - Adds admin UI icon selection and shared frontend `CategoryIcon` rendering primitives.
+  - Migrates catalog, inventory, monitoring, map/topology, detail, and mass-link surfaces to consistent technology icons while preserving separate operational status indicators.
+  - Preserves `/nodes.type` compatibility while adding `category_icon_key` metadata for visual consumers.
+
+### Known Issues
+- Backend full-suite stabilization remains tracked separately in issue #267; this release uses the scoped verification evidence documented in the SDD archive.
+
 ## [1.12.24] — 2026-06-11
 
 ### Fixed
