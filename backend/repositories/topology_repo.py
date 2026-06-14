@@ -1,4 +1,5 @@
 # pyright: reportArgumentType=false
+from __future__ import annotations
 from typing import List, Dict, Any, Optional, Set
 import importlib
 import json
@@ -6,7 +7,6 @@ from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC
 import re
 from neo4j import Driver
 from database import get_db
-from models.core import Node, Link
 _relationship_types = importlib.import_module("services.relationship_types")
 LISTABLE_RELATIONSHIP_TYPES = _relationship_types.LISTABLE_RELATIONSHIP_TYPES
 SUPPORTED_CI_RELATIONSHIP_TYPES = _relationship_types.SUPPORTED_CI_RELATIONSHIP_TYPES
@@ -24,13 +24,21 @@ def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = Fa
     query += """
         OPTIONAL MATCH (n)-[:CATEGORIZED_AS]->(c:Category)
         OPTIONAL MATCH (n)-[r:HAS_METRIC]->(m:MetricDef)
-        RETURN n, c.name as category, collect({
+        RETURN n, c.name as category, c.icon_key as category_icon_key, collect({
             name: m.id, protocol: m.protocol, status: r.status, value: r.last_value, last_updated: r.last_updated
         }) as metrics
-    """
+        """
     with driver.session() as session:
         result = session.run(query, **params)
-        return [{"node": r["n"], "category": r["category"], "metrics": r["metrics"]} for r in result]
+    return [
+        {
+            "node": r["n"],
+            "category": r["category"],
+            "category_icon_key": r["category_icon_key"],
+            "metrics": r["metrics"],
+        }
+        for r in result
+    ]
 
 def upsert_node(node: Node) -> None:
     driver = get_db()

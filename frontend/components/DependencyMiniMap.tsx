@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GraphNode, Event } from '../types';
+import CategoryIcon from './CategoryIcon';
 
 interface DependencyMiniMapProps {
     ciId?: string;
@@ -182,14 +183,6 @@ const DependencyMiniMap: React.FC<DependencyMiniMapProps> = ({ ciId, nodes, link
 
 
     if (!ciId) return null;
-
-    const getIcon = (type: string) => {
-        if (type === 'SERVER') return 'dns';
-        if (type === 'DATABASE') return 'database';
-        if (type === 'APPLICATION') return 'apps';
-        if (type === 'ROUTER' || type === 'SWITCH') return 'router';
-        return 'circle';
-    };
 
     // Determine Alarm Type Details
     const isPingFailure = event?.message.includes("Unreachable") || event?.message.includes("PING") || event?.message.includes("Down");
@@ -427,7 +420,15 @@ const DependencyMiniMap: React.FC<DependencyMiniMapProps> = ({ ciId, nodes, link
                                     )}
 
                                     <circle r={size} fill={fillColor} stroke={strokeColor} strokeWidth={isAlarmSource ? 3 : 2} className="shadow-2xl" />
-                                    <text x="0" y={isRoot ? 11 : 8} textAnchor="middle" className="material-symbols-outlined text-white pointer-events-none select-none" style={{ fontSize: fontSize + 'px' }}>{getIcon(n.type)}</text>
+                                    <foreignObject x={-size} y={-size} width={size * 2} height={size * 2} className="pointer-events-none">
+                                        <div className="flex h-full w-full items-center justify-center">
+                                            <CategoryIcon
+                                                iconKey={n.category_icon_key}
+                                                categoryName={n.category ?? n.type}
+                                                className={`text-white pointer-events-none select-none leading-none ${isRoot ? 'text-[28px]' : 'text-[22px]'}`}
+                                            />
+                                        </div>
+                                    </foreignObject>
                                 </g>
                             </g>
                         );

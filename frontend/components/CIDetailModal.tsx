@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { GraphNode } from '../types';
 import { getStatusClasses } from '../utils/status';
+import CategoryIcon from './CategoryIcon';
 import MetricHistoryChart from './MetricHistoryChart';
 
 interface CIDetailModalProps {
@@ -36,7 +37,12 @@ const CIDetailModal: React.FC<CIDetailModalProps> = ({ node, onClose }) => {
                         <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{node.label || node.id}</h2>
                         <div className="flex flex-wrap gap-3 mt-4">
                             <span className="text-xs font-mono text-neutral-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/5">ID: {node.id}</span>
-                            {(node.category || node.type) && <span className="text-xs font-bold text-brand-400 bg-brand-500/10 px-3 py-1.5 rounded-lg border border-brand-500/20">{node.category || node.type}</span>}
+                            {(node.category || node.type) && (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-brand-400 bg-brand-500/10 px-3 py-1.5 rounded-lg border border-brand-500/20">
+                                    <CategoryIcon iconKey={node.category_icon_key} categoryName={node.category || node.type} className="text-sm" />
+                                    {node.category || node.type}
+                                </span>
+                            )}
                             <span className="text-xs font-mono text-accent-cyan bg-accent-cyan/10 px-3 py-1.5 rounded-lg border border-accent-cyan/20">{node.ip || 'NO IP'}</span>
                             {node.location_name && <span className="text-xs font-bold text-purple-400 bg-purple-500/10 px-3 py-1.5 rounded-lg border border-purple-500/20">{node.location_name}</span>}
                         </div>

@@ -4,6 +4,7 @@ import { useCategoriesQuery } from '../hooks/queries/useCategoriesQuery';
 import { useQuery } from '@tanstack/react-query';
 import RelationshipTooltip from './RelationshipTooltip';
 import RelationshipBadge from './RelationshipBadge';
+import CategoryIcon from './CategoryIcon';
 
 interface FilterState {
     label: 'CI' | 'MetricDef';
@@ -129,10 +130,17 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ title, filter, setFilter, cat
                                     onChange={() => toggleId(node.id)}
                                 />
                                 <div className="flex flex-col min-w-0">
-                                    {/* T6: Wrap node label in RelationshipTooltip */}
-                                    <RelationshipTooltip ciId={node.id} relationships={relationshipMap || new Map()}>
-                                        <span className="text-[11px] font-bold text-white truncate">{node.label}</span>
-                                    </RelationshipTooltip>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <CategoryIcon
+                                            iconKey={node.category_icon_key}
+                                            categoryName={node.category || node.type}
+                                            className="text-sm text-brand-300 shrink-0"
+                                        />
+                                        {/* T6: Wrap node label in RelationshipTooltip */}
+                                        <RelationshipTooltip ciId={node.id} relationships={relationshipMap || new Map()}>
+                                            <span className="text-[11px] font-bold text-white truncate">{node.label}</span>
+                                        </RelationshipTooltip>
+                                    </div>
                                     {/* T7: Add RelationshipBadge */}
                                     <RelationshipBadge ciId={node.id} relationships={relationshipMap || new Map()} />
                                     <span className="text-[9px] text-neutral-500 font-mono truncate">{node.id} • {node.ip || 'No IP'} • {node.location_name}</span>

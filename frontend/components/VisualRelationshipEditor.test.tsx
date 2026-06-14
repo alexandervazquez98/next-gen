@@ -405,6 +405,56 @@ describe("VisualRelationshipEditor", () => {
 		expect(appNodeButton).not.toHaveClass("w-36", "rounded-2xl");
 	});
 
+	it("renders shared technology icons from category_icon_key while keeping status separate", async () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={[
+					{
+						...nodes[0],
+						category: "Network",
+						category_icon_key: "router",
+					},
+					nodes[1],
+				]}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const icon = await screen.findByRole("img", {
+			name: "Router technology icon",
+		});
+
+		expect(icon).toHaveTextContent("router");
+		expect(icon).not.toHaveTextContent("ACTIVE");
+		expect(screen.getByLabelText("CI status")).toHaveValue("OK");
+	});
+
+	it("falls back to category-derived technology icons for visual graph nodes", async () => {
+		render(
+			<VisualRelationshipEditor
+				nodes={[
+					{
+						...nodes[0],
+						category: "Layer 2 switch",
+						category_icon_key: null,
+					},
+					nodes[1],
+				]}
+				links={links}
+				onClose={vi.fn()}
+				onMutated={onMutated}
+			/>,
+		);
+
+		const icon = await screen.findByRole("img", {
+			name: "Layer 2 Switch technology icon",
+		});
+
+		expect(icon).toHaveTextContent("lan");
+	});
+
 	it("fades unrelated nodes and links while keeping related graph items prominent on hover", () => {
 		render(
 			<VisualRelationshipEditor

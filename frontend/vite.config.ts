@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
       }
     },
     test: {
+      forbidOnly: true,
       globals: true,
       environment: 'jsdom',
       setupFiles: ['./test/setup.ts'],

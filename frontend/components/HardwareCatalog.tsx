@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MetricDef } from '../types';
+import CategoryIcon from './CategoryIcon';
 
 interface HardwareModel {
     brand: string;
@@ -10,7 +11,7 @@ interface HardwareModel {
 
 const HardwareCatalog: React.FC = () => {
     const [models, setModels] = useState<HardwareModel[]>([]);
-    const [categories, setCategories] = useState<{ name: string }[]>([]);
+    const [categories, setCategories] = useState<{ name: string; icon_key?: string | null }[]>([]);
     const [owners, setOwners] = useState<{ name: string }[]>([]);
 
     // Form State
@@ -136,7 +137,16 @@ const HardwareCatalog: React.FC = () => {
                                         <span className="text-neutral-400">{m.model}</span>
                                     </div>
                                     <div className="flex gap-2 mt-2">
-                                        {m.category && <span className="text-[10px] bg-brand-500/20 text-brand-300 px-2 py-0.5 rounded uppercase tracking-wider">{m.category}</span>}
+                                        {m.category && (
+                                            <span className="text-[10px] bg-brand-500/20 text-brand-300 px-2 py-0.5 rounded uppercase tracking-wider inline-flex items-center gap-1">
+                                                <CategoryIcon
+                                                    className="text-[11px]"
+                                                    iconKey={categories.find((c) => c.name === m.category)?.icon_key}
+                                                    categoryName={m.category}
+                                                />
+                                                {m.category}
+                                            </span>
+                                        )}
                                         {m.owner && <span className="text-[10px] bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded uppercase tracking-wider">{m.owner}</span>}
                                     </div>
                                 </div>

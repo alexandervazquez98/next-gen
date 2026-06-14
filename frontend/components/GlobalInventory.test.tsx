@@ -80,4 +80,40 @@ describe('GlobalInventory', () => {
     expect(screen.queryByText('ID: node-1')).not.toBeInTheDocument();
     expect(screen.getByText('Select a CI to view telemetry')).toBeInTheDocument();
   });
+
+  it('renders explicit category technology icons while keeping critical status separate', () => {
+    nodes = [makeNode({
+      id: 'router-1',
+      label: 'Edge Router',
+      category: 'Network',
+      category_icon_key: 'router',
+      metrics: [{ name: 'CPU Load', protocol: 'SNMP', oid: '1', value: '95', status: 'CRITICAL', last_updated: '2026-04-04T10:05:00.000Z' }],
+    })];
+
+    render(<GlobalInventory />);
+
+    expect(screen.getByRole('img', { name: 'Router technology icon' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Edge Router'));
+
+    expect(screen.getAllByRole('img', { name: 'Router technology icon' })).toHaveLength(2);
+    expect(screen.getByText('warning')).toBeInTheDocument();
+  });
+
+  it('falls back to a category-name technology icon when icon metadata is missing', () => {
+    nodes = [makeNode({
+      id: 'switch-1',
+      label: 'Access Switch',
+      category: 'Layer 2 Switch',
+      category_icon_key: null,
+    })];
+
+    render(<GlobalInventory />);
+
+    expect(screen.getByRole('img', { name: 'Layer 2 Switch technology icon' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Access Switch'));
+
+    expect(screen.getAllByRole('img', { name: 'Layer 2 Switch technology icon' })).toHaveLength(2);
+  });
 });
