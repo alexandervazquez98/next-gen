@@ -195,6 +195,7 @@ def test_event_writer_threshold_breach_refresh_updates_open_or_ack_events_withou
     assert "MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})" not in breach_query["query"]
     assert "created_at: datetime(), last_seen: datetime()" in breach_query["query"]
     assert "SET existing.severity = row.severity" in breach_query["query"]
+    assert "existing.created_at = coalesce(existing.created_at, existing.last_seen, datetime())" in breach_query["query"]
     assert "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END" in breach_query["query"]
 
 

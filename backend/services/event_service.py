@@ -145,6 +145,12 @@ def _build_event_summary(
     event_data: Dict[str, Any], ci_data: Dict[str, Any], metric_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     summary = {key: _serialize_value(value) for key, value in event_data.items()}
+    if summary.get("created_at") is None:
+        summary["created_at"] = (
+            summary.get("last_seen")
+            or summary.get("recovered_at")
+            or summary.get("closed_at")
+        )
     summary["ci_node_id"] = ci_data.get("id")
     summary["ci_name"] = ci_data.get("name")
     summary["ci_hostname"] = ci_data.get("ip")
@@ -606,11 +612,13 @@ def _merge_availability_ci_metadata(
         key: value for key, value in incoming.items() if value is not None
     }
     merged = {**existing, **incoming_values}
-    existing_metadata = (
-        existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+    existing_raw_metadata = existing.get("metadata")
+    incoming_raw_metadata = incoming.get("metadata")
+    existing_metadata: Dict[str, Any] = (
+        existing_raw_metadata if isinstance(existing_raw_metadata, dict) else {}
     )
-    incoming_metadata = (
-        incoming.get("metadata") if isinstance(incoming.get("metadata"), dict) else {}
+    incoming_metadata: Dict[str, Any] = (
+        incoming_raw_metadata if isinstance(incoming_raw_metadata, dict) else {}
     )
     metadata = {**existing_metadata, **incoming_metadata}
     if metadata:

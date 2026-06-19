@@ -867,6 +867,36 @@ class TestEventServiceSmoke:
             }
         ]
 
+    def test_get_events_uses_last_seen_when_legacy_event_is_missing_created_at(
+        self, mock_neo4j_session
+    ):
+        get_events = _load_event_service_module().get_events
+        last_seen = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        mock_neo4j_session.set_response(
+            "return e, ci, m",
+            [
+                {
+                    "e": {
+                        "id": "evt-missing-created-at",
+                        "ci_id": "ci-legacy",
+                        "metric_id": "icmp_latency_ms",
+                        "status": "OPEN",
+                        "severity": "CRITICAL",
+                        "message": "Critical Threshold Breached",
+                        "last_seen": last_seen,
+                        "ack": False,
+                    },
+                    "ci": {"id": "ci-legacy", "name": "Legacy-CI"},
+                    "m": None,
+                }
+            ],
+        )
+
+        result = get_events(status="ACTIVE")
+
+        assert result[0]["created_at"] == last_seen.isoformat()
+        assert result[0]["last_seen"] == last_seen.isoformat()
+
     def test_get_events_returns_sparse_legacy_event_without_fabricated_metric(
         self, mock_neo4j_session
     ):
