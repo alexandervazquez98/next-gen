@@ -336,6 +336,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                     existing.message = row.message,
                     existing.source_protocol = row.source_protocol,
                     existing.availability_source = row.availability_source,
+                    existing.created_at = coalesce(existing.created_at, existing.last_seen, datetime()),
                     existing.last_seen = datetime(),
                     existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
                     existing.recovered_at = NULL,

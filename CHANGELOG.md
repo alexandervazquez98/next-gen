@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.28] — 2026-06-19
+
+### Fixed
+
+- **Recovered event timestamp repair** (PR #278, issue #277):
+  - Ensures non-collection polling events persist `created_at` on creation.
+  - Repairs missing `created_at` when events recover, including propagated events.
+  - Prevents the monitoring console from rendering null timestamps as Unix epoch (`12/31/1969`) or huge durations.
+- **Legacy active event timestamp fallback**:
+  - Repairs existing open/ack events missing `created_at` during breach refresh.
+  - Falls back to `last_seen`/terminal timestamps in the event feed so legacy open events do not show blank Open Since/Duration values.
+
 ## [1.12.25] — 2026-06-14
 
 ### Added
+
 - **Category technology icon system** (PR #269, issue #268):
   - Adds controlled `icon_key` metadata for catalog categories with backend validation, defaults, and generic fallback behavior.
   - Adds admin UI icon selection and shared frontend `CategoryIcon` rendering primitives.
@@ -17,11 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserves `/nodes.type` compatibility while adding `category_icon_key` metadata for visual consumers.
 
 ### Known Issues
+
 - Backend full-suite stabilization remains tracked separately in issue #267; this release uses the scoped verification evidence documented in the SDD archive.
 
 ## [1.12.24] — 2026-06-11
 
 ### Fixed
+
 - **Analytics calendar markers and chart interactions** (PR #251, issue #250):
   - Loads metric-history calendar markers by visible month and backfills nearby months in the background.
   - Distinguishes days with data, confirmed-empty days, loading months, and unknown months in the range picker.
@@ -38,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.22] — 2026-06-04
 
 ### Fixed
+
 - **Multi-window session timeout and refresh hardening** (issue #188):
   - Adds session policy resolution and refresh-token session metadata for standard vs operational sessions.
   - Handles stale concurrent refresh rotations without locking out active browser tabs while keeping recovery bounded.
@@ -48,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.21] — 2026-06-02
 
 ### Fixed
+
 - **Role permission save and access hardening** (PR #249, issue #246):
   - Fixes role create/update 500s caused by backend enum `.value` access on string permission payloads.
   - Validates and normalizes role permission strings before persistence, returning actionable 400 responses for invalid values.
@@ -57,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.20] — 2026-06-01
 
 ### Fixed
+
 - **Analytics metric history controls and chart layout**:
   - Replaces raw Custom Time Range datetime fields with a calendar and time picker for faster range selection.
   - Adds history-day highlighting so calendar days with metric samples appear shaded in green.
@@ -66,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.19] — 2026-06-01
 
 ### Fixed
+
 - **CMDB and visual relationship editor geo cluster layouts**:
   - Keeps GraphCMDB geo clusters scaled across a larger virtual canvas while preserving real CI coordinates and reducing municipal overlap.
   - Adds Visual Relationship Editor cluster bubbles, location checkbox filtering, location search, and GraphCMDB-style yellow graph search highlighting.
@@ -75,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.18] — 2026-06-01
 
 ### Fixed
+
 - **Technical availability correlation filtering** (issue #242):
   - Excludes propagated/correlated availability events from MTTR/MTBF and availability report calculations.
   - Keeps the existing `availability_source` `PING`/`ICMP` source-of-truth filter for direct technical availability evidence.
@@ -83,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.17] — 2026-05-31
 
 ### Fixed
+
 - **Availability source-of-truth hardening** (issue #239):
   - Adds explicit `availability_source` tagging for Ping/ICMP availability metrics and events.
   - Scopes MTTR/MTBF/availability reports to tagged `PING`/`ICMP` availability evidence, excluding untagged ICMP and `mariadb-GS` fallback behavior.
@@ -92,6 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.16] — 2026-05-31
 
 ### Fixed
+
 - **Graph CMDB internal cluster layout**:
   - Distributes nodes inside cluster circles with a floating sunflower layout instead of a bottom-heavy ring/clamp pattern.
   - Invalidates cached node positions when virtual canvas dimensions or cluster centers/radii change.
@@ -99,6 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.15] — 2026-05-31
 
 ### Fixed
+
 - **Graph CMDB scalable geo layout**:
   - Replaces fixed coordinate scaling with viewport-aware projection over a larger virtual canvas for country/world-scale CMDB views.
   - Adds initial cluster overlap resolution so city-dense clusters separate before manual drag.
@@ -119,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.14] — 2026-05-31
 
 ### Fixed
+
 - **Backup path validation hardening** (PR #224, issue #133):
   - Normalizes `.` and `..` path segments before rejecting unsafe `BACKUP_DIR` values in `safe-rebuild.sh`.
   - Keeps symlink behavior unchanged by avoiding filesystem canonicalization.
@@ -127,6 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.13] — 2026-05-30
 
 ### Fixed
+
 - **ICMP latency/jitter provisioning** (issue #217):
   - Stops creating per-CI `PING-*` metric definitions when CIs are created or edited.
   - Ensures `icmp_latency_ms` and `icmp_jitter_ms` sidecar metrics are linked for CIs with IPs, including existing CIs through the safe rebuild migration step.
@@ -135,6 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.12] — 2026-05-29
 
 ### Added
+
 - **Visual CI relationship editor completion** (PRs #198, #200, #202, and #204; tracker #191):
   - Adds a dedicated visual relationship editor for creating and deleting supported CI relationships from the map context.
   - Keeps read-only graph relationships such as `RUNS_ON` visible while labeling them read-only and suppressing unsupported delete actions.
@@ -145,6 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.11] — 2026-05-28
 
 ### Added
+
 - **Admin CI correlation visibility** (PRs #193 and #195, tracker #191):
   - Homologates CI relationship types so new writes use `CONNECTS_TO` instead of legacy `CONNECTED_TO`.
   - Adds scoped `/api/cis/relationships` summaries for Admin relationship visibility while preserving existing location scoping.
@@ -156,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.10] — 2026-05-27
 
 ### Added
+
 - **Availability analytics relocation** (PRs #185 and #187, issue #180):
   - Enriches `GET /api/events/availability-report` rows with sanitized CI metadata for category filtering and global CI-field search.
   - Removes the analyst-oriented Availability Metrics report from Monitoring so the console remains focused on `/api/events?status=CONSOLE` triage.
@@ -164,6 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Keeps Analytics access aligned with the existing profile/permission model rather than coupling the section to Admin-only access.
 
 ### Fixed
+
 - **Monitored CI dashboard counter** (PR #182, issue #163):
   - Stabilizes the active monitored CI counter after dashboard filtering updates.
 - **Metric deletion batching** (PR #184, issue #162):
@@ -171,12 +200,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserves delete API semantics while avoiding long Neo4j transactions for metrics with large historical fan-out.
 
 ### Performance
+
 - **Availability report query optimization** (PR #183, issue #176):
   - Optimizes availability report query behavior for the MTTR/MTBF reporting path added in the prior release.
 
 ## [1.12.9] — 2026-05-27
 
 ### Fixed
+
 - **User permission persistence** (PR #181, issue #172):
   - Normalizes User Manager permission payloads so raw strings such as `EVENT_VIEW` persist without triggering `'str' object has no attribute 'value'`.
   - Preserves compatibility with enum-like permission values, omitted permission updates, and explicit permission clearing.
@@ -187,6 +218,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.8] — 2026-05-27
 
 ### Added
+
 - **Availability MTTR/MTBF reporting** (PR #179, issue #178):
   - Adds `GET /api/events/availability-report` with a default 30-day window and custom `start` / `end` support.
   - Calculates MTTR from complete recovered events as `recovered_at - created_at`.
@@ -199,6 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.7] — 2026-05-27
 
 ### Added
+
 - **ICMP latency and jitter telemetry** (PR #177, issue #175):
   - Preserves existing binary ICMP availability metrics for event lifecycle compatibility while adding `icmp_latency_ms` and `icmp_jitter_ms` sidecar telemetry streams.
   - Parses successful ping latency, stores latency only on successful probes, and calculates jitter as the absolute delta between consecutive successful latency samples.
@@ -209,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.6] — 2026-05-26
 
 ### Fixed
+
 - **Recovered event console visibility** (PR #174, issue #173):
   - Adds a console-specific event feed that preserves `ACTIVE` as unresolved `OPEN`/`ACK` while keeping `RECOVERED` events visible in the Monitoring Console.
   - Protects ACKed/commented recovered events during streaming cleanup by rechecking prune eligibility at close time.
@@ -223,6 +257,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.4] — 2026-05-25
 
 ### Fixed
+
 - **Metric deletion UI and event cleanup semantics** (PR #161, issue #160):
   - Clarifies global metric definition deletion versus per-CI metric exclusion in the Admin Metrics UI.
   - Marks active collection-failure events as `RECOVERED` in the same Neo4j transaction that deletes the `MetricDef`.
@@ -232,6 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.3] — 2026-05-25
 
 ### Fixed
+
 - **SNMP no-response event severity normalization** (PR #159, issue #152):
   - Treats SNMP no-response, timeout, and no-data collection failures as `WARNING` events regardless of configured metric criticality.
   - Adds event lifecycle discriminators for collection failures, threshold breaches, and availability events to avoid conflating recovery paths.
@@ -242,6 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.2] — 2026-05-25
 
 ### Fixed
+
 - **Bulk metric operation freeze mitigation** (PRs #156-#158, issue #153):
   - Offloads heavy metric create/delete backend work from the FastAPI event loop.
   - Adds a process-local same-metric mutation guard with controlled duplicate-operation responses.
@@ -252,6 +289,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.1] — 2026-05-25
 
 ### Fixed
+
 - **Legacy SNMP latest readings refresh** (PR #151, issue #150):
   - Refreshes Neo4j `HAS_METRIC.last_value` and `HAS_METRIC.last_updated` after successful Timescale bulk persistence.
   - Keeps the UI/topology latest readings aligned with fresh `metric_values` rows while the scalable polling path remains disabled.
@@ -260,6 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.0] — 2026-05-25
 
 ### Added
+
 - **Scalable metric polling architecture** (PRs #140-#149, issue #139):
   - Adds default-off polling pipeline flags and side-effect-free contracts for staged rollout.
   - Adds PostgreSQL-backed polling cycles, task/result queues, leases, retries, dead-letter handling, and explicit migration runner.
@@ -271,15 +310,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adds `docs/snmp-scalable-engine.md` with a Mermaid diagram, happy path, flags, rollback model, and current caveats for the new leased SNMP engine.
 
 ### Changed
+
 - Documents the scalable polling rollout path in `README.md`, `docs/polling-pipeline-runbook.md`, and `docs/polling-pipeline-tuning.md`.
 
 ### Notes
+
 - Backpressure and metadata cache are currently queue-admission controls, not a deep adaptive control loop inside every worker.
 - The scalable path is default-off and should be enabled progressively in staging before production rollout.
 
 ## [1.11.10] — 2026-05-24
 
 ### Fixed
+
 - **Monitoring console ownership feedback** (PR #135, issue #31):
   - Surfaces failed “Tomar caso” ownership attempts inline instead of failing silently.
   - Disables the ownership action while the mutation is in flight and resets transient state across modal transitions.
@@ -294,6 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.11.9] — 2026-05-24
 
 ### Fixed
+
 - **AI agent permission validation hardening** (PR #121, issue #108):
   - Validates AI-agent JWT `permissions` claims against the `AIPermission` enum before granting access.
   - Rejects human/admin permissions, unknown permission strings, and malformed permission claims with fail-closed `403` responses.
@@ -303,6 +346,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.11.8] — 2026-05-23
 
 ### Changed
+
 - **System Status and SNMP Collector Optimizations**:
   - Implemented fast-fail Neo4j connectivity check (`verify_connection`) on the status endpoint to prevent API thread starvation on database startup/downtime.
   - Decoupled the SNMP collector worker from the main backend container by introducing `DISABLE_BACKEND_COLLECTOR=true`, preventing duplicate background workers.
@@ -312,6 +356,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.9.1] — 2026-05-11
 
 ### Fixed
+
 - **SSE stream-progress endpoint fixes** (issue #85):
   - Added missing `/api` prefix to SSE fetch URL (was causing 404)
   - Added Authorization Bearer token to SSE fetch headers (was causing 401)
@@ -323,6 +368,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.9.0] — 2026-05-11
 
 ### Added
+
 - **Batch Event Closure with SSE Progress Streaming**: Bulk close all RECOVERED events via `POST /events/prune` with real-time progress via `GET /events/bulk/stream-progress`
   - `event_batch_pruner()` async generator with cursor-based pagination (stable to inserts between batches)
   - Configurable batch size, delay, and timeout via `EVENT_BATCH_SIZE`, `EVENT_BATCH_DELAY_MS`, `EVENT_BATCH_TIMEOUT_S`
@@ -334,6 +380,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.11.4] — 2026-05-20
 
 ### Fixed
+
 - **ICMP polling false positives**: Fixed timeout, retry, and debounce logic in `snmp_worker.py`
   - Added `ICMPSettings` class with configurable `timeout_ms` (default 3s), `retries` (default 2), `debounce_count` (default 3)
   - Fixed platform-conditional ping: Linux uses `ping -W` (seconds), Windows uses `ping -w` (ms)
@@ -349,6 +396,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.11.5] — 2026-05-21
 
 ### Fixed
+
 - **Auth token security refactor** (PR #112):
   - Tokens stored in HTTP-only cookies (XSS protection) instead of localStorage
   - Refresh token rotation with 7-day TTL and one-time use
@@ -363,6 +411,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.11.0] — 2026-05-19
 
 ### Added
+
 - **CLI Polling Monitoring**: Execute CLI commands on multi-vendor network equipment via SSH/Telnet, extract values via regex, and feed numeric results into the ITOM monitoring pipeline
   - `MetricDef.protocol` extended with `CLI` value alongside existing SNMP and ICMP
   - `cli_worker.py` engine with SSH (preferred) and Telnet (fallback), privilege escalation, regex extraction, and NaN rate limiter (3 consecutive misses → alert)
@@ -373,9 +422,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `CLICredentialsSettings` in `backend/config.py` for `CLI_DEFAULT_USER`, `CLI_DEFAULT_PASS`, `CLI_ENABLE_PASS` env vars
 
 ### Fixed
+
 - **CLI protocol branch bug**: `cli_protocol == 'SSH'` changed to `!= 'Telnet'` so Telnet-only mode works correctly
 
 ### Fixed
+
 - **Nexgen-frontend proxy hostname conflict**: Vite proxy fallback changed from `localhost:8000` to `nexgen_backend:8000` to fix 404 on `GET /api/dictionaries/template-csv` caused by port conflict with netai-backend
 - **Neo4j ResultConsumedError in topology_repo**: `get_cis_relationship_summary()` now consumes result set inside session context, fixing 500 error on `POST /api/cis/relationships`
 - **Dictionary CSV template route ordering**: `GET /api/dictionaries/template-csv` now registers before `GET /api/dictionaries/{dictionary_id}` so FastAPI does not treat `template-csv` as a dictionary ID
@@ -387,6 +438,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.8.0] — 2026-05-10
 
 ### Added
+
 - **Bulk Metric Dictionary Upload**: CSV-based bulk creation of MetricDictionary nodes with pre-populated template, 10% SNMP validation before commit, and automatic HAS_METRIC link creation on confirm.
   - `GET /api/dictionaries/template-csv` — download CSV template pre-populated with existing brand+model pairs from CI nodes
   - `POST /api/dictionaries/bulk` — parse and validate CSV (no commit), returns preview with per-row errors
@@ -400,6 +452,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `api.ts` fixed: FormData/Blob passed directly without JSON.stringify
 
 ### Fixed
+
 - **StreamingResponse import**: `StreamingResponse` now correctly imported from `fastapi.responses` instead of `fastapi` (was blocking test collection)
   - `MetricDictionary` Neo4j nodes with brand+model required keys
   - `AppliedDictionary` overlay per CI for per-device customization
@@ -414,6 +467,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.6.0] — 2026-05-09
 
 ### Added
+
 - **Event Correlation (Root Cause)**: When a parent CI fails, dependent CIs are marked as `PROPAGATED` instead of creating separate events. Reduces alarm noise by showing only the root cause event.
   - New fields on Event: `propagated_from`, `correlation_type` ('ROOT'|'PROPAGATED'), `root_cause_ci_id`
   - `find_open_parent_event()` traverses DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to 3 levels
@@ -424,17 +478,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.5.0] — 2026-05-09
 
 ### Added
+
 - **CI Relationship Validator**: Add pre-creation validation to mass link editor and single-link creation. `POST /cis/relationships` batch endpoint returns CI relationship summaries. `RelationshipTooltip` + `RelationshipBadge` integrated into `MassLinkEditor` FilterPanel showing existing connections on hover.
 - **Validation Guard**: `execute_bulk_links` warns when CIs already have the target relationship type before MERGE.
 - **Simulate Enrichment**: `/links/mass/simulate` response includes `has_existing_relationships` with source/target CI lists.
 
 ### Fixed
+
 - **Layer Filter**: Fixed `n.category` vs `n.type` mismatch — layer filter now checks both fields.
 - **Debounce Race**: Fixed timeout race condition — IDs now captured via closure instead of ref.
 
 ## [1.4.0] — 2026-05-09
 
 ### Added
+
 - **RTU/MQTT Telemetry Infrastructure (Phase 1)**: Foundation for monitoring BLIIoT S475E RTU devices via MQTT.
   - `RTUService` — full CRUD for RTU and Sensor entities in Neo4j
   - RTU/Sensor Pydantic models (`RTU`, `Sensor`, `TelemetryMessage`)
@@ -446,14 +503,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Neo4j migration: RTU/Sensor node + relationship constraints (IF NOT EXISTS — idempotent)
 
 ### Fixed
+
 - **RTU delete_sensor always returned 404** (issue #64): Removed incorrect existence check that used `find_sensor_by_key` with hardcoded dummy values (`register_addr=0`, `sensor_type=''`). Now delegates to `repo.delete_sensor` directly.
 
 ### Testing
+
 - 7 new test files covering models, repo, service, router, integration, MQTT subscriber
 
 ## [1.3.0] — 2026-05-02
 
 ### Fixed
+
 - **CMDB Correlations**: Fixed link query using OR logic so CIs properly display their correlations in the graph view.
 - **Clustering Aura**: Aura now only visible for CRITICAL/WARNING clusters — no more visual noise from healthy clusters.
 - **Clustering Tooltip**: Hover tooltip with 1.5s delay shows all CIs in cluster with individual status badges.
@@ -461,35 +521,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cypher Injection Prevention**: Added allowlist validation for node labels in `_get_nodes_by_filter`.
 
 ### Added
+
 - **Smart Culling for GeoView Map**: When >200 active alarms, the map now intelligently shows only the top 50 most critical CIs instead of overwhelming the operator with 1000+ markers. Includes a "Ver todos / Ver más críticos" toggle in the map toolbar.
 - **Aura Radius Cap**: Maximum aura radius capped at 10km regardless of event count, preventing visual pollution from 50km+ circles.
 - **Severity-Weighted Ranking**: CIs are ranked by `Σ(severity_weight * event_count)` where critical=3, warning=2, info=1.
 
 ### Fixed
+
 - **GeoView CI Visibility**: Resolved an issue where the map appeared empty when >1000 alarms were active due to backend event truncation (LIMIT 100) cascading through the enrichment layer.
 
 ## [1.3.0] — 2026-05-02
 
 ### Added
+
 - **Backup System**: PostgreSQL backup with APScheduler daily scheduling, admin-configurable schedule (default 06:00 dawn), manual backup trigger (ADMIN only), Neo4j BACKUP_SUCCESS/BACKUP_FAILURE events for admin dashboard, backup history and metrics API endpoints.
 - **Backup Config Model**: PostgreSQL table for schedule_type, scheduled_time, enabled, retention_days, storage_path.
 - **Backup History Model**: Audit log of all backups (scheduled/manual) with status, duration, file size.
 - **Backup Metrics Endpoint**: `GET /api/backup/metrics` returns last_backup_at timestamp for admin dashboard.
 
 ### Fixed
+
 - **Backup concurrent safety**: Added threading lock to prevent simultaneous backup runs corrupting files.
 - **Backup cleanup error handling**: Cleanup failures now logged instead of silently swallowed.
 - **APScheduler reschedule race condition**: Using `remove_job` instead of `remove_all_jobs`.
 
 ### Security
+
 - Credentials for pg_dump now read from environment variables instead of hardcoded.
 
 ### Testing
+
 - Judgment Day: 3 rounds, 2 judges, 0 CRITICALs remaining, APPROVED verdict.
 
 ## [1.1.0] — 2026-05-02
 
 ### Added
+
 - **Hybrid Map Clustering**: Groups CIs by `location_name` (case-insensitive) with Haversine proximity fallback (500m threshold). Cluster markers display count badge, worst severity color, and CRITICAL clusters pulse with animate-ping.
 - **Cluster Hover Tooltips**: Hovering over a cluster shows a popup listing all CIs in that location with name and severity.
 - **Click-to-Expand Zones**: Clicking a cluster zooms the map to fit all members, renders individual CircleMarkers with connecting lines. Clicking outside collapses back to cluster view.
@@ -499,6 +566,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0-prod-init] — 2026-04-22
 
 ### Added
+
 - System startup event generation
 - PostgreSQL health check endpoint
 - Resource alerts to system logs
@@ -507,6 +575,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment-based external ports mapping
 
 ### Fixed
+
 - Missing IP and metrics in topology detail modal
 - Admin auth split-brain scenario
 - Postgres environment variable quoting issues
@@ -518,11 +587,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI editor prefill issues
 
 ### Security
+
 - Dynamic polling interval configuration
 - Security hardening for environment config
 - Allow-list enforcement for dynamic Cypher queries
 
 ### Infrastructure
+
 - Docker Compose with full port variabilization
 - Backend/frontend/service orchestration scripts
 - Dependabot configuration
