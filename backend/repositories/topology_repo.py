@@ -6,8 +6,8 @@ import json
 from config import get_icmp_settings
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 import re
-from neo4j import Driver
 from database import get_db
+from models.core import Node
 _relationship_types = importlib.import_module("services.relationship_types")
 LISTABLE_RELATIONSHIP_TYPES = _relationship_types.LISTABLE_RELATIONSHIP_TYPES
 SUPPORTED_CI_RELATIONSHIP_TYPES = _relationship_types.SUPPORTED_CI_RELATIONSHIP_TYPES
@@ -31,15 +31,15 @@ def get_nodes(allowed_locations: Optional[List[str]] = None, is_admin: bool = Fa
         """
     with driver.session() as session:
         result = session.run(query, **params)
-    return [
-        {
-            "node": r["n"],
-            "category": r["category"],
-            "category_icon_key": r["category_icon_key"],
-            "metrics": r["metrics"],
-        }
-        for r in result
-    ]
+        return [
+            {
+                "node": r["n"],
+                "category": r["category"],
+                "category_icon_key": r["category_icon_key"],
+                "metrics": r["metrics"],
+            }
+            for r in result
+        ]
 
 def upsert_node(node: Node) -> None:
     driver = get_db()
@@ -274,17 +274,17 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
     if locations: where.append("n.location_name IN $locations"); params["locations"] = locations
     if owners: where.append("n.owner IN $owners"); params["owners"] = owners
     if not is_admin and allowed_locations: where.append("n.location_name IN $allowed_locations"); params["allowed_locations"] = allowed_locations
-    w_str = (" AND " + " AND ".join(where)) if where else ""
+    w_str = ("WHERE " + " AND ".join(where)) if where else ""
     with driver.session() as session:
-        # Build the query: only CIs with valid location coordinates
+        # Build the query: include every scoped CI. Geographic coordinates are optional
+        # and are only reconstructed for frontend map placement when present.
         node_query = f"""
             MATCH (n:CI)
-            WHERE n.location IS NOT NULL AND n.location.latitude IS NOT NULL AND n.location.longitude IS NOT NULL
             {w_str}
             OPTIONAL MATCH (n)-[r:HAS_METRIC]->(m:MetricDef)
             RETURN n, 
-                   n.location.latitude as lat, 
-                   n.location.longitude as lng, 
+                   CASE WHEN n.location IS NULL THEN null ELSE n.location.latitude END as lat,
+                   CASE WHEN n.location IS NULL THEN null ELSE n.location.longitude END as lng,
                    labels(n) as labels,
                    collect({{
                        name: m.id, 
