@@ -1,5 +1,7 @@
 import json
+import logging
 import subprocess
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -418,3 +420,65 @@ def test_bounded_ping_maps_subprocess_failure_without_exception_details():
     assert result.latency_ms is None
     assert result.detail == "ping command failed"
     assert "secret detail" not in result.detail
+
+
+def test_post_lm_studio_logs_timeout_exception(caplog):
+    from config import LMStudioSettings
+    from services.ai_chat_service import LMStudioTimeoutError, _post_lm_studio_chat_completion
+
+    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
+            with pytest.raises(LMStudioTimeoutError):
+                _post_lm_studio_chat_completion(payload, settings)
+    assert "LM Studio request timed out" in caplog.text
+    assert "lmstudio.local" in caplog.text
+
+
+def test_post_lm_studio_logs_url_error(caplog):
+    from config import LMStudioSettings
+    from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
+
+    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
+            with pytest.raises(LMStudioError, match="unavailable"):
+                _post_lm_studio_chat_completion(payload, settings)
+    assert "LM Studio unavailable" in caplog.text
+    assert "lmstudio.local" in caplog.text
+
+
+def test_post_lm_studio_logs_parse_error(caplog):
+    from config import LMStudioSettings
+    from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
+
+    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=ValueError("bad data")):
+        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
+            with pytest.raises(LMStudioError, match="could not be parsed"):
+                _post_lm_studio_chat_completion(payload, settings)
+    assert "LM Studio response parse error" in caplog.text
+    assert "lmstudio.local" in caplog.text
+
+
+def test_post_lm_studio_logs_missing_message(caplog):
+    import io
+    from config import LMStudioSettings
+    from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
+
+    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    response_body = json.dumps({"choices": []}).encode("utf-8")
+    mock_response = MagicMock()
+    mock_response.read.return_value = response_body
+    mock_response.__enter__ = MagicMock(return_value=mock_response)
+    mock_response.__exit__ = MagicMock(return_value=False)
+    with patch("services.ai_chat_service.urllib.request.urlopen", return_value=mock_response):
+        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
+            with pytest.raises(LMStudioError, match="did not contain a chat message"):
+                _post_lm_studio_chat_completion(payload, settings)
+    assert "LM Studio response missing chat message" in caplog.text
+    assert "lmstudio.local" in caplog.text
