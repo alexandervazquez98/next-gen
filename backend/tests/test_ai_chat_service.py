@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,24 @@ def _diagnostic_user() -> User:
     return User(
         username="diagnostic-operator",
         role="OPERATOR",
+        permissions=["CI_VIEW", "RUN_DIAGNOSTICS"],
+        allowed_locations=[],
+    )
+
+
+def _event_view_user() -> User:
+    return User(
+        username="event-viewer",
+        role="OPERATOR",
+        permissions=["CI_VIEW", "EVENT_VIEW"],
+        allowed_locations=[],
+    )
+
+
+def _admin_user() -> User:
+    return User(
+        username="admin-operator",
+        role="ADMIN",
         permissions=["CI_VIEW", "RUN_DIAGNOSTICS"],
         allowed_locations=[],
     )
@@ -46,6 +65,32 @@ class _FakeDb:
     def refresh(self, model):
         model.id = 42
         self.refreshed.append(model)
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def order_by(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _FakeHistoryDb(_FakeDb):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+
+    def query(self, *_args, **_kwargs):
+        return _FakeQuery(self.rows)
 
 
 def _make_client(db=None, user=None):
@@ -99,6 +144,7 @@ def test_ai_chat_success_uses_server_config_and_persists_history(monkeypatch):
     assert response.json()["answer"] == "Use the incident timeline first."
     assert response.json()["model"] == "local-model"
     assert captured_payloads[0]["model"] == "local-model"
+    assert captured_payloads[0]["max_tokens"] == 800
     assert "http://lmstudio.local" not in json.dumps(captured_payloads[0])
     assert db.committed is True
     assert db.added[0].username == "operator"
@@ -128,6 +174,348 @@ def test_payload_system_prompt_uses_backend_identity_sources(tmp_path, monkeypat
     assert "Unique runtime identity." in system_prompt
     assert "Read-only diagnostics." in system_prompt
     assert "Use compact context." in system_prompt
+
+
+def test_payload_system_prompt_loads_optional_tool_catalog(tmp_path, monkeypatch):
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    identity_dir = tmp_path / "identity"
+    tools_dir = tmp_path / "tools"
+    identity_dir.mkdir()
+    tools_dir.mkdir()
+    (identity_dir / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    (identity_dir / "scope.md").write_text("# Scope\n\nRead-only diagnostics.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text("# Context\n\nUse compact context.", encoding="utf-8")
+    (tools_dir / "README.md").write_text("# AI tool system\n\nBackend-owned tool catalog.", encoding="utf-8")
+    (tools_dir / "event-list.md").write_text("# Event list\n\nProvider-neutral event listing.", encoding="utf-8")
+    (tools_dir / "network-basic.md").write_text("# Network basic tools\n\n`availability_check` and planned traceroute.", encoding="utf-8")
+    monkeypatch.setattr(ai_chat_service, "AI_IDENTITY_DIR", identity_dir)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "What tools are available?",
+        None,
+        None,
+        LMStudioSettings(enabled=True, model="local-model"),
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "Unique runtime identity." in system_prompt
+    assert "Backend-owned tool catalog." in system_prompt
+    assert "Provider-neutral event listing." in system_prompt
+    assert "planned traceroute" in system_prompt
+
+
+def test_payload_replays_bounded_history_before_current_question():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "What now?",
+        None,
+        None,
+        LMStudioSettings(enabled=True, model="local-model"),
+        history=[
+            {"role": "user", "content": "List active events"},
+            {"role": "assistant", "content": "Two events are active."},
+        ],
+    )
+
+    assert [message["role"] for message in payload["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert payload["messages"][1]["content"] == "List active events"
+    assert payload["messages"][-1]["content"].startswith("User question:\nWhat now?")
+
+
+def test_complete_chat_falls_back_when_model_returns_empty_event_list(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    from services import ai_chat_service
+
+    harness_result = {
+        "type": "event_list",
+        "status": "OPEN",
+        "severity": None,
+        "count": 2,
+        "truncated": False,
+        "events": [
+            {"ci_name": "Router A", "severity": "CRITICAL", "status": "OPEN", "message": "Service down"},
+            {"ci_name": "Switch B", "severity": "INFO", "status": "OPEN", "message": "Ping warning"},
+        ],
+    }
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "", "model": "local-model"},
+    ):
+        response = ai_chat_service.complete_chat(
+            "dime que eventos hay abiertos en estos momentos?",
+            None,
+            harness_result,
+            [],
+        )
+
+    assert response["model"] == "deterministic-template"
+    assert "Hay 2 eventos" in response["content"]
+    assert "Router A" in response["content"]
+    assert "Switch B" in response["content"]
+
+
+def test_complete_chat_preserves_non_empty_model_response(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    from services import ai_chat_service
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "Model answer", "model": "local-model"},
+    ):
+        response = ai_chat_service.complete_chat("hello", None, None, [])
+
+    assert response["content"] == "Model answer"
+
+
+def test_ai_policy_and_template_markdown_contracts_exist():
+    root = Path(__file__).resolve().parents[1]
+    required_fragments = {
+        "ai/policies/response-boundaries.md": [
+            "harness result exists",
+            "reachable means",
+            "unreachable means",
+            "root cause",
+            "Raven",
+            "Postgres",
+        ],
+        "ai/policies/lmstudio-runtime.md": [
+            "/v1/chat/completions",
+            "backend-owned history",
+            "reasoning_content",
+            "LM_STUDIO_MAX_TOKENS",
+            "LM_STUDIO_TIMEOUT_SECONDS",
+        ],
+        "ai/policies/followup-intents.md": [
+            "event-list triggers",
+            "availability follow-up triggers",
+            "named-area",
+            "availability_check_batch",
+            "5 CIs",
+        ],
+        "ai/templates/event_list.md": [
+            "Eventos observados",
+            "Diagnóstico observado",
+            "Límites",
+            "Siguiente chequeo sugerido",
+            "truncated",
+        ],
+        "ai/templates/availability_check.md": [
+            "CI",
+            "target",
+            "latency",
+            "bounded ping",
+            "does not confirm",
+        ],
+        "ai/templates/availability_check_batch.md": [
+            "count",
+            "per-CI",
+            "bounded ping",
+            "5 CIs",
+            "does not confirm",
+        ],
+    }
+
+    for relative_path, fragments in required_fragments.items():
+        text = (root / relative_path).read_text(encoding="utf-8")
+        lowered = text.lower()
+        for fragment in fragments:
+            assert fragment.lower() in lowered, relative_path
+
+
+def test_ai_markdown_loader_is_bounded_and_safe(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    base = tmp_path / "ai"
+    (base / "templates").mkdir(parents=True)
+    (base / "templates" / "event_list.md").write_text("x" * 25, encoding="utf-8")
+    monkeypatch.setattr(ai_chat_service, "AI_MARKDOWN_DIR", base)
+    monkeypatch.setattr(ai_chat_service, "MAX_AI_MARKDOWN_CHARS", 10)
+
+    assert ai_chat_service.load_ai_markdown_contract("templates", "event_list.md") == "x" * 10
+    assert ai_chat_service.load_ai_markdown_contract("templates", "missing.md") == ""
+    assert ai_chat_service.load_ai_markdown_contract("../identity", "Soul.md") == ""
+
+
+def test_render_event_list_response_uses_facts_and_safe_observed_diagnosis():
+    from services.ai_chat_service import render_harness_response
+
+    harness_result = {
+        "type": "event_list",
+        "status": "OPEN",
+        "severity": "WARNING",
+        "count": 2,
+        "truncated": True,
+        "events": [
+            {
+                "ci_name": "CUMBRES_PTP_DIR_PLAYAS_DE_TIJUANA",
+                "severity": "WARNING",
+                "status": "OPEN",
+                "metric_name": "ICMP Latency",
+                "message": "Warning Threshold Breached: 128.0 >= 100.0",
+                "last_seen": "2026-06-19T21:41:02Z",
+            },
+            {
+                "ci_name": "SWITCH C2",
+                "severity": "INFO",
+                "status": "OPEN",
+                "message": "Service/Host Down: PING-CHECK-CISCO",
+                "last_seen": "2026-06-19T21:40:25Z",
+            },
+        ],
+    }
+
+    response = render_harness_response("que eventos tenemos abiertos y cual es el diagnostico?", harness_result)
+
+    assert response is not None
+    assert "Hay 2 eventos" in response
+    assert "status=OPEN" in response
+    assert "severity=WARNING" in response
+    assert "CUMBRES_PTP_DIR_PLAYAS_DE_TIJUANA" in response
+    assert "SWITCH C2" in response
+    assert "Warning Threshold Breached: 128.0 >= 100.0" in response
+    assert "2026-06-19T21:41:02Z" in response
+    assert "latencia" in response.lower()
+    assert "disponibilidad" in response.lower()
+    assert "Resultado truncado" in response
+    assert "No confirma causa raíz" in response
+    for unsafe in ("congestión severa", "falla eléctrica", "firewall bloqueando", "estado óptimo", "resuelto"):
+        assert unsafe not in response.lower()
+
+
+def test_render_empty_event_list_response_has_filters_and_no_invented_facts():
+    from services.ai_chat_service import render_harness_response
+
+    response = render_harness_response(
+        "list open critical events",
+        {"type": "event_list", "status": "OPEN", "severity": "CRITICAL", "count": 0, "events": []},
+    )
+
+    assert response is not None
+    assert "There are no events" in response
+    assert "status=OPEN" in response
+    assert "severity=CRITICAL" in response
+    assert "root cause is" not in response.lower()
+    assert "resolved" not in response.lower()
+
+
+def test_render_availability_check_response_uses_bounded_ping_semantics():
+    from services.ai_chat_service import render_harness_response
+
+    response = render_harness_response(
+        "check Router-01 availability",
+        {
+            "type": "availability_check",
+            "ci_name": "Router-01",
+            "target": "192.168.1.10",
+            "status": "reachable",
+            "latency_ms": 7.42,
+            "detail": "1 packet received",
+        },
+    )
+
+    assert response is not None
+    assert "Router-01" in response
+    assert "reachable" in response
+    assert "192.168.1.10" in response
+    assert "7.42 ms" in response
+    assert "current bounded ping" in response
+    assert "does not confirm complete service health" in response
+    assert "service is healthy" not in response.lower()
+
+
+def test_render_availability_check_failure_does_not_claim_reachability():
+    from services.ai_chat_service import render_harness_response
+
+    response = render_harness_response(
+        "verifica Router-01",
+        {"type": "availability_check", "ci_ref": "Router-01", "status": "ci_not_found"},
+    )
+
+    assert response is not None
+    assert "Router-01" in response
+    assert "ci_not_found" in response
+    assert "respondió" not in response.lower()
+    assert "reachable," not in response.lower()
+
+
+def test_render_availability_batch_response_lists_results_and_cap():
+    from services.ai_chat_service import render_harness_response
+
+    response = render_harness_response(
+        "dame el estatus actual de islas agrarias",
+        {
+            "type": "availability_check_batch",
+            "count": 2,
+            "results": [
+                {
+                    "ci_name": "AP01-ISLAS_AGRARIAS-BAJA01",
+                    "status": "reachable",
+                    "target": "10.53.13.34",
+                    "latency_ms": 4.29,
+                    "detail": "1 packet received",
+                },
+                {
+                    "ci_name": "AP02-ISLAS_AGRARIAS-BAJA01",
+                    "status": "unreachable",
+                    "target": "10.53.13.35",
+                    "latency_ms": None,
+                    "detail": "no response to one bounded ping",
+                },
+            ],
+        },
+    )
+
+    assert response is not None
+    assert "Chequeo de disponibilidad ejecutado sobre 2 CIs" in response
+    assert "AP01-ISLAS_AGRARIAS-BAJA01" in response
+    assert "AP02-ISLAS_AGRARIAS-BAJA01" in response
+    assert "4.29 ms" in response
+    assert "ping acotado" in response.lower()
+    assert "máximo 5 CIs" in response
+    assert "salud completa" in response
+    assert "estables" not in response.lower()
+
+
+def test_complete_chat_bypasses_lm_studio_for_operational_harnesses(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    from services import ai_chat_service
+
+    with patch("services.ai_chat_service._post_lm_studio_chat_completion") as post:
+        response = ai_chat_service.complete_chat(
+            "list open events",
+            None,
+            {"type": "event_list", "status": "OPEN", "count": 0, "events": []},
+            [],
+        )
+
+    post.assert_not_called()
+    assert response["model"] == "deterministic-template"
+    assert "There are no events" in response["content"]
+
+
+def test_complete_chat_preserves_model_response_for_unknown_harness(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    from services import ai_chat_service
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "Model answer", "model": "local-model"},
+    ) as post:
+        response = ai_chat_service.complete_chat("hello", None, {"type": "future_harness"}, [])
+
+    post.assert_called_once()
+    assert response["content"] == "Model answer"
 
 
 def test_payload_places_user_question_before_operational_context():
@@ -245,6 +633,348 @@ def test_availability_check_resolves_ci_and_persists_ping_metadata(monkeypatch):
     assert response.json()["harness_result"]["status"] == "reachable"
     assert db.added[0].harness_result["ci_id"] == "ci-1"
     assert db.added[0].harness_result["target"] == "192.168.1.10"
+
+
+def test_availability_batch_rejects_oversized_ci_ref(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    response = client.post(
+        "/api/ai/chat",
+        json={
+            "query": "check availability",
+            "intent": {"type": "availability_check_batch", "ci_refs": ["x" * 121]},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_event_list_harness_persists_bounded_event_metadata(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, db = _make_client(user=_event_view_user())
+
+    events = [
+        {
+            "id": "evt-1",
+            "ci_id": "ci-1",
+            "ci_name": "Redis Cache",
+            "ci_hostname": "redis-01",
+            "metric_id": "latency",
+            "metric_name": "Latency",
+            "status": "OPEN",
+            "severity": "CRITICAL",
+            "message": "Redis latency above threshold",
+            "created_at": "2026-06-19T18:00:00Z",
+            "secret_field": "must-not-leak",
+        },
+        {
+            "id": "evt-2",
+            "ci_id": "ci-2",
+            "ci_name": "Router-01",
+            "status": "ACK",
+            "severity": "WARNING",
+            "message": "Packet loss detected",
+        },
+    ]
+
+    captured_payloads = []
+
+    def fake_completion(payload, settings):
+        captured_payloads.append(payload)
+        return {"content": "There are 2 active events.", "model": settings.model}
+
+    with patch("services.ai_chat_service.list_events_for_harness", return_value=events) as list_events, \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion", side_effect=fake_completion):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "event_list", "status": "ACTIVE", "limit": 1},
+            },
+        )
+
+    assert response.status_code == 200
+    list_events.assert_called_once()
+    assert list_events.call_args.args[1:] == ("ACTIVE", 1, None)
+    harness_result = response.json()["harness_result"]
+    assert harness_result["type"] == "event_list"
+    assert harness_result["count"] == 1
+    assert harness_result["truncated"] is True
+    assert harness_result["events"][0]["id"] == "evt-1"
+    assert "secret_field" not in harness_result["events"][0]
+    assert db.added[0].harness_result == harness_result
+    assert captured_payloads == []
+    assert response.json()["model"] == "deterministic-template"
+
+
+def test_event_list_harness_infers_open_critical_filters(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_event_view_user())
+
+    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events, \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No critical open events.", "model": "local-model"}):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "lista todos los eventos abiertos criticos"},
+        )
+
+    assert response.status_code == 200
+    list_events.assert_called_once()
+    assert list_events.call_args.args[1:] == ("OPEN", 10, "CRITICAL")
+    assert response.json()["harness_result"]["severity"] == "CRITICAL"
+
+
+def test_event_list_harness_accepts_active_events_alias(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]), \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No active events.", "model": "local-model"}):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "active_events", "status": "ACTIVE"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["type"] == "event_list"
+
+
+def test_event_list_harness_infers_unrecovered_events_from_query(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_event_view_user())
+
+    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events, \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No unrecovered events.", "model": "local-model"}):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "que eventos no se han recuperado?"},
+        )
+
+    assert response.status_code == 200
+    list_events.assert_called_once()
+    assert list_events.call_args.args[1:] == ("ACTIVE", 10, None)
+    assert response.json()["harness_result"]["type"] == "event_list"
+
+
+def test_followup_availability_batch_uses_latest_event_list_context(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    previous_row = type(
+        "Row",
+        (),
+        {
+            "username": "ai-cmdb-diagnostic-operator",
+            "user_message": "lista eventos activos",
+            "assistant_response": "SWITCH A and SWITCH B are active.",
+            "harness_result": {
+                "type": "event_list",
+                "events": [
+                    {"ci_name": "SWITCH A", "ci_id": "ci-a"},
+                    {"ci_name": "SWITCH B", "ci_id": "ci-b"},
+                ],
+            },
+        },
+    )()
+    client, db = _make_client(db=_FakeHistoryDb([previous_row]), user=_ai_cmdb_diagnostic_user())
+
+    from services.ai_chat_service import PingResult
+
+    def resolve_ci(_driver, ci_ref):
+        return {"id": ci_ref.lower().replace(" ", "-"), "name": ci_ref, "ip": "192.168.1.10"}
+
+    with patch("services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_ci), \
+         patch("services.ai_chat_service.run_bounded_ping", return_value=PingResult("reachable", "192.168.1.10", 1.2, "1 packet received")), \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "Both switches are reachable.", "model": "local-model"}):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "verifica si están funcionando"},
+        )
+
+    assert response.status_code == 200
+    harness_result = response.json()["harness_result"]
+    assert harness_result["type"] == "availability_check_batch"
+    assert harness_result["count"] == 2
+    assert [item["ci_name"] for item in harness_result["results"]] == ["SWITCH A", "SWITCH B"]
+    assert db.added[0].harness_result["type"] == "availability_check_batch"
+
+
+def test_followup_status_filters_latest_event_list_by_named_area(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    previous_row = type(
+        "Row",
+        (),
+        {
+            "username": "ai-cmdb-diagnostic-operator",
+            "user_message": "eventos abiertos",
+            "assistant_response": "Open events listed.",
+            "harness_result": {
+                "type": "event_list",
+                "events": [
+                    {"ci_name": "AP01-ISLAS_AGRARIAS-BAJA01", "ci_id": "ci-ap01"},
+                    {"ci_name": "AP02-ISLAS_AGRARIAS-BAJA01", "ci_id": "ci-ap02"},
+                    {"ci_name": "CUMBRES_PTP_DIR_PLAYAS_DE_TIJUANA", "ci_id": "ci-cumbres"},
+                ],
+            },
+        },
+    )()
+    client, _db = _make_client(db=_FakeHistoryDb([previous_row]), user=_ai_cmdb_diagnostic_user())
+
+    from services.ai_chat_service import PingResult
+
+    with patch(
+        "services.ai_chat_service.resolve_ci_for_harness",
+        side_effect=lambda _driver, ci_ref: {"id": ci_ref, "name": ci_ref, "ip": "192.168.1.10"},
+    ), patch(
+        "services.ai_chat_service.run_bounded_ping",
+        return_value=PingResult("unreachable", "192.168.1.10", None, "no response to one bounded ping"),
+    ), patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "Availability checked.", "model": "local-model"},
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "dame el estatus actual de islas agrarias, como sigue el sitio?"},
+        )
+
+    assert response.status_code == 200
+    harness_result = response.json()["harness_result"]
+    assert harness_result["type"] == "availability_check_batch"
+    assert [item["ci_name"] for item in harness_result["results"]] == [
+        "AP01-ISLAS_AGRARIAS-BAJA01",
+        "AP02-ISLAS_AGRARIAS-BAJA01",
+    ]
+
+
+def test_admin_can_run_followup_availability_without_ai_view_all(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    previous_row = type(
+        "Row",
+        (),
+        {
+            "username": "admin-operator",
+            "user_message": "eventos abiertos",
+            "assistant_response": "Open events listed.",
+            "harness_result": {"type": "event_list", "events": [{"ci_name": "AP01-ISLAS_AGRARIAS-BAJA01"}]},
+        },
+    )()
+    client, _db = _make_client(db=_FakeHistoryDb([previous_row]), user=_admin_user())
+
+    from services.ai_chat_service import PingResult
+
+    with patch(
+        "services.ai_chat_service.resolve_ci_for_harness",
+        return_value={"id": "ci-ap01", "name": "AP01-ISLAS_AGRARIAS-BAJA01", "ip": "192.168.1.10"},
+    ), patch(
+        "services.ai_chat_service.run_bounded_ping",
+        return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
+    ), patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "Done.", "model": "local-model"},
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "dame el estatus actual de islas agrarias, como sigue el sitio?"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["type"] == "availability_check_batch"
+
+
+def test_followup_confirmation_runs_availability_batch_from_recent_event_list(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    previous_row = type(
+        "Row",
+        (),
+        {
+            "username": "ai-cmdb-diagnostic-operator",
+            "user_message": "eventos críticos",
+            "assistant_response": "Should I check availability?",
+            "harness_result": {
+                "type": "event_list",
+                "events": [
+                    {"ci_name": "AP01-ISLAS_AGRARIAS-BAJA01"},
+                    {"ci_name": "AP02-ISLAS_AGRARIAS-BAJA01"},
+                ],
+            },
+        },
+    )()
+    client, _db = _make_client(db=_FakeHistoryDb([previous_row]), user=_ai_cmdb_diagnostic_user())
+
+    from services.ai_chat_service import PingResult
+
+    with patch(
+        "services.ai_chat_service.resolve_ci_for_harness",
+        side_effect=lambda _driver, ci_ref: {"id": ci_ref, "name": ci_ref, "ip": "192.168.1.10"},
+    ), patch(
+        "services.ai_chat_service.run_bounded_ping",
+        return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
+    ), patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        return_value={"content": "Done.", "model": "local-model"},
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "si, haz el chequeo de disponibilidad"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["type"] == "availability_check_batch"
+
+
+def test_payload_warns_model_when_no_harness_was_executed():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "realiza un analisis de disponibilidad",
+        None,
+        None,
+        LMStudioSettings(enabled=True, model="local-model"),
+    )
+
+    assert "No backend harness result is present" in payload["messages"][-1]["content"]
+    assert "Do not claim" in payload["messages"][-1]["content"]
+
+
+def test_event_list_harness_requires_event_permission(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client()
+
+    with patch("services.ai_chat_service.list_events_for_harness") as list_events, \
+         patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete:
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "event_list", "status": "ACTIVE"},
+            },
+        )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not authorized to view events"
+    list_events.assert_not_called()
+    complete.assert_not_called()
 
 
 def test_availability_check_requires_diagnostic_permission(monkeypatch):

@@ -1,6 +1,7 @@
 # Context policy
 
-Keep incident context small. The assistant should receive only the facts needed for the current question.
+Keep incident context small. The assistant should receive only the facts needed
+for the current question.
 
 ## Prompt ordering
 
@@ -15,10 +16,15 @@ Use this order when composing the request:
 ## Budget strategy
 
 - Prefer summarized fields over raw object dumps.
-- Include IDs, names, status, severity, timestamps, and the few metrics relevant to the question.
+- Include IDs, names, status, severity, timestamps, and the few metrics relevant
+  to the question.
 - Trim long notes, logs, and histories unless the user asks about them directly.
 - Do not include the full tool catalog in every prompt.
 
 ## Why tools stay compact
 
-Large tool catalogs waste context, dilute the incident facts, and increase the chance that the model focuses on unused capabilities instead of the operator's question. The backend should keep harness context limited to the current request.
+Large tool catalogs waste context, dilute the incident facts, and increase the
+chance that the model focuses on unused capabilities instead of the operator's
+question. Keep the identity prompt compact and place detailed tool contracts in
+`../tools/` files. The backend should keep harness result context limited to the
+current request.

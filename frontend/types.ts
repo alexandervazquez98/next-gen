@@ -69,6 +69,26 @@ export interface GraphNode {
 	events?: EventSummary[];
 }
 
+export interface IncidentEvent {
+	id: string;
+	timestamp: string;
+	title: string;
+	description: string;
+	severity: "CRITICAL" | "WARNING" | "INFO" | string;
+	status: string;
+	affectedNodes: string[];
+}
+
+export interface AIAction {
+	id: string;
+	timestamp: string;
+	incidentId: string;
+	remedy: string;
+	reasoning: string;
+	confidence: number;
+	executed: boolean;
+}
+
 export interface GraphLink {
 	id: string;
 	source: string;
