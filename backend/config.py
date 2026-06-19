@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -211,11 +211,19 @@ def get_polling_pipeline_settings() -> PollingPipelineSettings:
 
 
 class ICMPSettings(BaseModel):
-    """ICMP polling settings for timeout, retry, and debounce behavior."""
+    """ICMP polling settings for timeout, retry, debounce, and latency thresholds."""
 
     timeout_ms: int = Field(default=3000, ge=1)
     retries: int = Field(default=2, ge=0)
     debounce_count: int = Field(default=3, ge=1)
+    latency_warning_ms: float = Field(default=100.0, ge=0)
+    latency_critical_ms: float = Field(default=500.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_latency_thresholds(self) -> "ICMPSettings":
+        if self.latency_warning_ms >= self.latency_critical_ms:
+            raise ValueError("ICMP_LATENCY_WARNING_MS must be less than ICMP_LATENCY_CRITICAL_MS")
+        return self
 
     @classmethod
     def from_env(cls) -> "ICMPSettings":
@@ -224,6 +232,8 @@ class ICMPSettings(BaseModel):
             timeout_ms=int(os.getenv("ICMP_TIMEOUT_MS", "3000")),
             retries=int(os.getenv("ICMP_RETRIES", "2")),
             debounce_count=int(os.getenv("ICMP_DEBOUNCE_COUNT", "3")),
+            latency_warning_ms=float(os.getenv("ICMP_LATENCY_WARNING_MS", "100")),
+            latency_critical_ms=float(os.getenv("ICMP_LATENCY_CRITICAL_MS", "500")),
         )
 
 

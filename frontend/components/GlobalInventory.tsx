@@ -8,6 +8,12 @@ import { useNodesQuery } from '../hooks/queries/useNodesQuery';
 import { formatMetricValue } from '../utils/metricFormatting';
 import CategoryIcon from './CategoryIcon';
 
+const getWorstMetricStatus = (metrics: GraphNode['metrics'] = []) => {
+    if (metrics.some((metric) => metric.status === 'CRITICAL')) return 'CRITICAL';
+    if (metrics.some((metric) => metric.status === 'WARNING')) return 'WARNING';
+    return 'OK';
+};
+
 /**
  * GlobalInventory Component
  * 
@@ -81,7 +87,14 @@ const GlobalInventory: React.FC = () => {
             <div className="flex-1 flex gap-6 overflow-hidden">
                 {/* List Column */}
                 <div className="w-1/3 flex flex-col gap-3 overflow-y-auto custom-scrollbar pr-2">
-                    {filteredInventory.map(item => (
+                    {filteredInventory.map(item => {
+                        const worstStatus = getWorstMetricStatus(item.metrics);
+                        const statusDotClass = worstStatus === 'CRITICAL'
+                            ? 'bg-red-500 animate-pulse'
+                            : worstStatus === 'WARNING'
+                                ? 'bg-yellow-500 animate-pulse'
+                                : 'bg-emerald-500';
+                        return (
                         <div
                             key={item.id}
                             onClick={() => setSelectedId(item.id)}
@@ -93,7 +106,7 @@ const GlobalInventory: React.FC = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <div className="flex items-center gap-2">
-                                        <span className={`w-2 h-2 rounded-full ${item.metrics?.some(m => m.status === 'CRITICAL') ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                                        <span className={`w-2 h-2 rounded-full ${statusDotClass}`}></span>
                                         <h3 className={`text-sm font-black ${selectedId === item.id ? 'text-brand-400' : 'text-white'}`}>{item.label || item.id}</h3>
                                     </div>
                                     <div className="flex gap-2 mt-1">
@@ -109,7 +122,7 @@ const GlobalInventory: React.FC = () => {
                                 <span className="material-symbols-outlined text-neutral-600 text-lg group-hover:text-white transition-colors">chevron_right</span>
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </div>
 
                 {/* Detail Column */}
@@ -141,7 +154,7 @@ const GlobalInventory: React.FC = () => {
                                     <div key={idx} className={`p-4 rounded-xl border ${getStatusClasses(metric.status)} flex flex-col gap-2 transition-all hover:scale-[1.02]`}>
                                         <div className="flex justify-between items-start">
                                             <span className="text-[10px] font-black uppercase opacity-70 tracking-wider">{metric.protocol}</span>
-                                            {metric.status === 'CRITICAL' && <span className="material-symbols-outlined text-sm animate-pulse">warning</span>}
+                                            {(metric.status === 'CRITICAL' || metric.status === 'WARNING') && <span className="material-symbols-outlined text-sm animate-pulse">warning</span>}
                                         </div>
                                         <h4 className="text-center font-black text-sm uppercase opacity-90">{metric.name}</h4>
                                         <div className="text-center py-2">

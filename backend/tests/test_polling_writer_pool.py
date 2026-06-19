@@ -86,7 +86,10 @@ def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monke
         {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 0.0, "time": row.observed_at},
     ]
-    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK"]
+    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK", "icmp_latency_ms"]
+    assert event_rows[1]["status"] == "OK"
+    assert event_rows[1]["metadata"]["warning"] == 100.0
+    assert event_rows[1]["metadata"]["critical"] == 500.0
 
 
 def test_writer_expands_failed_icmp_availability_to_packet_loss_sidecar(monkeypatch):
@@ -152,8 +155,41 @@ def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatc
         {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 0.0, "time": row.observed_at},
     ]
-    assert event_rows == []
+    assert [event["metric_id"] for event in event_rows] == ["icmp_latency_ms"]
+    assert event_rows[0]["status"] == "OK"
     assert completed == [row.result_id]
+
+
+def test_writer_emits_warning_latency_event_from_icmp_sidecar(monkeypatch):
+    from polling import writer_pool
+
+    persisted = []
+    event_rows = []
+    row = _row(key="icmp-warning", numeric=1.0)
+    row.protocol = "ICMP"
+    row.metric_id = "icmp_availability"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "icmp_availability",
+        "metadata": {
+            "metric_kind": "availability",
+            "internal": True,
+            "icmp": {"latency_ms": 150.0, "sidecar_metric_ids": ["icmp_latency_ms"]},
+        },
+    })
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: None)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    assert stats["inserted"] == 1
+    assert event_rows[0]["metric_id"] == "icmp_latency_ms"
+    assert event_rows[0]["status"] == "WARNING"
+    assert event_rows[0]["value"]["numeric"] == 150.0
 
 
 def test_writer_batches_timescale_inserts_receipts_and_neo4j_updates(monkeypatch):

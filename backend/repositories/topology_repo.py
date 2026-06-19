@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional, Set
 import importlib
 import json
+from config import get_icmp_settings
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
 import re
 from neo4j import Driver
@@ -442,6 +443,7 @@ def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str,
 
 
 def ensure_icmp_sidecar_metric_defs(session) -> None:
+    icmp_settings = get_icmp_settings()
     session.run("""
         MERGE (latency:MetricDef {id: $latency_id})
         SET latency.name = 'ICMP Latency',
@@ -450,7 +452,9 @@ def ensure_icmp_sidecar_metric_defs(session) -> None:
             latency.dataType = 'FLOAT',
             latency.unit = 'ms',
             latency.operator = '>=',
-            latency.criticality = coalesce(latency.criticality, 1),
+            latency.warning = $latency_warning_ms,
+            latency.critical = $latency_critical_ms,
+            latency.criticality = coalesce(latency.criticality, 3),
             latency.metric_kind = 'telemetry'
         MERGE (jitter:MetricDef {id: $jitter_id})
         SET jitter.name = 'ICMP Jitter',
@@ -461,7 +465,9 @@ def ensure_icmp_sidecar_metric_defs(session) -> None:
             jitter.operator = '>=',
             jitter.criticality = coalesce(jitter.criticality, 1),
             jitter.metric_kind = 'telemetry'
-    """, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID)
+    """, latency_id=ICMP_LATENCY_METRIC_ID, jitter_id=ICMP_JITTER_METRIC_ID,
+        latency_warning_ms=icmp_settings.latency_warning_ms,
+        latency_critical_ms=icmp_settings.latency_critical_ms)
 
 
 def migrate_icmp_sidecar_metrics() -> None:
