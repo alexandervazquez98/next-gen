@@ -61,12 +61,31 @@ const STREAM_STATUS_WEIGHTS: Record<string, number> = {
 	CLOSED: 0,
 };
 
-function getEventOpenAgeMs(event: Event): number {
-	return Math.max(0, Date.now() - new Date(event.created_at).getTime());
+function parseEventTimestamp(value?: string | null): number | null {
+	if (!value) return null;
+	const timestamp = new Date(value).getTime();
+	return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getEventOpenAgeMs(event: Event): number | null {
+	const startedAt = parseEventTimestamp(event.created_at);
+	if (startedAt === null) return null;
+
+	const endedAt =
+		event.status === "RECOVERED"
+			? (parseEventTimestamp(event.recovered_at) ??
+				parseEventTimestamp(event.last_seen) ??
+				Date.now())
+			: Date.now();
+
+	return Math.max(0, endedAt - startedAt);
 }
 
 function formatOpenAge(event: Event): string {
-	const totalMinutes = Math.floor(getEventOpenAgeMs(event) / 60000);
+	const ageMs = getEventOpenAgeMs(event);
+	if (ageMs === null) return "—";
+
+	const totalMinutes = Math.floor(ageMs / 60000);
 	const days = Math.floor(totalMinutes / 1440);
 	const hours = Math.floor((totalMinutes % 1440) / 60);
 	const minutes = totalMinutes % 60;
@@ -77,11 +96,28 @@ function formatOpenAge(event: Event): string {
 }
 
 function getOpenAgeTone(event: Event): string {
-	const totalMinutes = Math.floor(getEventOpenAgeMs(event) / 60000);
+	const ageMs = getEventOpenAgeMs(event);
+	if (ageMs === null) return "text-neutral-500";
+	const totalMinutes = Math.floor(ageMs / 60000);
 
 	if (totalMinutes >= 60) return "text-red-400";
 	if (totalMinutes >= 15) return "text-yellow-300";
 	return "text-emerald-300";
+}
+
+function formatEventTime(value?: string | null): string {
+	const timestamp = parseEventTimestamp(value);
+	return timestamp === null ? "—" : new Date(timestamp).toLocaleTimeString();
+}
+
+function formatEventDate(value?: string | null): string {
+	const timestamp = parseEventTimestamp(value);
+	return timestamp === null ? "—" : new Date(timestamp).toLocaleDateString();
+}
+
+function formatEventDateTime(value?: string | null): string {
+	const timestamp = parseEventTimestamp(value);
+	return timestamp === null ? "—" : new Date(timestamp).toLocaleString();
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,11 +1196,13 @@ const MonitoringConsole: React.FC = () => {
 					(SEVERITY_WEIGHTS[a.severity] ?? 0);
 				if (severityDelta !== 0) return severityDelta;
 
-				const ageDelta = getEventOpenAgeMs(b) - getEventOpenAgeMs(a);
+				const ageDelta =
+					(getEventOpenAgeMs(b) ?? 0) - (getEventOpenAgeMs(a) ?? 0);
 				if (ageDelta !== 0) return ageDelta;
 
 				return (
-					new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+					(parseEventTimestamp(b.created_at) ?? 0) -
+					(parseEventTimestamp(a.created_at) ?? 0)
 				);
 			}),
 		[groupedEvents],
@@ -1407,95 +1445,96 @@ const MonitoringConsole: React.FC = () => {
 										) : (
 											filteredEventStream.map((evt) => {
 												const eventNode = nodeById.get(evt.ci_id);
-												const categoryName = eventNode?.category ?? eventNode?.type ?? null;
+												const categoryName =
+													eventNode?.category ?? eventNode?.type ?? null;
 
 												return (
-												<tr
-													key={evt.id}
-													className="hover:bg-white/5 transition-colors group"
-												>
-													<td className="p-3">
-														<div
-															className={`w-8 h-8 rounded-lg flex items-center justify-center ${evt.severity === "CRITICAL" ? "bg-red-500/20 text-red-500 animate-pulse" : evt.severity === "WARNING" ? "bg-yellow-500/20 text-yellow-500" : "bg-blue-500/20 text-blue-500"}`}
-														>
-															<span className="material-symbols-outlined text-lg">
-																{evt.severity === "CRITICAL"
-																	? "dangerous"
-																	: evt.severity === "WARNING"
-																		? "warning"
-																		: "info"}
-															</span>
-														</div>
-													</td>
-													<td className="p-3 text-xs text-neutral-400 whitespace-nowrap">
-														{new Date(evt.created_at).toLocaleTimeString()}
-														<div className="text-[10px] opacity-50">
-															{new Date(evt.created_at).toLocaleDateString()}
-														</div>
-													</td>
-													<td
-														className={`p-3 text-xs font-bold whitespace-nowrap ${getOpenAgeTone(evt)}`}
+													<tr
+														key={evt.id}
+														className="hover:bg-white/5 transition-colors group"
 													>
-														{formatOpenAge(evt)}
-													</td>
-													<td className="p-3 font-bold text-white">
-														<div className="flex items-center gap-2">
-															<CategoryIcon
-																iconKey={eventNode?.category_icon_key}
-																categoryName={categoryName}
-																className="text-base text-brand-300 shrink-0"
-															/>
-															<span>{evt.ci_name || evt.ci_id}</span>
-														</div>
-													</td>
-													<td className="p-3 text-neutral-300">
-														<div className="flex flex-col">
-															<span>{evt.message}</span>
-															{evt.relatedEvents &&
-																evt.relatedEvents.length > 0 && (
-																	<div className="flex items-center gap-2 mt-1">
-																		<span className="px-2 py-0.5 rounded bg-black/40 border border-white/10 text-[10px] text-neutral-400 font-bold uppercase flex items-center gap-1">
-																			<span className="material-symbols-outlined text-[10px]">
-																				hub
-																			</span>
-																			{evt.relatedEvents.length} Correlated
-																			Events
-																		</span>
-																	</div>
-																)}
-														</div>
-													</td>
-													<td className="p-3">
-														<span
-															className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${evt.status === "OPEN" ? "bg-red-500 text-white" : evt.status === "ACK" ? "bg-blue-500 text-white" : "bg-green-500 text-white"}`}
+														<td className="p-3">
+															<div
+																className={`w-8 h-8 rounded-lg flex items-center justify-center ${evt.severity === "CRITICAL" ? "bg-red-500/20 text-red-500 animate-pulse" : evt.severity === "WARNING" ? "bg-yellow-500/20 text-yellow-500" : "bg-blue-500/20 text-blue-500"}`}
+															>
+																<span className="material-symbols-outlined text-lg">
+																	{evt.severity === "CRITICAL"
+																		? "dangerous"
+																		: evt.severity === "WARNING"
+																			? "warning"
+																			: "info"}
+																</span>
+															</div>
+														</td>
+														<td className="p-3 text-xs text-neutral-400 whitespace-nowrap">
+															{formatEventTime(evt.created_at)}
+															<div className="text-[10px] opacity-50">
+																{formatEventDate(evt.created_at)}
+															</div>
+														</td>
+														<td
+															className={`p-3 text-xs font-bold whitespace-nowrap ${getOpenAgeTone(evt)}`}
 														>
-															{evt.status}
-														</span>
-													</td>
-													<td className="p-3 text-right">
-														<div className="flex justify-end gap-2 transition-opacity">
-															{canOpenEventModal && (
-																<button
-																	onClick={() => handleOpenComment(evt.id)}
-																	className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-brand-400 border border-brand-500/30 rounded text-xs font-bold uppercase flex items-center gap-1"
-																>
-																	<span className="material-symbols-outlined text-[10px]">
-																		visibility
-																	</span>{" "}
-																	Details
-																</button>
-															)}
-															{evt.status === "OPEN" && canAckEvent && (
-																<button
-																	onClick={() => handleAck(evt.id)}
-																	className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold uppercase"
-																>
-																	Ack
-																</button>
-															)}
-														</div>
-													</td>
-												</tr>
+															{formatOpenAge(evt)}
+														</td>
+														<td className="p-3 font-bold text-white">
+															<div className="flex items-center gap-2">
+																<CategoryIcon
+																	iconKey={eventNode?.category_icon_key}
+																	categoryName={categoryName}
+																	className="text-base text-brand-300 shrink-0"
+																/>
+																<span>{evt.ci_name || evt.ci_id}</span>
+															</div>
+														</td>
+														<td className="p-3 text-neutral-300">
+															<div className="flex flex-col">
+																<span>{evt.message}</span>
+																{evt.relatedEvents &&
+																	evt.relatedEvents.length > 0 && (
+																		<div className="flex items-center gap-2 mt-1">
+																			<span className="px-2 py-0.5 rounded bg-black/40 border border-white/10 text-[10px] text-neutral-400 font-bold uppercase flex items-center gap-1">
+																				<span className="material-symbols-outlined text-[10px]">
+																					hub
+																				</span>
+																				{evt.relatedEvents.length} Correlated
+																				Events
+																			</span>
+																		</div>
+																	)}
+															</div>
+														</td>
+														<td className="p-3">
+															<span
+																className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${evt.status === "OPEN" ? "bg-red-500 text-white" : evt.status === "ACK" ? "bg-blue-500 text-white" : "bg-green-500 text-white"}`}
+															>
+																{evt.status}
+															</span>
+														</td>
+														<td className="p-3 text-right">
+															<div className="flex justify-end gap-2 transition-opacity">
+																{canOpenEventModal && (
+																	<button
+																		onClick={() => handleOpenComment(evt.id)}
+																		className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-brand-400 border border-brand-500/30 rounded text-xs font-bold uppercase flex items-center gap-1"
+																	>
+																		<span className="material-symbols-outlined text-[10px]">
+																			visibility
+																		</span>{" "}
+																		Details
+																	</button>
+																)}
+																{evt.status === "OPEN" && canAckEvent && (
+																	<button
+																		onClick={() => handleAck(evt.id)}
+																		className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold uppercase"
+																	>
+																		Ack
+																	</button>
+																)}
+															</div>
+														</td>
+													</tr>
 												);
 											})
 										)}
@@ -1757,9 +1796,8 @@ const MonitoringConsole: React.FC = () => {
 						node?.category ??
 						node?.type ??
 						null;
-					const ageMs =
-						Date.now() - new Date(displayEvent.created_at).getTime();
-					const ageMinutes = Math.floor(ageMs / 60000);
+					const ageMs = getEventOpenAgeMs(displayEvent);
+					const ageMinutes = ageMs === null ? null : Math.floor(ageMs / 60000);
 					const slaRemaining = isBusinessContextReady
 						? (businessContext?.sla_remaining_minutes ?? null)
 						: null;
@@ -1982,7 +2020,7 @@ const MonitoringConsole: React.FC = () => {
 												</span>
 												<span>
 													<strong className="text-neutral-300">Inicio:</strong>{" "}
-													{new Date(displayEvent.created_at).toLocaleString()}
+													{formatEventDateTime(displayEvent.created_at)}
 												</span>
 											</div>
 										</div>
@@ -2179,9 +2217,11 @@ const MonitoringConsole: React.FC = () => {
 												Tiempo activo:
 											</span>
 											<span className="text-neutral-200 font-mono">
-												{ageMinutes < 60
-													? `${ageMinutes}m`
-													: `${Math.floor(ageMinutes / 60)}h ${ageMinutes % 60}m`}
+												{ageMinutes === null
+													? "—"
+													: ageMinutes < 60
+														? `${ageMinutes}m`
+														: `${Math.floor(ageMinutes / 60)}h ${ageMinutes % 60}m`}
 											</span>
 										</div>
 									</div>
@@ -2231,13 +2271,8 @@ const MonitoringConsole: React.FC = () => {
 														<div className="w-1.5 h-1.5 bg-red-500 rounded-full" />
 													</div>
 													<div className="text-[10px] text-neutral-600 font-mono mb-1">
-														{new Date(
-															displayEvent.created_at,
-														).toLocaleTimeString([], {
-															hour: "2-digit",
-															minute: "2-digit",
-														})}{" "}
-														· Sistema · Evento disparador
+														{formatEventTime(displayEvent.created_at)} · Sistema
+														· Evento disparador
 													</div>
 													<div className="bg-red-950/30 border border-red-500/20 p-2.5 rounded-lg text-xs text-red-200 leading-relaxed">
 														<span className="font-black text-red-400">
@@ -2699,10 +2734,7 @@ const RelatedAlarmsPanelWithQuery = ({
 							</div>
 						</div>
 						<div className="text-[10px] text-neutral-600 font-mono">
-							{new Date(evt.created_at).toLocaleTimeString([], {
-								hour: "2-digit",
-								minute: "2-digit",
-							})}
+							{formatEventTime(evt.created_at)}
 						</div>
 					</div>
 				))}

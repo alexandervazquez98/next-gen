@@ -193,6 +193,7 @@ def test_event_writer_threshold_breach_refresh_updates_open_or_ack_events_withou
     assert "coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')" in breach_query["query"]
     assert "coalesce(row.correlation_type, 'ROOT') <> 'PROPAGATED'" in breach_query["query"]
     assert "MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})" not in breach_query["query"]
+    assert "created_at: datetime(), last_seen: datetime()" in breach_query["query"]
     assert "SET existing.severity = row.severity" in breach_query["query"]
     assert "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END" in breach_query["query"]
 
@@ -543,6 +544,7 @@ def test_event_writer_recovers_non_collection_events_on_normal_rows():
 
     queries = "\n".join(q["query"] for q in driver.mock_session.queries)
     assert "row.recover_non_collection_event" in queries
+    assert "e.created_at = coalesce(e.created_at, e.last_seen, datetime())" in queries
     assert "e.event_type <> 'COLLECTION_FAILURE'" in queries
     assert "NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')" in queries
 
@@ -596,4 +598,5 @@ def test_event_writer_uses_collection_recovery_message_for_threshold_breach_reco
     batch_update_events(driver, [_event_row(97.0, metadata={"name": "cpu", "criticality": 3, "critical": 90})])
 
     recovery_query = next(q for q in driver.mock_session.queries if "row.recover_collection_failure" in q["query"])
+    assert "e.created_at = coalesce(e.created_at, e.last_seen, datetime())" in recovery_query["query"]
     assert "row.collection_recovery_message" in recovery_query["query"]
