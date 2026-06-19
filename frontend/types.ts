@@ -189,8 +189,8 @@ export interface EventSummary {
 	status: "OPEN" | "ACK" | "CLOSED" | "RECOVERED";
 	severity: "CRITICAL" | "WARNING" | "INFO";
 	message: string;
-	created_at: string;
-	last_seen: string;
+	created_at?: string | null;
+	last_seen?: string | null;
 	ack: boolean;
 	ack_at?: string;
 	closed_at?: string;

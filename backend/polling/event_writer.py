@@ -95,7 +95,7 @@ def _non_collection_target_event_type(row: Mapping[str, Any]) -> str | None:
 
 
 def _dedupe_non_collection_latest_state(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: dict[tuple[Any, Any, Any], tuple[bool, float, int, dict[str, Any]]] = {}
+    deduped: dict[tuple[Any, ...], tuple[bool, float, int, dict[str, Any]]] = {}
     for index, row in enumerate(rows):
         event_type = _non_collection_target_event_type(row)
         if event_type is None:
@@ -319,7 +319,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                 CREATE (created:Event {
                     id: randomUUID(), ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN',
                     severity: row.severity, message: row.message, source_protocol: row.source_protocol,
-                    availability_source: row.availability_source, last_seen: datetime(), ack: false,
+                    availability_source: row.availability_source, created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type, propagated_from: row.propagated_from,
                     root_cause_event_id: row.root_cause_event_id, root_cause_ci_id: row.root_cause_ci_id,
                     business_service_id: row.business_service_id,
@@ -377,7 +377,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                 OR e.failure_family = 'SNMP_NO_RESPONSE'
                 OR e.failure_family IS NULL
               )
-            SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = row.collection_recovery_message
+            SET e.created_at = coalesce(e.created_at, e.last_seen, datetime()),
+                e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = row.collection_recovery_message
             WITH e
             CALL {
                 WITH e
@@ -386,7 +387,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                   AND pe.correlation_type = 'PROPAGATED'
                   AND pe.status IN ['OPEN', 'ACK']
                   AND coalesce(m.can_propagate, true) = true
-                SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                SET pe.created_at = coalesce(pe.created_at, pe.last_seen, datetime()),
+                    pe.status = 'RECOVERED', pe.recovered_at = datetime()
                 RETURN count(pe) AS propagated_recovered
             }
             RETURN e
@@ -415,7 +417,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                   AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
                 )
               )
-            SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = row.message
+            SET e.created_at = coalesce(e.created_at, e.last_seen, datetime()),
+                e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = row.message
             WITH e
             CALL {
                 WITH e
@@ -425,7 +428,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                   AND pe.correlation_type = 'PROPAGATED'
                   AND pe.status IN ['OPEN', 'ACK']
                   AND coalesce(m.can_propagate, true) = true
-                SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                SET pe.created_at = coalesce(pe.created_at, pe.last_seen, datetime()),
+                    pe.status = 'RECOVERED', pe.recovered_at = datetime()
                 RETURN count(pe) AS propagated_recovered
             }
             RETURN e
