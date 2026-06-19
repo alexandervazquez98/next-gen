@@ -100,6 +100,23 @@ describe('GlobalInventory', () => {
     expect(screen.getByText('warning')).toBeInTheDocument();
   });
 
+  it('surfaces warning metrics as degraded in the inventory and detail views', () => {
+    nodes = [makeNode({
+      id: 'router-warning',
+      label: 'Latency Router',
+      metrics: [{ name: 'icmp_latency_ms', protocol: 'ICMP', oid: '', value: '150', status: 'WARNING', last_updated: '2026-04-04T10:05:00.000Z' }],
+    })];
+
+    const { container } = render(<GlobalInventory />);
+
+    expect(container.querySelector('.bg-yellow-500.animate-pulse')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Latency Router'));
+
+    expect(screen.getByText('warning')).toBeInTheDocument();
+    expect(screen.getByText('150.00')).toBeInTheDocument();
+  });
+
   it('falls back to a category-name technology icon when icon metadata is missing', () => {
     nodes = [makeNode({
       id: 'switch-1',

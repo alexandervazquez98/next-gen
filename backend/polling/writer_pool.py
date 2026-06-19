@@ -10,6 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from config import get_icmp_settings
 from models.timescale_models import MetricValue
 from polling import event_writer, pg_queue
 from polling.icmp_measurements import (
@@ -17,6 +18,8 @@ from polling.icmp_measurements import (
     ICMP_JITTER_METRIC_ID,
     ICMP_LATENCY_METRIC_ID,
     ICMP_PACKET_LOSS_METRIC_ID,
+    evaluate_latency_status,
+    latency_threshold_metadata,
 )
 
 
@@ -122,6 +125,30 @@ def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
         packet_loss = 0.0 if numeric > 0 else 100.0
         samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_PACKET_LOSS_METRIC_ID, "value": packet_loss, "time": observed})
     return samples
+
+
+def _icmp_latency_event_envelope(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
+    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    if "latency_ms" not in icmp:
+        return None
+    latency = float(icmp["latency_ms"])
+    settings = get_icmp_settings()
+    metadata = latency_threshold_metadata(
+        warning_ms=settings.latency_warning_ms,
+        critical_ms=settings.latency_critical_ms,
+    )
+    status = evaluate_latency_status(
+        latency,
+        warning_ms=settings.latency_warning_ms,
+        critical_ms=settings.latency_critical_ms,
+    )
+    return {
+        **dict(envelope),
+        "metric_id": ICMP_LATENCY_METRIC_ID,
+        "status": status,
+        "value": {"numeric": latency, "raw": latency},
+        "metadata": metadata,
+    }
 
 
 def receipt_exists(db, idempotency_key: str) -> bool:
@@ -253,15 +280,22 @@ def run_writer_once(
             stats["retried"] += 1
         return stats
 
-    event_payloads = [
-        item for item in new_payloads + pending_payloads
-        if not _is_internal_icmp_availability(item["envelope"])
-    ]
+    event_payloads = []
+    for item in new_payloads + pending_payloads:
+        if not _is_internal_icmp_availability(item["envelope"]):
+            event_payloads.append(item)
+        latency_envelope = _icmp_latency_event_envelope(item["envelope"])
+        if latency_envelope is not None:
+            event_payloads.append({**item, "envelope": latency_envelope})
     try:
         event_writer.batch_update_events(neo4j_driver, [item["envelope"] for item in event_payloads])
     except Exception as exc:
         retry_at = (now or _utc_now()) + timedelta(seconds=30)
+        retried_result_ids = set()
         for item in event_payloads:
+            if item["result_id"] in retried_result_ids:
+                continue
+            retried_result_ids.add(item["result_id"])
             pg_queue.retry_result(queue_db, item["result_id"], next_eligible_at=retry_at, error_code="neo4j_pending", error_message=str(exc))
             stats["retried"] += 1
         return stats

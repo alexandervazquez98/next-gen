@@ -26,6 +26,8 @@ class TestICMPSettings:
         assert settings.timeout_ms == 3000
         assert settings.retries == 2
         assert settings.debounce_count == 3
+        assert settings.latency_warning_ms == 100
+        assert settings.latency_critical_ms == 500
 
     def test_icmp_settings_from_env_override(self):
         """ICMPSettings.from_env reads env vars correctly."""
@@ -33,12 +35,24 @@ class TestICMPSettings:
         with patch.dict(os.environ, {
             "ICMP_TIMEOUT_MS": "5000",
             "ICMP_RETRIES": "5",
-            "ICMP_DEBOUNCE_COUNT": "7"
+            "ICMP_DEBOUNCE_COUNT": "7",
+            "ICMP_LATENCY_WARNING_MS": "150",
+            "ICMP_LATENCY_CRITICAL_MS": "600",
         }, clear=True):
             settings = ICMPSettings.from_env()
             assert settings.timeout_ms == 5000
             assert settings.retries == 5
             assert settings.debounce_count == 7
+            assert settings.latency_warning_ms == 150
+            assert settings.latency_critical_ms == 600
+
+    def test_icmp_latency_thresholds_must_be_ordered(self):
+        """ICMP latency warning threshold must remain below critical."""
+        from pydantic import ValidationError
+        from config import ICMPSettings
+
+        with pytest.raises(ValidationError, match="ICMP_LATENCY_WARNING_MS"):
+            ICMPSettings(latency_warning_ms=500, latency_critical_ms=500)
 
     def test_get_icmp_settings_singleton(self):
         """get_icmp_settings returns cached singleton."""
@@ -830,6 +844,89 @@ def test_poll_snmp_prefers_legacy_availability_when_sidecars_return_first():
     mock_fetch_icmp.assert_called_once()
     rows = mock_bulk_insert.call_args.args[1]
     assert any(row["metric_id"] == "PING-CHECK" and row["value"] == 1.0 for row in rows)
+
+
+def test_refresh_icmp_latency_events_updates_open_or_ack_events_without_merge_duplicate():
+    from engines.snmp_worker import _refresh_icmp_latency_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_latency_events(session, [{
+        "node_id": "ci-001",
+        "metric_id": "icmp_latency_ms",
+        "protocol": "ICMP",
+        "source_protocol": "ICMP",
+        "event_type": "THRESHOLD_BREACH",
+        "status": "WARNING",
+        "message": "Latency warning",
+    }])
+
+    query = session.queries[0]["query"]
+    assert "existing.status IN ['OPEN', 'ACK']" in query
+    assert "coalesce(existing.correlation_type, 'ROOT') = 'ROOT'" in query
+    assert "MERGE (e:Event {ci_id: row.node_id, metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH', status: 'OPEN'})" not in query
+    assert "SET existing.severity = row.status" in query
+    assert "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END" in query
+
+
+def test_recover_icmp_availability_events_excludes_propagated_direct_match_and_recovers_descendants():
+    from engines.snmp_worker import _recover_icmp_availability_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_availability_events(session, [{
+        "node_id": "ci-001",
+        "metric_id": "PING-CHECK",
+        "protocol": "ICMP",
+        "source_protocol": "ICMP",
+        "availability_source": "PING",
+        "value": 1.0,
+    }])
+
+    query = session.queries[0]["query"]
+    assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+    assert "pe.propagated_from = e.id" in query
+    assert "pe.root_cause_ci_id = e.ci_id" in query
+    assert "pe.correlation_type = 'PROPAGATED'" in query
+
+
+def test_refresh_icmp_availability_events_excludes_propagated_direct_match():
+    from engines.snmp_worker import _refresh_icmp_availability_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_availability_events(session, [{
+        "node_id": "ci-001",
+        "metric_id": "PING-CHECK",
+        "protocol": "ICMP",
+        "source_protocol": "ICMP",
+        "availability_source": "PING",
+        "event_type": "AVAILABILITY",
+        "severity": "CRITICAL",
+        "message": "Service/Host Down: PING-CHECK",
+        "value": 0.0,
+    }])
+
+    query = session.queries[0]["query"]
+    assert "coalesce(existing.correlation_type, 'ROOT') = 'ROOT'" in query
+
+
+def test_recover_icmp_latency_events_excludes_propagated_direct_match_and_recovers_descendants():
+    from engines.snmp_worker import _recover_icmp_latency_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_latency_events(session, [{
+        "node_id": "ci-001",
+        "metric_id": "icmp_latency_ms",
+        "protocol": "ICMP",
+        "source_protocol": "ICMP",
+        "status": "OK",
+        "message": "Metric ICMP Latency is OK. Value: 42.0",
+    }])
+
+    query = session.queries[0]["query"]
+    assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+    assert "pe.propagated_from = e.id" in query
+    assert "pe.root_cause_ci_id = e.ci_id" in query
+    assert "pe.correlation_type = 'PROPAGATED'" in query
+    assert "SET pe.status = 'RECOVERED'" in query
 
 
 def test_poll_snmp_skips_icmp_sidecar_metrics_as_primary_poll_targets():

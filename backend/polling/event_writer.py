@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterable, Mapping
 from uuid import UUID
@@ -66,6 +66,73 @@ def _collection_failure_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[
         key = (row.get("ci_id"), row.get("metric_id"), row.get("event_type"), row.get("failure_family"))
         deduped[key] = row
     return list(deduped.values())
+
+
+def _observed_at_order(value: Any) -> float | None:
+    if isinstance(value, datetime):
+        observed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    return observed.timestamp()
+
+
+def _non_collection_target_event_type(row: Mapping[str, Any]) -> str | None:
+    event_type = row.get("event_type")
+    if event_type and event_type != EVENT_TYPE_COLLECTION_FAILURE:
+        return str(event_type)
+    if not row.get("recover_non_collection_event"):
+        return None
+    if row.get("source_protocol") == "ICMP" and row.get("availability_source") in {"PING", "ICMP"}:
+        return EVENT_TYPE_AVAILABILITY
+    return EVENT_TYPE_THRESHOLD_BREACH
+
+
+def _dedupe_non_collection_latest_state(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[tuple[Any, Any, Any], tuple[bool, float, int, dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        event_type = _non_collection_target_event_type(row)
+        if event_type is None:
+            continue
+        key = (
+            row.get("ci_id"),
+            row.get("metric_id"),
+            event_type,
+            row.get("correlation_type") or "ROOT",
+            row.get("propagated_from"),
+            row.get("root_cause_event_id"),
+            row.get("root_cause_ci_id"),
+        )
+        observed_order = _observed_at_order(row.get("observed_at"))
+        order = (observed_order is not None, observed_order or 0.0, index)
+        existing = deduped.get(key)
+        if existing is None or order >= (existing[0], existing[1], existing[2]):
+            deduped[key] = (*order, row)
+    return [item[3] for item in deduped.values()]
+
+
+def _non_collection_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in _dedupe_non_collection_latest_state(rows)
+        if row.get("is_breach") and row.get("event_type") and row.get("event_type") != EVENT_TYPE_COLLECTION_FAILURE
+    ]
+
+
+def _latest_metric_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    row_list = list(rows)
+    non_collection_latest_ids = {id(row) for row in _dedupe_non_collection_latest_state(row_list)}
+    return [
+        row
+        for row in row_list
+        if _non_collection_target_event_type(row) is None or id(row) in non_collection_latest_ids
+    ]
 
 
 def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -143,6 +210,7 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
             "observed_at": _value(envelope.get("observed_at")),
             "correlation_type": metadata.get("correlation_type") or "ROOT",
             "propagated_from": metadata.get("propagated_from"),
+            "root_cause_event_id": metadata.get("root_cause_event_id"),
             "root_cause_ci_id": metadata.get("root_cause_ci_id") or envelope.get("ci_id"),
             "business_service_id": metadata.get("business_service_id"),
             "business_service_name": metadata.get("business_service_name"),
@@ -165,7 +233,10 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
     rows = build_event_rows(envelopes)
     if not rows:
         return 0
+    latest_metric_rows = _latest_metric_rows(rows)
     collection_failure_rows = _collection_failure_event_rows(rows)
+    non_collection_state_rows = _dedupe_non_collection_latest_state(rows)
+    non_collection_event_rows = _non_collection_event_rows(non_collection_state_rows)
     with driver.session() as session:
         session.run(
             """
@@ -178,7 +249,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             CREATE (n)-[:HAS_RESULT]->(res)
             CREATE (res)-[:FOR_METRIC]->(m)
             """,
-            rows=rows,
+            rows=latest_metric_rows,
         )
         session.run(
             """
@@ -232,33 +303,63 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             WITH row WHERE row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'
             MATCH (n:CI {id: row.ci_id})
             MATCH (m:MetricDef {id: row.metric_id})
-            MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})
-            SET e.id = coalesce(e.id, randomUUID()),
-                e.severity = row.severity,
-                e.message = row.message,
-                e.source_protocol = row.source_protocol,
-                e.availability_source = row.availability_source,
-                e.last_seen = datetime(),
-                e.ack = false,
-                e.correlation_type = coalesce(e.correlation_type, row.correlation_type),
-                e.propagated_from = coalesce(e.propagated_from, row.propagated_from),
-                e.root_cause_ci_id = coalesce(e.root_cause_ci_id, row.root_cause_ci_id),
-                e.business_service_id = coalesce(e.business_service_id, row.business_service_id),
-                e.business_service_name = coalesce(e.business_service_name, row.business_service_name),
-                e.business_service_tier = coalesce(e.business_service_tier, row.business_service_tier),
-                e.owner_t1 = coalesce(e.owner_t1, row.owner_t1),
-                e.owner_t2 = coalesce(e.owner_t2, row.owner_t2),
-                e.owner_t3 = coalesce(e.owner_t3, row.owner_t3),
-                e.impacted_users = coalesce(e.impacted_users, row.impacted_users),
-                e.site = coalesce(e.site, row.site),
-                e.service_catalog_id = coalesce(e.service_catalog_id, row.service_catalog_id),
-                e.service_category = coalesce(e.service_category, row.service_category),
-                e.service_tier = coalesce(e.service_tier, row.service_tier),
-                e.sla_minutes = coalesce(e.sla_minutes, row.sla_minutes)
-            MERGE (n)-[:HAS_EVENT]->(e)
-            MERGE (e)-[:TRIGGERED_BY]->(m)
+            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: row.event_type})
+            WHERE existing.status IN ['OPEN', 'ACK']
+              AND coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')
+              AND (
+                coalesce(row.correlation_type, 'ROOT') <> 'PROPAGATED'
+                OR (
+                  (row.propagated_from IS NULL OR existing.propagated_from = row.propagated_from)
+                  AND (row.root_cause_event_id IS NULL OR existing.root_cause_event_id = row.root_cause_event_id)
+                  AND (row.root_cause_ci_id IS NULL OR existing.root_cause_ci_id = row.root_cause_ci_id)
+                )
+              )
+            WITH row, n, m, head(collect(existing)) AS existing
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                CREATE (created:Event {
+                    id: randomUUID(), ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN',
+                    severity: row.severity, message: row.message, source_protocol: row.source_protocol,
+                    availability_source: row.availability_source, last_seen: datetime(), ack: false,
+                    correlation_type: row.correlation_type, propagated_from: row.propagated_from,
+                    root_cause_event_id: row.root_cause_event_id, root_cause_ci_id: row.root_cause_ci_id,
+                    business_service_id: row.business_service_id,
+                    business_service_name: row.business_service_name, business_service_tier: row.business_service_tier,
+                    owner_t1: row.owner_t1, owner_t2: row.owner_t2, owner_t3: row.owner_t3,
+                    impacted_users: row.impacted_users, site: row.site, service_catalog_id: row.service_catalog_id,
+                    service_category: row.service_category, service_tier: row.service_tier, sla_minutes: row.sla_minutes
+                })
+                MERGE (n)-[:HAS_EVENT]->(created)
+                MERGE (created)-[:TRIGGERED_BY]->(m)
+            )
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+                SET existing.severity = row.severity,
+                    existing.message = row.message,
+                    existing.source_protocol = row.source_protocol,
+                    existing.availability_source = row.availability_source,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
+                    existing.correlation_type = coalesce(existing.correlation_type, row.correlation_type),
+                    existing.propagated_from = coalesce(existing.propagated_from, row.propagated_from),
+                    existing.root_cause_event_id = coalesce(existing.root_cause_event_id, row.root_cause_event_id),
+                    existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.root_cause_ci_id),
+                    existing.business_service_id = coalesce(existing.business_service_id, row.business_service_id),
+                    existing.business_service_name = coalesce(existing.business_service_name, row.business_service_name),
+                    existing.business_service_tier = coalesce(existing.business_service_tier, row.business_service_tier),
+                    existing.owner_t1 = coalesce(existing.owner_t1, row.owner_t1),
+                    existing.owner_t2 = coalesce(existing.owner_t2, row.owner_t2),
+                    existing.owner_t3 = coalesce(existing.owner_t3, row.owner_t3),
+                    existing.impacted_users = coalesce(existing.impacted_users, row.impacted_users),
+                    existing.site = coalesce(existing.site, row.site),
+                    existing.service_catalog_id = coalesce(existing.service_catalog_id, row.service_catalog_id),
+                    existing.service_category = coalesce(existing.service_category, row.service_category),
+                    existing.service_tier = coalesce(existing.service_tier, row.service_tier),
+                    existing.sla_minutes = coalesce(existing.sla_minutes, row.sla_minutes)
+                MERGE (n)-[:HAS_EVENT]->(existing)
+                MERGE (existing)-[:TRIGGERED_BY]->(m)
+            )
             """,
-            rows=rows,
+            rows=non_collection_event_rows,
         )
         session.run(
             """
@@ -298,10 +399,14 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             WITH row WHERE row.recover_non_collection_event
             MATCH (:CI {id: row.ci_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
             WHERE e.status IN ['OPEN', 'ACK']
+              AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
               AND (
                 (
                   row.source_protocol = 'ICMP'
-                  AND e.event_type = 'AVAILABILITY'
+                  AND (
+                    e.event_type = 'AVAILABILITY'
+                    OR (e.event_type = 'THRESHOLD_BREACH' AND row.metric_id = e.metric_id)
+                  )
                   AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
                 )
                 OR (
@@ -325,6 +430,6 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             }
             RETURN e
             """,
-            rows=rows,
+            rows=non_collection_state_rows,
         )
     return len(rows)

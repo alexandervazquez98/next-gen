@@ -78,6 +78,34 @@ def test_event_writer_derives_threshold_breach_and_availability_recovery_rows():
     assert "Service/Host Down" in rows[2]["message"]
 
 
+def test_event_writer_derives_icmp_latency_warning_and_critical_threshold_rows():
+    from polling.event_writer import build_event_rows
+
+    base = {
+        **_event_row(99.9),
+        "protocol": "ICMP",
+        "metric_id": "icmp_latency_ms",
+        "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+    }
+
+    rows = build_event_rows([
+        base,
+        {**base, "value": {"numeric": 100.0, "raw": 100.0}},
+        {**base, "value": {"numeric": 499.9, "raw": 499.9}},
+        {**base, "value": {"numeric": 500.0, "raw": 500.0}},
+        {**base, "value": {"numeric": None, "raw": None}},
+    ])
+
+    assert rows[0]["is_breach"] is False
+    assert rows[0]["recover_non_collection_event"] is True
+    assert rows[1]["severity"] == "WARNING"
+    assert rows[1]["event_type"] == "THRESHOLD_BREACH"
+    assert rows[2]["severity"] == "WARNING"
+    assert rows[3]["severity"] == "CRITICAL"
+    assert rows[4]["is_breach"] is False
+    assert rows[4]["recover_non_collection_event"] is False
+
+
 def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     from polling.event_writer import batch_update_events
 
@@ -89,7 +117,8 @@ def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     assert "MERGE (n)-[r:HAS_METRIC]->(m)" in queries
     assert "CREATE (res:MetricResult" in queries
     assert "status: 'OPEN'" in queries
-    assert "e.id = coalesce(e.id, randomUUID())" in queries
+    assert "id: randomUUID()" in queries
+    assert "e.id = coalesce(e.id, randomUUID())" not in queries
     assert "RECOVERED" in queries
     assert "correlation_type" in queries
     assert "root_cause_ci_id" in queries
@@ -115,6 +144,250 @@ def test_event_writer_icmp_success_recovers_only_icmp_availability_events():
     assert "pe.propagated_from = e.id" in recovery_query
 
 
+def test_event_writer_icmp_latency_ok_recovers_threshold_breach_events():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [{
+        **_event_row(42.0),
+        "protocol": "ICMP",
+        "metric_id": "icmp_latency_ms",
+        "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+    }])
+
+    recovery_query = next(q for q in driver.mock_session.queries if "row.recover_non_collection_event" in q["query"])
+    assert "e.event_type = 'THRESHOLD_BREACH'" in recovery_query["query"]
+    assert "row.metric_id = e.metric_id" in recovery_query["query"]
+
+
+def test_event_writer_direct_latency_recovery_excludes_propagated_events():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [{
+        **_event_row(42.0),
+        "protocol": "ICMP",
+        "metric_id": "icmp_latency_ms",
+        "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+    }])
+
+    recovery_query = next(q for q in driver.mock_session.queries if "row.recover_non_collection_event" in q["query"])["query"]
+    assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in recovery_query
+    assert "pe.root_cause_ci_id = e.ci_id" in recovery_query
+    assert "pe.correlation_type = 'PROPAGATED'" in recovery_query
+
+
+def test_event_writer_threshold_breach_refresh_updates_open_or_ack_events_without_merge_duplicate():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [{
+        **_event_row(500.0),
+        "protocol": "ICMP",
+        "metric_id": "icmp_latency_ms",
+        "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+    }])
+
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    assert "existing.status IN ['OPEN', 'ACK']" in breach_query["query"]
+    assert "coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')" in breach_query["query"]
+    assert "coalesce(row.correlation_type, 'ROOT') <> 'PROPAGATED'" in breach_query["query"]
+    assert "MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})" not in breach_query["query"]
+    assert "SET existing.severity = row.severity" in breach_query["query"]
+    assert "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END" in breach_query["query"]
+
+
+def test_event_writer_propagated_breach_refresh_matches_correlation_and_root_identifiers():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [{
+        **_event_row(500.0),
+        "protocol": "ICMP",
+        "metric_id": "icmp_latency_ms",
+        "metadata": {
+            "name": "ICMP Latency",
+            "warning": 100,
+            "critical": 500,
+            "operator": ">=",
+            "metric_kind": "telemetry",
+            "criticality": 3,
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "event-parent",
+            "root_cause_event_id": "event-root",
+            "root_cause_ci_id": "ci-root",
+        },
+    }])
+
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    query = breach_query["query"]
+    assert "coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')" in query
+    assert "row.propagated_from IS NULL OR existing.propagated_from = row.propagated_from" in query
+    assert "row.root_cause_event_id IS NULL OR existing.root_cause_event_id = row.root_cause_event_id" in query
+    assert "row.root_cause_ci_id IS NULL OR existing.root_cause_ci_id = row.root_cause_ci_id" in query
+    assert breach_query["params"]["rows"][0]["correlation_type"] == "PROPAGATED"
+    assert breach_query["params"]["rows"][0]["root_cause_event_id"] == "event-root"
+
+
+def test_event_writer_deduplicates_non_collection_breaches_before_create_query():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [
+        {
+            **_event_row(100.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+        {
+            **_event_row(500.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+    ])
+
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    assert len(breach_query["params"]["rows"]) == 1
+    assert breach_query["params"]["rows"][0]["severity"] == "CRITICAL"
+    assert breach_query["params"]["rows"][0]["value"] == "500.0"
+
+
+def test_event_writer_keeps_distinct_propagated_roots_in_non_collection_batch():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [
+        {
+            **_event_row(500.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "metadata": {
+                "name": "ICMP Latency",
+                "critical": 500,
+                "operator": ">=",
+                "metric_kind": "telemetry",
+                "criticality": 3,
+                "correlation_type": "PROPAGATED",
+                "propagated_from": "event-parent-a",
+                "root_cause_event_id": "event-root-a",
+                "root_cause_ci_id": "ci-root-a",
+            },
+        },
+        {
+            **_event_row(500.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "metadata": {
+                "name": "ICMP Latency",
+                "critical": 500,
+                "operator": ">=",
+                "metric_kind": "telemetry",
+                "criticality": 3,
+                "correlation_type": "PROPAGATED",
+                "propagated_from": "event-parent-b",
+                "root_cause_event_id": "event-root-b",
+                "root_cause_ci_id": "ci-root-b",
+            },
+        },
+    ])
+
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    assert len(breach_query["params"]["rows"]) == 2
+
+
+def test_event_writer_uses_latest_non_collection_state_for_ok_then_warning_batch():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [
+        {
+            **_event_row(42.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+        {
+            **_event_row(100.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+    ])
+
+    latest_query = driver.mock_session.queries[0]
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    recovery_query = next(q for q in driver.mock_session.queries if "row.recover_non_collection_event" in q["query"])
+    assert len(latest_query["params"]["rows"]) == 1
+    assert latest_query["params"]["rows"][0]["status"] == "WARNING"
+    assert len(breach_query["params"]["rows"]) == 1
+    assert breach_query["params"]["rows"][0]["severity"] == "WARNING"
+    assert recovery_query["params"]["rows"][0]["recover_non_collection_event"] is False
+
+
+def test_event_writer_uses_latest_non_collection_state_for_warning_then_ok_batch():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [
+        {
+            **_event_row(100.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+        {
+            **_event_row(42.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+    ])
+
+    latest_query = driver.mock_session.queries[0]
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    recovery_query = next(q for q in driver.mock_session.queries if "row.recover_non_collection_event" in q["query"])
+    assert len(latest_query["params"]["rows"]) == 1
+    assert latest_query["params"]["rows"][0]["status"] == "OK"
+    assert breach_query["params"]["rows"] == []
+    assert len(recovery_query["params"]["rows"]) == 1
+    assert recovery_query["params"]["rows"][0]["recover_non_collection_event"] is True
+
+
+def test_event_writer_prefers_latest_observed_timestamp_over_last_duplicate_order():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(driver, [
+        {
+            **_event_row(42.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+        {
+            **_event_row(500.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "observed_at": datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        },
+    ])
+
+    latest_query = driver.mock_session.queries[0]
+    breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
+    recovery_query = next(q for q in driver.mock_session.queries if "row.recover_non_collection_event" in q["query"])
+    assert latest_query["params"]["rows"][0]["status"] == "OK"
+    assert breach_query["params"]["rows"] == []
+    assert recovery_query["params"]["rows"][0]["value"] == "42.0"
+
+
 def test_event_writer_preserves_propagated_correlation_metadata():
     from polling.event_writer import build_event_rows
 
@@ -135,6 +408,7 @@ def test_event_writer_preserves_propagated_correlation_metadata():
 
     assert rows[0]["correlation_type"] == "PROPAGATED"
     assert rows[0]["propagated_from"] == "event-root"
+    assert rows[0]["root_cause_event_id"] is None
     assert rows[0]["root_cause_ci_id"] == "ci-root"
     assert rows[0]["business_service_id"] == "bs-1"
 

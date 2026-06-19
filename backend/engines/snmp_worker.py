@@ -27,14 +27,17 @@ from polling.icmp_measurements import (
     ICMP_LATENCY_METRIC_ID,
     build_icmp_sidecar_samples,
     coerce_ping_measurement,
+    evaluate_latency_status,
     is_icmp_availability_metric,
     is_icmp_telemetry_metric,
+    latency_threshold_metadata,
     PingMeasurement,
     parse_ping_latency_ms,
 )
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
+    EVENT_TYPE_THRESHOLD_BREACH,
     FAILURE_FAMILY_SNMP_NO_RESPONSE,
     SOURCE_PROTOCOL_ICMP,
     SOURCE_PROTOCOL_SNMP,
@@ -309,6 +312,7 @@ def _refresh_icmp_availability_events(session, updates):
         OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
         WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
           AND existing.event_type = 'AVAILABILITY'
+          AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
           AND existing.availability_source IN ['PING', 'ICMP']
           AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
         WITH row, n, m, head(collect(existing)) AS existing
@@ -351,12 +355,94 @@ def _recover_icmp_availability_events(session, updates):
         UNWIND $recoveries AS row
         MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
         WHERE e.status IN ['OPEN', 'ACK']
+          AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
           AND e.event_type = 'AVAILABILITY'
           AND e.availability_source IN ['PING', 'ICMP']
           AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.protocol)
         SET e.status = 'RECOVERED',
             e.recovered_at = datetime(),
             e.message = 'Metric ICMP availability recovered. Latest sample collected by legacy SNMP worker'
+        WITH e
+        CALL {
+            WITH e
+            MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE pe.propagated_from = e.id
+              AND pe.root_cause_ci_id = e.ci_id
+              AND pe.correlation_type = 'PROPAGATED'
+              AND pe.status IN ['OPEN', 'ACK']
+              AND coalesce(m.can_propagate, true) = true
+            SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+            RETURN count(pe) AS propagated_recovered
+        }
+        RETURN e
+    """, recoveries=recoveries)
+
+
+def _refresh_icmp_latency_events(session, updates):
+    breaches = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+        and u.get("event_type") == EVENT_TYPE_THRESHOLD_BREACH
+        and u.get("status") in {"WARNING", "CRITICAL"}
+    ]
+    if not breaches:
+        return
+    session.run("""
+        UNWIND $breaches AS row
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+        WHERE existing.status IN ['OPEN', 'ACK']
+          AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+        WITH row, n, m, head(collect(existing)) AS existing
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                message: row.message, source_protocol: row.source_protocol,
+                last_seen: datetime(), ack: false, correlation_type: 'ROOT',
+                root_cause_ci_id: row.node_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.severity = row.status,
+                existing.message = row.message,
+                existing.source_protocol = row.source_protocol,
+                existing.last_seen = datetime(),
+                existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                existing.recovered_at = NULL,
+                existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id)
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """, breaches=breaches)
+
+
+def _recover_icmp_latency_events(session, updates):
+    recoveries = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+        and u.get("status") == "OK"
+    ]
+    if not recoveries:
+        return
+    session.run("""
+        UNWIND $recoveries AS row
+        MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+          AND e.event_type = 'THRESHOLD_BREACH'
+          AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.message = row.message
         WITH e
         CALL {
             WITH e
@@ -559,18 +645,41 @@ def poll_snmp():
                             "metric_kind": "availability" if protocol == SOURCE_PROTOCOL_ICMP and availability_source else "telemetry",
                         })
                     for sample in sidecar_samples:
+                        latency_thresholds = latency_threshold_metadata(
+                            warning_ms=icmp_settings.latency_warning_ms,
+                            critical_ms=icmp_settings.latency_critical_ms,
+                        )
+                        sample_status = "OK"
+                        sample_message = "Latest ICMP telemetry sample collected by legacy SNMP worker"
+                        sample_event_type = None
+                        sample_severity = "INFO"
+                        if sample["metric_id"] == ICMP_LATENCY_METRIC_ID:
+                            sample_status = evaluate_latency_status(
+                                sample.get("value"),
+                                warning_ms=icmp_settings.latency_warning_ms,
+                                critical_ms=icmp_settings.latency_critical_ms,
+                            )
+                            sample_severity = sample_status if sample_status in {"WARNING", "CRITICAL"} else "INFO"
+                            if sample_status == "CRITICAL":
+                                sample_message = f"Critical Threshold Breached: {sample['value']} >= {icmp_settings.latency_critical_ms}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            elif sample_status == "WARNING":
+                                sample_message = f"Warning Threshold Breached: {sample['value']} >= {icmp_settings.latency_warning_ms}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            else:
+                                sample_message = f"Metric ICMP Latency is OK. Value: {sample['value']}"
                         latest_updates.append({
                             "node_id": node_id,
                             "metric_id": sample["metric_id"],
                             "value": sample["value"],
                             "protocol": protocol,
                             "metric_name": sample["metric_id"],
-                            "criticality": record["criticality"],
-                            "status": "OK",
-                            "message": "Latest ICMP telemetry sample collected by legacy SNMP worker",
-                            "event_type": None,
+                            "criticality": latency_thresholds["criticality"] if sample["metric_id"] == ICMP_LATENCY_METRIC_ID else record["criticality"],
+                            "status": sample_status,
+                            "message": sample_message,
+                            "event_type": sample_event_type,
                             "source_protocol": SOURCE_PROTOCOL_ICMP,
-                            "severity": "INFO",
+                            "severity": sample_severity,
                             "metric_kind": "telemetry",
                         })
                 else:
@@ -639,6 +748,9 @@ def poll_snmp():
                 availability_updates = [u for u in latest_updates if u.get("metric_kind") == "availability"]
                 _refresh_icmp_availability_events(session, availability_updates)
                 _recover_icmp_availability_events(session, availability_updates)
+                latency_updates = [u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID]
+                _refresh_icmp_latency_events(session, latency_updates)
+                _recover_icmp_latency_events(session, latency_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
 

@@ -101,6 +101,30 @@ def icmp_metadata(measurement: PingMeasurement) -> dict[str, Any]:
     return metadata
 
 
+def latency_threshold_metadata(*, warning_ms: float, critical_ms: float) -> dict[str, Any]:
+    """Build MetricDef-compatible threshold metadata for ICMP latency."""
+    return {
+        "warning": float(warning_ms),
+        "critical": float(critical_ms),
+        "operator": ">=",
+        "criticality": 3,
+        "metric_kind": "telemetry",
+        "name": "ICMP Latency",
+    }
+
+
+def evaluate_latency_status(latency_ms: float | None, *, warning_ms: float, critical_ms: float) -> str:
+    """Evaluate ICMP latency against warning/critical thresholds."""
+    if latency_ms is None:
+        return "OK"
+    latency = float(latency_ms)
+    if latency >= float(critical_ms):
+        return "CRITICAL"
+    if latency >= float(warning_ms):
+        return "WARNING"
+    return "OK"
+
+
 def is_icmp_telemetry_metric(metric_id: str, metadata: dict[str, Any] | None = None) -> bool:
     """Return true for ICMP sidecar telemetry metrics that are derived, not polled."""
     value = str(metric_id or "")

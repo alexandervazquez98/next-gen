@@ -49,6 +49,8 @@ def test_migrate_icmp_sidecar_metrics_is_idempotent_for_existing_cis_with_ips(mo
     params = [q["params"] for q in driver.mock_session.queries]
     assert "MERGE (latency:MetricDef {id: $latency_id})" in queries
     assert "MERGE (jitter:MetricDef {id: $jitter_id})" in queries
+    assert "latency.warning = $latency_warning_ms" in queries
+    assert "latency.critical = $latency_critical_ms" in queries
     assert "MATCH (n:CI)" in queries
     assert "n.ip IS NOT NULL" in queries
     assert "trim(toString(n.ip)) <> ''" in queries
@@ -56,7 +58,12 @@ def test_migrate_icmp_sidecar_metrics_is_idempotent_for_existing_cis_with_ips(mo
     assert "availability.id STARTS WITH 'PING-'" not in queries
     assert "MERGE (n)-[:HAS_METRIC]->(latency)" in queries
     assert "MERGE (n)-[:HAS_METRIC]->(jitter)" in queries
-    assert {"latency_id": "icmp_latency_ms", "jitter_id": "icmp_jitter_ms"} in params
+    assert {
+        "latency_id": "icmp_latency_ms",
+        "jitter_id": "icmp_jitter_ms",
+        "latency_warning_ms": 100.0,
+        "latency_critical_ms": 500.0,
+    } in params
 
 
 def test_migrate_icmp_sidecar_metrics_script_entrypoint_invokes_repository(monkeypatch):
