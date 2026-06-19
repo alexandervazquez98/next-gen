@@ -37,7 +37,7 @@ export const analyzeIncident = async (incident: IncidentEvent): Promise<AIAction
   };
 };
 
-export const chatWithAIAgent = async (query: string, context: string) => {
-  const response = await api.post<{ answer: string }>('/ai/chat', { query, context });
+export const chatWithAIAgent = async (query: string, context: string, intent?: string, signal?: AbortSignal) => {
+  const response = await api.post<{ answer: string }>('/ai/chat', { query, context, intent }, { signal });
   return response.answer;
 };
