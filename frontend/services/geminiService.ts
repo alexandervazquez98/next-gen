@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { IncidentEvent, AIAction } from "../types";
+import { api } from "./api";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
@@ -37,12 +38,6 @@ export const analyzeIncident = async (incident: IncidentEvent): Promise<AIAction
 };
 
 export const chatWithAIAgent = async (query: string, context: string) => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Context: ${context}\n\nUser Question: ${query}`,
-    config: {
-      systemInstruction: "You are NEX-GEN Assistant. Be concise, technical, and helpful. Use the graph CMDB context provided.",
-    }
-  });
-  return response.text;
+  const response = await api.post<{ answer: string }>('/ai/chat', { query, context });
+  return response.answer;
 };
