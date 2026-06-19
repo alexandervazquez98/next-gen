@@ -20,6 +20,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float_bounded(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    """Parse a bounded float environment variable with a safe fallback."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if minimum <= value <= maximum:
+        return value
+    return default
+
+
 # ---------------------------------------------------------------------------
 # Event Batch Pruner Settings
 # ---------------------------------------------------------------------------
@@ -246,3 +260,37 @@ def get_icmp_settings() -> ICMPSettings:
     if _icmp_settings is None:
         _icmp_settings = ICMPSettings.from_env()
     return _icmp_settings
+
+
+# ---------------------------------------------------------------------------
+# LM Studio AI Chat Settings
+# ---------------------------------------------------------------------------
+
+
+class LMStudioSettings(BaseModel):
+    """Server-side LM Studio proxy settings."""
+
+    enabled: bool = False
+    base_url: str = "http://localhost:1234/v1"
+    model: str = "local-model"
+    timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+
+    @classmethod
+    def from_env(cls) -> "LMStudioSettings":
+        """Load LM Studio settings from environment variables."""
+        return cls(
+            enabled=_env_bool("LM_STUDIO_ENABLED", default=False),
+            base_url=os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/"),
+            model=os.getenv("LM_STUDIO_MODEL", "local-model"),
+            timeout_seconds=_env_float_bounded(
+                "LM_STUDIO_TIMEOUT_SECONDS",
+                15.0,
+                minimum=0.000001,
+                maximum=120.0,
+            ),
+        )
+
+
+def get_lm_studio_settings() -> LMStudioSettings:
+    """Return fresh LM Studio settings so tests and env changes are respected."""
+    return LMStudioSettings.from_env()

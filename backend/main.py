@@ -141,7 +141,7 @@ def schedule_daily_backup() -> None:
 
 
 # Router Imports
-from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli
+from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli, ai
 
 app = FastAPI(
     title="NEX-GEN API",
@@ -212,6 +212,7 @@ app.include_router(backup.router, prefix="/api")
 app.include_router(dictionaries.router, prefix="/api")
 app.include_router(cis.router, prefix="/api")
 app.include_router(cli.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
@@ -246,6 +247,7 @@ async def startup_event():
         from models.audit_event import AuditEvent  # Import to register model
         from models.rate_limit_attempt import RateLimitAttempt  # Import to register model
         from models.system_status_history import SystemStatusSnapshot  # Import to register model
+        from models.ai_chat import AIChatMessage  # Import to register model
 
         # Create Tables (includes backup_config, backup_history, rate_limit_attempts, system status history, and audit events)
         Base.metadata.create_all(bind=engine)
