@@ -196,6 +196,19 @@ const SystemDashboard: React.FC = () => {
     const latestHistorySnapshot = history?.latest_recorded_at ?? history?.rows[0]?.recorded_at ?? null;
     const snapshotIntervalLabel = formatSnapshotInterval(history?.snapshot_interval_seconds);
 
+    const SNAPSHOTS_PER_PAGE = 5;
+    const [snapshotPage, setSnapshotPage] = React.useState(0);
+
+    React.useEffect(() => {
+        setSnapshotPage(0);
+    }, [history?.rows]);
+
+    const totalSnapshotPages = Math.max(1, Math.ceil((history?.rows.length ?? 0) / SNAPSHOTS_PER_PAGE));
+    const paginatedRows = (history?.rows ?? []).slice(
+        snapshotPage * SNAPSHOTS_PER_PAGE,
+        (snapshotPage + 1) * SNAPSHOTS_PER_PAGE,
+    );
+
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';
         if (val >= 70) return 'text-amber-400';
@@ -439,7 +452,7 @@ const SystemDashboard: React.FC = () => {
                         <div className="p-4 font-mono text-xs text-neutral-500">No persisted operational snapshots yet. A snapshot is recorded at most every {snapshotIntervalLabel}.</div>
                     ) : (
                         <div className="divide-y divide-white/5 font-mono text-xs">
-                            {history.rows.map((row) => (
+                            {paginatedRows.map((row) => (
                                 <div key={row.recorded_at} className="grid gap-3 p-4 text-neutral-300 md:grid-cols-[190px_1fr]">
                                     <div>
                                         <p className="font-bold text-neutral-100">{formatHistoryTimestamp(row.recorded_at)}</p>
@@ -465,6 +478,29 @@ const SystemDashboard: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                    {(history?.rows.length ?? 0) > 0 && (
+                        <div className="flex items-center justify-between border-t border-white/5 px-4 py-3">
+                            <button
+                                onClick={() => setSnapshotPage((p) => Math.max(0, p - 1))}
+                                disabled={snapshotPage === 0}
+                                className="rounded-lg border border-white/10 px-3 py-1 text-xs font-bold text-neutral-400
+                                           transition-colors hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                Previous
+                            </button>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                                Page {snapshotPage + 1} of {totalSnapshotPages}
+                            </span>
+                            <button
+                                onClick={() => setSnapshotPage((p) => Math.min(totalSnapshotPages - 1, p + 1))}
+                                disabled={snapshotPage >= totalSnapshotPages - 1}
+                                className="rounded-lg border border-white/10 px-3 py-1 text-xs font-bold text-neutral-400
+                                           transition-colors hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                Next
+                            </button>
                         </div>
                     )}
                 </div>

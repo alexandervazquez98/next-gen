@@ -48,7 +48,7 @@ const AIAgentConsole: React.FC = () => {
       const response = await chatWithAIAgent(input, "Current Context: User viewing Incident Console. 2 Critical alerts on Redis Cache.", undefined, signal);
       setMessages(prev => [...prev, { role: 'assistant', content: response || 'Unable to process request.' }]);
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (error instanceof Error && error.name === "AbortError" || error instanceof DOMException && error.name === "AbortError") {
         return;
       }
       console.error(error);
