@@ -97,7 +97,7 @@ interface OperationalHistoryChartProps {
     tooltipFormatter?: (value: number, name: string) => [string, string];
 }
 
-const OperationalHistoryChart: React.FC<OperationalHistoryChartProps> = ({
+const OperationalHistoryChart = React.memo<OperationalHistoryChartProps>(({
     title,
     subtitle,
     data,
@@ -129,7 +129,46 @@ const OperationalHistoryChart: React.FC<OperationalHistoryChartProps> = ({
             </ResponsiveContainer>
         </div>
     </div>
-);
+));
+
+OperationalHistoryChart.displayName = 'OperationalHistoryChart';
+
+const RESOURCE_CHART_LINES = [
+    { key: 'cpu', name: 'CPU', color: '#22c55e' },
+    { key: 'ram', name: 'RAM', color: '#38bdf8' },
+    { key: 'disk', name: 'Disk', color: '#f59e0b' },
+] as const;
+
+const COLLECTOR_CHART_LINES = [
+    { key: 'metrics_collected', name: 'Collected', color: '#345bf2' },
+    { key: 'metrics_failed', name: 'Failed', color: '#ef4444' },
+    { key: 'jobs_per_min', name: 'Jobs/min', color: '#00f2ff' },
+] as const;
+
+const DISK_IO_CHART_LINES = [
+    { key: 'disk_read', name: 'Read', color: '#a78bfa' },
+    { key: 'disk_write', name: 'Write', color: '#fb7185' },
+] as const;
+
+const CYCLE_DURATION_CHART_LINES = [
+    { key: 'cycle_duration', name: 'Cycle time', color: '#10b981' },
+] as const;
+
+const formatPercentAxis = (value: number) => `${value}%`;
+const formatPercentTooltip = (value: number, name: string): [string, string] =>
+    [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—', name];
+
+const formatCompactAxis = formatCompactNumber;
+const formatCompactTooltip = (value: number, name: string): [string, string] =>
+    [formatCompactNumber(Number(value)), name];
+
+const formatBytesAxis = formatBytesPerSecond;
+const formatBytesTooltip = (value: number, name: string): [string, string] =>
+    [formatBytesPerSecond(Number(value)), name];
+
+const formatSecondsAxis = (value: number) => `${value}s`;
+const formatSecondsTooltip = (value: number, name: string): [string, string] =>
+    [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : '—', name];
 
 const SystemDashboard: React.FC = () => {
     const { data: status, isLoading: loading } = useSystemStatusQuery();
@@ -360,44 +399,33 @@ const SystemDashboard: React.FC = () => {
                             title="Resources over time"
                             subtitle="CPU, RAM, and disk utilization from persisted snapshots."
                             data={historyChartData}
-                            lines={[
-                                { key: 'cpu', name: 'CPU', color: '#22c55e' },
-                                { key: 'ram', name: 'RAM', color: '#38bdf8' },
-                                { key: 'disk', name: 'Disk', color: '#f59e0b' },
-                            ]}
-                            yAxisFormatter={(value) => `${value}%`}
-                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—', name]}
+                            lines={RESOURCE_CHART_LINES}
+                            yAxisFormatter={formatPercentAxis}
+                            tooltipFormatter={formatPercentTooltip}
                         />
                         <OperationalHistoryChart
                             title="Collector throughput"
                             subtitle="Polling volume, failed metrics, and jobs per minute."
                             data={historyChartData}
-                            lines={[
-                                { key: 'metrics_collected', name: 'Collected', color: '#345bf2' },
-                                { key: 'metrics_failed', name: 'Failed', color: '#ef4444' },
-                                { key: 'jobs_per_min', name: 'Jobs/min', color: '#00f2ff' },
-                            ]}
-                            yAxisFormatter={formatCompactNumber}
-                            tooltipFormatter={(value, name) => [formatCompactNumber(Number(value)), name]}
+                            lines={COLLECTOR_CHART_LINES}
+                            yAxisFormatter={formatCompactAxis}
+                            tooltipFormatter={formatCompactTooltip}
                         />
                         <OperationalHistoryChart
                             title="Disk I/O throughput"
                             subtitle="Read and write throughput sampled from backend diskstats."
                             data={historyChartData}
-                            lines={[
-                                { key: 'disk_read', name: 'Read', color: '#a78bfa' },
-                                { key: 'disk_write', name: 'Write', color: '#fb7185' },
-                            ]}
-                            yAxisFormatter={formatBytesPerSecond}
-                            tooltipFormatter={(value, name) => [formatBytesPerSecond(Number(value)), name]}
+                            lines={DISK_IO_CHART_LINES}
+                            yAxisFormatter={formatBytesAxis}
+                            tooltipFormatter={formatBytesTooltip}
                         />
                         <OperationalHistoryChart
                             title="Collector cycle duration"
                             subtitle="Duration of each collector polling cycle in seconds."
                             data={historyChartData}
-                            lines={[{ key: 'cycle_duration', name: 'Cycle time', color: '#10b981' }]}
-                            yAxisFormatter={(value) => `${value}s`}
-                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : '—', name]}
+                            lines={CYCLE_DURATION_CHART_LINES}
+                            yAxisFormatter={formatSecondsAxis}
+                            tooltipFormatter={formatSecondsTooltip}
                         />
                     </div>
                 )}
