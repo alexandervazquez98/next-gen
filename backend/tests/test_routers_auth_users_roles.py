@@ -753,6 +753,131 @@ class TestAuthUsersMe:
         response = client.get("/api/auth/users/me")
         assert response.status_code == 401
 
+    def test_get_current_user_calls_record_session_activity_with_sid(self):
+        """`get_current_user` must call record_session_activity with the JWT sid
+        and the resolved DB user id when a valid access token is presented."""
+        import asyncio
+        from services import auth_service as auth_service_module
+        from jose import jwt
+        from services.auth_service import SECRET_KEY, ALGORITHM
+
+        # Build a real access token carrying `sid` (the get_current_user flow
+        # decodes the JWT to read the sid claim).
+        token = jwt.encode(
+            {
+                "sub": "testuser",
+                "role": "OPERATOR",
+                "sid": "sid-users-me-001",
+                "profile": "standard",
+            },
+            SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+
+        # Build a mock SQLAlchemy User row that get_current_user will load.
+        from types import SimpleNamespace
+
+        mock_db_user = SimpleNamespace(
+            id=77,
+            username="testuser",
+            role="OPERATOR",
+            tier="T1",
+            permissions=[],
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$fake",
+            allowed_locations=[],
+            allowed_ci_types=None,
+            phone=None,
+            email=None,
+            force_password_change=False,
+        )
+
+        request = MagicMock()
+        request.headers = {"Authorization": f"Bearer {token}"}
+        request.cookies = {}
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+
+        with patch.object(
+            auth_service_module,
+            "record_session_activity",
+            return_value=True,
+        ) as mock_record, patch.object(
+            auth_service_module,
+            "user_repo",
+        ) as mock_user_repo:
+            mock_user_repo.get_user_by_username.return_value = mock_db_user
+            # get_current_user is async — run it to completion.
+            result = asyncio.run(
+                auth_service_module.get_current_user(request=request, db=mock_db)
+            )
+
+        assert result.username == "testuser"
+        mock_record.assert_called_once()
+        call_args = mock_record.call_args
+        assert call_args.args[0] == "sid-users-me-001"
+        assert call_args.args[1] == 77
+
+    def test_get_current_user_skips_record_session_activity_when_no_sid(self):
+        """When the JWT carries no `sid` claim, record_session_activity MUST
+        NOT be invoked (it is a no-op, but we still avoid the call to keep
+        the hot path tight)."""
+        import asyncio
+        from services import auth_service as auth_service_module
+        from jose import jwt
+        from services.auth_service import SECRET_KEY, ALGORITHM
+
+        token = jwt.encode(
+            {
+                "sub": "testuser",
+                "role": "OPERATOR",
+                # No sid claim at all.
+                "profile": "standard",
+            },
+            SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+
+        from types import SimpleNamespace
+
+        mock_db_user = SimpleNamespace(
+            id=77,
+            username="testuser",
+            role="OPERATOR",
+            tier="T1",
+            permissions=[],
+            is_active=True,
+            hashed_password="$pbkdf2-sha256$fake",
+            allowed_locations=[],
+            allowed_ci_types=None,
+            phone=None,
+            email=None,
+            force_password_change=False,
+        )
+
+        request = MagicMock()
+        request.headers = {"Authorization": f"Bearer {token}"}
+        request.cookies = {}
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+
+        with patch.object(
+            auth_service_module,
+            "record_session_activity",
+            return_value=True,
+        ) as mock_record, patch.object(
+            auth_service_module,
+            "user_repo",
+        ) as mock_user_repo:
+            mock_user_repo.get_user_by_username.return_value = mock_db_user
+            asyncio.run(
+                auth_service_module.get_current_user(request=request, db=mock_db)
+            )
+
+        mock_record.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Tests: POST /api/auth/change-password

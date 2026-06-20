@@ -3,6 +3,7 @@
 import hashlib
 import os
 import pytest
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -504,6 +505,107 @@ class TestAuthRefresh:
             assert row is None
         finally:
             session.close()
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_success_records_session_activity(self):
+        """Successful refresh must call record_session_activity once with the
+        rotated refresh's session_id and the resolved user_id."""
+        mock_user = _make_mock_pg_user(
+            username="testuser",
+            role="OPERATOR",
+            user_id=42,
+        )
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.VALID,
+                user_id=42,
+                session_id="sid-bump",
+            ),
+        ):
+            with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
+                with patch(
+                    "routers.auth.create_refresh_token",
+                    return_value=("new_refresh_token", MagicMock(id=123)),
+                ):
+                    with patch("routers.auth.create_access_token", return_value="new_access_token"):
+                        with patch("routers.auth.record_session_activity", return_value=True) as mock_record:
+                            response = client.post(
+                                "/api/auth/refresh",
+                                cookies={"refresh_token": "old_refresh_token"},
+                            )
+
+        assert response.status_code == 200
+        mock_record.assert_called_once()
+        call_args = mock_record.call_args
+        assert call_args.args[0] == "sid-bump"
+        assert call_args.args[1] == 42
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_refresh_idle_expired_clears_cookies_and_emits_audit_event(self):
+        """Idle-expired refresh returns 401, clears both cookies, and persists
+        a `session.idle_expired` audit event with safe context."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.add = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.IDLE_EXPIRED,
+                user_id=42,
+                session_id="sid-idle",
+                policy_profile="standard",
+                token_id=99,
+            ),
+        ):
+            with patch("routers.auth.audit_service") as mock_audit:
+                response = client.post(
+                    "/api/auth/refresh",
+                    cookies={"refresh_token": "old_refresh_token"},
+                )
+
+        assert response.status_code == 401
+        assert "session timed out" in response.json()["detail"]
+
+        # Both access_token and refresh_token cookies must be cleared (Max-Age=0).
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "access_token=" in set_cookie
+        assert "refresh_token=" in set_cookie
+        lowered = set_cookie.lower()
+        assert "max-age=0" in lowered
+
+        # Audit event emitted with safe lifecycle context.
+        mock_audit.record_auth_event.assert_called_once()
+        kwargs = mock_audit.record_auth_event.call_args.kwargs
+        assert kwargs["event_type"] == "session.idle_expired"
+        assert kwargs["outcome"] == "DENIED"
+        assert kwargs["context"]["session_id"] == "sid-idle"
+        assert kwargs["context"]["user_id"] == 42
+        assert kwargs["context"]["policy_profile"] == "standard"
+        assert kwargs["context"]["activity_anchor"] in ("last_activity_at", "created_at")
+        # Consistency with `session.activity_recorded`: the throttle window
+        # value must appear in both lifecycle events so dashboards and
+        # cross-event correlation stay coherent.
+        assert isinstance(kwargs["context"]["throttle_seconds"], int)
+        assert kwargs["context"]["throttle_seconds"] > 0
 
         app.dependency_overrides.pop(get_pg_db, None)
 

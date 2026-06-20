@@ -9,6 +9,15 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
 }));
 
+// Mock sonner so the toast helper is trackable before the dependency is installed.
+// PR2 (#287) installs `sonner` and AuthContext calls `toast(...)` from it.
+const sonnerMocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+}));
+vi.mock('sonner', () => ({
+  toast: sonnerMocks.toast,
+}));
+
 // Mock the api module - use vi.hoisted to avoid hoisting issues
 const mocks = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn() },
@@ -28,6 +37,7 @@ describe('AuthContext', () => {
     localStorage.clear();
     mocks.api.get.mockReset();
     mocks.api.post.mockReset();
+    sonnerMocks.toast.mockReset();
     // Default: resolve with null user so hydration doesn't crash
     mocks.api.get.mockResolvedValue(null);
   });
@@ -151,7 +161,7 @@ describe('AuthContext', () => {
   });
 
   describe('session policy and cross-tab behavior', () => {
-    it('logs out and clears standard non-persistent sessions after the configured inactivity timeout', async () => {
+    it('clears local state for standard non-persistent sessions after inactivity without calling /auth/logout', async () => {
       vi.useFakeTimers();
       const mockUser = {
         ...baseUser,
@@ -174,9 +184,124 @@ describe('AuthContext', () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
 
-      expect(mocks.api.post).toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
+      // PR2: inactivity expiry is local-only; it MUST NOT call /auth/logout.
+      expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.anything());
+      expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
+    });
+
+    it('shows the Spanish idle-expired toast for 15s when inactivity fires', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(sonnerMocks.toast).toHaveBeenCalledWith(
+        'Tu sesión expiró por inactividad. Volvé a iniciar sesión.',
+        { duration: 15_000 },
+      );
+      expect(result.current.user).toBeNull();
+    });
+
+    it('defers the redirect to /login by ~30s after inactivity fires', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+      // Use a hash route so redirectToLoginOnce() takes the hash branch (no full nav in jsdom).
+      window.location.hash = '#/dashboard';
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      // Right after inactivity: user cleared, toast shown, but NOT redirected yet.
+      expect(result.current.user).toBeNull();
+      expect(sonnerMocks.toast).toHaveBeenCalled();
+      expect(window.location.hash).toBe('#/dashboard');
+
+      // Advance another 29s (still under the 30s threshold).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_000);
+      });
+      expect(window.location.hash).toBe('#/dashboard');
+
+      // Cross the 30s threshold → redirect fires.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(window.location.hash).toBe('#/login');
+    });
+
+    it('resets the inactivity timer when touchstart or touchmove events fire', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // Hydration settled; inactivity useEffect armed the 60s timer at fake time ~0.
+      expect(result.current.user).toEqual(mockUser);
+
+      // Advance halfway, then fire touchstart. The handler MUST reset the timer,
+      // so the original 60s deadline is no longer relevant.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+        window.dispatchEvent(new Event('touchstart'));
+      });
+      // Advance past the ORIGINAL 60s deadline. With touchstart reset, inactivity
+      // must NOT have fired.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+      expect(result.current.user).toEqual(mockUser);
+
+      // Advance further and fire touchmove. Same expectation — inactivity must not fire.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+        window.dispatchEvent(new Event('touchmove'));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+      expect(result.current.user).toEqual(mockUser);
     });
 
     it('does not arm inactivity logout for persistent operational sessions', async () => {

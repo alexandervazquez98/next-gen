@@ -1,10 +1,13 @@
 import os
 import secrets
 import hashlib
+import logging
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from models.user import (
     TokenData,
@@ -26,12 +29,22 @@ from models.refresh_token import (
     hash_token,
     generate_opaque_token,
 )
+from services import audit_service
 from services.session_policy import (
     SessionPolicy,
     get_standard_session_policy,
     get_session_policy_by_profile,
+    get_session_activity_write_throttle_seconds,
     resolve_session_policy_for_user,
 )
+
+logger = logging.getLogger(__name__)
+
+# Per-worker advisory throttle cache. Keyed by session_id; value is the UTC
+# timestamp before which the worker should skip writing. Bounded size prevents
+# memory growth on busy workers; expired keys are evicted on the write path.
+_ACTIVITY_THROTTLE_CACHE: dict[str, datetime] = {}
+_ACTIVITY_THROTTLE_CACHE_MAX = 10_000
 
 # ── Secret Configuration ─────────────────────────────────────────────────────
 
@@ -111,10 +124,13 @@ def _is_token_idle_expired(rt: RefreshToken, now: datetime, policy: SessionPolic
     if policy.idle_timeout_minutes is None:
         return False
 
-    if rt.last_activity_at is None:
-        return False
-
-    return now - rt.last_activity_at > timedelta(minutes=policy.idle_timeout_minutes)
+    # PR1 #287: coalesce NULL last_activity_at to created_at so transitional
+    # NULL rows (skipped PR0 backfill or rows inserted during deployment)
+    # do not become immortal. The DB conditional update only writes
+    # last_activity_at on actual activity, so the created_at anchor is the
+    # most recent conservative activity timestamp for legacy rows.
+    anchor = rt.last_activity_at or rt.created_at
+    return now - anchor > timedelta(minutes=policy.idle_timeout_minutes)
 
 
 def _format_refresh_verification_result(
@@ -129,6 +145,117 @@ def _format_refresh_verification_result(
         return None
 
     return result.user_id, result.session_id
+
+
+def _evict_activity_throttle_cache(now: datetime) -> None:
+    """Drop expired keys from the per-worker throttle cache.
+
+    Bounded eviction keeps the dict from growing without limit on busy workers.
+    """
+    if not _ACTIVITY_THROTTLE_CACHE:
+        return
+    stale = [sid for sid, until in _ACTIVITY_THROTTLE_CACHE.items() if until <= now]
+    for sid in stale:
+        _ACTIVITY_THROTTLE_CACHE.pop(sid, None)
+
+
+def record_session_activity(
+    session_id: str | None,
+    user_id: int,
+    db: Session,
+    policy: SessionPolicy,
+    request: Request | None = None,
+) -> bool:
+    """Persist a throttled activity bump for a refresh-token session.
+
+    Behavior:
+    - Returns False for missing session_id, operational profile (no-op per
+      design), or any DB failure (logged via ``logger.exception``).
+    - Returns True when the DB row was actually updated and the audit event
+      was attempted. Returns False when the per-worker advisory cache
+      skipped the write or when the DB conditional UPDATE matched 0 rows.
+    - Hybrid throttle: in-process dict skips obvious same-worker writes
+      within the window; the DB conditional UPDATE is the authoritative
+      cross-worker gate.
+    """
+    if not session_id:
+        return False
+
+    if policy.profile == "operational":
+        return False
+
+    now = datetime.utcnow()
+    throttle_seconds = get_session_activity_write_throttle_seconds()
+
+    # Bounded eviction keeps the cache from leaking memory on busy workers.
+    if len(_ACTIVITY_THROTTLE_CACHE) >= _ACTIVITY_THROTTLE_CACHE_MAX:
+        _evict_activity_throttle_cache(now)
+
+    cached_until = _ACTIVITY_THROTTLE_CACHE.get(session_id)
+    if cached_until is not None and cached_until > now:
+        return False
+
+    throttle_cutoff = now - timedelta(seconds=throttle_seconds)
+    update_sql = text(
+        "UPDATE refresh_tokens "
+        "SET last_activity_at = :now "
+        "WHERE session_id = :sid AND user_id = :uid "
+        "AND (last_activity_at IS NULL OR last_activity_at <= :cutoff) "
+        "RETURNING session_id"
+    )
+
+    try:
+        result = db.execute(
+            update_sql,
+            {
+                "now": now,
+                "sid": session_id,
+                "uid": user_id,
+                "cutoff": throttle_cutoff,
+            },
+        )
+        row = result.first()
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception(
+            "record_session_activity db failure session_id=%s user_id=%s",
+            session_id,
+            user_id,
+        )
+        return False
+
+    _ACTIVITY_THROTTLE_CACHE[session_id] = now + timedelta(seconds=throttle_seconds)
+
+    if row is None:
+        return False
+
+    logger.debug(
+        "record_session_activity updated session_id=%s user_id=%s",
+        session_id,
+        user_id,
+    )
+
+    try:
+        audit_service.record_auth_event(
+            db=db,
+            request=request,
+            event_type="session.activity_recorded",
+            outcome="SUCCESS",
+            actor_username=None,
+            reason="activity_recorded",
+            context={
+                "session_id": session_id,
+                "user_id": user_id,
+                "policy_profile": policy.profile,
+                "throttle_seconds": throttle_seconds,
+                "activity_anchor": "last_activity_at",
+            },
+        )
+    except Exception:  # pragma: no cover - defensive operational safety path
+        logger.exception("record_session_activity audit failure session_id=%s", session_id)
+
+    return True
 
 
 def verify_refresh_token(
@@ -374,6 +501,13 @@ async def get_current_user(
     # Map to Pydantic User
     # Resolve latest policy metadata from authoritative user state.
     policy = resolve_session_policy_for_user(user)
+
+    # PR1 #287: bump server-authoritative session activity if the access
+    # token carries a `sid` claim. No-op when sid is missing or when the
+    # recorder's internal DB write fails (the request must still succeed).
+    sid = payload.get("sid")
+    if sid:
+        record_session_activity(sid, user.id, db, policy, request=request)
 
     return UserInDB(
         username=user.username,

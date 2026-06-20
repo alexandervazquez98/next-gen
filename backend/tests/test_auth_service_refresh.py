@@ -2,11 +2,14 @@
 
 import secrets
 import hashlib
+import logging
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
+from sqlalchemy.exc import SQLAlchemyError
 
 # Import from auth_service after env is set via conftest
+from services import auth_service
 from services.auth_service import (
     create_access_token,
     verify_refresh_token,
@@ -14,6 +17,7 @@ from services.auth_service import (
     revoke_all_user_refresh_tokens,
     create_refresh_token,
     try_increment_refresh_recovery_count,
+    record_session_activity,
     SECRET_KEY,
     ALGORITHM,
 )
@@ -177,6 +181,76 @@ class TestVerifyRefreshToken:
 
         result = verify_refresh_token(token, mock_db)
         assert result.status == RefreshVerificationStatus.IDLE_EXPIRED
+
+    def test_standard_session_with_null_activity_uses_created_at_anchor(self):
+        """NULL last_activity_at must coalesce to created_at for the idle check.
+
+        Today the implementation returns VALID (not expired) when
+        last_activity_at is None. PR1 closes that gap so rows whose
+        last_activity_at was never written do not become immortal.
+        """
+        token = "null-anchor-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        rt = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-null-anchor",
+            policy_profile="standard",
+        )
+        # Force NULL last_activity_at (legacy / transitional state).
+        rt.last_activity_at = None
+        # Anchor must be 16 minutes old so the 15-minute standard timeout fires.
+        rt.created_at = datetime.utcnow() - timedelta(minutes=16)
+        mock_db.query.return_value.filter.return_value.first.return_value = rt
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.IDLE_EXPIRED
+        assert result.user_id == 1
+        assert result.session_id == "sess-null-anchor"
+
+    def test_recently_active_session_with_null_activity_is_not_idle(self):
+        """When last_activity_at is NULL but created_at is fresh, the token
+        is still valid (anchor is created_at and now-created_at <= timeout).
+        """
+        token = "fresh-null-anchor-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        rt = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-fresh",
+            policy_profile="standard",
+        )
+        rt.last_activity_at = None
+        rt.created_at = datetime.utcnow() - timedelta(minutes=5)
+        mock_db.query.return_value.filter.return_value.first.return_value = rt
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.VALID
+        assert result.session_id == "sess-fresh"
+
+    def test_recently_active_session_is_not_idle(self):
+        """Symmetric positive case: non-null last_activity_at within timeout
+        is still VALID (regression guard for the coalesce change)."""
+        token = "recent-active-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            last_activity_at=datetime.utcnow() - timedelta(minutes=5),
+            policy_profile="standard",
+        )
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.VALID
 
     def test_recently_rotated_token_is_recoverable(self):
         token = "stale-token"
@@ -404,3 +478,97 @@ class TestCreateRefreshToken:
         assert added_rt.policy_profile == "operational"
         assert added_rt.last_activity_at is not None
         assert isinstance(added_rt.expires_at, datetime)
+
+
+class TestRecordSessionActivity:
+    """Tests for record_session_activity (PR1 #287).
+
+    Contract (per design.md §PR1 and tasks.md §1.1):
+    - Returns False for missing session_id
+    - 5 calls within the throttle window on the same session_id produce
+      exactly one `db.execute` against the refresh_tokens table
+    - Operational profile returns False and writes nothing
+    - A raised SQLAlchemyError is caught, returns False, and logs exception
+    """
+
+    def setup_method(self):
+        # Reset the in-process throttle cache between tests to avoid bleed.
+        cache = getattr(auth_service, "_ACTIVITY_THROTTLE_CACHE", None)
+        if isinstance(cache, dict):
+            cache.clear()
+
+    def test_missing_session_id_returns_false_without_db_write(self):
+        mock_db = MagicMock()
+        policy = get_standard_session_policy()
+
+        result = record_session_activity(None, user_id=42, db=mock_db, policy=policy)
+
+        assert result is False
+        mock_db.execute.assert_not_called()
+
+    def test_five_calls_within_throttle_window_produce_single_db_execute(self, monkeypatch):
+        monkeypatch.setenv("SESSION_ACTIVITY_WRITE_THROTTLE_SECONDS", "60")
+        mock_db = MagicMock()
+        # rowcount=1 simulates a successful UPDATE; the SQL is irrelevant for
+        # the contract — only the call count matters.
+        result_proxy = MagicMock()
+        result_proxy.rowcount = 1
+        mock_db.execute.return_value = result_proxy
+        policy = get_standard_session_policy()
+
+        outcomes = [
+            record_session_activity(
+                session_id="sess-throttle",
+                user_id=42,
+                db=mock_db,
+                policy=policy,
+            )
+            for _ in range(5)
+        ]
+
+        assert outcomes.count(True) == 1
+        assert outcomes.count(False) == 4
+        assert mock_db.execute.call_count == 1
+
+    def test_operational_profile_returns_false_and_writes_nothing(self):
+        mock_db = MagicMock()
+        policy = get_operational_session_policy()
+
+        result = record_session_activity(
+            session_id="sess-operational",
+            user_id=42,
+            db=mock_db,
+            policy=policy,
+        )
+
+        assert result is False
+        mock_db.execute.assert_not_called()
+
+    def test_sqlalchemy_error_is_caught_returns_false_and_logs_exception(self, caplog):
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = SQLAlchemyError("boom")
+        policy = get_standard_session_policy()
+
+        with caplog.at_level(logging.DEBUG, logger="services.auth_service"):
+            result = record_session_activity(
+                session_id="sess-failing",
+                user_id=42,
+                db=mock_db,
+                policy=policy,
+            )
+
+        assert result is False
+        # logger.exception() records an ERROR-level log carrying the
+        # SQLAlchemyError traceback (exc_info) and the function's own message.
+        error_records = [
+            record for record in caplog.records
+            if record.levelno == logging.ERROR
+            and record.name == "services.auth_service"
+        ]
+        assert error_records, f"expected ERROR log, got: {[(r.levelname, r.name) for r in caplog.records]}"
+        # exc_info is attached so pytest's caplog preserves the formatted
+        # exception text including the original "boom" message.
+        assert any(
+            "boom" in record.getMessage() or "boom" in str(record.exc_info)
+            for record in error_records
+        )
