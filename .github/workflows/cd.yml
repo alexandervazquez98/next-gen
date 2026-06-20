@@ -36,13 +36,15 @@
 #   1. Checkout (full history — needed for git rev-parse + log in the
 #      cd-failure issue body).
 #   2. Prepare .env from runner host (copies $HOME/.env into the workdir).
-#   3. Validate env (scripts/validate-env.sh --check-backup-dir).
-#   4. Pre-flight dry-run (scripts/safe-rebuild.sh --dry-run) — ALWAYS.
+#   3. Assert runner contract (scripts/ci-cd-check-runner-contract.sh).
+#      Docker, Compose v2, BACKUP_DIR writable, .env present, gh auth.
+#   4. Validate env (scripts/validate-env.sh --check-backup-dir).
+#   5. Pre-flight dry-run (scripts/safe-rebuild.sh --dry-run) — ALWAYS.
 #      Gives operators a preview in the job log.
-#   5. Real deploy (scripts/safe-rebuild.sh) — skip only when the
+#   6. Real deploy (scripts/safe-rebuild.sh) — skip only when the
 #      workflow_dispatch input dry_run=true.
-#   6. Cleanup (docker compose ps) — always, for visibility.
-#   7. On any failure: open GitHub Issue labeled cd-failure.
+#   7. Cleanup (docker compose ps) — always, for visibility.
+#   8. On any failure: open GitHub Issue labeled cd-failure.
 #
 # SHA pins (consistent with PR1..PR5):
 #   - actions/checkout@v4: 692973e3d937129bcbf40652eb9f2f61becf3332 (v4.1.7)
@@ -53,9 +55,9 @@
 # documented substitute when no production runner is reachable.
 #
 # BACKUP_DIR: expected to be set in the runner environment
-# (or .env on the runner host). scripts/validate-env.sh
-# --check-backup-dir verifies it exists and is writable before the
-# deploy step runs.
+# (or .env on the runner host). The contract script
+# (scripts/ci-cd-check-runner-contract.sh) verifies it exists and is
+# writable before the deploy step runs.
 
 name: cd
 
@@ -92,9 +94,10 @@ jobs:
 
       # .env is gitignored and lives on the runner host only
       # (see docs/self-hosted-runner.md#prerequisites). Copy it into
-      # the workdir so scripts/validate-env.sh and scripts/safe-rebuild.sh
-      # can read the production secrets. The source path follows the
-      # runner setup guide ($HOME/.env, owned by the runner user, chmod 600).
+      # the workdir so scripts/ci-cd-check-runner-contract.sh,
+      # scripts/validate-env.sh, and scripts/safe-rebuild.sh all see
+      # the same file. The source path follows the runner setup guide
+      # ($HOME/.env, owned by the runner user, chmod 600).
       - name: Prepare .env from runner host
         run: |
           set -eu
@@ -105,6 +108,13 @@ jobs:
           cp "$HOME/.env" .env
           chmod 600 .env
           echo "Loaded .env from $HOME/.env ($(wc -l < .env) lines, mode $(stat -c %a .env))"
+
+      # R8 / T6.4: assert the runner contract. Failures here mean the
+      # runner itself is misconfigured (Docker missing, BACKUP_DIR not
+      # writable, gh unauthenticated, etc.). The CD job MUST fail loud
+      # rather than silently skip a contract violation.
+      - name: Assert runner contract
+        run: sh scripts/ci-cd-check-runner-contract.sh
 
       # R8: .env and BACKUP_DIR validated before any deploy step.
       - name: Validate environment
