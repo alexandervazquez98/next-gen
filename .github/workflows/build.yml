@@ -1,0 +1,216 @@
+# Workflow: build (PR4 of ci-cd-pipeline)
+#
+# Builds the backend image and the production frontend image on every
+# pull request that touches build-related files, then smoke-runs each
+# image to prove it can start and serve. This is PR4 of the six-slice
+# CI/CD chain (feature-branch-chain: PR1 -> PR2 -> PR3 -> PR4 -> PR5 -> PR6).
+#
+# Jobs:
+#   backend-image     — R6 build lane: docker build backend/Dockerfile,
+#                       tag backend:ci-${{ github.sha }}, smoke-run with
+#                       `python --version` to prove the runtime boots.
+#   frontend-image    — R6 build lane: docker build frontend/Dockerfile.prod
+#                       (multi-stage pnpm + nginx runner from T4.1), tag
+#                       frontend:prod-${{ github.sha }}, smoke-run with
+#                       nginx serving on :80 and curl the HTML root.
+#   compose-validate  — T4.2 verification: validates the prod overlay
+#                       (`docker-compose.prod.yml`) merges cleanly with
+#                       the base `docker-compose.yml`.
+#   build-verify      — T4.4 PR4 verification gate. Always runs so a
+#                       build-only PR exercises actionlint + yamllint +
+#                       compose-validate even when no Dockerfile touched.
+#
+# Chain strategy: PR4 targets `cicd/frontend-ci`. The path filter keeps
+# this lane silent on docs-only or lint-only PRs to protect the reviewer
+# signal. PR6 (CD lane) will reuse these same images on the production
+# self-hosted runner; the smoke steps here are the same contract PR6
+# will rely on (without the registry push — that ships in PR6).
+#
+# SHA pins (CVE mitigation per PR1 finding #2302):
+#   - docker/setup-buildx-action: v3.12.0  -> 8d2750c...
+#   - docker/build-push-action:    v6.19.2  -> 10e90e3...
+#   - tj-actions/changed-files:    v46.0.5  -> ed68ef82... (PR1 pin)
+# Latest docker/setup-buildx-action is v4.1.0 but v3.12.0 is the last
+# v3 line; v4 introduced upstream API drift that we don't need yet.
+# build-push-action v6 is the stable line used by the wider ecosystem
+# and matches the Compose v2 contract.
+#
+# Spec: openspec/changes/ci-cd-pipeline/specs/ci-cd-pipeline/spec.md
+#       Requirement "Build Lane and Production Images" (R6).
+
+name: build
+
+on:
+  pull_request:
+    paths:
+      - "frontend/Dockerfile.prod"
+      - "frontend/nginx.conf"
+      - "frontend/.dockerignore"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "backend/Dockerfile"
+      - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
+      - "backend/engines/**"
+      - "docker-compose.yml"
+      - "docker-compose.prod.yml"
+      - ".github/workflows/build.yml"
+  push:
+    branches:
+      - main
+      - "cicd/**"
+    paths:
+      - "frontend/Dockerfile.prod"
+      - "frontend/nginx.conf"
+      - "frontend/.dockerignore"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "backend/Dockerfile"
+      - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
+      - "backend/engines/**"
+      - "docker-compose.yml"
+      - "docker-compose.prod.yml"
+      - ".github/workflows/build.yml"
+
+# Cancel superseded PR runs; keep push runs to the end.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # R6: build backend image and smoke-run it. We do NOT push the image
+  # (registry push ships in PR6 with the CD lane). The smoke step uses
+  # `--rm` so the container is auto-removed after the runtime check.
+  backend-image:
+    name: backend-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=moby/buildkit:latest
+
+      - name: Build backend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: false
+          tags: backend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-run backend image (python --version)
+        run: |
+          set -euo pipefail
+          docker run --rm backend:ci-${{ github.sha }} python --version
+
+  # R6: build the multi-stage frontend production image and smoke-run it
+  # on :8080 with a real HTTP probe. We serve, curl the root, then
+  # always remove the container (success OR failure).
+  frontend-image:
+    name: frontend-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=moby/buildkit:latest
+
+      - name: Build frontend:prod image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: frontend
+          file: frontend/Dockerfile.prod
+          push: false
+          tags: frontend:prod-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-run frontend image (serve + curl)
+        run: |
+          set -euo pipefail
+          docker rm -f ci-frontend-smoke 2>/dev/null || true
+          docker run --rm -d --name ci-frontend-smoke -p 8080:80 frontend:prod-${{ github.sha }} >/dev/null
+          # Give nginx a moment to bind the port.
+          sleep 2
+          status=$(curl -s -o /tmp/ci-frontend-index.html -w "%{http_code}" http://127.0.0.1:8080/)
+          echo "GET / -> HTTP $status"
+          if [ "$status" != "200" ]; then
+            echo "smoke failed: expected HTTP 200 from nginx, got $status"
+            docker logs ci-frontend-smoke || true
+            docker rm -f ci-frontend-smoke || true
+            exit 1
+          fi
+          # Confirm we got real HTML (not an empty body or error page).
+          if ! head -c 200 /tmp/ci-frontend-index.html | grep -qi "<html"; then
+            echo "smoke failed: response body does not look like HTML"
+            head -c 400 /tmp/ci-frontend-index.html || true
+            docker rm -f ci-frontend-smoke || true
+            exit 1
+          fi
+          echo "smoke OK: nginx served index.html"
+          docker rm -f ci-frontend-smoke >/dev/null 2>&1 || true
+
+  # T4.2 verification: the prod overlay (introduced in this PR) merges
+  # cleanly with the base compose file. Catches overlay regressions
+  # before they reach PR5 (smoke lane) or PR6 (CD lane).
+  compose-validate:
+    name: compose-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=moby/buildkit:latest
+
+      - name: Validate compose overlay
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod config --quiet
+
+  # T4.4: PR4 verification gate. Always runs so a build-only PR exercises
+  # actionlint + yamllint even when no Dockerfile in the change set.
+  # This job catches contract drift (broken SHA pins, missing
+  # permissions, malformed concurrency) before review.
+  build-verify:
+    name: build-verify (PR4 gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download actionlint (pinned release)
+        run: |
+          set -euo pipefail
+          VERSION="1.7.8"
+          curl -sSLf -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
+
+      - name: actionlint must pass
+        run: ./actionlint -color
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install yamllint
+        run: pip install --quiet yamllint==1.38.0
+
+      - name: yamllint must pass
+        run: yamllint -c .yamllint.yml .github/
+
+      - name: docker compose -F dev + prod overlay must validate
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod config --quiet
