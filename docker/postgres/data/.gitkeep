@@ -1,0 +1,24 @@
+# Why this empty directory must exist in the repo
+#
+# `docker-compose.yml` bind-mounts the host directory
+# `./docker/postgres/data` into the postgres container at
+# `/var/lib/postgresql/data`. Docker auto-creates missing bind-mount
+# source directories on Linux, but only on some Docker engine versions
+# and only when the parent path is writable. On a fresh GitHub-hosted
+# runner (ubuntu-latest) the first `docker compose up postgres` will:
+#
+#   1. Try to bind `./docker/postgres/data` from the workspace root.
+#   2. If the dir is missing AND the engine refuses auto-create,
+#      fail with: `error while mounting volume ... source directory
+#      does not exist`.
+#
+# To make smoke runs reproducible the smoke workflow explicitly does
+# `mkdir -p docker/postgres/data` BEFORE `docker compose up` (see
+# `.github/workflows/smoke.yml`). This .gitkeep is the canonical proof
+# in-repo that the path is expected to exist; it is intentionally the
+# only file inside the directory because postgres manages the rest of
+# the contents itself at runtime.
+#
+# This directory IS listed in `.gitignore` because we do NOT want to
+# commit database data. The `.gitkeep` file is force-added by the
+# smoke workflow's first commit and is otherwise harmless.
