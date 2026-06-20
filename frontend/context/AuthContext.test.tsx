@@ -275,28 +275,30 @@ describe('AuthContext', () => {
       await act(async () => {
         await Promise.resolve();
       });
-      // Hydration settled.
+      // Hydration settled; inactivity useEffect armed the 60s timer at fake time ~0.
       expect(result.current.user).toEqual(mockUser);
 
-      // Advance halfway through the 60s window, then fire a touchstart event.
+      // Advance halfway, then fire touchstart. The handler MUST reset the timer,
+      // so the original 60s deadline is no longer relevant.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000);
         window.dispatchEvent(new Event('touchstart'));
       });
-      // Advance past the original 60s deadline — touchstart should have reset the timer.
+      // Advance past the ORIGINAL 60s deadline. With touchstart reset, inactivity
+      // must NOT have fired.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(31_000);
       });
       expect(sonnerMocks.toast).not.toHaveBeenCalled();
       expect(result.current.user).toEqual(mockUser);
 
-      // Fire touchmove just before the NEW deadline; same expectation.
+      // Advance further and fire touchmove. Same expectation — inactivity must not fire.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(20_000);
         window.dispatchEvent(new Event('touchmove'));
       });
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(31_000);
+        await vi.advanceTimersByTimeAsync(15_000);
       });
       expect(sonnerMocks.toast).not.toHaveBeenCalled();
       expect(result.current.user).toEqual(mockUser);

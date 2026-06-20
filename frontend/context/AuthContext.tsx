@@ -31,7 +31,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = ['click', 'keydown', 'mousemove', 'focus', 'visibilitychange'];
+const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = ['click', 'keydown', 'mousemove', 'focus', 'visibilitychange', 'touchstart', 'touchmove'];
 let redirectedToLogin = false;
 
 function redirectToLoginOnce() {
