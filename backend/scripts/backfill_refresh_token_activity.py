@@ -95,13 +95,21 @@ def backfill_refresh_token_activity(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
+    description = (
+        "Batched deployment-time backfill for "
+        "refresh_tokens.last_activity_at IS NULL rows."
+    )
+    epilog = (
+        "Live evidence (run before/after the backfill):\n"
+        "  SELECT count(*) FROM refresh_tokens WHERE last_activity_at IS NULL;\n"
+        "  SELECT id, user_id, last_activity_at FROM refresh_tokens "
+        "WHERE last_activity_at IS NULL;\n"
+        "Both queries must return zero rows once the backfill completes."
+    )
     parser = argparse.ArgumentParser(
-        description=(
-            "Batched deployment-time backfill for "
-            "refresh_tokens.last_activity_at IS NULL rows. "
-            "Live evidence query: "
-            "SELECT count(*) FROM refresh_tokens WHERE last_activity_at IS NULL;"
-        ),
+        description=description,
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--batch-size",
