@@ -9,6 +9,15 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
 }));
 
+// Mock sonner so the toast helper is trackable before the dependency is installed.
+// PR2 (#287) installs `sonner` and AuthContext calls `toast(...)` from it.
+const sonnerMocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+}));
+vi.mock('sonner', () => ({
+  toast: sonnerMocks.toast,
+}));
+
 // Mock the api module - use vi.hoisted to avoid hoisting issues
 const mocks = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn() },
@@ -179,6 +188,75 @@ describe('AuthContext', () => {
       expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
+    });
+
+    it('shows the Spanish idle-expired toast for 15s when inactivity fires', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(sonnerMocks.toast).toHaveBeenCalledWith(
+        'Tu sesión expiró por inactividad. Volvé a iniciar sesión.',
+        { duration: 15_000 },
+      );
+      expect(result.current.user).toBeNull();
+    });
+
+    it('defers the redirect to /login by ~30s after inactivity fires', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+      // Use a hash route so redirectToLoginOnce() takes the hash branch (no full nav in jsdom).
+      window.location.hash = '#/dashboard';
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      // Right after inactivity: user cleared, toast shown, but NOT redirected yet.
+      expect(result.current.user).toBeNull();
+      expect(sonnerMocks.toast).toHaveBeenCalled();
+      expect(window.location.hash).toBe('#/dashboard');
+
+      // Advance another 29s (still under the 30s threshold).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_000);
+      });
+      expect(window.location.hash).toBe('#/dashboard');
+
+      // Cross the 30s threshold → redirect fires.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(window.location.hash).toBe('#/login');
     });
 
     it('does not arm inactivity logout for persistent operational sessions', async () => {
