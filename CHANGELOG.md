@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] — 2026-06-20
+
+### Added
+
+- **AI prompts override folder** (PR #286, issue #285):
+  - Adds operator-owned prompts folder controlled by `AI_PROMPTS_DIR` with one-time seed from `backend/ai` on first boot.
+  - Keeps operator edits safe: bundled defaults are never overwritten after seed (frozen snapshot).
+  - Falls back to bundled defaults at runtime when an override is missing or not a regular file.
+  - Wires Docker to mount the host prompts folder via `AI_PROMPTS_DIR_HOST` and documents local/Docker usage.
+
 ## [1.13.0] — 2026-06-20
 
 ### Added
