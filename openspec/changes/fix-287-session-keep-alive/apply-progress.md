@@ -31,6 +31,24 @@
   - GREEN: 2 help tests pass.
   - Added explicit `--help` epilog with the live-evidence SQL operators run before/after.
 
+### Follow-up commits (post-PR0-verify, after `verify-report-pr0.md` flagged regressions)
+
+- [x] **Regression d9e2997** — `test(auth): add CLI subprocess regression and DB NOW coverage`
+  - Adds 3 tests in `backend/tests/test_refresh_token_activity_backfill.py`:
+    - `test_help_works_without_postgres_db_import` (subprocess; RED against the original `f6f6801` script because of the eager `models.refresh_token` import chain).
+    - `test_update_uses_database_now_not_python_clock` (RED against the original `datetime.utcnow()` UPDATE).
+    - `test_invalid_batch_size_rejected` and `test_invalid_sleep_seconds_rejected` (validation tests, GREEN already).
+  - RED state (script reverted via `git stash`): 2 of the 4 new tests fail with the exact errors the verify agent caught (`ModuleNotFoundError: psycopg2`; assertion error on rendered SQL).
+
+- [x] **Regression 54c3ec0** — `fix(auth): make backfill script import-light and use DB NOW()`
+  - Rewrites the backfill SQL as a single `text("UPDATE refresh_tokens SET last_activity_at = NOW() WHERE id IN (SELECT id FROM refresh_tokens WHERE last_activity_at IS NULL LIMIT :batch_size)")`.
+  - Drops `from sqlalchemy import select, update` and `from models.refresh_token import RefreshToken` at module level; the script no longer pulls `postgres_db` at import time.
+  - `Session` only imported under `TYPE_CHECKING` for type hints.
+  - GREEN: 8/8 tests pass; `python backend/scripts/backfill_refresh_token_activity.py --help` succeeds on hosts without `psycopg2`.
+
+- [x] **Evidence 67ee589** — `chore(sdd): record PR0 live PostgreSQL backfill evidence`
+  - Adds `openspec/changes/fix-287-session-keep-alive/live-evidence-pr0.md` with BEFORE / RUN / AFTER output from a live `timescale/timescaledb:2.15.0-pg16` Docker container. Legacy row id=1 was updated to `NOW()`; control row id=2 was untouched; second run = 0 rows (idempotent).
+
 ### Housekeeping commit
 
 - [x] `chore(sdd): mark PR0 tasks complete in tasks.md` — commit `9ddaa05`. Adds the OpenSpec `tasks.md` artifact to the branch so reviewers see the marked checkboxes.
@@ -46,9 +64,9 @@
 | 0.3 | `backend/tests/test_refresh_token_activity_backfill.py` | Unit | ✅ 2/2 (from 0.2) | ✅ Help SQL assertion failed (wrapped description) | ✅ 2/2 passed | ✅ 2 help cases (count + row-id SQL) | ✅ Used `RawDescriptionHelpFormatter` so SQL is not wrapped |
 
 ### Test Summary
-- **Total tests written in PR0**: 4
-- **Total tests passing**: 4 (PR0 file) / 80 (auth-adjacent files) / 1040 (full backend)
-- **Layers used**: Unit (4)
+- **Total tests written in PR0**: 8 (4 initial + 4 regression tests)
+- **Total tests passing**: 8 (PR0 file) / 84 (auth-adjacent files) / 1044 (full backend)
+- **Layers used**: Unit (7) + subprocess CLI regression (1)
 - **Approval tests**: None (no existing-code refactor in PR0)
 - **Pure functions created**: 1 (`backfill_refresh_token_activity`)
 
@@ -70,25 +88,28 @@
 
 | Scope | Command | Result |
 |-------|---------|--------|
-| Focused (PR0) | `uv run pytest backend/tests/test_refresh_token_activity_backfill.py -v` | 4 passed |
-| Auth-adjacent | `uv run pytest tests/test_auth_service_refresh.py tests/test_auth_router_refresh.py tests/test_auth_service.py tests/test_audit_service.py tests/test_refresh_token_activity_backfill.py -q` | 80 passed |
-| Full backend | `uv run pytest backend/tests -q` | **1040 passed, 97 pre-existing failures, 1 skipped** (baseline pre-PR0 was 1036 passed + 97 pre-existing failures; +4 new tests, no new failures) |
+| Focused (PR0) | `uv run pytest backend/tests/test_refresh_token_activity_backfill.py -v` | 8 passed |
+| Auth-adjacent | `uv run pytest tests/test_auth_service_refresh.py tests/test_auth_router_refresh.py tests/test_auth_service.py tests/test_audit_service.py tests/test_refresh_token_activity_backfill.py -q` | 84 passed |
+| Full backend | `uv run pytest backend/tests -q` | **1044 passed, 97 pre-existing failures, 1 skipped** (baseline pre-PR0 was 1036 passed + 97 pre-existing failures; +8 new tests, no new failures) |
+| CLI `--help` (no DB driver installed) | `uv run python backend/scripts/backfill_refresh_token_activity.py --help` | exit 0, evidence SQL present |
+| Live PostgreSQL evidence | `RUNNING_LOCALLY=true POSTGRES_HOST=localhost uv run python backend/scripts/backfill_refresh_token_activity.py` against `timescale/timescaledb:2.15.0-pg16` container with 1 legacy NULL + 1 control row | updated 1 row; control untouched; second run = 0 rows (idempotent). Full output in `live-evidence-pr0.md`. |
 | Pre-existing failures | RTU/backup/dictionary/cli_worker/event_correlation tests | **Unchanged** — same 13 files, 97 cases as before PR0; no regressions introduced by PR0. |
 
 ---
 
 ## Deviations from the Plan
 
-- **Live PostgreSQL evidence**: Not collected. The local dev environment used to author this PR does NOT have a running PostgreSQL instance (`pg_isready` returns "no response"). The repo's `.env.example` configures `POSTGRES_HOST=postgres` for the Docker Compose stack, which was not started in this slice. The PR body documents this risk and asks the first reviewer to run the script against a populated `refresh_tokens` table before merge. No fake data was seeded; this is a deliberate honesty gap, not a fabricated-evidence claim.
+- **Live PostgreSQL evidence**: Initially not collected by the apply agent because the local dev environment had no Postgres. The orchestrator raised `nexgen_postgres` (`timescale/timescaledb:2.15.0-pg16`), seeded one legacy NULL row + one control row, ran the script, and committed the BEFORE / RUN / AFTER output as `openspec/changes/fix-287-session-keep-alive/live-evidence-pr0.md` (commit `67ee589`). This satisfies the PR0 acceptance criterion that required live PostgreSQL evidence with at least one exercised row.
+- **Three follow-up commits after the verify agent flagged regressions** (`d9e2997`, `54c3ec0`, `67ee589`): these are RED-then-GREEN pairs addressing the verify agent's three findings (live evidence, CLI `--help` import chain, `datetime.utcnow` vs DB `NOW()`). They were not in the original `tasks.md` PR0 plan but are necessary follow-ups.
 - **`RawDescriptionHelpFormatter` added in 0.3 instead of 0.2**: Task 0.2 already included a brief description mentioning the SQL, but argparse was wrapping it across two lines and breaking the test substring search. The minor help refactor (`description` → `description + epilog + RawDescriptionHelpFormatter`) and the 2 help tests landed together in commit `72ba56b` because splitting them would have left a RED test in the 0.2 GREEN commit. This is a non-substantive split.
-- **Housekeeping commit `9ddaa05`**: The OpenSpec `tasks.md` was untracked in the worktree when PR0 started, so I committed it as a `chore(sdd)` commit to surface the `[x]` marks to reviewers. This is consistent with the project's "ship the SDD artifacts in the PR" convention.
-- **Commit title format**: All three PR0 commit titles match the exact strings from `tasks.md` (`test(auth): …`, `fix(auth): …`, `test(auth): …`). No `Co-Authored-By` trailer, no AI attribution.
+- **Housekeeping commits `9ddaa05`, `819df6d`**: The OpenSpec `tasks.md` and `apply-progress.md` were untracked in the worktree when PR0 started, so they were committed as `chore(sdd)` commits to surface the `[x]` marks and the progress report to reviewers. This is consistent with the project's "ship the SDD artifacts in the PR" convention.
+- **Commit title format**: All work-unit commit titles match the exact strings from `tasks.md` plus the regression-fix follow-ups (`test(auth): …`, `fix(auth): …`, `chore(sdd): …`). No `Co-Authored-By` trailer, no AI attribution.
 
 ---
 
 ## Risks
 
-- **Local Postgres not running**: As above. First reviewer must run the script against the staging or production `refresh_tokens` table and paste before/after counts + one exercised row id into the PR body before merge.
+- **PR body wording**: The PR body says `Closes #287`. With this wording GitHub will auto-close the parent issue when PR0 merges, but PR1 and PR2 are still pending. The orchestrator will fix this to `Part of #287 (PR0 of 3 in the feature-branch chain)` before merge.
 - **Pre-existing 97 backend test failures (RTU/backup/dictionary/cli_worker)**: Unrelated to auth/session. Not addressed by PR0 by design (no scope creep). Listed in PR body under verification so reviewers know they are pre-existing.
 - **No `ci-cd-pipeline` lint gate yet**: This PR will not be auto-validated by the new lint lane from PR1 of the ci-cd-pipeline change because that workflow is still in draft. PR0 does not add lint config or break any existing one.
 
@@ -106,7 +127,7 @@
 ## Verification Recommendation
 
 `next_recommended`: `sdd-verify-minimax` for this slice — the orchestrator should:
-1. Confirm `uv run pytest backend/tests/test_refresh_token_activity_backfill.py -v` is still 4/4 passing.
-2. Confirm full backend suite still shows **1040 passed / 97 pre-existing failures** (no new regressions).
+1. Confirm `uv run pytest backend/tests/test_refresh_token_activity_backfill.py -v` is still 8/8 passing.
+2. Confirm full backend suite still shows **1044 passed / 97 pre-existing failures** (no new regressions).
 3. Confirm PR #289 is the only one in the chain that is `OPEN`.
-4. Confirm the live-evidence gap is acceptable for the reviewer (or block and ask for live row exercise before merge).
+4. Confirm live-evidence captured in `live-evidence-pr0.md` is met (legacy row updated, control row untouched, idempotent on second run).
