@@ -39,11 +39,27 @@ describe('chatWithAIAgent', () => {
   it('forwards signal to api.post config', async () => {
     vi.mocked(api.post).mockResolvedValueOnce({ answer: 'ok' });
     const controller = new AbortController();
-    await chatWithAIAgent('hello', 'ctx', controller.signal);
+    await chatWithAIAgent('hello', 'ctx', undefined, controller.signal);
     expect(api.post).toHaveBeenCalledWith(
       '/ai/chat',
       { query: 'hello', context: 'ctx' },
       { signal: controller.signal },
+    );
+  });
+
+  it('forwards explicit backend intent when provided', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ answer: 'ok' });
+
+    await chatWithAIAgent('list events', 'ctx', { type: 'event_list', status: 'OPEN', limit: 10 });
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/ai/chat',
+      {
+        query: 'list events',
+        context: 'ctx',
+        intent: { type: 'event_list', status: 'OPEN', limit: 10 },
+      },
+      { signal: undefined },
     );
   });
 
@@ -61,7 +77,7 @@ describe('chatWithAIAgent', () => {
     vi.mocked(api.post).mockRejectedValue(new DOMException('Aborted', 'AbortError'));
     const controller = new AbortController();
     controller.abort();
-    await expect(chatWithAIAgent('hello', 'ctx', controller.signal))
+    await expect(chatWithAIAgent('hello', 'ctx', undefined, controller.signal))
       .rejects.toThrow('Aborted');
   });
 });

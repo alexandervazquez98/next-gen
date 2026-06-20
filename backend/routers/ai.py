@@ -170,11 +170,14 @@ async def chat_with_ai(
             detail="LM Studio is unavailable",
         )
 
-    intent = body.intent or infer_chat_intent(body.query) or infer_followup_intent(
-        body.query,
-        db,
-        current_user.username,
-    )
+    intent = body.intent or infer_chat_intent(body.query)
+    if intent is None:
+        intent = await asyncio.to_thread(
+            infer_followup_intent,
+            body.query,
+            db,
+            current_user.username,
+        )
     if intent is not None and not _can_run_intent_harness(intent, current_user):
         detail = (
             "Not authorized to run diagnostics"

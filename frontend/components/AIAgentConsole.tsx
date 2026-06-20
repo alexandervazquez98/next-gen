@@ -52,7 +52,7 @@ const AIAgentConsole: React.FC = () => {
 		try {
 			const context =
 				"Current Context: User is interacting with NEX-GEN AI chat. Use backend harness results as the source of truth for live event or diagnostic data.";
-			const response = await chatWithAIAgent(input, context, signal);
+			const response = await chatWithAIAgent(input, context, undefined, signal);
 			setMessages((prev) => [
 				...prev,
 				{
