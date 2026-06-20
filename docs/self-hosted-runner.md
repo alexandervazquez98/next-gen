@@ -45,7 +45,7 @@ Install before registering the runner:
 | Docker Engine ≥ 24.x | `safe-rebuild.sh` invokes `docker compose` (v2 plugin), which is bundled with recent Docker Engine releases. |
 | Docker Compose v2 | `docker compose version` must report `v2.x.x`. The runner contract script rejects v1. |
 | A durable `BACKUP_DIR` (default `.docker/backups`) | The CD workflow captures a pre-rebuild backup before touching containers. The directory must be on the host (not inside a container). |
-| A host-resident `.env` | Loaded by `safe-rebuild.sh` for production secrets (`POSTGRES_PASSWORD`, `NEO4J_PASSWORD`, `JWT_SECRET_KEY`, etc.). Must mirror `.env.example` and pass `scripts/validate-env.sh`. |
+| A host-resident `.env` at `$HOME/.env` (e.g. `/home/runner/.env`) | The CD workflow copies this into the workdir before any contract check or deploy step. Must mirror `.env.example` and pass `scripts/validate-env.sh`. |
 | `gh` CLI authenticated | Used by the CD workflow to open `cd-failure` issues. Run `gh auth login` once. |
 | Outbound HTTPS to `github.com` and `api.github.com` | Required for runner registration and job polling. |
 
@@ -124,7 +124,8 @@ same cadence as token rotation.
       groups, no sudoers entry.
 - [ ] `/opt/actions-runner` is `chmod 700` and owned by `runner:runner`.
 - [ ] `BACKUP_DIR` is on a separate partition or volume with capacity alerts.
-- [ ] `.env` is `chmod 600`, owned by `runner`, never world-readable.
+- [ ] `.env` is `chmod 600`, owned by `runner`, lives at `$HOME/.env`
+      (e.g. `/home/runner/.env`), never world-readable.
 - [ ] The runner systemd unit has `NoNewPrivileges=yes`,
       `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`.
 - [ ] Outbound network egress is allowlisted to `github.com`, `api.github.com`,
@@ -149,7 +150,7 @@ same cadence as token rotation.
 | Runner contract step fails: "docker is not installed" | Docker Engine removed or PATH drift | Reinstall Docker Engine and confirm `command -v docker` works for the runner user |
 | Runner contract step fails: "Docker Compose v2 required" | Plugin not installed | `sudo apt-get install docker-compose-plugin` (or distro equivalent) |
 | Runner contract step fails: "BACKUP_DIR is not writable" | Disk full or permissions | `df -h $BACKUP_DIR`; `sudo chown -R runner:runner $BACKUP_DIR && sudo chmod 750 $BACKUP_DIR` |
-| Runner contract step fails: ".env not found" | Missing or wrong location | `ls -la /opt/actions-runner/.env`; copy from `.env.example` and populate secrets |
+| Runner contract step fails: ".env not found" | `$HOME/.env` missing on runner host | `ls -la "$HOME/.env"`; copy from `.env.example` and populate secrets (mode 600, owner runner) |
 | Runner contract step fails: "gh is not authenticated" | Token expired | `sudo -u runner gh auth login` (or refresh the token) |
 | `docker compose` hangs mid-deploy | Docker daemon hung | `sudo systemctl restart docker`; if persistent, check `journalctl -u docker` |
 | Deploy job stays queued | No runner matches all six labels | Verify labels via `sudo /opt/actions-runner/config.sh list`; the label list must match exactly |
