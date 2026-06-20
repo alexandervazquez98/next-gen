@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from services.auth_service import (
@@ -18,9 +19,10 @@ from services.auth_service import (
     revoke_refresh_token,
     revoke_all_user_refresh_tokens,
     verify_refresh_token,
+    record_session_activity,
     get_current_active_user,
 )
-from models.refresh_token import generate_opaque_token
+from models.refresh_token import generate_opaque_token, RefreshToken
 from services.session_policy import (
     resolve_session_policy_for_user,
     session_policy_cookie_max_age_seconds,
@@ -316,12 +318,49 @@ async def refresh_tokens(
 
     if verification.status == RefreshVerificationStatus.IDLE_EXPIRED:
         increment_attempts(rate_limit_key, identity_type="refresh_token")
-        _clear_access_cookie(response, domain=_COOKIE_DOMAIN)
-        _clear_refresh_cookie(response, domain=_COOKIE_DOMAIN)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="session timed out",
+        # PR1 #287: emit the lifecycle audit event for idle expiry. The DB
+        # anchor may be `last_activity_at` or the COALESCE fallback to
+        # `created_at` for transitional NULL rows (see _is_token_idle_expired).
+        idle_anchor = "last_activity_at"
+        if verification.token_id is not None:
+            try:
+                anchor_row = (
+                    db.query(RefreshToken.last_activity_at, RefreshToken.created_at)
+                    .filter(RefreshToken.id == verification.token_id)
+                    .first()
+                )
+                if anchor_row is not None:
+                    last_activity_at, created_at = anchor_row
+                    idle_anchor = "last_activity_at" if last_activity_at is not None else "created_at"
+            except Exception:
+                # Audit must not block the 401 response.
+                pass
+        audit_service.record_auth_event(
+            db=db,
+            request=request,
+            event_type="session.idle_expired",
+            outcome=AUDIT_OUTCOME_DENIED,
+            actor_username=verification.user_id and None,
+            reason="idle_timeout",
+            context={
+                "session_id": verification.session_id,
+                "user_id": verification.user_id,
+                "policy_profile": verification.policy_profile,
+                "activity_anchor": idle_anchor,
+            },
         )
+        # Build a JSONResponse directly so the Set-Cookie headers reach the
+        # client AND the route's `response_model=RefreshTokenResponse`
+        # validation is bypassed (we are returning an error body, not a
+        # token bundle). `raise HTTPException(...)` would discard the
+        # cookie-clearing headers.
+        idle_response = JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "session timed out"},
+        )
+        _clear_access_cookie(idle_response, domain=_COOKIE_DOMAIN)
+        _clear_refresh_cookie(idle_response, domain=_COOKIE_DOMAIN)
+        return idle_response
 
     if verification.status == RefreshVerificationStatus.USER_INACTIVE:
         increment_attempts(rate_limit_key, identity_type="refresh_token")
@@ -410,6 +449,11 @@ async def refresh_tokens(
         domain=_COOKIE_DOMAIN,
         max_age_seconds=session_policy_cookie_max_age_seconds(policy),
     )
+
+    # PR1 #287: bump server-authoritative session activity for the
+    # rotated refresh's session. The DB conditional UPDATE is throttled
+    # cross-worker; this is a no-op on operational profile.
+    record_session_activity(session_id, db_user.id, db, policy, request=request)
 
     return RefreshTokenResponse(access_token=access_token)
 

@@ -502,6 +502,13 @@ async def get_current_user(
     # Resolve latest policy metadata from authoritative user state.
     policy = resolve_session_policy_for_user(user)
 
+    # PR1 #287: bump server-authoritative session activity if the access
+    # token carries a `sid` claim. No-op when sid is missing or when the
+    # recorder's internal DB write fails (the request must still succeed).
+    sid = payload.get("sid")
+    if sid:
+        record_session_activity(sid, user.id, db, policy, request=request)
+
     return UserInDB(
         username=user.username,
         hashed_password=user.hashed_password,
