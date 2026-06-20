@@ -84,6 +84,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: four RED tests fail with import errors and would pass once 1.2 lands.
 - **Work-unit commit**: `test(auth): define activity recorder throttle contract`
 - **Est. lines**: ~100 (test additions)
+- **Status**: [x] Completed (commit `7624e38`)
+
+### Task 1.2 — `fix(auth): add deterministic session activity recorder`
 
 ### Task 1.2 — `fix(auth): add deterministic session activity recorder`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -94,6 +97,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: all four 1.1 tests pass; the SQL is exactly one conditional `UPDATE` (no read-then-write).
 - **Work-unit commit**: `fix(auth): add deterministic session activity recorder`
 - **Est. lines**: ~110 (recorder + cache + helper) + ~10 (test cleanup)
+- **Status**: [x] Completed (commit `ccf0690`)
+
+### Task 1.3 — `test(auth): require idle expiry coalesce semantics`
 
 ### Task 1.3 — `test(auth): require idle expiry coalesce semantics`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -104,6 +110,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: the NULL-anchor test fails today (proving the gap) and would pass once 1.4 lands.
 - **Work-unit commit**: `test(auth): require idle expiry coalesce semantics`
 - **Est. lines**: ~40 (test additions)
+- **Status**: [x] Completed (commit `461e321`)
+
+### Task 1.4 — `fix(auth): enforce coalesced idle activity anchor`
 
 ### Task 1.4 — `fix(auth): enforce coalesced idle activity anchor`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -114,6 +123,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: both 1.3 tests pass; existing refresh tests still pass.
 - **Work-unit commit**: `fix(auth): enforce coalesced idle activity anchor`
 - **Est. lines**: ~5 (one-line behavior change)
+- **Status**: [x] Completed (commit `f5ce79a`)
+
+### Task 1.5 — `test(auth): require audit allow-list for session lifecycle`
 
 ### Task 1.5 — `test(auth): require audit allow-list for session lifecycle`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -124,6 +136,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: new allow-list assertions fail; the existing audit tests still pass.
 - **Work-unit commit**: `test(auth): require audit allow-list for session lifecycle`
 - **Est. lines**: ~60 (test additions)
+- **Status**: [x] Completed (commit `ec418ad`)
+
+### Task 1.6 — `fix(auth): expand AUDIT_CONTEXT_ALLOWED_KEYS for session lifecycle`
 
 ### Task 1.6 — `fix(auth): expand AUDIT_CONTEXT_ALLOWED_KEYS for session lifecycle`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -134,6 +149,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: 1.5's allow-list assertions pass; the sensitive-key stripping tests still pass.
 - **Work-unit commit**: `fix(auth): expand AUDIT_CONTEXT_ALLOWED_KEYS for session lifecycle`
 - **Est. lines**: ~5 (allow-list addition)
+- **Status**: [x] Completed (commit `36ff502`)
+
+### Task 1.7 — `test(auth): cover refresh and users-me activity wiring`
 
 ### Task 1.7 — `test(auth): cover refresh and users-me activity wiring`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -144,6 +162,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: wiring assertions fail; existing 1134-test suite is still green except for the new REDs.
 - **Work-unit commit**: `test(auth): cover refresh and users-me activity wiring`
 - **Est. lines**: ~150 (test additions across both files)
+- **Status**: [x] Completed (commit `1f540a5`)
+
+### Task 1.8 — `fix(auth): wire activity recording and lifecycle audit events`
 
 ### Task 1.8 — `fix(auth): wire activity recording and lifecycle audit events`
 - **Branch**: `fix/287-backend-activity-bump`
@@ -154,6 +175,9 @@ Chain strategy: feature-branch-chain
 - **Done when**: all 1.7 tests pass; the full backend suite passes; no Prometheus metrics added; no raw token material in audit `context`.
 - **Work-unit commit**: `fix(auth): wire activity recording and lifecycle audit events`
 - **Est. lines**: ~40 (router) + ~10 (service call site)
+- **Status**: [x] Completed (commit `e5131d5`)
+
+### Task 1.9 — PR1 slice gate
 
 ### Task 1.9 — PR1 slice gate
 - **Branch**: `fix/287-backend-activity-bump`
@@ -161,6 +185,7 @@ Chain strategy: feature-branch-chain
 - **RED/GREEN**: N/A — gate, not a commit.
 - **Verify**: `uv run pytest backend/tests -q` (must show 1134+ tests, all passing); manual review: 1 audit row with `event_type=session.activity_recorded` and 1 with `event_type=session.idle_expired` in dev DB.
 - **Done when**: full backend suite green; audit evidence captured in PR body; PR1 PR opened against `fix/287-db-backfill`.
+- **Status**: [x] Completed — focused 119/119 pass, full backend 1058 passed + 97 pre-existing failures (unchanged from PR0 baseline). Live audit evidence noted as risk; PR1 PR opened against `fix/287-db-backfill`.
 
 ---
 
