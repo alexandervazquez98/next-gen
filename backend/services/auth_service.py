@@ -124,10 +124,13 @@ def _is_token_idle_expired(rt: RefreshToken, now: datetime, policy: SessionPolic
     if policy.idle_timeout_minutes is None:
         return False
 
-    if rt.last_activity_at is None:
-        return False
-
-    return now - rt.last_activity_at > timedelta(minutes=policy.idle_timeout_minutes)
+    # PR1 #287: coalesce NULL last_activity_at to created_at so transitional
+    # NULL rows (skipped PR0 backfill or rows inserted during deployment)
+    # do not become immortal. The DB conditional update only writes
+    # last_activity_at on actual activity, so the created_at anchor is the
+    # most recent conservative activity timestamp for legacy rows.
+    anchor = rt.last_activity_at or rt.created_at
+    return now - anchor > timedelta(minutes=policy.idle_timeout_minutes)
 
 
 def _format_refresh_verification_result(
