@@ -11,7 +11,7 @@
 #   shellcheck    — R11 shell script lint on changed files
 #   lint-backend  — R2 Ruff + Black on changed backend files
 #   lint-frontend — R2 ESLint + Prettier on changed frontend files
-#   lint-verify   — T1.7 PR1 verification gate on empty diff (main push only)
+#   lint-verify   — T1.7 PR1 verification gate (runs on push:main AND on PR)
 #
 # See openspec/changes/ci-cd-pipeline/design.md D4 for changed-files scoping.
 
@@ -27,6 +27,12 @@ on:
       - "scripts/**"
       - "docs/**"
       - ".yamllint.yml"
+      - "frontend/eslint.config.js"
+      - "frontend/.prettierrc.json"
+      - "frontend/.prettierignore"
+      - "frontend/package.json"
+      - "backend/ruff.toml"
+      - "backend/pyproject.toml"
   push:
     branches:
       - main
@@ -38,6 +44,12 @@ on:
       - "frontend/**"
       - "scripts/**"
       - ".yamllint.yml"
+      - "frontend/eslint.config.js"
+      - "frontend/.prettierrc.json"
+      - "frontend/.prettierignore"
+      - "frontend/package.json"
+      - "backend/ruff.toml"
+      - "backend/pyproject.toml"
 
 # Cancel superseded PR runs; keep push runs to the end.
 concurrency:
@@ -54,9 +66,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download actionlint
+      - name: Download actionlint (pinned release)
         run: |
-          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          set -euo pipefail
+          VERSION="1.7.8"
+          curl -sSLf -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
       - name: Run actionlint
         run: ./actionlint -color
 
@@ -66,12 +83,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Install yamllint
         run: pip install --quiet yamllint==1.38.0
       - name: Run yamllint
         run: yamllint -c .yamllint.yml .github/ .yamllint.yml
 
-  # R11: shellcheck on changed shell scripts.
+  # R11: shellcheck on changed shell scripts (shellcheck is preinstalled on
+  # ubuntu-24.04 runners; no apt-get install needed).
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
@@ -82,20 +104,20 @@ jobs:
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
           files_yaml: |
-            scripts/**.sh
             scripts/**/*.sh
             docker/neo4j/entrypoint.sh
             monitor_performance.sh
-      - name: Install ShellCheck
-        if: steps.changed.outputs.any_changed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run ShellCheck
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
-          if [ ${#files[@]} -gt 0 ]; then
-            shellcheck -x "${files[@]}"
+          shell_files=()
+          for f in "${files[@]}"; do
+            case "$f" in *.sh|entrypoint.sh) shell_files+=("$f") ;; esac
+          done
+          if [ ${#shell_files[@]} -gt 0 ]; then
+            shellcheck -x "${shell_files[@]}"
           else
             echo "No shell files changed — skipping."
           fi
@@ -153,7 +175,9 @@ jobs:
             echo "No .py files in change set — skipping."
           fi
 
-  # R2: ESLint + Prettier on changed frontend files.
+  # R2: ESLint + Prettier on changed frontend files (changed-only scope per
+  # spec R2 "Legacy untouched files do not block PR1"). DevDeps are installed
+  # in PR3; until then scripts use `pnpm dlx` to fetch eslint/prettier on demand.
   lint-frontend:
     name: lint-frontend
     runs-on: ubuntu-latest
@@ -164,7 +188,7 @@ jobs:
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
           files_yaml: |
-            frontend/**/*.{ts,tsx,js,cjs,json,css,md}
+            frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md}
             frontend/eslint.config.js
             frontend/.prettierrc.json
             frontend/.prettierignore
@@ -181,26 +205,62 @@ jobs:
         if: steps.changed.outputs.any_changed == 'true'
         working-directory: frontend
         run: corepack pnpm install --frozen-lockfile
-      - name: Run ESLint
+      - name: Run ESLint (changed files only)
         if: steps.changed.outputs.any_changed == 'true'
         working-directory: frontend
-        run: pnpm run lint
-      - name: Run Prettier --check
+        run: |
+          set -euo pipefail
+          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          lint_files=()
+          for f in "${files[@]}"; do
+            case "$f" in
+              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs) lint_files+=("$f") ;;
+            esac
+          done
+          if [ ${#lint_files[@]} -gt 0 ]; then
+            pnpm dlx eslint@9.18.0 --max-warnings=0 "${lint_files[@]}"
+          else
+            echo "No JS/TS files in change set — skipping ESLint."
+          fi
+      - name: Run Prettier --check (changed files only)
         if: steps.changed.outputs.any_changed == 'true'
         working-directory: frontend
-        run: pnpm run format:check
+        run: |
+          set -euo pipefail
+          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          fmt_files=()
+          for f in "${files[@]}"; do
+            case "$f" in
+              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs|*.css|*.md|*.json) fmt_files+=("$f") ;;
+            esac
+          done
+          if [ ${#fmt_files[@]} -gt 0 ]; then
+            pnpm dlx prettier@3.4.2 --check "${fmt_files[@]}"
+          else
+            echo "No format-relevant files in change set — skipping Prettier."
+          fi
 
-  # T1.7: PR1 verification gate — empty-diff must be green on main push.
+  # T1.7: PR1 verification gate — runs on push to main AND on PRs that touch
+  # the lint configs so failures surface pre-merge, not just post-merge.
   lint-verify:
     name: lint-verify (PR1 gate)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - name: Download actionlint
-        run: bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: Download actionlint (pinned release)
+        run: |
+          set -euo pipefail
+          VERSION="1.7.8"
+          curl -sSLf -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
       - name: actionlint must pass
         run: ./actionlint -color
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Install yamllint + ruff + black
         run: pip install --quiet yamllint==1.38.0 ruff==0.15.18 black==26.5.1
       - name: yamllint must pass
