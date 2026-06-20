@@ -701,6 +701,139 @@ class TestAuthRefresh:
 
         app.dependency_overrides.pop(get_pg_db, None)
 
+    def test_terminal_abuse_statuses_still_increment_rate_limit_revoked(self, rate_limit_db):
+        """Regression guard: REVOKED (a terminal abuse status) must keep
+        counting toward the refresh-token rate limit even after the T3 fix
+        narrowed the should_count_rate_limit guard to the
+        ROTATED_STALE_RECOVERABLE branch. This test pins the contract that
+        the model default flag (should_count_rate_limit=True) keeps every
+        terminal status counting."""
+        raw_token = "revoked_refresh_token"
+        rate_limit_key = refresh_token_rate_limit_key(raw_token)
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.REVOKED,
+                # should_count_rate_limit omitted on purpose: relies on the
+                # model default of True. The T3 fix only narrowed the guard
+                # for ROTATED_STALE_RECOVERABLE, so REVOKED still counts.
+            ),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": raw_token},
+            )
+
+        assert response.status_code == 401
+
+        session = rate_limit_db()
+        try:
+            rows = (
+                session.query(RateLimitAttempt)
+                .filter_by(identity_key=rate_limit_key)
+                .all()
+            )
+            assert len(rows) == 1
+            assert rows[0].identity_type == "refresh_token"
+        finally:
+            session.close()
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_terminal_abuse_statuses_still_increment_rate_limit_expired(self, rate_limit_db):
+        """Regression guard: EXPIRED (a terminal abuse status) must keep
+        counting toward the refresh-token rate limit. Mirrors the REVOKED
+        guard above."""
+        raw_token = "expired_refresh_token"
+        rate_limit_key = refresh_token_rate_limit_key(raw_token)
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(
+                status=RefreshVerificationStatus.EXPIRED,
+                # should_count_rate_limit omitted on purpose: relies on the
+                # model default of True.
+            ),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": raw_token},
+            )
+
+        assert response.status_code == 401
+
+        session = rate_limit_db()
+        try:
+            rows = (
+                session.query(RateLimitAttempt)
+                .filter_by(identity_key=rate_limit_key)
+                .all()
+            )
+            assert len(rows) == 1
+            assert rows[0].identity_type == "refresh_token"
+        finally:
+            session.close()
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
+    def test_missing_refresh_token_increments_rate_limit(self, rate_limit_db):
+        """Regression guard: a request with no refresh token cookie at all
+        must still record exactly one RateLimitAttempt row. The MISSING
+        branch at routers/auth.py:298 is upstream of the T3 fix and must
+        keep counting."""
+        raw_token = "missing_refresh_token"
+        rate_limit_key = refresh_token_rate_limit_key(raw_token)
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_pg_db] = override_get_db
+
+        with patch(
+            "routers.auth.verify_refresh_token",
+            return_value=RefreshVerificationResult(status=RefreshVerificationStatus.MISSING),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": raw_token},
+            )
+
+        assert response.status_code == 401
+
+        session = rate_limit_db()
+        try:
+            rows = (
+                session.query(RateLimitAttempt)
+                .filter_by(identity_key=rate_limit_key)
+                .all()
+            )
+            assert len(rows) == 1
+            assert rows[0].identity_type == "refresh_token"
+        finally:
+            session.close()
+
+        app.dependency_overrides.pop(get_pg_db, None)
+
     def test_refresh_success_records_session_activity(self):
         """Successful refresh must call record_session_activity once with the
         rotated refresh's session_id and the resolved user_id."""
