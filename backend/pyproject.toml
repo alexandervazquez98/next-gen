@@ -1,0 +1,11 @@
+# pyproject.toml for next-gen backend.
+#
+# This file hosts ONLY [tool.black]. There is no [project] table, so uv
+# continues to resolve dependencies from backend/requirements.txt and
+# backend/requirements-dev.txt.
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+skip-string-normalization = false
+skip-magic-trailing-comma = false
