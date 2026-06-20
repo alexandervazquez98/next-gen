@@ -21,6 +21,13 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
     "request_id",
     "changed_fields",
     "required_permission",
+    # PR1 #287 — auth session lifecycle context for
+    # `session.activity_recorded` and `session.idle_expired` events.
+    "session_id",
+    "user_id",
+    "policy_profile",
+    "throttle_seconds",
+    "activity_anchor",
 }
 
 SENSITIVE_CONTEXT_KEYS = {
