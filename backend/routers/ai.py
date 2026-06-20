@@ -157,7 +157,7 @@ def infer_followup_intent(query: str, db, username: str) -> AIChatIntent | None:
 
 
 @router.post("/chat", response_model=AIChatResponse)
-async def chat_with_ai(
+def chat_with_ai(
     body: AIChatRequest,
     current_user: User = Depends(get_current_active_user),
     db=Depends(get_pg_db),
@@ -183,7 +183,7 @@ async def chat_with_ai(
         raise HTTPException(status_code=403, detail=detail)
 
     try:
-        harness_result = maybe_run_harness(intent, neo4j_driver)
+        harness_result = maybe_run_harness(intent, neo4j_driver, current_user)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

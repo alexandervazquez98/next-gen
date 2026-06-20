@@ -32,6 +32,16 @@ def _event_view_user() -> User:
     )
 
 
+def _scoped_event_view_user() -> User:
+    return User(
+        username="scoped-event-viewer",
+        role="OPERATOR",
+        permissions=["CI_VIEW", "EVENT_VIEW"],
+        allowed_locations=["Site A"],
+        allowed_ci_types=["Switch"],
+    )
+
+
 def _admin_user() -> User:
     return User(
         username="admin-operator",
@@ -648,6 +658,59 @@ def test_availability_batch_rejects_oversized_ci_ref(monkeypatch):
     )
 
     assert response.status_code == 422
+
+
+def test_event_list_query_applies_user_scope():
+    from services import ai_chat_service
+
+    class Session:
+        def __init__(self):
+            self.params = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def run(self, _query, **params):
+            self.params = params
+            return []
+
+    session = Session()
+    driver = type("Driver", (), {"session": lambda _self: session})()
+
+    assert ai_chat_service.list_events_for_harness(
+        driver,
+        "OPEN",
+        10,
+        None,
+        user=_scoped_event_view_user(),
+    ) == []
+
+    assert session.params["is_unscoped"] is False
+    assert session.params["allowed_locations"] == ["Site A"]
+    assert session.params["allowed_ci_types"] == ["Switch"]
+
+
+def test_event_list_query_returns_no_rows_without_scope():
+    from services import ai_chat_service
+
+    driver = type("Driver", (), {"session": lambda _self: (_ for _ in ()).throw(AssertionError("should not query"))})()
+
+    assert ai_chat_service.list_events_for_harness(
+        driver,
+        "OPEN",
+        10,
+        user=_event_view_user(),
+    ) == []
+
+
+def test_ai_chat_route_is_sync_to_offload_blocking_work():
+    import inspect
+    from routers.ai import chat_with_ai
+
+    assert not inspect.iscoroutinefunction(chat_with_ai)
 
 
 def test_event_list_harness_persists_bounded_event_metadata(monkeypatch):

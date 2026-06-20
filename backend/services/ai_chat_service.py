@@ -13,6 +13,7 @@ from typing import Any
 from config import LMStudioSettings, get_lm_studio_settings
 from models.ai_chat import AIChatMessage
 from services import event_service
+from models.user import AIPermission, User
 
 
 FALLBACK_SYSTEM_PROMPT = (
@@ -273,13 +274,26 @@ def _compact_event_summary(event: dict[str, Any]) -> dict[str, Any]:
     return {key: event.get(key) for key in fields if event.get(key) is not None}
 
 
+def _event_scope_for_user(user: User | None) -> tuple[bool, list[str] | None, list[str] | None]:
+    if user is None or user.role == "ADMIN" or AIPermission.AI_VIEW_ALL.value in user.permissions:
+        return True, None, None
+    allowed_locations = list(user.allowed_locations or [])
+    allowed_ci_types = list(user.allowed_ci_types or []) if user.allowed_ci_types else None
+    return False, allowed_locations, allowed_ci_types
+
+
 def list_events_for_harness(
     neo4j_driver,
     status_filter: str,
     limit: int,
     severity_filter: str | None = None,
+    user: User | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch at most limit + 1 event summaries for bounded chat context."""
+    """Fetch at most limit + 1 scoped event summaries for bounded chat context."""
+    is_unscoped, allowed_locations, allowed_ci_types = _event_scope_for_user(user)
+    if not is_unscoped and not allowed_locations:
+        return []
+
     query_limit = limit + 1
     with neo4j_driver.session() as session:
         result = session.run(
@@ -293,6 +307,8 @@ def list_events_for_harness(
                 OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
             )
             AND ($severity IS NULL OR e.severity = $severity)
+            AND ($is_unscoped OR ci.location_name IN $allowed_locations)
+            AND ($allowed_ci_types IS NULL OR ci.layer IN $allowed_ci_types)
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
@@ -300,6 +316,9 @@ def list_events_for_harness(
             """,
             status=status_filter,
             severity=severity_filter,
+            is_unscoped=is_unscoped,
+            allowed_locations=allowed_locations or [],
+            allowed_ci_types=allowed_ci_types,
             limit=query_limit,
         )
         return [
@@ -314,12 +333,12 @@ def list_events_for_harness(
         ]
 
 
-def _run_event_list_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
+def _run_event_list_harness(intent: Any, neo4j_driver, user: User | None = None) -> dict[str, Any]:
     status_filter = str(getattr(intent, "status", "ACTIVE") or "ACTIVE").upper()
     limit = int(getattr(intent, "limit", 10) or 10)
     severity_filter = getattr(intent, "severity", None)
     severity_filter = str(severity_filter).upper() if severity_filter else None
-    events = list_events_for_harness(neo4j_driver, status_filter, limit, severity_filter)
+    events = list_events_for_harness(neo4j_driver, status_filter, limit, severity_filter, user=user)
     truncated = len(events) > limit
     visible_events = [_compact_event_summary(event) for event in events[:limit]]
     return {
@@ -354,12 +373,14 @@ HARNESS_EXECUTORS = {
 }
 
 
-def maybe_run_harness(intent: Any, neo4j_driver) -> dict[str, Any] | None:
+def maybe_run_harness(intent: Any, neo4j_driver, user: User | None = None) -> dict[str, Any] | None:
     if not intent:
         return None
     executor = HARNESS_EXECUTORS.get(str(getattr(intent, "type", "")))
     if executor is None:
         return None
+    if str(getattr(intent, "type", "")) in {"event_list", "active_events"}:
+        return executor(intent, neo4j_driver, user)
     return executor(intent, neo4j_driver)
 
 
