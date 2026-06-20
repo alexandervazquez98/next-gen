@@ -24,7 +24,8 @@ describe('chatWithAIAgent', () => {
     expect(api.post).toHaveBeenCalledWith('/ai/chat', {
       query: 'What should I check?',
       context: 'Incident console context',
-    });
+      intent: undefined,
+    }, { signal: undefined });
     expect(answer).toBe('Check the active Redis incident first.');
   });
 
@@ -34,5 +35,34 @@ describe('chatWithAIAgent', () => {
     const answer = await chatWithAIAgent('Hello', '');
 
     expect(answer).toBe('');
+  });
+
+  it('forwards signal to api.post config', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ answer: 'ok' });
+    const controller = new AbortController();
+    await chatWithAIAgent('hello', 'ctx', undefined, controller.signal);
+    expect(api.post).toHaveBeenCalledWith(
+      '/ai/chat',
+      { query: 'hello', context: 'ctx', intent: undefined },
+      { signal: controller.signal },
+    );
+  });
+
+  it('passes undefined signal when not provided', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ answer: 'ok' });
+    await chatWithAIAgent('hello', 'ctx');
+    expect(api.post).toHaveBeenCalledWith(
+      '/ai/chat',
+      { query: 'hello', context: 'ctx', intent: undefined },
+      { signal: undefined },
+    );
+  });
+
+  it('propagates AbortError when signal is aborted', async () => {
+    vi.mocked(api.post).mockRejectedValue(new DOMException('Aborted', 'AbortError'));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(chatWithAIAgent('hello', 'ctx', undefined, controller.signal))
+      .rejects.toThrow('Aborted');
   });
 });

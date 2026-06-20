@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import re
 import subprocess
 import urllib.error
@@ -12,6 +13,8 @@ from typing import Any
 
 from config import LMStudioSettings, get_lm_studio_settings
 from models.ai_chat import AIChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 FALLBACK_SYSTEM_PROMPT = (
@@ -113,17 +116,22 @@ def _post_lm_studio_chat_completion(payload: dict[str, Any], settings: LMStudioS
         with urllib.request.urlopen(request, timeout=settings.timeout_seconds) as response:
             data = json.loads(response.read().decode("utf-8"))
     except TimeoutError as exc:
+        logger.exception("LM Studio request timed out (url=%s)", url)
         raise LMStudioTimeoutError("LM Studio request timed out") from exc
     except urllib.error.URLError as exc:
         if isinstance(getattr(exc, "reason", None), TimeoutError):
+            logger.exception("LM Studio request timed out (url=%s)", url)
             raise LMStudioTimeoutError("LM Studio request timed out") from exc
+        logger.exception("LM Studio unavailable (url=%s)", url)
         raise LMStudioError("LM Studio is unavailable") from exc
     except Exception as exc:
+        logger.exception("LM Studio response parse error (url=%s)", url)
         raise LMStudioError("LM Studio response could not be parsed") from exc
 
     try:
         message = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
+        logger.exception("LM Studio response missing chat message (url=%s)", url)
         raise LMStudioError("LM Studio response did not contain a chat message") from exc
     return {"content": str(message), "model": str(data.get("model") or settings.model)}
 

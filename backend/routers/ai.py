@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -68,9 +69,11 @@ async def chat_with_ai(
     if body.intent is not None and not _can_run_availability_harness(current_user):
         raise HTTPException(status_code=403, detail="Not authorized to run diagnostics")
 
-    harness_result = maybe_run_harness(body.intent, neo4j_driver)
+    harness_result = await asyncio.to_thread(maybe_run_harness, body.intent, neo4j_driver)
     try:
-        completion = complete_chat(body.query, body.context, harness_result)
+        completion = await asyncio.to_thread(
+            complete_chat, body.query, body.context, harness_result,
+        )
     except LMStudioTimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -82,7 +85,8 @@ async def chat_with_ai(
             detail="LM Studio is unavailable",
         )
 
-    row = save_chat_exchange(
+    row = await asyncio.to_thread(
+        save_chat_exchange,
         db,
         username=current_user.username,
         user_message=body.query,
