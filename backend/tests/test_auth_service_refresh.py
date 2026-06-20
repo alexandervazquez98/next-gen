@@ -313,6 +313,68 @@ class TestVerifyRefreshToken:
         result = verify_refresh_token(token, mock_db)
         assert result.status == RefreshVerificationStatus.ROTATED_STALE_REJECTED
 
+    def test_all_rotated_stale_recoverable_paths_set_should_count_rate_limit_false(self):
+        """Req 4: verify_refresh_token must always set
+        should_count_rate_limit=False on a ROTATED_STALE_RECOVERABLE result.
+
+        The service has exactly one ROTATED_STALE_RECOVERABLE branch today
+        (within stale grace AND below recovery cap). This test pins that
+        branch and acts as a guardrail: a future service refactor that adds
+        a new recoverable path or relaxes the flag will fail this test."""
+        token = "recoverable-flag-contract"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=42,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-flag-contract",
+            revoked_at=datetime.utcnow() - timedelta(seconds=1),
+            revoked_reason="rotated",
+            rotated_at=datetime.utcnow() - timedelta(seconds=10),
+            stale_recovery_count=0,
+            policy_profile="standard",
+            last_activity_at=datetime.utcnow(),
+        )
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE
+        assert result.should_count_rate_limit is False
+
+    def test_rotated_token_beyond_grace_is_stale_rejected_not_recoverable(self):
+        """Req 4 boundary: a rotated token past stale grace must be
+        ROTATED_STALE_REJECTED, NOT ROTATED_STALE_RECOVERABLE.
+
+        The existing test_rotated_token_beyond_grace_is_rejected asserts
+        status == ROTATED_STALE_REJECTED (which implicitly excludes the
+        recoverable status). This test pins the boundary explicitly so a
+        future regression where the boundary slips — for example, a grace
+        window expansion that re-classifies past-grace tokens as
+        recoverable — fails loudly."""
+        token = "late-stale-flag-contract"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=88,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-88-flag-contract",
+            revoked_at=datetime.utcnow() - timedelta(seconds=1),
+            revoked_reason="rotated",
+            rotated_at=datetime.utcnow() - timedelta(seconds=get_stale_recovery_grace_seconds() + 1),
+            stale_recovery_count=0,
+            policy_profile="standard",
+            last_activity_at=datetime.utcnow(),
+        )
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.ROTATED_STALE_REJECTED
+        # Explicit boundary guard: the past-grace path MUST NOT collapse
+        # into ROTATED_STALE_RECOVERABLE.
+        assert result.status != RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE
+
 
 class TestTryIncrementRefreshRecoveryCount:
     """Tests for atomic stale recovery reservation."""
@@ -336,6 +398,35 @@ class TestTryIncrementRefreshRecoveryCount:
         assert result is False
         mock_db.query.return_value.filter.return_value.update.assert_called_once()
         mock_db.commit.assert_called_once()
+
+    def test_try_increment_refresh_recovery_count_contract_unchanged(self):
+        """Req 5: the recovery atomic contract is pinned.
+
+        Verifies that try_increment_refresh_recovery_count:
+        - Returns True when the atomic update affects exactly one row
+          (recovery slot reserved within the cap).
+        - Returns False when the atomic update affects zero rows
+          (cap already consumed).
+        - Calls commit() once for both branches (existing contract).
+
+        The fix MUST NOT alter the atomic implementation or the
+        stale_rotation_max_recoveries default; only the router counter
+        honoring changes."""
+        # True branch: one row affected.
+        mock_db_true = MagicMock()
+        mock_db_true.query.return_value.filter.return_value.update.return_value = 1
+
+        assert try_increment_refresh_recovery_count(mock_db_true, token_id=321, max_recoveries=3) is True
+        mock_db_true.query.return_value.filter.return_value.update.assert_called_once()
+        mock_db_true.commit.assert_called_once()
+
+        # False branch: zero rows affected.
+        mock_db_false = MagicMock()
+        mock_db_false.query.return_value.filter.return_value.update.return_value = 0
+
+        assert try_increment_refresh_recovery_count(mock_db_false, token_id=321, max_recoveries=3) is False
+        mock_db_false.query.return_value.filter.return_value.update.assert_called_once()
+        mock_db_false.commit.assert_called_once()
 
 
 class TestRevokeRefreshToken:
