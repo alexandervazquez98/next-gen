@@ -1,0 +1,154 @@
+# Workflow: backend-ci (PR2 of ci-cd-pipeline)
+#
+# Runs pytest with strict markers and produces a coverage report for every
+# pull request that touches backend code. This is PR2 of the six-slice CI/CD
+# chain (feature-branch-chain: PR1 -> PR2 -> ... -> PR6).
+#
+# Jobs:
+#   backend-tests — Python 3.11, pip install from requirements*.txt, pytest
+#                   --cov with strict markers; coverage.xml uploaded as an
+#                   artifact for reviewer inspection.
+#   ci-verify     — T2.4 PR2 verification gate: actionlint, yamllint, and a
+#                   pytest --collect-only run to prove the workflow stays
+#                   green on PR + push to main + cicd/**.
+#
+# Scope decision (T2.3): this lane runs UNIT-ONLY in v1. Integration tests
+# with Postgres + Neo4j service containers are explicitly deferred to a
+# future change. The current backend test suite mocks external services, so
+# running pytest in CI without service containers is safe and keeps the lane
+# under the 400-line review budget.
+#
+# Codecov upload: not wired in v1. Operators can add a Codecov step once a
+# CODECOV_TOKEN secret is provisioned; the artifact upload already captures
+# coverage.xml for local inspection.
+#
+# Chain strategy: PR2 targets `cicd/lint-dep-skeleton`. The path filter keeps
+# this lane silent on docs-only or frontend-only PRs to protect the
+# reviewer signal. See openspec/changes/ci-cd-pipeline/design.md.
+
+name: backend-ci
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
+      - "backend/pytest.ini"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches:
+      - main
+      - "cicd/**"
+    paths:
+      - "backend/**"
+      - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
+      - "backend/pytest.ini"
+      - ".github/workflows/backend-ci.yml"
+
+# Cancel superseded PR runs; keep push runs to the end.
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # R4 Backend CI Lane: pytest with strict markers + coverage. Unit-only in v1.
+  backend-tests:
+    name: backend-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed backend files
+        id: changed
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
+        with:
+          files_yaml: |
+            backend/**/*.py
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            backend/pytest.ini
+
+      - name: Set up Python 3.11
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Verify pytest install
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: backend
+        run: python -m pytest --version
+
+      - name: Run pytest with coverage
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -m pytest --cov=. --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage artifact
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  # T2.4: PR2 verification gate. Always runs so a backend-only PR exercises
+  # actionlint + yamllint + pytest collect even when no Python file changed.
+  ci-verify:
+    name: ci-verify (PR2 gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download actionlint (pinned release)
+        run: |
+          set -euo pipefail
+          VERSION="1.7.8"
+          curl -sSLf -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
+
+      - name: actionlint must pass
+        run: ./actionlint -color
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install yamllint
+        run: pip install --quiet yamllint==1.38.0
+
+      - name: yamllint must pass
+        run: yamllint -c .yamllint.yml .github/
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -m pip install -q -r requirements.txt -r requirements-dev.txt
+
+      - name: pytest --collect-only must succeed
+        working-directory: backend
+        run: python -m pytest --collect-only -q
