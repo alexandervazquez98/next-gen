@@ -260,6 +260,48 @@ describe('AuthContext', () => {
       expect(window.location.hash).toBe('#/login');
     });
 
+    it('resets the inactivity timer when touchstart or touchmove events fire', async () => {
+      vi.useFakeTimers();
+      const mockUser = {
+        ...baseUser,
+        session_id: 'session-123',
+        session_policy: { profile: 'standard', idle_timeout_minutes: 1, persistent: false },
+      };
+      mocks.api.get.mockResolvedValue(mockUser);
+      mocks.api.post.mockResolvedValue({ status: 'success' });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // Hydration settled.
+      expect(result.current.user).toEqual(mockUser);
+
+      // Advance halfway through the 60s window, then fire a touchstart event.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+        window.dispatchEvent(new Event('touchstart'));
+      });
+      // Advance past the original 60s deadline — touchstart should have reset the timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+      expect(result.current.user).toEqual(mockUser);
+
+      // Fire touchmove just before the NEW deadline; same expectation.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+        window.dispatchEvent(new Event('touchmove'));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(sonnerMocks.toast).not.toHaveBeenCalled();
+      expect(result.current.user).toEqual(mockUser);
+    });
+
     it('does not arm inactivity logout for persistent operational sessions', async () => {
       const mockUser = {
         ...baseUser,
