@@ -1,0 +1,51 @@
+# .dockerignore for frontend/Dockerfile.prod.
+#
+# Keep the build context small and reproducible. Without this, the
+# build context includes node_modules (huge), dist from previous
+# builds, coverage output, and IDE/OS cruft. Listing them here shaves
+# seconds off every build and prevents stale artefacts from leaking
+# into the image.
+
+# Local dependencies (rebuilt inside the image via pnpm install).
+node_modules/
+
+# Previous build artefacts (the prod Dockerfile builds into a fresh
+# /app/dist inside the builder stage).
+dist/
+coverage/
+
+# Editor / OS metadata.
+.vscode/
+.idea/
+.DS_Store
+*.sw?
+*.swo
+
+# Logs.
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test outputs that should not ship inside the production image.
+test-results/
+playwright-report/
+
+# Local env files — must never leak into a production image.
+.env
+.env.local
+.env.*.local
+
+# VCS metadata (GitHub Actions checkout already handles .git, but
+# belt-and-suspenders).
+.git/
+.gitignore
+.github/
+
+# Markdown and docs (no need inside the image).
+*.md
+docs/
+
+# Source maps if generated (kept out of prod by default; uncomment
+# to debug:  *.map
