@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { api, type ApiRequestConfig } from '../services/api';
+import { api } from '../services/api';
 import { publishAuthSessionEvent, subscribeAuthSessionEvents } from '../services/sessionBus';
 
 export interface SessionPolicy {
@@ -122,15 +122,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const expireForInactivity = async () => {
             if (disposed) return;
 
-            try {
-                await api.post('/auth/logout', {}, { skipAuthRefresh: true } as ApiRequestConfig);
-            } catch {
-                // Best effort — backend remains the security authority.
-            } finally {
-                if (!disposed) {
-                    endLocalSession('idle_timeout', 'session-expired', user.session_id);
-                }
-            }
+            // PR2 (#287): inactivity expiry is local-only UX cleanup.
+            // Backend remains the security authority via /auth/refresh idle-expiry,
+            // so we MUST NOT call /auth/logout here — that would revoke the refresh-token
+            // family and force-logout sibling tabs that are still actively used.
+            endLocalSession('idle_timeout', 'session-expired', user.session_id);
         };
 
         const resetTimer = () => {
