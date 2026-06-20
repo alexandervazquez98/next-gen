@@ -1,0 +1,156 @@
+# Workflow: frontend-ci (PR3 of ci-cd-pipeline)
+#
+# Runs Vitest with coverage on every pull request that touches frontend code.
+# This is PR3 of the six-slice CI/CD chain (feature-branch-chain: PR1 -> PR2
+# -> PR3 -> ... -> PR6).
+#
+# Jobs:
+#   frontend-tests — Vitest with jsdom + @vitest/coverage-v8; lcov.info
+#                   uploaded as an artifact for reviewer inspection.
+#   ci-verify      — T3.3 PR3 verification gate: actionlint, yamllint, and a
+#                    `vitest list` collect to prove the workflow stays green
+#                    on PR + push to main + cicd/**.
+#
+# Chain strategy: PR3 targets `cicd/backend-ci`. The path filter keeps this
+# lane silent on docs-only or backend-only PRs to protect the reviewer
+# signal. ESLint + Prettier on changed files is handled by lint.yml — this
+# workflow is intentionally tests-only.
+#
+# Lockfile discipline (spec R5 scenario "Lockfile drift blocks CI"): the
+# install step uses `--frozen-lockfile` so a package.json / pnpm-lock.yaml
+# drift fails CI before tests run, matching spec R5 acceptance criteria.
+#
+# SHA pins: tj-actions/changed-files pinned to v46.0.5
+# (CVE-2025-30022 mitigation, consistent with PR1 lint.yml + PR2 backend-ci).
+
+name: frontend-ci
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - ".github/workflows/frontend-ci.yml"
+  push:
+    branches:
+      - main
+      - "cicd/**"
+    paths:
+      - "frontend/**"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - ".github/workflows/frontend-ci.yml"
+
+# Cancel superseded PR runs; keep push runs to the end.
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # R5 Frontend CI Lane: Corepack pnpm frozen-lockfile install, Vitest, coverage.
+  frontend-tests:
+    name: frontend-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed frontend files
+        id: changed
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
+        with:
+          files_yaml: |
+            frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md,json}
+            frontend/eslint.config.js
+            frontend/.prettierrc.json
+            frontend/.prettierignore
+            frontend/package.json
+            frontend/pnpm-lock.yaml
+            frontend/vite.config.ts
+            frontend/test-setup.ts
+
+      - name: Set up Node 22
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Enable Corepack
+        if: steps.changed.outputs.any_changed == 'true'
+        run: corepack enable
+
+      - name: Install frontend dependencies (frozen lockfile)
+        if: steps.changed.outputs.any_changed == 'true'
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Verify Vitest install
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: pnpm exec vitest --version
+
+      - name: Run Vitest
+        if: steps.changed.outputs.any_changed == 'true'
+        run: pnpm --dir frontend run test:run
+
+      - name: Run Vitest with coverage
+        if: steps.changed.outputs.any_changed == 'true'
+        run: pnpm --dir frontend run test:coverage
+
+      - name: Upload coverage artifact
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+
+  # T3.3: PR3 verification gate. Always runs so a frontend-only PR exercises
+  # actionlint + yamllint + vitest collect even when no JS/TS file changed.
+  ci-verify:
+    name: ci-verify (PR3 gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download actionlint (pinned release)
+        run: |
+          set -euo pipefail
+          VERSION="1.7.8"
+          curl -sSLf -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
+
+      - name: actionlint must pass
+        run: ./actionlint -color
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install yamllint
+        run: pip install --quiet yamllint==1.38.0
+
+      - name: yamllint must pass
+        run: yamllint -c .yamllint.yml .github/
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack + install (frozen)
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --dir frontend install --frozen-lockfile
+
+      - name: vitest list must enumerate
+        run: pnpm --dir frontend exec vitest list > /dev/null
