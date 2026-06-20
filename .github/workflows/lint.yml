@@ -1,0 +1,213 @@
+# Workflow: lint (PR1 skeleton + verification harness).
+#
+# PR1 introduces the workflow skeleton + lint verification gate. PR2..PR6 add
+# backend-ci.yml, frontend-ci.yml, build.yml, smoke.yml, cd.yml respectively.
+# This file is intentionally limited to workflow linting and changed-file code
+# linting — no tests, no builds, no deploys.
+#
+# Jobs:
+#   actionlint    — R1 workflow YAML validation
+#   yamllint      — R1 YAML sanity check
+#   shellcheck    — R11 shell script lint on changed files
+#   lint-backend  — R2 Ruff + Black on changed backend files
+#   lint-frontend — R2 ESLint + Prettier on changed frontend files
+#   lint-verify   — T1.7 PR1 verification gate on empty diff (main push only)
+#
+# See openspec/changes/ci-cd-pipeline/design.md D4 for changed-files scoping.
+
+name: lint
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "docs/**"
+      - ".yamllint.yml"
+  push:
+    branches:
+      - main
+      - "cicd/**"
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
+      - ".yamllint.yml"
+
+# Cancel superseded PR runs; keep push runs to the end.
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # R1: actionlint validates every workflow YAML file.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actionlint
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: Run actionlint
+        run: ./actionlint -color
+
+  # R1: yamllint sanity check.
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install --quiet yamllint==1.38.0
+      - name: Run yamllint
+        run: yamllint -c .yamllint.yml .github/ .yamllint.yml
+
+  # R11: shellcheck on changed shell scripts.
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect changed shell files
+        id: changed
+        uses: tj-actions/changed-files@v46
+        with:
+          files_yaml: |
+            scripts/**.sh
+            scripts/**/*.sh
+            docker/neo4j/entrypoint.sh
+            monitor_performance.sh
+      - name: Install ShellCheck
+        if: steps.changed.outputs.any_changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run ShellCheck
+        if: steps.changed.outputs.any_changed == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          if [ ${#files[@]} -gt 0 ]; then
+            shellcheck -x "${files[@]}"
+          else
+            echo "No shell files changed — skipping."
+          fi
+
+  # R2: Ruff + Black on changed backend files.
+  lint-backend:
+    name: lint-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect changed backend files
+        id: changed
+        uses: tj-actions/changed-files@v46
+        with:
+          files_yaml: |
+            backend/**/*.py
+            backend/ruff.toml
+            backend/pyproject.toml
+      - name: Set up Python
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff and black
+        if: steps.changed.outputs.any_changed == 'true'
+        run: pip install --quiet ruff==0.15.18 black==26.5.1
+      - name: Run Ruff
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          py_files=()
+          for f in "${files[@]}"; do
+            case "$f" in *.py) py_files+=("$f") ;; esac
+          done
+          if [ ${#py_files[@]} -gt 0 ]; then
+            ruff check --config ruff.toml "${py_files[@]}"
+          else
+            echo "No .py files in change set — skipping."
+          fi
+      - name: Run Black --check
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          py_files=()
+          for f in "${files[@]}"; do
+            case "$f" in *.py) py_files+=("$f") ;; esac
+          done
+          if [ ${#py_files[@]} -gt 0 ]; then
+            black --check --diff "${py_files[@]}"
+          else
+            echo "No .py files in change set — skipping."
+          fi
+
+  # R2: ESLint + Prettier on changed frontend files.
+  lint-frontend:
+    name: lint-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect changed frontend files
+        id: changed
+        uses: tj-actions/changed-files@v46
+        with:
+          files_yaml: |
+            frontend/**/*.{ts,tsx,js,cjs,json,css,md}
+            frontend/eslint.config.js
+            frontend/.prettierrc.json
+            frontend/.prettierignore
+            frontend/package.json
+      - name: Set up Node
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable Corepack
+        if: steps.changed.outputs.any_changed == 'true'
+        run: corepack enable
+      - name: Install dependencies
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: corepack pnpm install --frozen-lockfile
+      - name: Run ESLint
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: pnpm run lint
+      - name: Run Prettier --check
+        if: steps.changed.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: pnpm run format:check
+
+  # T1.7: PR1 verification gate — empty-diff must be green on main push.
+  lint-verify:
+    name: lint-verify (PR1 gate)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actionlint
+        run: bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: actionlint must pass
+        run: ./actionlint -color
+      - name: Install yamllint + ruff + black
+        run: pip install --quiet yamllint==1.38.0 ruff==0.15.18 black==26.5.1
+      - name: yamllint must pass
+        run: yamllint -c .yamllint.yml .github/
+      - name: ruff must parse config
+        working-directory: backend
+        run: ruff check --config ruff.toml tests/__init__.py
+      - name: black must parse config
+        working-directory: backend
+        run: black --check tests/__init__.py
