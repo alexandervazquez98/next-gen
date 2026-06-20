@@ -601,6 +601,11 @@ class TestAuthRefresh:
         assert kwargs["context"]["user_id"] == 42
         assert kwargs["context"]["policy_profile"] == "standard"
         assert kwargs["context"]["activity_anchor"] in ("last_activity_at", "created_at")
+        # Consistency with `session.activity_recorded`: the throttle window
+        # value must appear in both lifecycle events so dashboards and
+        # cross-event correlation stay coherent.
+        assert isinstance(kwargs["context"]["throttle_seconds"], int)
+        assert kwargs["context"]["throttle_seconds"] > 0
 
         app.dependency_overrides.pop(get_pg_db, None)
 
