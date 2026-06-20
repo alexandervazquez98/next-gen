@@ -287,6 +287,14 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to seed roles: {e}")
 
+    # Seed AI Prompts (frozen user-override folder; non-fatal, bundled fallback applies)
+    try:
+        from services.ai_chat_service import ensure_ai_prompts_seeded
+
+        ensure_ai_prompts_seeded()
+    except Exception as e:
+        logger.error(f"Failed to seed AI prompts: {e}")
+
     # Start Background SNMP Collector
     disable_collector = os.getenv("DISABLE_BACKEND_COLLECTOR", "false").lower() in ("true", "1", "yes", "on")
     if not disable_collector:
