@@ -67,25 +67,15 @@ export const analyzeIncident = async (
 	};
 };
 
-export type AIChatIntent =
-	| {
-			type: "event_list" | "active_events";
-			status?: "ACTIVE" | "CONSOLE" | "OPEN" | "ACK" | "CLOSED" | "RECOVERED";
-			severity?: "CRITICAL" | "WARNING" | "INFO";
-			limit?: number;
-	  }
-	| { type: "availability_check"; ci_ref: string }
-	| { type: "availability_check_batch"; ci_refs: string[] };
-
 export const chatWithAIAgent = async (
 	query: string,
 	context: string,
-	intent?: AIChatIntent,
+	signal?: AbortSignal,
 ) => {
-	const response = await api.post<{ answer: string }>("/ai/chat", {
-		query,
-		context,
-		intent,
-	});
+	const response = await api.post<{ answer: string }>(
+		"/ai/chat",
+		{ query, context },
+		{ signal },
+	);
 	return response.answer;
 };

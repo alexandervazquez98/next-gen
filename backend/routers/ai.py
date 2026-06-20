@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Literal
 
@@ -157,7 +158,7 @@ def infer_followup_intent(query: str, db, username: str) -> AIChatIntent | None:
 
 
 @router.post("/chat", response_model=AIChatResponse)
-def chat_with_ai(
+async def chat_with_ai(
     body: AIChatRequest,
     current_user: User = Depends(get_current_active_user),
     db=Depends(get_pg_db),
@@ -183,15 +184,22 @@ def chat_with_ai(
         raise HTTPException(status_code=403, detail=detail)
 
     try:
-        harness_result = maybe_run_harness(intent, neo4j_driver, current_user)
+        harness_result = await asyncio.to_thread(maybe_run_harness, intent, neo4j_driver, current_user)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operational harness is unavailable; no diagnostic or event result was executed.",
         )
-    history = load_chat_history(db, current_user.username)
+
+    history = await asyncio.to_thread(load_chat_history, db, current_user.username)
     try:
-        completion = complete_chat(body.query, body.context, harness_result, history)
+        completion = await asyncio.to_thread(
+            complete_chat,
+            body.query,
+            body.context,
+            harness_result,
+            history,
+        )
     except LMStudioTimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -203,7 +211,8 @@ def chat_with_ai(
             detail="LM Studio is unavailable",
         )
 
-    row = save_chat_exchange(
+    row = await asyncio.to_thread(
+        save_chat_exchange,
         db,
         username=current_user.username,
         user_message=body.query,

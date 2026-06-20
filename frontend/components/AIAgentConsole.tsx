@@ -19,12 +19,19 @@ const AIAgentConsole: React.FC = () => {
 	const [input, setInput] = useState("");
 	const [loading, setLoading] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const abortControllerRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
 		if (scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 		}
 	}, [messages]);
+
+	useEffect(() => {
+		return () => {
+			abortControllerRef.current?.abort();
+		};
+	}, []);
 
 	const handleSend = async () => {
 		if (!input.trim() || loading) return;
@@ -34,10 +41,18 @@ const AIAgentConsole: React.FC = () => {
 		setInput("");
 		setLoading(true);
 
+		abortControllerRef.current?.abort();
+		const controller = new AbortController();
+		abortControllerRef.current = controller;
+		const signal = AbortSignal.any([
+			controller.signal,
+			AbortSignal.timeout(60_000),
+		]);
+
 		try {
 			const context =
 				"Current Context: User is interacting with NEX-GEN AI chat. Use backend harness results as the source of truth for live event or diagnostic data.";
-			const response = await chatWithAIAgent(input, context);
+			const response = await chatWithAIAgent(input, context, signal);
 			setMessages((prev) => [
 				...prev,
 				{
@@ -46,6 +61,12 @@ const AIAgentConsole: React.FC = () => {
 				},
 			]);
 		} catch (error) {
+			if (
+				(error instanceof Error && error.name === "AbortError") ||
+				(error instanceof DOMException && error.name === "AbortError")
+			) {
+				return;
+			}
 			console.error(error);
 			setMessages((prev) => [
 				...prev,
@@ -58,6 +79,7 @@ const AIAgentConsole: React.FC = () => {
 				},
 			]);
 		} finally {
+			abortControllerRef.current = null;
 			setLoading(false);
 		}
 	};

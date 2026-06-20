@@ -97,7 +97,7 @@ interface OperationalHistoryChartProps {
     tooltipFormatter?: (value: number, name: string) => [string, string];
 }
 
-const OperationalHistoryChart: React.FC<OperationalHistoryChartProps> = ({
+const OperationalHistoryChart = React.memo<OperationalHistoryChartProps>(({
     title,
     subtitle,
     data,
@@ -129,7 +129,46 @@ const OperationalHistoryChart: React.FC<OperationalHistoryChartProps> = ({
             </ResponsiveContainer>
         </div>
     </div>
-);
+));
+
+OperationalHistoryChart.displayName = 'OperationalHistoryChart';
+
+const RESOURCE_CHART_LINES = [
+    { key: 'cpu', name: 'CPU', color: '#22c55e' },
+    { key: 'ram', name: 'RAM', color: '#38bdf8' },
+    { key: 'disk', name: 'Disk', color: '#f59e0b' },
+] as const;
+
+const COLLECTOR_CHART_LINES = [
+    { key: 'metrics_collected', name: 'Collected', color: '#345bf2' },
+    { key: 'metrics_failed', name: 'Failed', color: '#ef4444' },
+    { key: 'jobs_per_min', name: 'Jobs/min', color: '#00f2ff' },
+] as const;
+
+const DISK_IO_CHART_LINES = [
+    { key: 'disk_read', name: 'Read', color: '#a78bfa' },
+    { key: 'disk_write', name: 'Write', color: '#fb7185' },
+] as const;
+
+const CYCLE_DURATION_CHART_LINES = [
+    { key: 'cycle_duration', name: 'Cycle time', color: '#10b981' },
+] as const;
+
+const formatPercentAxis = (value: number) => `${value}%`;
+const formatPercentTooltip = (value: number, name: string): [string, string] =>
+    [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—', name];
+
+const formatCompactAxis = formatCompactNumber;
+const formatCompactTooltip = (value: number, name: string): [string, string] =>
+    [formatCompactNumber(Number(value)), name];
+
+const formatBytesAxis = formatBytesPerSecond;
+const formatBytesTooltip = (value: number, name: string): [string, string] =>
+    [formatBytesPerSecond(Number(value)), name];
+
+const formatSecondsAxis = (value: number) => `${value}s`;
+const formatSecondsTooltip = (value: number, name: string): [string, string] =>
+    [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : '—', name];
 
 const SystemDashboard: React.FC = () => {
     const { data: status, isLoading: loading } = useSystemStatusQuery();
@@ -156,6 +195,19 @@ const SystemDashboard: React.FC = () => {
     const historyIsStale = isHistoryStale(history);
     const latestHistorySnapshot = history?.latest_recorded_at ?? history?.rows[0]?.recorded_at ?? null;
     const snapshotIntervalLabel = formatSnapshotInterval(history?.snapshot_interval_seconds);
+
+    const SNAPSHOTS_PER_PAGE = 5;
+    const [snapshotPage, setSnapshotPage] = React.useState(0);
+
+    React.useEffect(() => {
+        setSnapshotPage(0);
+    }, [history?.rows]);
+
+    const totalSnapshotPages = Math.max(1, Math.ceil((history?.rows.length ?? 0) / SNAPSHOTS_PER_PAGE));
+    const paginatedRows = (history?.rows ?? []).slice(
+        snapshotPage * SNAPSHOTS_PER_PAGE,
+        (snapshotPage + 1) * SNAPSHOTS_PER_PAGE,
+    );
 
     const getStatusColor = (val: number) => {
         if (val >= 90) return 'text-red-500';
@@ -360,44 +412,33 @@ const SystemDashboard: React.FC = () => {
                             title="Resources over time"
                             subtitle="CPU, RAM, and disk utilization from persisted snapshots."
                             data={historyChartData}
-                            lines={[
-                                { key: 'cpu', name: 'CPU', color: '#22c55e' },
-                                { key: 'ram', name: 'RAM', color: '#38bdf8' },
-                                { key: 'disk', name: 'Disk', color: '#f59e0b' },
-                            ]}
-                            yAxisFormatter={(value) => `${value}%`}
-                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—', name]}
+                            lines={RESOURCE_CHART_LINES}
+                            yAxisFormatter={formatPercentAxis}
+                            tooltipFormatter={formatPercentTooltip}
                         />
                         <OperationalHistoryChart
                             title="Collector throughput"
                             subtitle="Polling volume, failed metrics, and jobs per minute."
                             data={historyChartData}
-                            lines={[
-                                { key: 'metrics_collected', name: 'Collected', color: '#345bf2' },
-                                { key: 'metrics_failed', name: 'Failed', color: '#ef4444' },
-                                { key: 'jobs_per_min', name: 'Jobs/min', color: '#00f2ff' },
-                            ]}
-                            yAxisFormatter={formatCompactNumber}
-                            tooltipFormatter={(value, name) => [formatCompactNumber(Number(value)), name]}
+                            lines={COLLECTOR_CHART_LINES}
+                            yAxisFormatter={formatCompactAxis}
+                            tooltipFormatter={formatCompactTooltip}
                         />
                         <OperationalHistoryChart
                             title="Disk I/O throughput"
                             subtitle="Read and write throughput sampled from backend diskstats."
                             data={historyChartData}
-                            lines={[
-                                { key: 'disk_read', name: 'Read', color: '#a78bfa' },
-                                { key: 'disk_write', name: 'Write', color: '#fb7185' },
-                            ]}
-                            yAxisFormatter={formatBytesPerSecond}
-                            tooltipFormatter={(value, name) => [formatBytesPerSecond(Number(value)), name]}
+                            lines={DISK_IO_CHART_LINES}
+                            yAxisFormatter={formatBytesAxis}
+                            tooltipFormatter={formatBytesTooltip}
                         />
                         <OperationalHistoryChart
                             title="Collector cycle duration"
                             subtitle="Duration of each collector polling cycle in seconds."
                             data={historyChartData}
-                            lines={[{ key: 'cycle_duration', name: 'Cycle time', color: '#10b981' }]}
-                            yAxisFormatter={(value) => `${value}s`}
-                            tooltipFormatter={(value, name) => [Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : '—', name]}
+                            lines={CYCLE_DURATION_CHART_LINES}
+                            yAxisFormatter={formatSecondsAxis}
+                            tooltipFormatter={formatSecondsTooltip}
                         />
                     </div>
                 )}
@@ -411,7 +452,7 @@ const SystemDashboard: React.FC = () => {
                         <div className="p-4 font-mono text-xs text-neutral-500">No persisted operational snapshots yet. A snapshot is recorded at most every {snapshotIntervalLabel}.</div>
                     ) : (
                         <div className="divide-y divide-white/5 font-mono text-xs">
-                            {history.rows.map((row) => (
+                            {paginatedRows.map((row) => (
                                 <div key={row.recorded_at} className="grid gap-3 p-4 text-neutral-300 md:grid-cols-[190px_1fr]">
                                     <div>
                                         <p className="font-bold text-neutral-100">{formatHistoryTimestamp(row.recorded_at)}</p>
@@ -437,6 +478,29 @@ const SystemDashboard: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                    {(history?.rows.length ?? 0) > 0 && (
+                        <div className="flex items-center justify-between border-t border-white/5 px-4 py-3">
+                            <button
+                                onClick={() => setSnapshotPage((p) => Math.max(0, p - 1))}
+                                disabled={snapshotPage === 0}
+                                className="rounded-lg border border-white/10 px-3 py-1 text-xs font-bold text-neutral-400
+                                           transition-colors hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                Previous
+                            </button>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                                Page {snapshotPage + 1} of {totalSnapshotPages}
+                            </span>
+                            <button
+                                onClick={() => setSnapshotPage((p) => Math.min(totalSnapshotPages - 1, p + 1))}
+                                disabled={snapshotPage >= totalSnapshotPages - 1}
+                                className="rounded-lg border border-white/10 px-3 py-1 text-xs font-bold text-neutral-400
+                                           transition-colors hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                Next
+                            </button>
                         </div>
                     )}
                 </div>
