@@ -151,7 +151,7 @@ describe('AuthContext', () => {
   });
 
   describe('session policy and cross-tab behavior', () => {
-    it('logs out and clears standard non-persistent sessions after the configured inactivity timeout', async () => {
+    it('clears local state for standard non-persistent sessions after inactivity without calling /auth/logout', async () => {
       vi.useFakeTimers();
       const mockUser = {
         ...baseUser,
@@ -174,7 +174,9 @@ describe('AuthContext', () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
 
-      expect(mocks.api.post).toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
+      // PR2: inactivity expiry is local-only; it MUST NOT call /auth/logout.
+      expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.anything());
+      expect(mocks.api.post).not.toHaveBeenCalledWith('/auth/logout', {}, expect.objectContaining({ skipAuthRefresh: true }));
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
     });
