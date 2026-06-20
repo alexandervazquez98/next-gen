@@ -1,0 +1,26 @@
+# yamllint config for next-gen.
+
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+    require-starting-space: true
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  braces: disable
+  brackets: disable
+
+ignore: |
+  node_modules/
+  frontend/dist/
+  backend/__pycache__/
+  .venv/
+  .worktrees/

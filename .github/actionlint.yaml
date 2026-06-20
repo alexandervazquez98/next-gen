@@ -1,0 +1,11 @@
+# actionlint config for next-gen. See https://github.com/rhysd/actionlint/tree/v1.7.8/docs/config.md
+
+self-hosted-runner:
+  labels: []
+  matrix: {}
+
+config-variables: null
+
+# Files actionlint should NOT treat as workflow definitions.
+exclude:
+  - .github/dependabot.yml
