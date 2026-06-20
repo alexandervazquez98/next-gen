@@ -113,6 +113,18 @@ def get_session_policy_by_profile(profile: str) -> SessionPolicy:
     return get_standard_session_policy()
 
 
+def get_session_activity_write_throttle_seconds() -> int:
+    """Cross-worker throttle window for refresh-token activity writes.
+
+    Default is 60s. The DB conditional UPDATE is the authoritative gate; this
+    in-process cache is advisory only and safe to lose (per worker).
+    """
+    return _parse_int(
+        os.getenv("SESSION_ACTIVITY_WRITE_THROTTLE_SECONDS"),
+        default=60,
+    )
+
+
 def resolve_session_policy_for_user(user: object) -> SessionPolicy:
     """Resolve the session policy for a user row or Pydantic User payload."""
     operational_enabled = _parse_bool(os.getenv("SESSION_OPERATIONAL_ENABLED"), default=False)

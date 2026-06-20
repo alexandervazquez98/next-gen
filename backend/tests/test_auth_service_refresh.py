@@ -488,10 +488,17 @@ class TestRecordSessionActivity:
             )
 
         assert result is False
-        # logger.exception() records an ERROR-level log; caplog records the
-        # formatted exception text.
+        # logger.exception() records an ERROR-level log carrying the
+        # SQLAlchemyError traceback (exc_info) and the function's own message.
+        error_records = [
+            record for record in caplog.records
+            if record.levelno == logging.ERROR
+            and record.name == "services.auth_service"
+        ]
+        assert error_records, f"expected ERROR log, got: {[(r.levelname, r.name) for r in caplog.records]}"
+        # exc_info is attached so pytest's caplog preserves the formatted
+        # exception text including the original "boom" message.
         assert any(
-            record.levelno == logging.ERROR
-            and "boom" in record.getMessage()
-            for record in caplog.records
+            "boom" in record.getMessage() or "boom" in str(record.exc_info)
+            for record in error_records
         )
