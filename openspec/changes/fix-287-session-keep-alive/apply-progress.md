@@ -1,4 +1,4 @@
-# Apply Progress: fix-287-session-keep-alive — PR0 + PR1
+# Apply Progress: fix-287-session-keep-alive — PR0 + PR1 + PR2
 
 **Change ID**: `fix-287-session-keep-alive`
 **Issue**: `alexandervazquez98/next-gen#287` (status: approved)
@@ -11,10 +11,10 @@
 
 ```text
 main
- └── fix/287-session-keep-alive                    ← tracker (no-merge until all children land)
+   └── fix/287-session-keep-alive                    ← tracker (no-merge until all children land)
        ├── fix/287-db-backfill                     ← PR0 → base: tracker (PR #289, awaiting user merge)
-       │     └── fix/287-backend-activity-bump     ← PR1 → base: PR0  (this branch)
-       │           └── fix/287-frontend-idle-logout ← PR2 → base: PR1
+       │     └── fix/287-backend-activity-bump     ← PR1 → base: PR0  (PR #290 OPEN, awaiting user merge)
+       │           └── fix/287-frontend-idle-logout ← PR2 → base: PR1 (THIS BRANCH)
 ```
 
 ---
@@ -182,3 +182,119 @@ The orchestrator should:
 5. Re-run the RED test cycle manually if needed:
    - `git checkout fix/287-backend-activity-bump`
    - `git revert <commit-of-task-1.2-or-1.4-or-1.6-or-1.8>` to verify each GREEN implementation is actually required.
+
+---
+
+## PR2 — `fix/287-frontend-idle-logout` (THIS BRANCH — COMPLETE)
+
+**Branch**: `fix/287-frontend-idle-logout` (created from `fix/287-backend-activity-bump` per feature-branch-chain)
+**Base branch for PR**: `fix/287-backend-activity-bump` (NOT the tracker; this is the feature-branch-chain pattern)
+**Linked issue**: Part of `alexandervazquez98/next-gen#287` (Bug 2 frontend fix — local-only idle expiry)
+**Strict TDD mode**: enabled (every work unit = RED tests first → GREEN implementation)
+
+### Completed PR2 Tasks (all in this branch)
+
+- [x] **Task 2.1** — `test(auth): define local-only idle expiry behavior` — commit `2b9644a`
+  - RED: modified the existing inactivity test (`clears local state for standard non-persistent sessions after inactivity without calling /auth/logout`) to assert `mocks.api.post` was NOT called with `/auth/logout` from inactivity (PR2 spec). The manual logout test was already a positive regression guard.
+  - Confirmed RED: assertion failed with `expected "vi.fn()" to not be called with arguments: ['/auth/logout', {}, { skipAuthRefresh: true }]` — the inactivity path was still calling `/auth/logout`.
+
+- [x] **Task 2.2** — `fix(auth): make idle expiry local-only` — commit `bb68e74`
+  - Files: `frontend/context/AuthContext.tsx` (removed `await api.post('/auth/logout', ...)` + try/catch from `expireForInactivity`; dropped unused `ApiRequestConfig` import).
+  - Implementation: `expireForInactivity` now calls `endLocalSession('idle_timeout', 'session-expired', user.session_id)` directly (no server logout, no try/catch wrapper).
+  - GREEN: 2.1's inactivity test passes (15/15 of AuthContext tests).
+
+- [x] **Task 2.3** — `test(auth): require idle toast and deferred redirect` — commit `44ef9bf`
+  - RED: added 2 new tests in `AuthContext.test.tsx` and a `vi.mock('sonner', ...)` mock + `sonnerMocks.toast.mockReset()` in `beforeEach` (vitest 4 + jsdom 29 require explicit mock reset between tests):
+    - `shows the Spanish idle-expired toast for 15s when inactivity fires` (asserts `toast` called with exact Spanish message + `{ duration: 15_000 }`).
+    - `defers the redirect to /login by ~30s after inactivity fires` (sets `window.location.hash = '#/dashboard'`, advances 60s → asserts hash still `#/dashboard` and toast called; advances 29s → asserts hash still `#/dashboard`; advances 2s → asserts hash becomes `#/login`).
+  - Confirmed RED: both failed (`toast` not called; redirect would have been immediate due to design).
+
+- [x] **Task 2.4** — `feat(auth): show idle expiry toast before redirect` — commit `fb75972`
+  - Files: `frontend/context/AuthContext.tsx`, `frontend/package.json` (added `sonner@2.0.7`), `frontend/pnpm-lock.yaml`.
+  - Implementation:
+    - `IDLE_EXPIRED_TOAST_MESSAGE`, `IDLE_EXPIRED_TOAST_DURATION_MS`, `IDLE_EXPIRED_REDIRECT_DELAY_MS` module constants.
+    - `showIdleExpiredToast()` helper using `sonner`'s `toast()`.
+    - `idleRedirectTimerRef` + `clearIdleRedirectTimer()` + `scheduleIdleRedirect(delayMs=30_000)`.
+    - `endLocalSession` no longer immediately calls `redirectToLoginOnce()`; for `session-expired` broadcast type it schedules the 30s redirect instead (so the user has time to see the toast before navigation).
+    - `expireForInactivity` shows the toast immediately, then calls `endLocalSession(...)`.
+    - A top-level unmount `useEffect(() => clearIdleRedirectTimer, [clearIdleRedirectTimer])` ensures the redirect timer does not fire after the provider unmounts.
+    - `login` also clears the redirect timer (so a re-login cancels any pending redirect).
+    - **Important lifecycle note**: the inactivity `useEffect`'s cleanup does NOT clear `idleRedirectTimerRef`. This is because `endLocalSession` calls `setUser(null)`, which triggers a re-render where the inactivity useEffect cleanup runs FIRST; clearing the redirect timer there would kill the just-scheduled redirect.
+  - GREEN: 17/17 of AuthContext tests pass (2 new + 15 baseline). `pnpm add sonner` updated `pnpm-lock.yaml`; no `--frozen-lockfile` was used per task instructions.
+
+- [x] **Task 2.5** — `test(auth): reset idle timer on touch activity` — commit `1898d5f`
+  - RED: added `resets the inactivity timer when touchstart or touchmove events fire` — advances 30s, dispatches `touchstart`, advances 31s (past original 60s), asserts toast NOT called and user unchanged; then advances 20s and dispatches `touchmove`, advances 15s, asserts same.
+  - Confirmed RED: `expected "vi.fn()" to not be called at all, but actually been called 1 times` — the inactivity timer fired at fake time 60s because `touchstart` was not yet in `ACTIVITY_EVENTS`.
+  - **Test math gotcha**: the initial draft of the test (committed in `1898d5f`) had incorrect math for the second touchmove section: after touchstart reset (deadline 90s), advancing 30s + 31s = 91s landed past the new deadline, so the inactivity fired and the test failed for the right reason but with a misleading diff. This was caught and fixed in the same commit.
+
+- [x] **Task 2.6** — `fix(auth): add touch activity listeners` — commit `3b19789`
+  - Files: `frontend/context/AuthContext.tsx` (`ACTIVITY_EVENTS` extended to include `'touchstart'` and `'touchmove'`; one-line change).
+  - GREEN: 2.5's touch test passes (18/18 of AuthContext tests).
+
+- [x] **Task 2.7** — PR2 slice gate — full frontend 479/479 pass, no regressions, manual two-tab smoke gap documented in PR body.
+
+- [x] **Housekeeping `bb7afb3`** — `chore(sdd): mark PR2 tasks complete in tasks.md`
+
+## PR2 TDD Cycle Evidence (Strict TDD)
+
+| Task | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----|-------|-------------|----------|
+| 2.1 | ✅ inactivity test failed (`expected vi.fn() to not be called with ['/auth/logout', ...]`) | n/a (test-only) | ✅ Inactivity no-logout + manual logout (existing positive guard) | ➖ clean test rename |
+| 2.2 | ✅ 2.1's RED | ✅ 15/15 pass | ➖ same inactivity test | ✅ Dropped unused `ApiRequestConfig` import |
+| 2.3 | ✅ both toast + redirect tests failed | n/a (test-only) | ✅ Toast message exact + duration 15000 + redirect hash navigation + 29s/30s boundary | ➖ required explicit `sonnerMocks.toast.mockReset()` in `beforeEach` because `vi.hoisted` mocks persist across tests |
+| 2.4 | ✅ 2.3's RED (toast not called + redirect hash was already `#/login` immediately) | ✅ 17/17 pass | ➖ same 2 tests | ✅ Critical fix: removed `clearIdleRedirectTimer` from the inactivity `useEffect` cleanup, because `setUser(null)` triggers that cleanup synchronously after the redirect is scheduled — the cleanup would kill the just-scheduled redirect. Added a top-level unmount effect instead. |
+| 2.5 | ✅ touch test failed (`toast called once` — inactivity fired at fake time 60s because touchstart wasn't listened) | n/a (test-only) | ✅ touchstart + touchmove + advancing past original deadline | ➖ Test math corrected in same commit: second touchmove section initially advanced past the new deadline |
+| 2.6 | ✅ 2.5's RED | ✅ 18/18 pass | ➖ same touch test | ➖ one-line constant |
+
+## Test Summary (PR2)
+
+- **PR2 new tests**: 3 (1 modified inactivity + 2 toast/redirect + 1 touch reset; the inactivity test was modified, not added)
+  - Actually: 1 modified + 3 added = 3 net new tests (was 15 → now 18 in AuthContext.test.tsx).
+- **PR2 tests passing**: 3
+- **Full frontend**: **479 passed**, 0 failed, 0 skipped (57 test files)
+  - Pre-PR2 baseline: 476 passed, 0 failed
+  - After PR2: 479 passed, 0 failed (+3)
+  - No regressions introduced.
+
+## Files Changed (PR2 only)
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `frontend/context/AuthContext.tsx` | Modified | Removed `await api.post('/auth/logout', ...)` + try/catch from `expireForInactivity`; added `sonner` import + `IDLE_EXPIRED_*` constants + `showIdleExpiredToast()` helper + `idleRedirectTimerRef` + `clearIdleRedirectTimer` + `scheduleIdleRedirect`; deferred redirect in `endLocalSession` for session-expired type; added unmount cleanup useEffect; `login` clears redirect timer; `ACTIVITY_EVENTS` extended with `touchstart` + `touchmove`; dropped unused `ApiRequestConfig` import. |
+| `frontend/context/AuthContext.test.tsx` | Modified | Added `vi.mock('sonner', ...)` + `sonnerMocks.toast.mockReset()`; modified existing inactivity test to assert local-only; added 3 new tests (Spanish toast + 15s duration, deferred 30s redirect, touch reset). |
+| `frontend/package.json` | Modified | Added `"sonner": "2.0.7"` to `dependencies`. |
+| `frontend/pnpm-lock.yaml` | Modified | Lockfile updated by `pnpm add sonner`. |
+| `openspec/changes/fix-287-session-keep-alive/tasks.md` | Modified (in branch) | Marked PR2 tasks 2.1–2.7 complete with commit SHAs. |
+| `openspec/changes/fix-287-session-keep-alive/apply-progress.md` | Modified (in branch) | Added PR2 section above. |
+
+**PR2 diff vs `fix/287-backend-activity-bump`**: 2 source files modified, 2 OpenSpec artifacts updated, 1 lockfile + 1 package.json modified. ~115 insertions, ~25 deletions (within design's ~280/~40 forecast, within the 400-line review budget per work unit).
+
+## Deviations from the Plan
+
+- **Toast mock requires explicit `mockReset()` in `beforeEach`**: The `sonnerMocks.toast` is created via `vi.hoisted(() => ({ toast: vi.fn() }))` — the same `vi.fn()` instance is shared across tests. `vi.restoreAllMocks()` (which the existing `beforeEach` uses) only restores spy implementations; it does NOT reset mock call history. Without `sonnerMocks.toast.mockReset()`, the second toast-asserting test sees the first test's call. Added explicit `sonnerMocks.toast.mockReset()` to `beforeEach`.
+- **Lifecycle: redirect timer survives inactivity useEffect cleanup**: The natural implementation pattern (clearing the redirect timer in the inactivity `useEffect` cleanup) breaks the deferred-redirect requirement: `endLocalSession` calls `setUser(null)`, which synchronously triggers the inactivity useEffect cleanup. The cleanup would clear the redirect we just scheduled. Solution: do NOT clear `idleRedirectTimerRef` in the inactivity useEffect cleanup; add a top-level unmount useEffect instead, plus `clearIdleRedirectTimer()` in `login` (so a fresh login cancels a pending redirect).
+- **Manual two-tab smoke evidence NOT collected by the apply agent**: True multi-tab browser behavior requires E2E. The spec already calls out this gap (spec "Risks" section). The PR body documents the gap and instructs the reviewer to perform a manual two-tab smoke before merge.
+- **`vi.advanceTimersByTimeAsync` test math gotcha in 2.5**: Initial draft of the touch test had a math bug — after touchstart reset (deadline 90s), the second section advanced 30s + 31s = 61s past the touchstart reset point (which landed at fake time 91s, past the 90s deadline), causing the inactivity to fire. Caught and fixed in the same commit (`1898d5f`).
+
+## Risks (PR2)
+
+- **No live two-tab browser smoke**: Documented as a PR-body gap for the reviewer. Unit tests cover the per-tab logic and the broadcast wiring; the only thing not covered is true cross-tab event delivery in a real browser. The risk is low because `sessionBus.test.ts` already covers BroadcastChannel + localStorage fallback + dedupe; the remaining gap is whether two `window` instances in a real browser actually exchange messages.
+- **`sonner` toast container not rendered in the test**: `toast()` from sonner renders into a portal at `document.body`. We mock the module so the test asserts on the call without needing a rendered portal. In production, `sonner` requires its own `<Toaster />` mount point in the app shell (e.g., `App.tsx`). This is intentionally out of scope for PR2 — the spec only requires the `toast(...)` call; mounting the `<Toaster />` should land in a follow-up PR that integrates the toast UI.
+- **`redirectedToLogin` is module-level state**: It survives across tests but is reset on `login` and on hydration. Tests that run after a previous test that already redirected would see the flag stuck `true`. The current test design (each test sets `window.location.hash` and asserts explicit transitions) is robust to this; new tests should follow the same pattern.
+
+## Verification Recommendation (PR2)
+
+`next_recommended`: `sdd-verify-minimax` for this slice (PR2 — the FINAL slice in the chain).
+
+The orchestrator should:
+1. Confirm `pnpm --dir frontend exec vitest run context/AuthContext.test.tsx` shows **18/18 passing** (was 15/15 before PR2; +3 new tests).
+2. Confirm full frontend `pnpm --dir frontend run test:run` shows **479 passed, 0 failed, 0 skipped** (no regressions; +3 from baseline 476).
+3. Confirm `frontend/package.json` includes `sonner` and `frontend/pnpm-lock.yaml` is updated.
+4. Confirm the PR title says `Part of #287 (PR2 of 3)` and the base branch is `fix/287-backend-activity-bump` (NOT the tracker and NOT `main`).
+5. Re-run the RED test cycle manually if needed:
+   - `git checkout fix/287-frontend-idle-logout`
+   - `git revert <commit-of-task-2.2-or-2.4-or-2.6>` to verify each GREEN implementation is actually required.
+6. Perform the manual two-tab smoke before merge:
+   - Two tabs share one authenticated session.
+   - Background tab sits idle past the policy timeout → foreground tab must remain authenticated, no `/auth/logout` server call, no cookie clearing.
+   - Click Logout in any tab → both tabs clear state, sibling tabs receive the `logout` broadcast.
