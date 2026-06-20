@@ -85,10 +85,12 @@ services:
       - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}
       - LM_STUDIO_TIMEOUT_SECONDS=${LM_STUDIO_TIMEOUT_SECONDS:-15}
       - LM_STUDIO_MAX_TOKENS=${LM_STUDIO_MAX_TOKENS:-800}
+      - AI_PROMPTS_DIR=/data/ai
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${BACKUP_DIR:-.docker/backups}:/backups
+      - ${AI_PROMPTS_DIR_HOST:-.docker/ai}:/data/ai
     healthcheck:
       test:
         [

@@ -83,10 +83,12 @@ docker/neo4j/data/
 docker/neo4j/logs/
 docker/postgres/data/
 .docker/backups/
+.docker/ai/
 
 # Directorios de datos genéricos
 data/
 db/
+.ai/
 
 # Archivos de bases de datos locales
 *.db

@@ -173,7 +173,8 @@ def test_payload_system_prompt_uses_backend_identity_sources(tmp_path, monkeypat
     (identity_dir / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
     (identity_dir / "scope.md").write_text("# Scope\n\nRead-only diagnostics.", encoding="utf-8")
     (identity_dir / "context-policy.md").write_text("# Context\n\nUse compact context.", encoding="utf-8")
-    monkeypatch.setattr(ai_chat_service, "AI_IDENTITY_DIR", identity_dir)
+    # User override folder is the parent of identity/; resolver reads identity/<file>.
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
 
     payload = ai_chat_service.build_lm_studio_payload(
         "What changed?",
@@ -202,7 +203,7 @@ def test_payload_system_prompt_loads_optional_tool_catalog(tmp_path, monkeypatch
     (tools_dir / "README.md").write_text("# AI tool system\n\nBackend-owned tool catalog.", encoding="utf-8")
     (tools_dir / "event-list.md").write_text("# Event list\n\nProvider-neutral event listing.", encoding="utf-8")
     (tools_dir / "network-basic.md").write_text("# Network basic tools\n\n`availability_check` and planned traceroute.", encoding="utf-8")
-    monkeypatch.setattr(ai_chat_service, "AI_IDENTITY_DIR", identity_dir)
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
 
     payload = ai_chat_service.build_lm_studio_payload(
         "What tools are available?",
@@ -351,12 +352,161 @@ def test_ai_markdown_loader_is_bounded_and_safe(tmp_path, monkeypatch):
     base = tmp_path / "ai"
     (base / "templates").mkdir(parents=True)
     (base / "templates" / "event_list.md").write_text("x" * 25, encoding="utf-8")
-    monkeypatch.setattr(ai_chat_service, "AI_MARKDOWN_DIR", base)
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", base)
     monkeypatch.setattr(ai_chat_service, "MAX_AI_MARKDOWN_CHARS", 10)
 
     assert ai_chat_service.load_ai_markdown_contract("templates", "event_list.md") == "x" * 10
     assert ai_chat_service.load_ai_markdown_contract("templates", "missing.md") == ""
     assert ai_chat_service.load_ai_markdown_contract("../identity", "Soul.md") == ""
+
+
+def test_user_override_wins_over_bundled(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    user_dir = tmp_path / "user"
+    (user_dir / "templates").mkdir(parents=True)
+    (user_dir / "templates" / "event_list.md").write_text("USER-OVERRIDE-MARKER", encoding="utf-8")
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+
+    assert (
+        ai_chat_service.load_ai_markdown_contract("templates", "event_list.md")
+        == "USER-OVERRIDE-MARKER"
+    )
+
+
+def test_bundled_fallback_when_user_file_missing(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    # User override folder exists but has no templates/event_list.md -> loader
+    # must fall back to the bundled default (real backend/ai tree).
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+
+    bundled = (ai_chat_service.AI_DIR / "templates" / "event_list.md").read_text(encoding="utf-8")
+    assert ai_chat_service.load_ai_markdown_contract("templates", "event_list.md") == bundled
+
+
+def test_bundled_fallback_when_user_path_is_directory(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    user_dir = tmp_path / "user"
+    (user_dir / "templates" / "event_list.md").mkdir(parents=True)
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+
+    bundled = (ai_chat_service.AI_DIR / "templates" / "event_list.md").read_text(encoding="utf-8")
+    assert ai_chat_service.load_ai_markdown_contract("templates", "event_list.md") == bundled
+
+
+def test_system_prompt_user_override_wins(tmp_path, monkeypatch):
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    user_dir = tmp_path / "user"
+    (user_dir / "identity").mkdir(parents=True)
+    (user_dir / "identity" / "Soul.md").write_text("CUSTOM-SOUL-MARKER", encoding="utf-8")
+    (user_dir / "identity" / "scope.md").write_text("Read-only diagnostics.", encoding="utf-8")
+    (user_dir / "identity" / "context-policy.md").write_text("Use compact context.", encoding="utf-8")
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "What changed?",
+        None,
+        None,
+        LMStudioSettings(enabled=True, model="local-model"),
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "CUSTOM-SOUL-MARKER" in system_prompt
+
+
+def test_system_prompt_bundled_fallback_when_user_dir_empty(tmp_path, monkeypatch):
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    # Empty user override folder -> every file falls back to bundled defaults.
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "What changed?",
+        None,
+        None,
+        LMStudioSettings(enabled=True, model="local-model"),
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert system_prompt != ai_chat_service.FALLBACK_SYSTEM_PROMPT
+    assert "concise technical assistant for CMDB" in system_prompt
+
+
+def test_seed_copies_bundled_tree_into_empty_dir(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    target = tmp_path / "prompts"
+
+    class _Settings:
+        prompts_dir = str(target)
+
+    monkeypatch.setattr(ai_chat_service, "get_ai_prompts_settings", lambda: _Settings())
+    ai_chat_service.ensure_ai_prompts_seeded()
+
+    assert (target / "identity" / "Soul.md").exists()
+    assert (target / "identity" / "scope.md").exists()
+    assert (target / "templates" / "event_list.md").exists()
+    assert (target / "tools" / "README.md").exists()
+
+
+def test_seed_ignores_empty_dirs_and_dotfiles(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    target = tmp_path / "prompts"
+    (target / "identity").mkdir(parents=True)
+    (target / ".keep").write_text("", encoding="utf-8")
+
+    class _Settings:
+        prompts_dir = str(target)
+
+    monkeypatch.setattr(ai_chat_service, "get_ai_prompts_settings", lambda: _Settings())
+    ai_chat_service.ensure_ai_prompts_seeded()
+
+    assert (target / "identity" / "Soul.md").exists()
+    assert (target / "templates" / "event_list.md").exists()
+
+
+def test_seed_never_overwrites_existing_files(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    target = tmp_path / "prompts"
+    (target / "identity").mkdir(parents=True)
+    sentinel = "FROZEN-SENTINEL-DO-NOT-TOUCH"
+    (target / "identity" / "Soul.md").write_text(sentinel, encoding="utf-8")
+
+    class _Settings:
+        prompts_dir = str(target)
+
+    monkeypatch.setattr(ai_chat_service, "get_ai_prompts_settings", lambda: _Settings())
+    ai_chat_service.ensure_ai_prompts_seeded()
+
+    # Frozen snapshot: pre-existing user file is never clobbered.
+    assert (target / "identity" / "Soul.md").read_text(encoding="utf-8") == sentinel
+
+
+def test_seed_noop_when_prompts_dir_unset(tmp_path, monkeypatch):
+    from services import ai_chat_service
+
+    target = tmp_path / "prompts"
+    target.mkdir()
+
+    class _Settings:
+        prompts_dir = ""
+
+    monkeypatch.setattr(ai_chat_service, "get_ai_prompts_settings", lambda: _Settings())
+    ai_chat_service.ensure_ai_prompts_seeded()
+
+    # Feature off -> nothing written.
+    assert not any(target.iterdir())
 
 
 def test_render_event_list_response_uses_facts_and_safe_observed_diagnosis():
@@ -550,10 +700,17 @@ def test_payload_system_prompt_falls_back_when_identity_source_missing(tmp_path,
     from config import LMStudioSettings
     from services import ai_chat_service
 
-    identity_dir = tmp_path / "identity"
-    identity_dir.mkdir()
-    (identity_dir / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
-    monkeypatch.setattr(ai_chat_service, "AI_IDENTITY_DIR", identity_dir)
+    # Point BOTH the user override and the bundled root at dirs that lack the
+    # required scope.md / context-policy.md, so the resolver cannot find them
+    # anywhere and the system prompt degrades to FALLBACK_SYSTEM_PROMPT.
+    user_dir = tmp_path / "user"
+    bundled_dir = tmp_path / "bundled"
+    (user_dir / "identity").mkdir(parents=True)
+    (bundled_dir / "identity").mkdir(parents=True)
+    (user_dir / "identity" / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    (bundled_dir / "identity" / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
+    monkeypatch.setattr(ai_chat_service, "AI_DIR", bundled_dir)
 
     payload = ai_chat_service.build_lm_studio_payload(
         "What changed?",

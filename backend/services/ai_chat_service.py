@@ -4,14 +4,15 @@ import ipaddress
 import json
 import logging
 import re
+import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from config import LMStudioSettings, get_lm_studio_settings
+from config import LMStudioSettings, get_ai_prompts_settings, get_lm_studio_settings
 from models.ai_chat import AIChatMessage
 from services import event_service
 from models.user import AIPermission, User
@@ -25,15 +26,21 @@ FALLBACK_SYSTEM_PROMPT = (
     "context. Do not invent tool results."
 )
 AI_DIR = Path(__file__).resolve().parents[1] / "ai"
-AI_IDENTITY_DIR = AI_DIR / "identity"
-AI_MARKDOWN_DIR = AI_DIR
-REQUIRED_PROMPT_SOURCE_FILES = ("Soul.md", "scope.md", "context-policy.md")
+# User override root. ``None`` means "feature off" -> loaders read AI_DIR in
+# place (legacy behavior). Tests monkeypatch this directly; production resolves
+# it lazily from AI_PROMPTS_DIR via _user_dir().
+AI_USER_DIR: Optional[Path] = None
+REQUIRED_PROMPT_SOURCE_FILES = (
+    "identity/Soul.md",
+    "identity/scope.md",
+    "identity/context-policy.md",
+)
 OPTIONAL_PROMPT_SOURCE_FILES = (
-    "../tools/README.md",
-    "../tools/availability_check.md",
-    "../tools/event-list.md",
-    "../tools/network-basic.md",
-    "../tools/visualization.md",
+    "tools/README.md",
+    "tools/availability_check.md",
+    "tools/event-list.md",
+    "tools/network-basic.md",
+    "tools/visualization.md",
 )
 MAX_SYSTEM_PROMPT_CHARS = 10_000
 MAX_AI_MARKDOWN_CHARS = 20_000
@@ -56,27 +63,76 @@ class LMStudioTimeoutError(LMStudioError):
     """LM Studio did not answer within the configured timeout."""
 
 
+def _user_dir() -> Optional[Path]:
+    """Resolve the user override root, caching the env lookup in AI_USER_DIR."""
+    global AI_USER_DIR
+    if AI_USER_DIR is None:
+        configured = get_ai_prompts_settings().prompts_dir
+        if configured:
+            AI_USER_DIR = Path(configured)
+    return AI_USER_DIR
+
+
+def _resolve_prompt(rel: str) -> Path:
+    """Return the user override file when present, else the bundled default.
+
+    ``rel`` is relative to the prompts root (e.g. ``identity/Soul.md``).
+    The bundled tree is the invisible fallback so a missing user file never
+    breaks the runtime.
+    """
+    user_root = _user_dir()
+    if user_root is not None:
+        candidate = user_root / rel
+        if candidate.is_file():
+            return candidate
+    return AI_DIR / rel
+
+
+def _has_user_prompt_files(user_dir: Path) -> bool:
+    """Return true once the operator folder contains any prompt markdown file."""
+    return any(path.is_file() and path.suffix == ".md" for path in user_dir.rglob("*"))
+
+
+def ensure_ai_prompts_seeded() -> None:
+    """Seed the user prompts folder once from the bundled defaults (frozen).
+
+    No-op when AI_PROMPTS_DIR is unset. When the folder is empty or missing it
+    is populated with a full copy of the bundled ``ai/`` tree. Once any file is
+    present the folder is treated as a frozen snapshot: we never overwrite or
+    add files, honoring operator ownership.
+    """
+    prompts_dir = get_ai_prompts_settings().prompts_dir
+    if not prompts_dir:
+        return
+    user_dir = Path(prompts_dir)
+    if user_dir.exists() and _has_user_prompt_files(user_dir):
+        return
+    user_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(AI_DIR, user_dir, dirs_exist_ok=True)
+    logger.info("Seeded AI prompts folder at %s from bundled defaults", user_dir)
+
+
 def load_system_prompt() -> str:
     """Compose the bounded runtime system prompt from backend-owned sources."""
     sections: list[str] = []
     try:
-        for filename in REQUIRED_PROMPT_SOURCE_FILES:
-            source = AI_IDENTITY_DIR / filename
+        for rel in REQUIRED_PROMPT_SOURCE_FILES:
+            source = _resolve_prompt(rel)
             text = source.read_text(encoding="utf-8").strip()
             if not text:
                 return FALLBACK_SYSTEM_PROMPT
-            sections.append(f"## {filename}\n{text}")
+            sections.append(f"## {rel}\n{text}")
     except OSError:
         return FALLBACK_SYSTEM_PROMPT
 
-    for filename in OPTIONAL_PROMPT_SOURCE_FILES:
-        source = AI_IDENTITY_DIR / filename
+    for rel in OPTIONAL_PROMPT_SOURCE_FILES:
+        source = _resolve_prompt(rel)
         try:
             text = source.read_text(encoding="utf-8").strip()
         except OSError:
             continue
         if text:
-            sections.append(f"## {filename}\n{text}")
+            sections.append(f"## {rel}\n{text}")
 
     prompt = "\n\n".join(sections)
     if len(prompt) > MAX_SYSTEM_PROMPT_CHARS:
@@ -526,7 +582,7 @@ def load_ai_markdown_contract(section: str, filename: str) -> str:
     if section not in {"policies", "templates"} or "/" in filename or ".." in filename:
         return ""
     try:
-        path = AI_MARKDOWN_DIR / section / filename
+        path = _resolve_prompt(f"{section}/{filename}")
         return path.read_text(encoding="utf-8")[:MAX_AI_MARKDOWN_CHARS]
     except OSError:
         return ""

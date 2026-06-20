@@ -303,3 +303,30 @@ class LMStudioSettings(BaseModel):
 def get_lm_studio_settings() -> LMStudioSettings:
     """Return fresh LM Studio settings so tests and env changes are respected."""
     return LMStudioSettings.from_env()
+
+
+# ---------------------------------------------------------------------------
+# AI Prompts Settings
+# ---------------------------------------------------------------------------
+
+
+class AIPromptsSettings(BaseModel):
+    """User-overridable AI prompts folder.
+
+    When ``prompts_dir`` is empty the loaders read the bundled defaults
+    in-place (legacy behavior). When set, it points at a runtime data folder
+    that is seeded once from the bundled tree and then treated as a frozen
+    snapshot owned by the operator.
+    """
+
+    prompts_dir: str = ""
+
+    @classmethod
+    def from_env(cls) -> "AIPromptsSettings":
+        """Load the AI prompts folder from the environment."""
+        return cls(prompts_dir=os.getenv("AI_PROMPTS_DIR", "").strip())
+
+
+def get_ai_prompts_settings() -> AIPromptsSettings:
+    """Return fresh AI prompts settings so tests and env changes are respected."""
+    return AIPromptsSettings.from_env()
