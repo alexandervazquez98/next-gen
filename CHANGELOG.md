@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-06-20
+
+### Added
+
+- **AI chat operational harness responses** (PR #284, issue #282):
+  - Adds backend-owned `event_list`, `availability_check`, and `availability_check_batch` harness behavior with markdown policies/templates.
+  - Renders operational harness answers deterministically to avoid unsupported RCA, resolution, or infrastructure-cause claims.
+  - Adds LM Studio runtime controls for max tokens/timeouts and preserves backend-managed chat history.
+  - Supports status/severity event filtering and contextual availability follow-ups from recent event-list results.
+
+### Fixed
+
+- **AI console request resilience** (PR #283, issue #281):
+  - Prevents repeated AI console messages from hanging by adding abort handling and request cleanup.
+  - Offloads blocking AI chat work from the request path and improves LM Studio error handling.
+  - Adds targeted frontend/backend coverage for AI console request behavior.
+
 ## [1.12.28] — 2026-06-19
 
 ### Fixed
