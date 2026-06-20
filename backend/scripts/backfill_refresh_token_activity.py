@@ -24,41 +24,40 @@ import argparse
 import logging
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # Allow running this script directly from the repository root or from inside
 # backend/scripts without requiring PYTHONPATH manipulation by callers.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select, update  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
-from models.refresh_token import RefreshToken  # noqa: E402
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 
-def _build_backfill_statement(batch_size: int):
-    """Build a bounded ``UPDATE refresh_tokens`` for one batch of NULL rows.
-
-    The LIMIT subquery keeps each batch under ``batch_size`` rows so the lock
-    window stays short even when many legacy rows exist.
+# Raw SQL keeps this script free of ORM model imports so `python ... --help`
+# works on hosts that do not have psycopg2 / the backend models importable.
+# The bounded subquery keeps each UPDATE under ``batch_size`` rows so the lock
+# window stays short even when many legacy rows exist.
+BACKFILL_SQL = text(
     """
-    null_ids_subquery = (
-        select(RefreshToken.id)
-        .where(RefreshToken.last_activity_at.is_(None))
-        .limit(batch_size)
+    UPDATE refresh_tokens
+    SET last_activity_at = NOW()
+    WHERE id IN (
+        SELECT id FROM refresh_tokens
+        WHERE last_activity_at IS NULL
+        LIMIT :batch_size
     )
-    return (
-        update(RefreshToken)
-        .where(RefreshToken.id.in_(null_ids_subquery))
-        .values(last_activity_at=datetime.utcnow())
-    )
+    """
+)
 
 
 def backfill_refresh_token_activity(
-    db: Session,
+    db: "Session",
     *,
     batch_size: int = 1000,
     sleep_seconds: float = 0.1,
@@ -69,17 +68,19 @@ def backfill_refresh_token_activity(
     of pause between batches. Returns the total number of rows updated. The
     function is idempotent: once no NULL rows remain the loop exits cleanly
     and returns ``0`` on subsequent calls.
+
+    Uses raw SQL with ``NOW()`` so the timestamp comes from the database clock
+    and avoids any app-server / Postgres clock-skew risk.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
     if sleep_seconds < 0:
         raise ValueError("sleep_seconds must be non-negative")
 
-    stmt = _build_backfill_statement(batch_size)
     total = 0
 
     while True:
-        result = db.execute(stmt)
+        result = db.execute(BACKFILL_SQL, {"batch_size": batch_size})
         rowcount = result.rowcount or 0
         if rowcount == 0:
             break
