@@ -51,8 +51,7 @@ describe('AIAgentConsole', () => {
   });
 
   it('aborts previous request when sending a new message', async () => {
-    let resolveFirst: (v: string) => void;
-    const firstCall = new Promise<string>(r => { resolveFirst = r; });
+    const firstCall = new Promise<string>(() => undefined);
     const mockChat = vi.mocked(chatWithAIAgent)
       .mockImplementationOnce(() => firstCall)
       .mockResolvedValueOnce('second response');
@@ -64,7 +63,7 @@ describe('AIAgentConsole', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(mockChat).toHaveBeenCalledTimes(1));
 
-    const firstSignal = mockChat.mock.calls[0][3] as AbortSignal;
+    const firstSignal = mockChat.mock.calls[0][3] as unknown as AbortSignal;
     expect(firstSignal).toBeInstanceOf(AbortSignal);
   });
 });

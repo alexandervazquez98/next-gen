@@ -274,6 +274,7 @@ class LMStudioSettings(BaseModel):
     base_url: str = "http://localhost:1234/v1"
     model: str = "local-model"
     timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    max_tokens: int = Field(default=800, gt=0, le=4096)
 
     @classmethod
     def from_env(cls) -> "LMStudioSettings":
@@ -287,6 +288,14 @@ class LMStudioSettings(BaseModel):
                 15.0,
                 minimum=0.000001,
                 maximum=120.0,
+            ),
+            max_tokens=int(
+                _env_float_bounded(
+                    "LM_STUDIO_MAX_TOKENS",
+                    800.0,
+                    minimum=1.0,
+                    maximum=4096.0,
+                )
             ),
         )
 

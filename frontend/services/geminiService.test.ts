@@ -24,7 +24,6 @@ describe('chatWithAIAgent', () => {
     expect(api.post).toHaveBeenCalledWith('/ai/chat', {
       query: 'What should I check?',
       context: 'Incident console context',
-      intent: undefined,
     }, { signal: undefined });
     expect(answer).toBe('Check the active Redis incident first.');
   });
@@ -43,8 +42,24 @@ describe('chatWithAIAgent', () => {
     await chatWithAIAgent('hello', 'ctx', undefined, controller.signal);
     expect(api.post).toHaveBeenCalledWith(
       '/ai/chat',
-      { query: 'hello', context: 'ctx', intent: undefined },
+      { query: 'hello', context: 'ctx' },
       { signal: controller.signal },
+    );
+  });
+
+  it('forwards explicit backend intent when provided', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ answer: 'ok' });
+
+    await chatWithAIAgent('list events', 'ctx', { type: 'event_list', status: 'OPEN', limit: 10 });
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/ai/chat',
+      {
+        query: 'list events',
+        context: 'ctx',
+        intent: { type: 'event_list', status: 'OPEN', limit: 10 },
+      },
+      { signal: undefined },
     );
   });
 
@@ -53,7 +68,7 @@ describe('chatWithAIAgent', () => {
     await chatWithAIAgent('hello', 'ctx');
     expect(api.post).toHaveBeenCalledWith(
       '/ai/chat',
-      { query: 'hello', context: 'ctx', intent: undefined },
+      { query: 'hello', context: 'ctx' },
       { signal: undefined },
     );
   });

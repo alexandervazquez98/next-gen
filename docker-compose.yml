@@ -84,6 +84,7 @@ services:
       - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}
       - LM_STUDIO_TIMEOUT_SECONDS=${LM_STUDIO_TIMEOUT_SECONDS:-15}
+      - LM_STUDIO_MAX_TOKENS=${LM_STUDIO_MAX_TOKENS:-800}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
