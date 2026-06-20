@@ -27,6 +27,7 @@ from services.session_policy import (
     resolve_session_policy_for_user,
     session_policy_cookie_max_age_seconds,
     access_token_max_age_seconds,
+    get_session_activity_write_throttle_seconds,
 )
 from services import audit_service
 from utils.security import verify_password, get_password_hash
@@ -347,6 +348,9 @@ async def refresh_tokens(
                 "user_id": verification.user_id,
                 "policy_profile": verification.policy_profile,
                 "activity_anchor": idle_anchor,
+                # Mirror `session.activity_recorded` so dashboard cross-event
+                # correlation stays coherent (warning from PR1 verify agent).
+                "throttle_seconds": get_session_activity_write_throttle_seconds(),
             },
         )
         # Build a JSONResponse directly so the Set-Cookie headers reach the
