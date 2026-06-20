@@ -84,6 +84,98 @@ def test_record_auth_event_persists_versioned_schema_and_safe_request_metadata(a
     assert set(stored.context).issubset(AUDIT_CONTEXT_ALLOWED_KEYS)
 
 
+# PR1 #287 — auth session lifecycle context keys must be allow-listed so
+# `session.activity_recorded` and `session.idle_expired` audit events persist
+# the safe session/user/policy context they need. Sensitive keys must still
+# be stripped.
+
+PR1_SESSION_LIFECYCLE_KEYS = {
+    "session_id",
+    "user_id",
+    "policy_profile",
+    "throttle_seconds",
+    "activity_anchor",
+}
+
+
+def test_pr1_session_lifecycle_keys_are_allow_listed():
+    """PR1 session lifecycle keys must be in AUDIT_CONTEXT_ALLOWED_KEYS."""
+    missing = PR1_SESSION_LIFECYCLE_KEYS - AUDIT_CONTEXT_ALLOWED_KEYS
+    assert not missing, (
+        f"AUDIT_CONTEXT_ALLOWED_KEYS missing PR1 session lifecycle keys: {missing}"
+    )
+
+
+def test_record_auth_event_persists_pr1_session_lifecycle_context(audit_db):
+    """Safe session lifecycle context must survive sanitization."""
+    record_auth_event(
+        audit_db,
+        request=_Request(),
+        event_type="session.activity_recorded",
+        outcome="SUCCESS",
+        actor_username="alice",
+        reason="activity_recorded",
+        context={
+            "session_id": "sess-abc-123",
+            "user_id": 42,
+            "policy_profile": "standard",
+            "throttle_seconds": 60,
+            "activity_anchor": "last_activity_at",
+        },
+    )
+
+    stored = audit_db.query(AuditEvent).one()
+    assert stored.context["session_id"] == "sess-abc-123"
+    assert stored.context["user_id"] == 42
+    assert stored.context["policy_profile"] == "standard"
+    assert stored.context["throttle_seconds"] == 60
+    assert stored.context["activity_anchor"] == "last_activity_at"
+    assert set(stored.context).issubset(AUDIT_CONTEXT_ALLOWED_KEYS)
+
+
+def test_record_auth_event_strips_sensitive_keys_with_pr1_context(audit_db):
+    """Sensitive keys must be stripped even when PR1 lifecycle keys are present."""
+    record_auth_event(
+        audit_db,
+        request=_Request(),
+        event_type="session.idle_expired",
+        outcome="DENIED",
+        actor_username="alice",
+        reason="idle_timeout",
+        context={
+            "session_id": "sess-xyz-789",
+            "user_id": 42,
+            "policy_profile": "standard",
+            "throttle_seconds": 60,
+            "activity_anchor": "last_activity_at",
+            # Sensitive noise that must still be filtered out:
+            "token": "Bearer secret",
+            "cookies": "session=deadbeef",
+            "authorization": "Bearer secret",
+            "raw_body": {"refresh_token": "must-not-persist"},
+            "refresh_token": "raw-refresh",
+        },
+    )
+
+    stored = audit_db.query(AuditEvent).one()
+    # PR1 safe context preserved
+    assert stored.context["session_id"] == "sess-xyz-789"
+    assert stored.context["user_id"] == 42
+    # Sensitive keys stripped
+    for forbidden in (
+        "token",
+        "cookies",
+        "authorization",
+        "raw_body",
+        "refresh_token",
+    ):
+        assert forbidden not in stored.context
+    serialized = str(stored.context).lower()
+    assert "secret" not in serialized
+    assert "deadbeef" not in serialized
+    assert "must-not-persist" not in serialized
+
+
 def test_record_critical_change_truncates_free_text_and_rejects_sensitive_context(audit_db):
     long_reason = "x" * 300
 
