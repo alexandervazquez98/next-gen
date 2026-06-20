@@ -1,12 +1,7 @@
 import type React from "react";
 import { useState, useRef, useEffect } from "react";
-import {
-	buildChatIntent,
-	chatWithAIAgent,
-	inferPendingIntentFromAnswer,
-	isToolConfirmation,
-	type AIChatIntent,
-} from "../services/geminiService";
+import { ApiError } from "../services/api";
+import { chatWithAIAgent } from "../services/geminiService";
 
 interface Message {
 	role: "user" | "assistant";
@@ -23,9 +18,6 @@ const AIAgentConsole: React.FC = () => {
 	]);
 	const [input, setInput] = useState("");
 	const [loading, setLoading] = useState(false);
-	const [pendingIntent, setPendingIntent] = useState<
-		AIChatIntent | undefined
-	>();
 	const scrollRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -43,19 +35,9 @@ const AIAgentConsole: React.FC = () => {
 		setLoading(true);
 
 		try {
-			const confirmedIntent = isToolConfirmation(input)
-				? pendingIntent
-				: undefined;
-			const inferredIntent = confirmedIntent
-				? undefined
-				: buildChatIntent(input);
-			const intent = confirmedIntent ?? inferredIntent;
 			const context =
 				"Current Context: User is interacting with NEX-GEN AI chat. Use backend harness results as the source of truth for live event or diagnostic data.";
-			const response = await chatWithAIAgent(input, context, intent);
-			setPendingIntent(
-				intent ? undefined : inferPendingIntentFromAnswer(response || ""),
-			);
+			const response = await chatWithAIAgent(input, context);
 			setMessages((prev) => [
 				...prev,
 				{
@@ -69,7 +51,10 @@ const AIAgentConsole: React.FC = () => {
 				...prev,
 				{
 					role: "assistant",
-					content: "Network disruption in AI reasoning layer.",
+					content:
+						error instanceof ApiError
+							? error.message
+							: "Network disruption in AI reasoning layer.",
 				},
 			]);
 		} finally {
@@ -101,7 +86,7 @@ const AIAgentConsole: React.FC = () => {
 						className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
 					>
 						<div
-							className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
+							className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
 								m.role === "user"
 									? "bg-brand-600 text-white rounded-tr-none"
 									: "bg-neutral-800/80 text-neutral-200 border border-white/5 rounded-tl-none"

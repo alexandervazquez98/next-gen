@@ -144,7 +144,11 @@ def infer_followup_intent(query: str, db, username: str) -> AIChatIntent | None:
         r"\b(verifica|verificar|checa|chequeo|revisa|revisar|estatus|estado|siguen|disponibilidad|funcionando|responden|reachable|working|availability)\b",
         normalized,
     )
-    if not asks_availability:
+    confirms_prior_action = re.search(
+        r"^\s*(ok|okay|si|sí|dale|hazlo|usalo|úsalo|ejecutalo|ejecútalo|do it|use it)\b",
+        normalized,
+    )
+    if not asks_availability and not confirms_prior_action:
         return None
     ci_refs = latest_event_list_ci_refs(db, username, query=query)
     if not ci_refs:
@@ -178,7 +182,13 @@ async def chat_with_ai(
         )
         raise HTTPException(status_code=403, detail=detail)
 
-    harness_result = maybe_run_harness(intent, neo4j_driver)
+    try:
+        harness_result = maybe_run_harness(intent, neo4j_driver)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operational harness is unavailable; no diagnostic or event result was executed.",
+        )
     history = load_chat_history(db, current_user.username)
     try:
         completion = complete_chat(body.query, body.context, harness_result, history)

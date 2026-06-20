@@ -933,7 +933,7 @@ def test_followup_confirmation_runs_availability_batch_from_recent_event_list(mo
     ):
         response = client.post(
             "/api/ai/chat",
-            json={"query": "si, haz el chequeo de disponibilidad"},
+            json={"query": "sí"},
         )
 
     assert response.status_code == 200
@@ -953,6 +953,20 @@ def test_payload_warns_model_when_no_harness_was_executed():
 
     assert "No backend harness result is present" in payload["messages"][-1]["content"]
     assert "Do not claim" in payload["messages"][-1]["content"]
+
+
+def test_harness_failure_returns_operational_unavailable(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    client, _ = _make_client(user=_event_view_user())
+
+    with patch("services.ai_chat_service.list_events_for_harness", side_effect=RuntimeError("neo4j down")):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "dime que eventos hay abiertos"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Operational harness is unavailable; no diagnostic or event result was executed."
 
 
 def test_event_list_harness_requires_event_permission(monkeypatch):
