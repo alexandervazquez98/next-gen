@@ -182,6 +182,76 @@ class TestVerifyRefreshToken:
         result = verify_refresh_token(token, mock_db)
         assert result.status == RefreshVerificationStatus.IDLE_EXPIRED
 
+    def test_standard_session_with_null_activity_uses_created_at_anchor(self):
+        """NULL last_activity_at must coalesce to created_at for the idle check.
+
+        Today the implementation returns VALID (not expired) when
+        last_activity_at is None. PR1 closes that gap so rows whose
+        last_activity_at was never written do not become immortal.
+        """
+        token = "null-anchor-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        rt = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-null-anchor",
+            policy_profile="standard",
+        )
+        # Force NULL last_activity_at (legacy / transitional state).
+        rt.last_activity_at = None
+        # Anchor must be 16 minutes old so the 15-minute standard timeout fires.
+        rt.created_at = datetime.utcnow() - timedelta(minutes=16)
+        mock_db.query.return_value.filter.return_value.first.return_value = rt
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.IDLE_EXPIRED
+        assert result.user_id == 1
+        assert result.session_id == "sess-null-anchor"
+
+    def test_recently_active_session_with_null_activity_is_not_idle(self):
+        """When last_activity_at is NULL but created_at is fresh, the token
+        is still valid (anchor is created_at and now-created_at <= timeout).
+        """
+        token = "fresh-null-anchor-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        rt = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            session_id="sess-fresh",
+            policy_profile="standard",
+        )
+        rt.last_activity_at = None
+        rt.created_at = datetime.utcnow() - timedelta(minutes=5)
+        mock_db.query.return_value.filter.return_value.first.return_value = rt
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.VALID
+        assert result.session_id == "sess-fresh"
+
+    def test_recently_active_session_is_not_idle(self):
+        """Symmetric positive case: non-null last_activity_at within timeout
+        is still VALID (regression guard for the coalesce change)."""
+        token = "recent-active-token"
+        token_hash = hash_token(token)
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = self._mock_rt(
+            token_hash=token_hash,
+            user_id=1,
+            expires_at=datetime.utcnow() + timedelta(days=7),
+            last_activity_at=datetime.utcnow() - timedelta(minutes=5),
+            policy_profile="standard",
+        )
+
+        result = verify_refresh_token(token, mock_db)
+
+        assert result.status == RefreshVerificationStatus.VALID
+
     def test_recently_rotated_token_is_recoverable(self):
         token = "stale-token"
         token_hash = hash_token(token)
