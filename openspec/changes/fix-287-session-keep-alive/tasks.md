@@ -200,6 +200,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: inactivity test fails today (`api.post('/auth/logout', ...)` is called once at lines 122-134 of `AuthContext.tsx`); manual logout test still passes.
 - **Work-unit commit**: `test(auth): define local-only idle expiry behavior`
 - **Est. lines**: ~50 (test additions)
+- **Status**: [x] Completed (commit `2b9644a`)
 
 ### Task 2.2 — `fix(auth): make idle expiry local-only`
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -210,6 +211,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: 2.1's inactivity test passes; existing 476 frontend tests still pass.
 - **Work-unit commit**: `fix(auth): make idle expiry local-only`
 - **Est. lines**: ~8 (delete + minor reshuffle)
+- **Status**: [x] Completed (commit `bb68e74`)
 
 ### Task 2.3 — `test(auth): require idle toast and deferred redirect`
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -220,6 +222,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: toast and redirect assertions fail until 2.4 lands.
 - **Work-unit commit**: `test(auth): require idle toast and deferred redirect`
 - **Est. lines**: ~45 (test additions with fake timers)
+- **Status**: [x] Completed (commit `44ef9bf`)
 
 ### Task 2.4 — `feat(auth): show idle expiry toast before redirect`
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -230,6 +233,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: 2.3's tests pass; 476 frontend tests still pass; `frontend/package.json` includes `sonner`; `pnpm-lock.yaml` is updated.
 - **Work-unit commit**: `feat(auth): show idle expiry toast before redirect`
 - **Est. lines**: ~25 (AuthContext) + ~2 (package.json) + lockfile churn
+- **Status**: [x] Completed (commit `fb75972`)
 
 ### Task 2.5 — `test(auth): reset idle timer on touch activity`
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -240,6 +244,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: touch-reset assertions fail until 2.6 lands.
 - **Work-unit commit**: `test(auth): reset idle timer on touch activity`
 - **Est. lines**: ~30 (test additions)
+- **Status**: [x] Completed (commit `1898d5f`)
 
 ### Task 2.6 — `fix(auth): add touch activity listeners`
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -250,6 +255,7 @@ Chain strategy: feature-branch-chain
 - **Done when**: touch events reset the timer; full frontend suite green.
 - **Work-unit commit**: `fix(auth): add touch activity listeners`
 - **Est. lines**: ~1 (`ACTIVITY_EVENTS` constant)
+- **Status**: [x] Completed (commit `3b19789`)
 
 ### Task 2.7 — PR2 slice gate
 - **Branch**: `fix/287-frontend-idle-logout`
@@ -257,6 +263,7 @@ Chain strategy: feature-branch-chain
 - **RED/GREEN**: N/A — gate, not a commit.
 - **Verify**: `pnpm --dir frontend run test:run` (must show 476+ tests, all passing); manual two-tab smoke documented in PR body: background tab idle does NOT force active tab server logout; explicit Logout still logs out sibling tabs.
 - **Done when**: full frontend suite green; manual two-tab smoke evidence attached; PR2 PR opened against `fix/287-backend-activity-bump`.
+- **Status**: [x] Completed — focused 18/18 pass, full frontend suite 479/479 pass (476 baseline + 3 new tests).
 
 ---
 
