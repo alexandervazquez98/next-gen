@@ -114,7 +114,7 @@ jobs:
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
           shell_files=()
           for f in "${files[@]}"; do
-            case "$f" in *.sh|entrypoint.sh) shell_files+=("$f") ;; esac
+            case "$f" in *.sh) shell_files+=("$f") ;; esac
           done
           if [ ${#shell_files[@]} -gt 0 ]; then
             shellcheck -x "${shell_files[@]}"
