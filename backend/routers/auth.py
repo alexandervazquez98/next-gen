@@ -401,7 +401,8 @@ async def refresh_tokens(
             verification.token_id,
             policy.stale_rotation_max_recoveries,
         ):
-            increment_attempts(rate_limit_key, identity_type="refresh_token")
+            if verification.should_count_rate_limit:
+                increment_attempts(rate_limit_key, identity_type="refresh_token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="session expired",
