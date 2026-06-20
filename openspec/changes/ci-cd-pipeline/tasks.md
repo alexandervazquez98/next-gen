@@ -80,10 +80,10 @@ Strict-TDD policy (`openspec/config.yaml` `sdd.strict_tdd`): every workflow or s
 
 | ID | Title | Files | Reqs | Est | Deps | Verification gate | strict_tdd_evidence |
 |---|---|---|---|---|---|---|---|
-| T4.1 | Multi-stage `frontend/Dockerfile.prod` (pnpm builder + nginx/static runner) | `frontend/Dockerfile.prod`, `frontend/.dockerignore` | R6 | 80 | — | `docker build -f frontend/Dockerfile.prod frontend/` succeeds; image runs and serves dist on expected port | T4.3 build workflow is the harness; build itself is the test. |
-| T4.2 | `docker-compose.yml` `frontend-prod` profile (no breaking change to dev stack) | `docker-compose.yml` | R6 | 50 | T4.1 | `docker compose --profile prod config --quiet` valid; existing dev profile unchanged | `compose config` validation is the harness; non-breaking assertion via diff review. |
-| T4.3 | `.github/workflows/build.yml` (build backend + frontend:prod, smoke-run each) | `.github/workflows/build.yml` | R6 | 180 | T4.1, T4.2 | `docker build` backend + frontend:prod succeed on `ubuntu-latest`; smoke-run exits 0 | Build job is the test for R6 images-build scenario. |
-| T4.4 | PR4 verification gate — both images build clean on hosted runner | `.github/workflows/build.yml` (adds `build-verify` summary) | R6, R11 | 40 | T4.3 | Run logs show both images green; broken Dockerfile blocks merge (R6 broken scenario) | Build failure on broken Dockerfile is the test for R6 broken-Dockerfile scenario. |
+| T4.1 | Multi-stage `frontend/Dockerfile.prod` (pnpm builder + nginx/static runner) | `frontend/Dockerfile.prod`, `frontend/.dockerignore`, `frontend/nginx.conf` | R6 | 80 | — | `docker build -f frontend/Dockerfile.prod frontend/` succeeds; image runs and serves dist on expected port | T4.3 build workflow is the harness; build itself is the test. | [x] |
+| T4.2 | `docker-compose.yml` `frontend-prod` profile (no breaking change to dev stack) | `docker-compose.prod.yml` (new overlay) | R6 | 50 | T4.1 | `docker compose --profile prod config --quiet` valid; existing dev profile unchanged | `compose config` validation is the harness; non-breaking assertion via diff review. | [x] |
+| T4.3 | `.github/workflows/build.yml` (build backend + frontend:prod, smoke-run each) | `.github/workflows/build.yml` | R6 | 180 | T4.1, T4.2 | `docker build` backend + frontend:prod succeed on `ubuntu-latest`; smoke-run exits 0 | Build job is the test for R6 images-build scenario. | [x] |
+| T4.4 | PR4 verification gate — both images build clean on hosted runner | `.github/workflows/build.yml` (adds `build-verify` summary) | R6, R11 | 40 | T4.3 | Run logs show both images green; broken Dockerfile blocks merge (R6 broken scenario) | Build failure on broken Dockerfile is the test for R6 broken-Dockerfile scenario. | [x] |
 
 **PR4 total**: 350 LOC. **Chain downstream**: PR5 branches off `cicd/build-images`.
 
