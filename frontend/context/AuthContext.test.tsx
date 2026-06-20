@@ -37,6 +37,7 @@ describe('AuthContext', () => {
     localStorage.clear();
     mocks.api.get.mockReset();
     mocks.api.post.mockReset();
+    sonnerMocks.toast.mockReset();
     // Default: resolve with null user so hydration doesn't crash
     mocks.api.get.mockResolvedValue(null);
   });
