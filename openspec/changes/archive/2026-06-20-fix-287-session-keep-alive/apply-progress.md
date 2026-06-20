@@ -298,3 +298,30 @@ The orchestrator should:
    - Two tabs share one authenticated session.
    - Background tab sits idle past the policy timeout → foreground tab must remain authenticated, no `/auth/logout` server call, no cookie clearing.
    - Click Logout in any tab → both tabs clear state, sibling tabs receive the `logout` broadcast.
+
+---
+
+## Archived
+
+**Archived on**: 2026-06-20
+**Archived from**: `openspec/changes/fix-287-session-keep-alive/`
+**Archived to**: `openspec/changes/archive/2026-06-20-fix-287-session-keep-alive/`
+**Archive SHA**: `1cc1787` (main + tracker; both at the same commit after fast-forward)
+**Artifact store mode**: `hybrid` (this file + Engram `sdd/fix-287-session-keep-alive/archive-report`)
+
+### Final state
+
+- All three PRs merged: #289 (PR0), #290 (PR1), #291 (PR2).
+- Tracker branch `fix/287-session-keep-alive` fast-forwarded to `main` at `1cc1787`.
+- 19/19 implementation tasks checked (`- [x]`) in `tasks.md`.
+- Focused tests: PR0 8/8, PR1 119/119, PR2 18/18 (auth-adjacent) + 479/479 full frontend.
+- Live PostgreSQL evidence captured in `live-evidence-pr0.md`.
+
+### Synced main specs
+
+- Created: `openspec/specs/auth-session-lifecycle/spec.md` (consolidated lifecycle capability covering all three slices).
+- Modified: `openspec/specs/audit-logging/spec.md` (added `Authentication session lifecycle event capture` requirement for `session.activity_recorded` and `session.idle_expired`).
+
+### Follow-up
+
+- Bug 3 stale-recovery/rate-limit follow-up is tracked separately in `alexandervazquez98/next-gen#292` (OPEN). It is not a #287 merge gate and is intentionally out of scope for this archive.

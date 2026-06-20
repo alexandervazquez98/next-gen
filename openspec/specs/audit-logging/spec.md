@@ -107,3 +107,32 @@ A cleanup process MUST remove records strictly older than the retention window.
 - GIVEN an audit event within 90 days exists
 - WHEN cleanup runs
 - THEN that event MUST remain queryable.
+
+### Requirement: Authentication session lifecycle event capture
+
+The system MUST capture session lifecycle events `session.activity_recorded` and `session.idle_expired` emitted by the backend auth/session activity recorder, with allow-listed context keys (`session_id`, `user_id`, `policy_profile`, `throttle_seconds`, `activity_anchor`) and explicit exclusion of raw tokens, cookies, authorization headers, and request bodies.
+
+The `session.activity_recorded` event SHALL be emitted only when a refresh-token row is updated by the throttled `record_session_activity` recorder. The `session.idle_expired` event SHALL be emitted when refresh verification rejects a session for inactivity.
+
+#### Scenario: Activity recording emits a safe audit row
+
+- GIVEN an authenticated request bumps a standard session via the throttled recorder
+- WHEN the recorder commits a `refresh_tokens.last_activity_at` update
+- THEN an audit event with `event_type = session.activity_recorded` SHALL be persisted
+- AND the audit context SHALL include `session_id`, `user_id`, `policy_profile`, `throttle_seconds`, and `activity_anchor`
+- AND the audit context SHALL NOT include raw refresh or access tokens, cookies, or authorization headers.
+
+#### Scenario: Idle expiry emits a safe audit row
+
+- GIVEN a refresh request arrives for a session whose activity anchor is older than the configured timeout
+- WHEN the router rejects the request with HTTP 401
+- THEN an audit event with `event_type = session.idle_expired` SHALL be persisted before the response is sent
+- AND the audit context SHALL include `session_id`, `user_id`, `policy_profile`, and `activity_anchor`
+- AND no Prometheus metric SHALL be created for this event.
+
+#### Scenario: Sensitive keys are stripped from session lifecycle context
+
+- GIVEN a caller attempts to record a session lifecycle event with a context that includes `token`, `cookies`, `authorization`, `raw_body`, or `refresh_token`
+- WHEN the audit service processes the event
+- THEN those keys SHALL be stripped before persistence
+- AND the allow-listed keys SHALL remain in the persisted context.
