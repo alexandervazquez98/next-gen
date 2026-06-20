@@ -19,12 +19,8 @@ smoke workflow (`.github/workflows/smoke.yml`) does
 `mkdir -p docker/postgres/data` before `docker compose up` to keep
 runs deterministic on GitHub-hosted runners.
 
-For local development you can either:
-
-- let Docker auto-create the path (works on most engines ≥ 20.10), OR
-- run `mkdir -p docker/postgres/data` once before `docker compose up`.
-
-## R1 status
+For local development either let Docker auto-create the path (works
+on most engines ≥ 20.10) or `mkdir -p docker/postgres/data` once.
 
 Documented and mitigated in PR5 of ci-cd-pipeline. See
 `openspec/changes/ci-cd-pipeline/design.md` (R1) and
