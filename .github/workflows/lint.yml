@@ -176,8 +176,10 @@ jobs:
           fi
 
   # R2: ESLint + Prettier on changed frontend files (changed-only scope per
-  # spec R2 "Legacy untouched files do not block PR1"). DevDeps are installed
-  # in PR3; until then scripts use `pnpm dlx` to fetch eslint/prettier on demand.
+  # spec R2 "Legacy untouched files do not block PR1"). ESLint and Prettier
+  # are local devDependencies installed by `corepack pnpm install`; the lint
+  # and format scripts in package.json wrap them so this job stays in sync
+  # with local commands.
   lint-frontend:
     name: lint-frontend
     runs-on: ubuntu-latest
@@ -218,7 +220,7 @@ jobs:
             esac
           done
           if [ ${#lint_files[@]} -gt 0 ]; then
-            pnpm dlx eslint@9.18.0 --max-warnings=0 "${lint_files[@]}"
+            pnpm run lint -- "${lint_files[@]}"
           else
             echo "No JS/TS files in change set — skipping ESLint."
           fi
@@ -235,7 +237,7 @@ jobs:
             esac
           done
           if [ ${#fmt_files[@]} -gt 0 ]; then
-            pnpm dlx prettier@3.4.2 --check "${fmt_files[@]}"
+            pnpm run format:check -- "${fmt_files[@]}"
           else
             echo "No format-relevant files in change set — skipping Prettier."
           fi
