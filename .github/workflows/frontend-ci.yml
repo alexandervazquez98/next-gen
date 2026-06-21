@@ -150,6 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           corepack enable
+          corepack prepare pnpm@10.12.1 --activate
           pnpm --dir frontend install --frozen-lockfile
 
       - name: vitest list must enumerate
