@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.2] — 2026-06-20
+
+### Fixed
+
+- **Router honors `should_count_rate_limit` for `ROTATED_STALE_RECOVERABLE`** (PR #293, closes #292):
+  - Wraps the stale-recovery exhausted counter write in `if verification.should_count_rate_limit:` so legitimate stale-rotation races do not contribute to `rate_limit_attempts`.
+  - Surgical fix: only `backend/routers/auth.py:404` is wrapped; the other 8 `increment_attempts` call sites for terminal abuse statuses (MISSING, EXPIRED, REVOKED, IDLE_EXPIRED, USER_INACTIVE, ROTATED_STALE_REJECTED, no-user, no-db-user) remain unchanged and continue to count.
+  - Adds 9 backend tests: 6 router (3 RED bug-proof + 3 terminal-abuse regression guards) + 3 service (flag contract + atomic contract unchanged).
+  - Targeted suite: 65/65 green. Full backend: 1067 passing (+9 from this PR). 97 pre-existing failures in 13 unrelated test files remain out of scope and are NOT addressed by this patch.
+
 ## [1.13.1] — 2026-06-20
 
 ### Added
