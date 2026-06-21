@@ -308,3 +308,102 @@ class TestMixedSeveritiesRegression:
             f"B's severity flattened to root's WARNING; got {b_ev['severity']!r}"
         )
         assert b_ev["correlation_type"] == "PROPAGATED"
+
+
+# ---------------------------------------------------------------------------
+# Scenario 4: REQ-CORR-8 depth coverage — true 3-hop found + 4-hop ignored
+# ---------------------------------------------------------------------------
+
+
+class TestDepthCoverageExtension:
+    """REQ-CORR-8 runtime coverage for explicit hop counts.
+
+    The earlier ``TestThreeHopChain`` class exercises A→B→C, which is
+    only 2 upstream hops from C to A. REQ-CORR-8 calls out two deeper
+    scenarios that the previous fixture could not express:
+
+    1. A true 3-hop chain A→B→C→D where the leaf is 3 hops from the
+       root. With ``max_depth=3`` the Cypher traversal still reaches the
+       root, so the leaf must be tagged ``PROPAGATED`` with
+       ``root_cause_ci_id`` equal to the root CI.
+    2. A 4-hop chain A→B→C→D→E where the leaf is 4 hops from the root.
+       ``max_depth=3`` caps the traversal, so no parent is found and the
+       leaf must be tagged ``ROOT`` with ``root_cause_ci_id`` equal to
+       its own CI (NOT the root).
+
+    These tests use the new ``build_dependency_chain(depth=N)`` factory
+    to build exact ``N``-CI linear chains. The mock session's
+    ``parent_lookup`` honors the same ``max_depth=3`` cap, so a
+    dependent whose hop count exceeds the cap is deliberately absent
+    from the lookup and the resolver sees ``None`` (mimicking the real
+    Cypher's bounded traversal).
+    """
+
+    def test_three_hop_chain_root_cause_found(self):
+        """A → B → C → D (4 CIs linear). D is 3 hops from A.
+
+        REQ-CORR-8 (one-hop-three-hop found, four-hop ignored): a 3-hop
+        chain resolves the root cause. D must be ``PROPAGATED`` with
+        ``root_cause_ci_id='ci-A'`` and ``propagated_from`` equal to
+        A's open event id.
+        """
+        fixture = build_dependency_chain(depth=4)
+        _run_poll_cycle(fixture)
+
+        root_id = fixture["ci_ids"][0]  # 'ci-A'
+        leaf_id = fixture["ci_ids"][-1]  # 'ci-D'
+        root_event_id = fixture["root_event_id"]
+
+        leaf_event = _get_event_row_for(fixture, leaf_id)
+        assert leaf_event is not None, (
+            f"expected {leaf_id}'s event to be captured for depth=4 chain. "
+            f"Created events: {sorted(fixture['session'].created_events.keys())!r}"
+        )
+
+        assert leaf_event["correlation_type"] == "PROPAGATED", (
+            f"3-hop chain: expected PROPAGATED for {leaf_id} (3 hops from "
+            f"{root_id}, within max_depth=3), got {leaf_event['correlation_type']!r}. "
+            f"Query text: {leaf_event['source_query_text'][:200]!r}"
+        )
+        assert leaf_event["root_cause_ci_id"] == root_id, (
+            f"3-hop chain: expected root_cause_ci_id={root_id!r} for {leaf_id}, "
+            f"got {leaf_event['root_cause_ci_id']!r}"
+        )
+        assert leaf_event["propagated_from"] == root_event_id, (
+            f"3-hop chain: expected propagated_from={root_event_id!r} for {leaf_id}, "
+            f"got {leaf_event['propagated_from']!r}"
+        )
+
+    def test_four_hop_chain_root_cause_ignored(self):
+        """A → B → C → D → E (5 CIs linear). E is 4 hops from A.
+
+        REQ-CORR-8: a 4-hop chain exceeds the resolver's ``max_depth=3``
+        cap, so the traversal cannot reach the root. The leaf must be
+        tagged ``ROOT`` with ``root_cause_ci_id`` equal to its own CI
+        (NOT the root CI), and ``propagated_from`` must be ``None``.
+        """
+        fixture = build_dependency_chain(depth=5)
+        _run_poll_cycle(fixture)
+
+        root_id = fixture["ci_ids"][0]  # 'ci-A'
+        leaf_id = fixture["ci_ids"][-1]  # 'ci-E'
+
+        leaf_event = _get_event_row_for(fixture, leaf_id)
+        assert leaf_event is not None, (
+            f"expected {leaf_id}'s event to be captured for depth=5 chain. "
+            f"Created events: {sorted(fixture['session'].created_events.keys())!r}"
+        )
+
+        assert leaf_event["correlation_type"] == "ROOT", (
+            f"4-hop chain: expected ROOT for {leaf_id} (4 hops from {root_id}, "
+            f"beyond max_depth=3), got {leaf_event['correlation_type']!r}. "
+            f"Query text: {leaf_event['source_query_text'][:200]!r}"
+        )
+        assert leaf_event["root_cause_ci_id"] == leaf_id, (
+            f"4-hop chain: expected root_cause_ci_id={leaf_id!r} (own CI, since "
+            f"parent is beyond max_depth), got {leaf_event['root_cause_ci_id']!r}"
+        )
+        assert leaf_event["propagated_from"] is None, (
+            f"4-hop chain: expected propagated_from=None for {leaf_id}, "
+            f"got {leaf_event['propagated_from']!r}"
+        )
