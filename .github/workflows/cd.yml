@@ -61,16 +61,36 @@
 
 name: cd
 
+# v1 trigger policy (2026-06-20):
+# - workflow_dispatch: ALWAYS available, with dry_run input. Operators
+#   trigger this manually before / between / after deploys to verify
+#   the runner contract + env + safe-rebuild.sh pre-flight on the real
+#   production runner. dry_run=true is the default-safe option.
+# - push: branches: [main]: DISABLED. The CD lane was originally
+#   intended to auto-deploy on merge to main, but the production
+#   server already runs the nextgen compose project from
+#   /home/alex/nextgen/ (manual deploys). The runner's checkout dir
+#   (/opt/.../_work/next-gen/next-gen/) is a different path, which
+#   makes docker compose treat the running containers as orphans and
+#   the bind-mount data dirs would point to the runner's empty
+#   checkout. Migrating to CD-first deploys requires switching data
+#   dirs to named volumes (preserved across compose project locations)
+#   and changing the runner's working dir — see the project
+#   discussion in openspec/changes/ci-cd-pipeline/specs/ci-cd-pipeline/spec.md
+#   "Open Questions" if revisited.
+# When the migration is done, restore the push trigger:
+#   on:
+#     push:
+#       branches: [main]
+#     workflow_dispatch:
+#       ...
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       dry_run:
         description: "Dry run only (do not actually deploy)"
         required: false
-        default: "false"
+        default: "true"
         type: boolean
 
 # CRITICAL: never cancel an in-flight deploy. See header comment.
@@ -168,11 +188,25 @@ jobs:
       - name: Pre-flight dry-run
         run: sh scripts/safe-rebuild.sh --dry-run
 
-      # R8: real deploy. Skip only when workflow_dispatch dry_run=true.
-      # Push events have no inputs.dry_run context, so the deploy runs
-      # by default. Failure here triggers the cd-failure issue below.
-      - name: Real deploy
-        if: ${{ inputs.dry_run != 'true' }}
+      # v1 (2026-06-20): Real deploy is DISABLED via `if: false`. The CD
+      # lane's workflow_dispatch path runs contract + env + dry-run
+      # validation only. Real `sh scripts/safe-rebuild.sh` is kept as
+      # documentation for the future migration (Option B in the spec
+      # discussion: switch data dirs to named volumes, align runner
+      # working dir with /home/alex/nextgen/, then re-enable).
+      #
+      # To re-enable real deploys in the future:
+      #   1. Switch ./docker/*/data bind mounts in docker-compose.yml to
+      #      named volumes (preserve data across compose project dirs).
+      #   2. Make the runner's working dir /home/alex/nextgen/ (or a
+      #      symlink path the existing project recognizes).
+      #   3. Change `if: false` below back to
+      #      `if: ${{ inputs.dry_run != 'true' }}` AND restore the
+      #      `push: branches: [main]` trigger above.
+      #   4. Test with workflow_dispatch dry_run=false once before
+      #      relying on push-triggered deploys.
+      - name: Real deploy (DISABLED in v1)
+        if: false
         run: sh scripts/safe-rebuild.sh
 
       # Cleanup / status snapshot. ALWAYS runs so operators see the
