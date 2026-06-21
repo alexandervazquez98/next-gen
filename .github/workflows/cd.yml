@@ -247,7 +247,7 @@ jobs:
             . ./.env
             set +a
           fi
-          BACKUP_DIR="${BACKUP_DIR:-<unset — see workflow run log for the deploy's BACKUP_DIR>}"
+          BACKUP_DIR="${BACKUP_DIR:-UNSET_SEE_WORKFLOW_RUN_LOG_FOR_BACKUP_DIR}"
           SHA=$(git rev-parse HEAD)
           MSG=$(git log -1 --pretty=%s)
           SHORT_SHA=$(git rev-parse --short HEAD)
