@@ -245,10 +245,40 @@ def _dedupe_snmp_collection_failures(failures):
     return list(deduped.values())
 
 
-def _refresh_snmp_collection_failures(session, failures):
+def _tag_failure_with_correlation(failure, correlation_cache=None):
+    """Resolve and stamp correlation fields onto a single failure/update row.
+
+    Calls `resolve_correlation_fields` to decide whether the event is ROOT or
+    PROPAGATED. The returned dict is added to the row as
+    `correlation_type`, `propagated_from`, and `root_cause_ci_id`. The original
+    row is mutated in place and returned for chaining.
+
+    A per-call `correlation_cache` may be passed to dedupe parent lookups
+    across the same poll cycle (~5s TTL — see T12).
+    """
+    from services.event_service import resolve_correlation_fields
+
+    node_id = failure.get("node_id")
+    severity = failure.get("severity") or "WARNING"
+    if not node_id:
+        return failure
+    fields = resolve_correlation_fields(
+        node_id,
+        severity,
+        cache=correlation_cache,
+    )
+    failure["correlation_type"] = fields["correlation_type"]
+    failure["propagated_from"] = fields["propagated_from"]
+    failure["root_cause_ci_id"] = fields["root_cause_ci_id"]
+    return failure
+
+
+def _refresh_snmp_collection_failures(session, failures, correlation_cache=None):
     failures = _dedupe_snmp_collection_failures(failures)
     if not failures:
         return
+    for failure in failures:
+        _tag_failure_with_correlation(failure, correlation_cache=correlation_cache)
     session.run("""
         UNWIND $failures AS row
         MATCH (n:CI {id: row.node_id})
@@ -268,8 +298,10 @@ def _refresh_snmp_collection_failures(session, failures):
                 status: 'OPEN', severity: row.severity, message: row.message,
                 event_type: row.event_type, failure_family: row.failure_family,
                 source_protocol: row.source_protocol, created_at: datetime(),
-                last_seen: datetime(), ack: false, correlation_type: 'ROOT',
-                root_cause_ci_id: row.node_id
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -292,7 +324,7 @@ def _availability_source(value: Any) -> str | None:
     return source if source in {"PING", "ICMP"} else None
 
 
-def _refresh_icmp_availability_events(session, updates):
+def _refresh_icmp_availability_events(session, updates, correlation_cache=None):
     availability_events = [
         u
         for u in updates
@@ -302,6 +334,8 @@ def _refresh_icmp_availability_events(session, updates):
     ]
     if not availability_events:
         return
+    for event in availability_events:
+        _tag_failure_with_correlation(event, correlation_cache=correlation_cache)
     session.run("""
         UNWIND $availability_events AS row
         WITH row WHERE row.event_type = 'AVAILABILITY'
@@ -323,7 +357,9 @@ def _refresh_icmp_availability_events(session, updates):
                 event_type: row.event_type, source_protocol: row.source_protocol,
                 availability_source: row.availability_source,
                 created_at: datetime(), last_seen: datetime(), ack: false,
-                correlation_type: 'ROOT', root_cause_ci_id: row.node_id
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -378,7 +414,7 @@ def _recover_icmp_availability_events(session, updates):
     """, recoveries=recoveries)
 
 
-def _refresh_icmp_latency_events(session, updates):
+def _refresh_icmp_latency_events(session, updates, correlation_cache=None):
     breaches = [
         u
         for u in updates
@@ -389,6 +425,10 @@ def _refresh_icmp_latency_events(session, updates):
     ]
     if not breaches:
         return
+    for breach in breaches:
+        # The latency breach uses status (WARNING/CRITICAL) for severity.
+        breach.setdefault("severity", breach.get("status"))
+        _tag_failure_with_correlation(breach, correlation_cache=correlation_cache)
     session.run("""
         UNWIND $breaches AS row
         MATCH (n:CI {id: row.node_id})
@@ -402,8 +442,10 @@ def _refresh_icmp_latency_events(session, updates):
                 id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                 event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                 message: row.message, source_protocol: row.source_protocol,
-                last_seen: datetime(), ack: false, correlation_type: 'ROOT',
-                root_cause_ci_id: row.node_id
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -722,7 +764,13 @@ def poll_snmp():
                 duration_current,
                 jobs_per_min,
             )
-            _refresh_snmp_collection_failures(session, failure_updates)
+            # Per-poll-cycle cache for parent-lookups (REQ-CORR-1 / T12).
+            # Shared across the three refresh sites in this cycle so a burst
+            # of dependent events in the same cycle only re-traverses the
+            # topology once per ci_id (~5s TTL).
+            correlation_cache: Dict[str, tuple] = {}
+
+            _refresh_snmp_collection_failures(session, failure_updates, correlation_cache=correlation_cache)
 
             # Perform Bulk Insert at the end of the cycle. Only publish latest
             # values to Neo4j after Timescale persistence succeeds, so the UI
@@ -746,10 +794,10 @@ def poll_snmp():
                             r.last_message = $msg
                     """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status=update["status"], msg=update["message"])
                 availability_updates = [u for u in latest_updates if u.get("metric_kind") == "availability"]
-                _refresh_icmp_availability_events(session, availability_updates)
+                _refresh_icmp_availability_events(session, availability_updates, correlation_cache=correlation_cache)
                 _recover_icmp_availability_events(session, availability_updates)
                 latency_updates = [u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID]
-                _refresh_icmp_latency_events(session, latency_updates)
+                _refresh_icmp_latency_events(session, latency_updates, correlation_cache=correlation_cache)
                 _recover_icmp_latency_events(session, latency_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
