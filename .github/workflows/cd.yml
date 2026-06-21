@@ -186,6 +186,12 @@ jobs:
       # trigger context (push vs dispatch + dry_run), and a runbook
       # pointer. The `if: failure()` covers every step above including
       # runner-contract and validate-env.
+      #
+      # Source .env first so BACKUP_DIR is available for the issue body.
+      # Use parameter expansion (${BACKUP_DIR:-...}) as belt-and-suspenders
+      # so the issue creation script never aborts on set -eu due to a
+      # missing variable — losing the alert is worse than a slightly
+      # degraded message.
       - name: Open cd-failure issue
         if: failure()
         env:
@@ -193,6 +199,16 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -eu
+          # Source .env so BACKUP_DIR is bound in the heredoc body.
+          # Defensive: even if .env is missing, default to a path that
+          # tells the operator "look in the run log instead".
+          if [ -f .env ]; then
+            set -a
+            # shellcheck disable=SC1091
+            . ./.env
+            set +a
+          fi
+          BACKUP_DIR="${BACKUP_DIR:-<unset — see workflow run log for the deploy's BACKUP_DIR>}"
           SHA=$(git rev-parse HEAD)
           MSG=$(git log -1 --pretty=%s)
           SHORT_SHA=$(git rev-parse --short HEAD)
@@ -209,6 +225,7 @@ jobs:
           - Commit: \`${SHA}\`
           - Message: ${MSG}
           - Trigger: ${TRIGGER_INFO}
+          - BACKUP_DIR: \`${BACKUP_DIR}\`
 
           ## Recovery
 
@@ -217,7 +234,7 @@ jobs:
           start. Key steps:
 
           1. Read the captured run log linked above.
-          2. Inspect \`$BACKUP_DIR\` for the pre-rebuild backup matching this deploy.
+          2. Inspect the BACKUP_DIR above for the pre-rebuild backup matching this deploy.
           3. Follow [Failure recovery](docs/ci-cd-runbook.md#failure-recovery).
           4. Acknowledge the issue per [Alert acknowledgment](docs/ci-cd-runbook.md#alert-acknowledgment).
           BODY
