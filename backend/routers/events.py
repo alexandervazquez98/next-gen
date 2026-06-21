@@ -37,13 +37,28 @@ class CloseRequest(BaseModel):
 
 
 @router.get("", response_model=List[EventFeedSummary])
-async def get_events(status: Optional[str] = None):
-    """
-    Fetch system events filtered by status.
+async def get_events(
+    status: Optional[str] = None,
+    include: Optional[str] = Query(
+        None,
+        description=(
+            "Opt-in to include non-authoritative (PROPAGATED) cascade events. "
+            "Pass 'propagated' or 'all' to include them; omit (or pass any "
+            "other value) to filter them out by default (REQ-CORR-6)."
+        ),
+    ),
+):
+    """Fetch system events filtered by status.
+
     Args:
-        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
+        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED',
+            'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
+        include (str, optional): 'propagated' or 'all' to include PROPAGATED
+            cascade events. Default filters them out so cascades deduplicate
+            to one authoritative incident per chain.
     """
-    return event_service.get_events(status)
+    include_propagated = include in {"propagated", "all"}
+    return event_service.get_events(status, include_propagated=include_propagated)
 
 
 @router.get("/availability-report", response_model=AvailabilityReportResponse)

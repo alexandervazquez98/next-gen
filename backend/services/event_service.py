@@ -1072,11 +1072,32 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
-def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_events(
+    status: Optional[str] = None,
+    include_propagated: bool = False,
+) -> List[Dict[str, Any]]:
+    """List events for the operator feed.
+
+    Args:
+        status: Optional status filter ('OPEN', 'ACK', 'CLOSED', 'RECOVERED',
+            'ACTIVE', 'CONSOLE'). ``None`` returns every status.
+        include_propagated: When False (default), the feed surfaces only
+            authoritative events (ROOT + legacy events with missing
+            ``correlation_type``). PROPAGATED events are filtered out at
+            the Cypher level. Pass True to include cascades — used by
+            forensic views and the AI agent audit log.
+
+    Returns:
+        Public event summaries (see ``_public_event_summary``).
+    """
     driver = get_db()
+    correlation_clause = (
+        "" if include_propagated
+        else "AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'"
+    )
     with driver.session() as session:
         result = session.run(
-            """
+            f"""
             MATCH (e:Event)<-[:HAS_EVENT]-(ci:CI)
             WITH e, ci
             WHERE (
@@ -1085,6 +1106,7 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
                 OR ($status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED'])
                 OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
             )
+            {correlation_clause}
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
