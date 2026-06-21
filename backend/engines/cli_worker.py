@@ -344,9 +344,39 @@ def check_nan_threshold(metric_id: str, value: float, raw_output: Optional[str],
         count = _nan_tracker.get(metric_id, 0) + 1
         _nan_tracker[metric_id] = count
         if count >= 3:
-            # Emit alert event to Neo4j
+            # Emit alert event to Neo4j. REQ-CORR-3: stamp correlation fields
+            # onto the CLI_POLL_ALERT Event so cascade-deduplication works
+            # for CLI metrics too. Resolve correlation against the CI that
+            # OWNS the MetricDef (not the cosmetic `node_label` string).
             try:
                 with driver.session() as session:
+                    # 1. Look up the CI for this MetricDef.
+                    ci_id: Optional[str] = None
+                    try:
+                        lookup = session.run(
+                            "MATCH (n:CI)-[:HAS_METRIC]->(m:MetricDef {id: $mid}) "
+                            "RETURN n.id AS ci_id",
+                            mid=metric_id,
+                        ).single()
+                        if lookup is not None:
+                            ci_id = lookup.get("ci_id")
+                    except Exception:
+                        ci_id = None  # fail-safe: alert still emits
+
+                    # 2. Compute correlation (fail-safe: ROOT if anything
+                    #    goes wrong, so the alert is never lost).
+                    correlation = {
+                        "correlation_type": "ROOT",
+                        "propagated_from": None,
+                        "root_cause_ci_id": ci_id or metric_id,
+                    }
+                    if ci_id:
+                        try:
+                            from services.event_service import resolve_correlation_fields
+                            correlation = resolve_correlation_fields(ci_id, "WARNING")
+                        except Exception:
+                            pass  # fail-safe: keep default ROOT
+
                     session.run("""
                         MATCH (m:MetricDef {id: $mid})
                         CREATE (e:Event {
@@ -355,10 +385,16 @@ def check_nan_threshold(metric_id: str, value: float, raw_output: Optional[str],
                             node_label: $node_label,
                             message: '3 consecutive NaN misses for CLI metric',
                             raw_output: $raw_output,
-                            timestamp: datetime()
+                            timestamp: datetime(),
+                            correlation_type: $correlation_type,
+                            propagated_from: $propagated_from,
+                            root_cause_ci_id: $root_cause_ci_id
                         })
                         SET m.last_alert = datetime()
-                    """, mid=metric_id, node_label=node_label, raw_output=raw_output or '')
+                    """, mid=metric_id, node_label=node_label, raw_output=raw_output or '',
+                        correlation_type=correlation["correlation_type"],
+                        propagated_from=correlation["propagated_from"],
+                        root_cause_ci_id=correlation["root_cause_ci_id"])
             except Exception as e:
                 print(f"[CLI] Failed to emit alert event: {e}")
             print(f"[CLI] WARNING: 3 consecutive NaN misses for metric {metric_id} on {node_label}.")
