@@ -6,12 +6,13 @@
   "type": "module",
   "scripts": {
     "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.includes('pnpm/')) { console.error('Use pnpm via Corepack: corepack pnpm install --frozen-lockfile'); process.exit(1); }\"",
-    "dev": "vite",
     "build": "vite build",
+    "check:deps": "bash ../scripts/check-frontend-deps.sh",
+    "dev": "vite",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@google/genai": "1.37.0",
