@@ -94,7 +94,7 @@ if [ "$failures" -eq 0 ]; then
             fail "R5: renew command final arg must be 'frontend', got '$last_token'"
         fi
     fi
-    if ! grep -q -- '+ docker compose up -d --force-recreate --renew-anon-volumes frontend' "$LAST_OUT"; then
+    if ! printf '%s\n' "$LAST_OUT" | grep -q -- '+ docker compose up -d --force-recreate --renew-anon-volumes frontend'; then
         fail "R5: must print '+ docker compose up -d --force-recreate --renew-anon-volumes frontend'; out: $LAST_OUT"
     fi
 fi
@@ -107,14 +107,18 @@ assert_exit 0 'R6: --dry-run exits 0' \
 if [ -s "$WORK/docker.log" ]; then
     fail "R6: --dry-run must not exec docker; log: $(cat "$WORK/docker.log")"
 fi
-if ! grep -q -- '+ docker compose up -d --force-recreate --renew-anon-volumes frontend' "$LAST_OUT"; then
+if ! printf '%s\n' "$LAST_OUT" | grep -q -- '+ docker compose up -d --force-recreate --renew-anon-volumes frontend'; then
     fail "R6: --dry-run must print '+ docker compose up -d --force-recreate --renew-anon-volumes frontend'; out: $LAST_OUT"
 fi
 
 # --- R7: missing docker exits non-zero with missing-command message ---
 # Run the script with PATH set to a directory that does NOT contain docker.
+# Place a sh symlink in the empty dir so the script's interpreter can still
+# be located; this isolates the failure to `docker` being absent.
 EMPTY_PATH=$(mktemp -d -t refresh-empty.XXXXXX)
 trap 'rm -rf "$WORK" "$EMPTY_PATH"' EXIT
+SH_PATH=$(command -v sh)
+ln -s "$SH_PATH" "$EMPTY_PATH/sh"
 set +e
 ( PATH="$EMPTY_PATH" sh "$REFRESH_SCRIPT" ) >"$WORK/out" 2>"$WORK/err"
 rc=$?
