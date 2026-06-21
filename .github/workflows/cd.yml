@@ -1,0 +1,187 @@
+# Workflow: cd (PR6 of ci-cd-pipeline)
+#
+# PR6 of the six-slice CI/CD chain (feature-branch-chain: PR1 -> PR2 ->
+# PR3 -> PR4 -> PR5 -> PR6). This is the **last slice** — when the
+# integrated chain fast-forwards into `main`, this workflow runs on every
+# push to `main` and calls scripts/safe-rebuild.sh on the production
+# self-hosted runner.
+#
+# Spec: openspec/changes/ci-cd-pipeline/specs/ci-cd-pipeline/spec.md
+#       "CD Lane" (R8), "Rollback Policy v1" (R9).
+#
+# Triggers:
+#   - push: branches: [main] — auto-deploy after merge
+#   - workflow_dispatch with inputs.dry_run: boolean — manual dry-run or
+#     manual real deploy (when forced via re-dispatch)
+#
+# Concurrency:
+#   group: cd-main
+#   cancel-in-progress: false — CRITICAL: never cancel an in-flight
+#   deploy. If a new commit lands while a deploy is running, the new
+#   push waits in queue until the current deploy completes (success
+#   OR failure). Without this guard, a mid-deploy cancellation could
+#   leave the stack in a partial state with no automatic rollback
+#   (v1 rollback policy).
+#
+# Runner:
+#   runs-on: [self-hosted, linux, x64, production, next-gen, cd]
+#   All six labels MUST match — see docs/self-hosted-runner.md.
+#
+# Permissions:
+#   contents: read  — checkout the repo
+#   issues: write   — open the cd-failure issue on failure
+#   No other scopes; secrets stay host-local.
+#
+# Steps:
+#   1. Checkout (full history — needed for git rev-parse + log in the
+#      cd-failure issue body).
+#   2. Prepare .env from runner host (copies $HOME/.env into the workdir).
+#   3. Assert runner contract (scripts/ci-cd-check-runner-contract.sh).
+#      Docker, Compose v2, BACKUP_DIR writable, .env present, gh auth.
+#   4. Validate env (scripts/validate-env.sh --check-backup-dir).
+#   5. Pre-flight dry-run (scripts/safe-rebuild.sh --dry-run) — ALWAYS.
+#      Gives operators a preview in the job log.
+#   6. Real deploy (scripts/safe-rebuild.sh) — skip only when the
+#      workflow_dispatch input dry_run=true.
+#   7. Cleanup (docker compose ps) — always, for visibility.
+#   8. On any failure: open GitHub Issue labeled cd-failure.
+#
+# SHA pins (consistent with PR1..PR5):
+#   - actions/checkout@v4: 692973e3d937129bcbf40652eb9f2f61becf3332 (v4.1.7)
+#
+# T6.6 manual-evidence note: the dry-run dispatch record is the
+# authoritative substitute for "real deploy to prod" in CI; the manual
+# deploy drill (per docs/ci-cd-runbook.md#manual-deploy-fallback) is the
+# documented substitute when no production runner is reachable.
+#
+# BACKUP_DIR: expected to be set in the runner environment
+# (or .env on the runner host). The contract script
+# (scripts/ci-cd-check-runner-contract.sh) verifies it exists and is
+# writable before the deploy step runs.
+
+name: cd
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only (do not actually deploy)"
+        required: false
+        default: "false"
+        type: boolean
+
+# CRITICAL: never cancel an in-flight deploy. See header comment.
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cd:
+    name: cd
+    runs-on: [self-hosted, linux, x64, production, next-gen, cd]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+
+      # .env is gitignored and lives on the runner host only
+      # (see docs/self-hosted-runner.md#prerequisites). Copy it into
+      # the workdir so scripts/ci-cd-check-runner-contract.sh,
+      # scripts/validate-env.sh, and scripts/safe-rebuild.sh all see
+      # the same file. The source path follows the runner setup guide
+      # ($HOME/.env, owned by the runner user, chmod 600).
+      - name: Prepare .env from runner host
+        run: |
+          set -eu
+          if [ ! -f "$HOME/.env" ]; then
+            echo "::error::Runner host is missing \$HOME/.env. See docs/self-hosted-runner.md#prerequisites."
+            exit 1
+          fi
+          cp "$HOME/.env" .env
+          chmod 600 .env
+          echo "Loaded .env from $HOME/.env ($(wc -l < .env) lines, mode $(stat -c %a .env))"
+
+      # R8 / T6.4: assert the runner contract. Failures here mean the
+      # runner itself is misconfigured (Docker missing, BACKUP_DIR not
+      # writable, gh unauthenticated, etc.). The CD job MUST fail loud
+      # rather than silently skip a contract violation.
+      - name: Assert runner contract
+        run: sh scripts/ci-cd-check-runner-contract.sh
+
+      # R8: .env and BACKUP_DIR validated before any deploy step.
+      - name: Validate environment
+        run: sh scripts/validate-env.sh --check-backup-dir
+
+      # R8: always print the deploy plan. Even on real deploy this gives
+      # operators a single-screen summary of what safe-rebuild.sh is
+      # about to do.
+      - name: Pre-flight dry-run
+        run: sh scripts/safe-rebuild.sh --dry-run
+
+      # R8: real deploy. Skip only when workflow_dispatch dry_run=true.
+      # Push events have no inputs.dry_run context, so the deploy runs
+      # by default. Failure here triggers the cd-failure issue below.
+      - name: Real deploy
+        if: ${{ inputs.dry_run != 'true' }}
+        run: sh scripts/safe-rebuild.sh
+
+      # Cleanup / status snapshot. ALWAYS runs so operators see the
+      # final compose state regardless of outcome.
+      - name: Cleanup (compose ps)
+        if: always()
+        run: docker compose ps
+
+      # R8 / R9: open a GitHub Issue labeled `cd-failure` on any
+      # failure. Body captures the run URL, commit SHA + message, the
+      # trigger context (push vs dispatch + dry_run), and a runbook
+      # pointer. The `if: failure()` covers every step above including
+      # runner-contract and validate-env.
+      - name: Open cd-failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          SHA=$(git rev-parse HEAD)
+          MSG=$(git log -1 --pretty=%s)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TITLE="CD failure: ${SHORT_SHA} run ${{ github.run_id }}"
+          TRIGGER_INFO="${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TRIGGER_INFO="workflow_dispatch (dry_run=${{ github.event.inputs.dry_run }})"
+          fi
+
+          cat > /tmp/cd-failure-body.md <<BODY
+          ## CD Failure
+
+          - Workflow run: ${RUN_URL}
+          - Commit: \`${SHA}\`
+          - Message: ${MSG}
+          - Trigger: ${TRIGGER_INFO}
+
+          ## Recovery
+
+          See [docs/ci-cd-runbook.md](docs/ci-cd-runbook.md) for the manual
+          recovery procedure using the pre-rebuild backup captured at deploy
+          start. Key steps:
+
+          1. Read the captured run log linked above.
+          2. Inspect \`$BACKUP_DIR\` for the pre-rebuild backup matching this deploy.
+          3. Follow [Failure recovery](docs/ci-cd-runbook.md#failure-recovery).
+          4. Acknowledge the issue per [Alert acknowledgment](docs/ci-cd-runbook.md#alert-acknowledgment).
+          BODY
+
+          gh issue create \
+            --label cd-failure \
+            --title "$TITLE" \
+            --body-file /tmp/cd-failure-body.md
+          rm -f /tmp/cd-failure-body.md

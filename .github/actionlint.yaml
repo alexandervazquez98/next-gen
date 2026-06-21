@@ -1,7 +1,15 @@
 # actionlint config for next-gen. See https://github.com/rhysd/actionlint/tree/v1.7.8/docs/config.md
 
 self-hosted-runner:
-  labels: []
+  # Custom labels applied to the production self-hosted runner that
+  # runs the CD lane. Standard labels (self-hosted, linux, x64) are
+  # built-in; the rest are registered with the runner at install time
+  # per docs/self-hosted-runner.md. Listed here so actionlint stops
+  # flagging them as unknown.
+  labels:
+    - production
+    - next-gen
+    - cd
   matrix: {}
 
 config-variables: null
