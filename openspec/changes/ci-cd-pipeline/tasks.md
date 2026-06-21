@@ -94,12 +94,12 @@ Strict-TDD policy (`openspec/config.yaml` `sdd.strict_tdd`): every workflow or s
 
 | ID | Title | Files | Reqs | Est | Deps | Verification gate | strict_tdd_evidence |
 |---|---|---|---|---|---|---|---|
-| T5.1 | Add `@playwright/test` devDep + `corepack pnpm install` | `frontend/package.json`, `frontend/pnpm-lock.yaml` | R7 | 30 | T3.1 | Lockfile updated; `corepack pnpm install --frozen-lockfile` clean | Lockfile diff review + reinstall is the test. |
-| T5.2 | `frontend/playwright.config.ts` (compose webServer, timeouts 120s/90s) | `frontend/playwright.config.ts` | R7 | 80 | T5.1 | `corepack pnpm playwright test --list` enumerates specs; local config loads | Config dry-run + spec enumeration is the test harness. |
-| T5.3 | 2 Playwright smoke specs (frontend HTML + backend HTTP 200) | `frontend/test/e2e/frontend-html.spec.ts`, `frontend/test/e2e/backend-health.spec.ts` | R7 | 80 | T5.2 | `corepack pnpm playwright test` against compose stack green | The specs themselves are the R7 smoke-validates-serving-paths test. |
-| T5.4 | `.github/workflows/smoke.yml` (compose up, health waits 120s/90s, Playwright, compose down no `-v`) | `.github/workflows/smoke.yml` | R7 | 120 | T5.3 | Workflow green on PR touching compose/services; unhealthy stack tears down without `-v` | T5.3 specs + T5.5 dir-creation are the tests for R7 unhealthy-stack scenario. |
-| T5.5 | Document `docker/postgres/data` host dir creation (R1 mitigation) | `docker/README.md` or compose comment | R6, R7 | 10 | — | First-run `compose up` creates dir; doc snippet present | Manual evidence: compose default-bind-creates behavior; doc snippet is the artifact. |
-| T5.6 | PR5 verification gate — smoke workflow green on PR | `.github/workflows/smoke.yml` | R7, R11 | 30 | T5.4 | Open scratch PR touching compose/services; workflow green | CI run logs are the evidence under strict TDD. |
+| T5.1 | Add `@playwright/test` devDep + `corepack pnpm install` | `frontend/package.json`, `frontend/pnpm-lock.yaml` | R7 | 30 | T3.1 | Lockfile updated; `corepack pnpm install --frozen-lockfile` clean | Lockfile diff review + reinstall is the test. | [x] |
+| T5.2 | `frontend/playwright.config.ts` (compose webServer, timeouts 120s/90s) | `frontend/playwright.config.ts` | R7 | 80 | T5.1 | `corepack pnpm playwright test --list` enumerates specs; local config loads | Config dry-run + spec enumeration is the test harness. | [x] |
+| T5.3 | 2 Playwright smoke specs (frontend HTML + backend HTTP 200) | `frontend/test/e2e/frontend-html.spec.ts`, `frontend/test/e2e/backend-health.spec.ts` | R7 | 80 | T5.2 | `corepack pnpm playwright test` against compose stack green | The specs themselves are the R7 smoke-validates-serving-paths test. | [x] |
+| T5.4 | `.github/workflows/smoke.yml` (compose up, health waits 120s/90s, Playwright, compose down no `-v`) | `.github/workflows/smoke.yml` | R7 | 120 | T5.3 | Workflow green on PR touching compose/services; unhealthy stack tears down without `-v` | T5.3 specs + T5.5 dir-creation are the tests for R7 unhealthy-stack scenario. | [x] |
+| T5.5 | Document `docker/postgres/data` host dir creation (R1 mitigation) | `docker/README.md` or compose comment | R6, R7 | 10 | — | First-run `compose up` creates dir; doc snippet present | Manual evidence: compose default-bind-creates behavior; doc snippet is the artifact. | [x] |
+| T5.6 | PR5 verification gate — smoke workflow green on PR | `.github/workflows/smoke.yml` | R7, R11 | 30 | T5.4 | Open scratch PR touching compose/services; workflow green | CI run logs are the evidence under strict TDD. | [x] |
 
 **PR5 total**: 350 LOC. **Chain downstream**: PR6 branches off `cicd/smoke-playwright`.
 
