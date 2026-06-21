@@ -41,6 +41,13 @@ def _run_poll_cycle(fixture):
 
     Pre-populates the ICMP debounce counter to 2 for every CI in the chain
     so the first failure triggers an event (default debounce_count=3).
+
+    Patches BOTH `engines.snmp_worker.driver` (used by the poll cycle) and
+    `database.driver` (used by `repositories.topology_repo.get_db()` which
+    is called by the resolver's `find_open_parent_event`). They point at the
+    same ChainMockNeo4jDriver instance so the same mock session answers
+    both call sites — that's the only way the real Cypher can find the
+    canned parent rows.
     """
     from engines import snmp_worker
 
@@ -50,6 +57,7 @@ def _run_poll_cycle(fixture):
         snmp_worker._consecutive_failures[ci] = 2  # one more failure triggers event
 
     with patch("engines.snmp_worker.driver", fixture["driver"]), \
+         patch("database.driver", fixture["driver"]), \
          patch("engines.snmp_worker.SessionLocal", return_value=fixture["db"]), \
          patch("engines.snmp_worker.bulk_insert_metrics") as mock_bulk_insert, \
          patch("engines.snmp_worker.fetch_icmp_ping", return_value=fixture["ping_measurement"]):
