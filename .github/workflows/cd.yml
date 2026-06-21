@@ -109,11 +109,53 @@ jobs:
           chmod 600 .env
           echo "Loaded .env from $HOME/.env ($(wc -l < .env) lines, mode $(stat -c %a .env))"
 
+      # Export every KEY=VALUE from .env into the workflow's GITHUB_ENV
+      # so subsequent steps see BACKUP_DIR, NEO4J_*, POSTGRES_*, etc.
+      # as real environment variables. safe-rebuild.sh and the runner
+      # contract script read these via shell env, not from .env directly
+      # (validate-env.sh is the only thing that reads .env).
+      #
+      # Filter rules:
+      #   - KEY must match POSIX env var conventions (uppercase, digits,
+      #     underscore; cannot start with a digit).
+      #   - Skip well-known shell-managed vars (PATH, HOME, PWD, UID, GID)
+      #     to avoid clobbering the runner's own env.
+      #   - Skip comment lines and blank lines.
+      - name: Export .env into workflow environment
+        id: export-env
+        run: |
+          set -eu
+          while IFS='=' read -r key value; do
+            case "$key" in
+              ''|\#*) continue ;;
+              PATH|HOME|PWD|UID|GID|SHLVL|_|* ) continue ;;
+            esac
+            case "$key" in
+              *[!A-Z0-9_]*|[0-9]*) continue ;;
+            esac
+            # Strip surrounding single/double quotes if present.
+            value="${value%\"}"
+            value="${value#\"}"
+            value="${value%\'}"
+            value="${value#\'}"
+            echo "$key<<EOF" >> "$GITHUB_ENV"
+            echo "$value" >> "$GITHUB_ENV"
+            echo "EOF" >> "$GITHUB_ENV"
+          done < .env
+
       # R8 / T6.4: assert the runner contract. Failures here mean the
       # runner itself is misconfigured (Docker missing, BACKUP_DIR not
       # writable, gh unauthenticated, etc.). The CD job MUST fail loud
       # rather than silently skip a contract violation.
+      #
+      # Pass GH_TOKEN to the contract script so gh auth via env-var
+      # token is accepted as an alternative to interactive gh auth login.
+      # The runner contract (scripts/ci-cd-check-runner-contract.sh)
+      # recognizes GITHUB_TOKEN / GH_TOKEN env vars and skips the
+      # interactive `gh auth status` check.
       - name: Assert runner contract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sh scripts/ci-cd-check-runner-contract.sh
 
       # R8: .env and BACKUP_DIR validated before any deploy step.

@@ -84,15 +84,20 @@ else
     fi
 fi
 
-# 5. gh CLI authenticated. The cd-failure issue step needs to post as
-#    the workflow bot via GITHUB_TOKEN, which gh picks up automatically
-#    when GITHUB_TOKEN is in the env. We also check gh auth status so
-#    manual ops (operator-driven deploys from the runner host) keep
-#    working.
+# 5. gh CLI authenticated. Acceptable forms of auth, in priority order:
+#    (a) GH_TOKEN or GITHUB_TOKEN env var set (the workflow's secrets
+#        pass these; gh uses the env token transparently for any
+#        subsequent gh command without requiring interactive login).
+#    (b) Interactive `gh auth login` already done on the runner host
+#        (manual ops path; runner user ran `gh auth login` themselves).
+#    The cd-failure issue step uses (a); operator-driven manual ops use
+#    (b). Either is sufficient.
 if ! command -v gh >/dev/null 2>&1; then
     fail 'gh CLI is not installed. See https://cli.github.com/manual/installation.'
+elif [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+    : # GH_TOKEN/GITHUB_TOKEN env var is set — gh will use it for any command
 elif ! gh auth status >/dev/null 2>&1; then
-    fail 'gh is not authenticated. Run: gh auth login (or set GITHUB_TOKEN).'
+    fail 'gh is not authenticated. Run: gh auth login (or set GITHUB_TOKEN/GITHUB_TOKEN env var).'
 fi
 
 if [ "$failures" -gt 0 ]; then
