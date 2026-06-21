@@ -1,0 +1,54 @@
+# docker-compose.prod.yml — production overlay for the frontend image.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod config
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+#
+# Strategy: ADD a separate `frontend-prod` service (not override the
+# dev `frontend`). The base `frontend` service is left fully untouched,
+# which makes the overlay strictly additive and non-breaking by
+# construction.
+#
+# Why a separate service and not an override:
+#   - Docker Compose v2 MERGES list fields like `volumes` and
+#     `environment` rather than replacing them, so an override of
+#     `frontend` would inherit the dev bind-mounts (`./frontend:/app`,
+#     `/app/node_modules`) that exist for hot-reload. Those mounts
+#     would mask parts of the prod image. A separate service sidesteps
+#     the merge entirely.
+#   - Operators can run dev (`docker compose up`) and prod
+#     (`... --profile prod up -d frontend-prod`) on the same host on
+#     different ports without conflict.
+#
+# NON-BREAKING: this file is OPT-IN. The base `docker-compose.yml` and
+# the dev `frontend` service are not modified. `docker compose up`
+# continues to start Vite on :3000 as before. PR6 (CD lane) will run
+# this overlay on the production endpoint via `safe-rebuild.sh`.
+
+services:
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    image: nexgen_frontend:prod
+    container_name: nexgen_frontend_prod
+    profiles:
+      - prod
+    ports:
+      - "${FRONTEND_PROD_EXTERNAL_PORT:-3010}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://127.0.0.1:80/",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
