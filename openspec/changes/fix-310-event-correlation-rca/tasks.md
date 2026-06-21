@@ -107,18 +107,20 @@ Notes:
   - Canned `find_open_parent_event` Cypher responses are loaded into `MockNeo4jDriver` so real `topology_repo.find_open_parent_event` executes against the mock session. **Do NOT mock `find_open_parent_event` itself.**
   - Stubs `engines.snmp_worker.fetch_icmp_ping_measurement` / `fetch_snmp_value` with deterministic measurements.
   - Patches `SessionLocal`, `bulk_insert_metrics`, and scheduler side effects as existing tests do.
-- **Mandatory scenarios** (all three, each `<1s`):
-  1. `fan_out`: A CRITICAL → assert exactly one Event for A: `correlation_type='ROOT'`, `root_cause_ci_id='A'`, severity CRITICAL; one Event per B/C/D: `correlation_type='PROPAGATED'`, `propagated_from=<A event id>`, `root_cause_ci_id='A'`, severity from each CI's own metric; `notify_critical_event_escalation` called exactly once for A and zero times for B/C/D; `GET /api/events` default returns only A; `?include=propagated` returns all four.
+- **Mandatory scenarios** (all four, each `<1s`):
+  1. `fan_out`: A CRITICAL → assert exactly one Event for A: `correlation_type='ROOT'`, `root_cause_ci_id='A'`, severity CRITICAL; one Event per B/C/D: `correlation_type='PROPAGATED'`, `propagated_from=<A event id>`, `root_cause_ci_id='A'`, severity from each CI's own metric.
   2. 3-hop chain: A WARNING, B CRITICAL (own metric), C WARNING (own metric) → assert A ROOT WARNING, B PROPAGATED CRITICAL, C PROPAGATED WARNING. Confirms severity follows descendant's own metric, not root's.
   3. Mixed severities regression: any other severity combination proves propagated severity never flattens to root severity.
+  4. **Depth coverage (REQ-CORR-8 runtime):** explicit depth scenarios via the new `build_dependency_chain(depth=N)` factory parameter. A true 3-hop chain `A→B→C→D` (depth=4) — D resolves the root cause and is tagged `PROPAGATED` with `root_cause_ci_id='A'`. A 4-hop chain `A→B→C→D→E` (depth=5) — E exceeds the traversal depth and is tagged `ROOT` with `root_cause_ci_id='E'` (not 'A').
 - **Mock boundary contract:** stub the SNMP poller; **never** stub `find_open_parent_event`.
-- **Consumer assertions** in the same test cycle: `notify_critical_event_escalation` call counts AND `GET /api/events` default vs `?include=propagated` return sets.
+- **Consumer assertions** (`notify_critical_event_escalation` call counts AND `GET /api/events` default vs `?include=propagated` return sets) are tested in PR 2 (T9/T10), NOT in T5. T5 is write-side only. See `design.md` "Mandatory Path A Chain Test" section and `spec.md` REQ-CORR-1 "Test coverage" subsection.
 - **Work-unit commits:**
   1. `test(events): add build_dependency_chain fixture factory and topology helpers`
   2. `test(events): add failing Path A fan-out correlation scenario`
   3. `test(events): add failing Path A 3-hop chain correlation scenario`
-  4. `test(events): add consumer assertions for escalation and events API in chain test`
-- **Status:** ✅ completed (commits f4c0805 + 4056497) — fixture in `backend/tests/fixtures/rca_chain.py`; 10-test test file covers all three scenarios. **Note:** consumer assertions (escalation + `GET /api/events`) are deferred to PR 2 (T9/T10) where those surfaces are actually modified.
+  4. `test(events): extend build_dependency_chain fixture for depth-specific chains` *(added in continuation)*
+  5. `test(events): add true 3-hop found and 4-hop ignored depth coverage (REQ-CORR-8)` *(added in continuation)*
+- **Status:** ✅ completed (commits f4c0805 + 4056497 + 9beeae1 + 42be63f) — fixture in `backend/tests/fixtures/rca_chain.py`; 12-test test file covers all four scenarios (10 from PR 1 + 2 depth-coverage tests). **Note:** consumer assertions (escalation + `GET /api/events`) are deferred to PR 2 (T9/T10) where those surfaces are actually modified.
 
 ### T6 — [GREEN] Wire `resolve_correlation_fields` into Path A (3 sites)
 
