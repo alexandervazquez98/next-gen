@@ -184,6 +184,14 @@ resolve_backup_dir() {
         value=$(env_value .env BACKUP_DIR)
         value=$(trim_value "$value")
         if [ "$value" ]; then
+            # Expand a leading ~ or ~/ to $HOME so the value is usable as a
+            # path. ~/foo expands to /home/<user>/foo; ~user/foo would
+            # require getent — not supported here, fall through to tilde-
+            # literal path which the caller will see as missing.
+            case "$value" in
+                "~") value=$HOME ;;
+                "~/"*) value=$HOME/${value#"~/"} ;;
+            esac
             printf '%s\n' "$value"
             return
         fi
