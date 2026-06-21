@@ -120,6 +120,24 @@ jobs:
           mkdir -p docker/postgres/data docker/neo4j/data docker/neo4j/logs .docker/backups
           ls -la docker/postgres/data docker/neo4j/data docker/neo4j/logs .docker/backups
 
+      # Materialize a test-only .env from .env.example with throwaway
+      # credentials. The smoke stack is ephemeral (docker compose down at
+      # job end, no -v) so real secrets are not required; the goal is to
+      # satisfy docker-compose.yml's `env_file: .env` requirement and let
+      # the data tier pass healthchecks.
+      - name: Materialize test-only .env
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # Replace any password placeholder with a deterministic CI-only value.
+          sed -i "s/YourStrongPassword#2026/ci-smoke-password-12345/g" .env
+          sed -i "s/ChangeMe_SomethingVeryLongAndSecure_123456/ci-smoke-jwt-secret-very-long-and-secure/g" .env
+          # Override BACKUP_DIR to a workspace-local path (avoid the default
+          # .docker/backups, which is fine but we make it explicit for CI).
+          grep -q '^BACKUP_DIR=' .env || echo "BACKUP_DIR=.docker/backups" >> .env
+          echo "--- .env (sanitized, lines 1-20) ---"
+          sed -e 's/=.*/=<redacted>/' .env | head -20
+
       # Backend-stack first: postgres + neo4j + backend. The `depends_on`
       # healthchecks in docker-compose.yml gate the order; we additionally
       # poll backend health directly with curl because FastAPI readiness
