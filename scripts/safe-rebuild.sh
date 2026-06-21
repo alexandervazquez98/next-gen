@@ -224,6 +224,7 @@ if [ "${SAFE_REBUILD_LIB_ONLY:-0}" = "1" ]; then
 fi
 
 require_command docker
+require_command sha256sum
 
 printf 'Validating .env without creating secrets...\n'
 backup_dir=$(sh scripts/validate-env.sh --print-backup-dir)
@@ -254,6 +255,7 @@ fi
 
 printf 'Building and restarting services...\n'
 run docker compose build
+maybe_renew_frontend_anonymous_volume
 run docker compose up -d
 
 printf 'Applying ICMP latency/jitter sidecar migration...\n'
