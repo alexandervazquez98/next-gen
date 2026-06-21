@@ -49,7 +49,7 @@ fi
 #    is the test; we then parse the major version and require >= 2.
 if command -v docker >/dev/null 2>&1; then
     if ! docker compose version >/dev/null 2>&1; then
-        fail 'docker compose v2 plugin is required (the v2 subcommand `docker compose` failed). Install the docker-compose-plugin.'
+        fail 'docker compose v2 plugin is required. Install the docker-compose-plugin.'
     else
         compose_version_output=$(docker compose version 2>/dev/null || printf '')
         major=$(printf '%s' "$compose_version_output" | sed -n 's/.*[Vv]ersion[[:space:]]*v\?\([0-9]\+\).*/\1/p')

@@ -74,6 +74,7 @@ mkdir -p "$WORK/backups"
 # (a) docker exits 127 with no output -> contract exits 1.
 #     We rely on the stub taking precedence on PATH.
 assert_exit 1 'docker missing/broken -> exit 1' \
+    # shellcheck disable=SC2016 # $1/$2/$3 are positional args to sh -c, not local expansion
     sh -c 'cd "$1" && PATH="$2/bin:$PATH" BACKUP_DIR="$2/backups" sh "$3"' \
     sh "$WORK" "$WORK" "$CONTRACT"
 
@@ -102,11 +103,13 @@ STUB
 chmod +x "$WORK/bin/gh"
 
 assert_exit 1 'missing BACKUP_DIR -> exit 1' \
+    # shellcheck disable=SC2016 # $1/$2/$3 are positional args to sh -c, not local expansion
     sh -c 'cd "$1" && PATH="$2/bin:$PATH" BACKUP_DIR="$2/no-such-dir" sh "$3"' \
     sh "$WORK" "$WORK" "$CONTRACT"
 
 # (c) all conditions mocked -> exit 0.
 assert_exit 0 'all conditions mocked -> exit 0' \
+    # shellcheck disable=SC2016 # $1/$2/$3 are positional args to sh -c, not local expansion
     sh -c 'cd "$1" && PATH="$2/bin:$PATH" BACKUP_DIR="$2/backups" sh "$3"' \
     sh "$WORK" "$WORK" "$CONTRACT"
 
