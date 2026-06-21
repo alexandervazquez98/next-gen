@@ -18,6 +18,7 @@ USAGE
 dry_run=0
 skip_neo4j=0
 offline_neo4j=0
+frontend_lockfile_hash=
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -164,6 +165,56 @@ verify_container_backups() {
     '
 }
 
+# Prints the SHA-256 hash of frontend/pnpm-lock.yaml. Used as the
+# frontend lockfile sentinel primitive. Returns a clear error when the
+# lockfile is missing so the operator can fix it before continuing.
+compute_frontend_lockfile_hash() {
+    frontend_lockfile="frontend/pnpm-lock.yaml"
+    if [ ! -f "$frontend_lockfile" ]; then
+        printf 'ERROR: frontend lockfile not found: %s\n' "$frontend_lockfile" >&2
+        exit 1
+    fi
+    sha256sum "$frontend_lockfile" | awk '{print $1}'
+}
+
+# Compares the current frontend lockfile hash against the stored sentinel
+# at $backup_dir/frontend-pnpm-lock.sha256. Sets the global
+# frontend_lockfile_hash. Returns 0 when the lockfile changed (or no
+# sentinel exists yet) so the renew step should run; 1 when unchanged.
+# Does NOT mutate the sentinel — the caller writes it only after a
+# successful renew.
+frontend_lockfile_changed() {
+    frontend_lockfile_hash=$(compute_frontend_lockfile_hash)
+    sentinel="$backup_dir/frontend-pnpm-lock.sha256"
+    if [ ! -f "$sentinel" ]; then
+        return 0
+    fi
+    stored=$(cat "$sentinel" 2>/dev/null || printf '')
+    stored=$(printf '%s\n' "$stored" | sed 's/[[:space:]]*$//')
+    if [ "$stored" = "$frontend_lockfile_hash" ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Renews only the dev `frontend` anonymous node_modules volume when the
+# lockfile hash changed. Always scoped to the `frontend` service so
+# unrelated anonymous volumes (current and future) stay intact. The
+# sentinel is written only after a successful non-dry-run renew so a
+# failed Docker command cannot mask stale dependency state.
+maybe_renew_frontend_anonymous_volume() {
+    if ! frontend_lockfile_changed; then
+        return 0
+    fi
+    if [ "$dry_run" -eq 1 ]; then
+        printf '+ docker compose up -d --force-recreate --renew-anon-volumes frontend\n'
+        printf 'DRY RUN: would update sentinel %s/frontend-pnpm-lock.sha256\n' "$backup_dir"
+        return 0
+    fi
+    run docker compose up -d --force-recreate --renew-anon-volumes frontend
+    printf '%s\n' "$frontend_lockfile_hash" > "$backup_dir/frontend-pnpm-lock.sha256"
+}
+
 if [ "${SAFE_REBUILD_LIB_ONLY:-0}" = "1" ]; then
     # shellcheck disable=SC2317
     return 0 2>/dev/null || {
@@ -173,6 +224,7 @@ if [ "${SAFE_REBUILD_LIB_ONLY:-0}" = "1" ]; then
 fi
 
 require_command docker
+require_command sha256sum
 
 printf 'Validating .env without creating secrets...\n'
 backup_dir=$(sh scripts/validate-env.sh --print-backup-dir)
@@ -203,6 +255,7 @@ fi
 
 printf 'Building and restarting services...\n'
 run docker compose build
+maybe_renew_frontend_anonymous_volume
 run docker compose up -d
 
 printf 'Applying ICMP latency/jitter sidecar migration...\n'

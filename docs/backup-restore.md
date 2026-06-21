@@ -12,6 +12,24 @@ Use this runbook before Docker rebuilds or releases. Docker Compose commands do 
 
 Do not run `docker compose down -v` as part of rebuilds. That deletes named volumes and can destroy database state.
 
+### Data volumes vs build-artifact volumes
+
+Safe rebuilds deliberately distinguish **data volumes** from **build-artifact volumes**. Treat them differently:
+
+| Volume kind | Example | Safe-rebuild behavior | Operator recovery |
+| --- | --- | --- | --- |
+| Data volume (bind mount or named) | `postgres` data, `neo4j` data, `BACKUP_DIR` mount | Preserved across every rebuild | Never run `docker compose down -v`, `docker volume rm`, or delete data directories. |
+| Build-artifact anonymous volume | Dev `frontend /app/node_modules` | Renewed automatically by `safe-rebuild.sh` when `frontend/pnpm-lock.yaml` changes | Run `sh scripts/refresh-frontend-deps.sh` to renew only the `frontend` anonymous volume without rebuilding images. |
+
+If a stale `node_modules` symptom appears after a `safe-rebuild.sh` (for example `Failed to resolve import "sonner" from context/AuthContext.tsx`), do not delete volumes. Use the narrow recovery path:
+
+```sh
+sh scripts/refresh-frontend-deps.sh        # actual renew
+sh scripts/refresh-frontend-deps.sh --dry-run  # preview only
+```
+
+The `frontend-prod` service has no anonymous volume, so the renew flag is a no-op for production. `--renew-anon-volumes` is intentionally scoped to the `frontend` service so it never reaches data volumes.
+
 Run the scripts from Linux/macOS/Git Bash/WSL, not PowerShell. On Windows PowerShell, use Git Bash or WSL for the safe rebuild command.
 
 ## Manual Deploy Flow
