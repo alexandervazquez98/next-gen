@@ -216,16 +216,51 @@ def _poller_stub_for(severity: str) -> Any:
     return PingMeasurement(available=False, latency_ms=None)
 
 
-def _build_parent_lookup(layout: Dict[str, Any], root_event_id: str = "evt-A-root") -> Dict[str, Dict[str, Any]]:
-    """Build the parent_lookup table: for each dependent CI, map to A's open event."""
+def _build_parent_lookup(
+    layout: Dict[str, Any],
+    root_event_id: str = "evt-A-root",
+    max_depth: int = 3,
+) -> Dict[str, Dict[str, Any]]:
+    """Build the parent_lookup table mirroring `find_open_parent_event` Cypher.
+
+    The mock session returns ``parent_lookup[ci_id]`` for the parent-lookup
+    Cypher. To stay faithful to the real Cypher
+    (``[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..max_depth]``), a dependent CI is
+    only included in the lookup if it can reach the root within ``max_depth``
+    hops. Dependents beyond ``max_depth`` are deliberately absent, so the
+    resolver sees ``None`` (no open parent) and tags the event as ``ROOT`` —
+    exactly what the real traversal would do.
+
+    For fan-out, all dependents are 1 hop from the root, so all are included.
+    For chain A→B→C (dependent_count=3), B=1 hop and C=2 hops, both within
+    max_depth=3, so both included. For depth=4 (A→B→C→D), D=3 hops (within
+    cap). For depth=5 (A→B→C→D→E), E=4 hops — E is excluded.
+    """
+    root_id = layout["root_ids"][0]
+    parent_of = layout.get("parent_of", {})
+
+    # Walk the parent_of chain to compute the hop count from each dependent
+    # to the root. Cap the walk at max_depth + 1 steps as a defensive guard.
+    hops_to_root: Dict[str, int] = {}
+    for ci in parent_of.keys():
+        h = 0
+        cur = ci
+        for _ in range(max_depth + 2):
+            if cur not in parent_of:
+                break
+            cur = parent_of[cur]
+            h += 1
+        hops_to_root[ci] = h
+
     return {
         ci: {
             "parent_event_id": root_event_id,
-            "parent_ci_id": layout["root_ids"][0],
-            "root_cause_ci_id": layout["root_ids"][0],
+            "parent_ci_id": root_id,
+            "root_cause_ci_id": root_id,
             "correlation_type": "ROOT",
         }
-        for ci in layout["parent_of"].keys()
+        for ci in parent_of.keys()
+        if hops_to_root[ci] <= max_depth
     }
 
 
@@ -234,6 +269,7 @@ def build_dependency_chain(
     root_count: int = 1,
     dependent_count: int = 3,
     severities: Optional[Dict[str, str]] = None,
+    depth: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build a chain fixture: returns a dict with the wired-up mocks.
 
@@ -258,8 +294,43 @@ def build_dependency_chain(
         severities: resolved severity per ci_id
         ping_measurement: deterministic PingMeasurement that forces DOWN
         root_event_id: id used for A's open ROOT event
+
+    Topology selection
+    ------------------
+    - ``topology="fan_out"`` (default): A is the root, B/C/D depend on A.
+    - ``topology="chain"``: A→B→C with ``dependent_count`` chained descendants.
+    - ``depth=N`` (when set): a linear chain of exactly ``N`` CIs.
+      ``ci_ids[0]`` is the root, ``ci_ids[N-1]`` is the leaf, and each
+      ``ci[i]`` depends on ``ci[i-1]`` (i.e., ``ci[i] -[:DEPENDS_ON]-> ci[i-1]``).
+      The leaf's perspective: hops to root = ``N - 1``.
+
+      Used by REQ-CORR-8 runtime coverage to build explicit N-hop chains:
+      ``depth=4`` gives a true 3-hop chain (A→B→C→D, leaf is 3 hops from A,
+      within ``max_depth=3``) and ``depth=5`` gives a 4-hop chain
+      (A→B→C→D→E, leaf is 4 hops from A, beyond the cap). The fixture's
+      ``parent_lookup`` honors the same ``max_depth=3`` cap, so dependents
+      beyond the cap resolve to ``None`` (tagged ROOT) just like the real
+      Cypher traversal.
+
+    When ``depth`` is set, ``topology``/``root_count``/``dependent_count``
+    are ignored.
     """
-    if topology == "fan_out":
+    if depth is not None:
+        if depth < 2:
+            raise ValueError(f"depth must be >= 2, got {depth!r}")
+        # Linear chain: ci-A is root, ci-B/ci-C/... are descendants.
+        # Each ci[i] depends on ci[i-1] (ci[i] -[:DEPENDS_ON]-> ci[i-1]).
+        chain_ids = ["ci-A"] + [
+            f"ci-{chr(ord('B') + i)}" for i in range(depth - 1)
+        ]
+        layout = {
+            "root_ids": ["ci-A"],
+            "dependent_ids": chain_ids[1:],
+            "parent_of": {
+                chain_ids[i + 1]: chain_ids[i] for i in range(len(chain_ids) - 1)
+            },
+        }
+    elif topology == "fan_out":
         layout = _fan_out_layout(root_count, dependent_count)
     elif topology == "chain":
         layout = _chain_layout(root_count, dependent_count)
