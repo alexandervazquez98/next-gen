@@ -1,0 +1,280 @@
+# Workflow: cd (PR6 of ci-cd-pipeline)
+#
+# PR6 of the six-slice CI/CD chain (feature-branch-chain: PR1 -> PR2 ->
+# PR3 -> PR4 -> PR5 -> PR6). This is the **last slice** — when the
+# integrated chain fast-forwards into `main`, this workflow runs on every
+# push to `main` and calls scripts/safe-rebuild.sh on the production
+# self-hosted runner.
+#
+# Spec: openspec/changes/ci-cd-pipeline/specs/ci-cd-pipeline/spec.md
+#       "CD Lane" (R8), "Rollback Policy v1" (R9).
+#
+# Triggers:
+#   - push: branches: [main] — auto-deploy after merge
+#   - workflow_dispatch with inputs.dry_run: boolean — manual dry-run or
+#     manual real deploy (when forced via re-dispatch)
+#
+# Concurrency:
+#   group: cd-main
+#   cancel-in-progress: false — CRITICAL: never cancel an in-flight
+#   deploy. If a new commit lands while a deploy is running, the new
+#   push waits in queue until the current deploy completes (success
+#   OR failure). Without this guard, a mid-deploy cancellation could
+#   leave the stack in a partial state with no automatic rollback
+#   (v1 rollback policy).
+#
+# Runner:
+#   runs-on: [self-hosted, linux, x64, production, next-gen, cd]
+#   All six labels MUST match — see docs/self-hosted-runner.md.
+#
+# Permissions:
+#   contents: read  — checkout the repo
+#   issues: write   — open the cd-failure issue on failure
+#   No other scopes; secrets stay host-local.
+#
+# Steps:
+#   1. Checkout (full history — needed for git rev-parse + log in the
+#      cd-failure issue body).
+#   2. Prepare .env from runner host (copies $HOME/.env into the workdir).
+#   3. Assert runner contract (scripts/ci-cd-check-runner-contract.sh).
+#      Docker, Compose v2, BACKUP_DIR writable, .env present, gh auth.
+#   4. Validate env (scripts/validate-env.sh --check-backup-dir).
+#   5. Pre-flight dry-run (scripts/safe-rebuild.sh --dry-run) — ALWAYS.
+#      Gives operators a preview in the job log.
+#   6. Real deploy (scripts/safe-rebuild.sh) — skip only when the
+#      workflow_dispatch input dry_run=true.
+#   7. Cleanup (docker compose ps) — always, for visibility.
+#   8. On any failure: open GitHub Issue labeled cd-failure.
+#
+# SHA pins (consistent with PR1..PR5):
+#   - actions/checkout@v4: 692973e3d937129bcbf40652eb9f2f61becf3332 (v4.1.7)
+#
+# T6.6 manual-evidence note: the dry-run dispatch record is the
+# authoritative substitute for "real deploy to prod" in CI; the manual
+# deploy drill (per docs/ci-cd-runbook.md#manual-deploy-fallback) is the
+# documented substitute when no production runner is reachable.
+#
+# BACKUP_DIR: expected to be set in the runner environment
+# (or .env on the runner host). The contract script
+# (scripts/ci-cd-check-runner-contract.sh) verifies it exists and is
+# writable before the deploy step runs.
+
+name: cd
+
+# v1 trigger policy (2026-06-20):
+# - workflow_dispatch: ALWAYS available, with dry_run input. Operators
+#   trigger this manually before / between / after deploys to verify
+#   the runner contract + env + safe-rebuild.sh pre-flight on the real
+#   production runner. dry_run=true is the default-safe option.
+# - push: branches: [main]: DISABLED. The CD lane was originally
+#   intended to auto-deploy on merge to main, but the production
+#   server already runs the nextgen compose project from
+#   /home/alex/nextgen/ (manual deploys). The runner's checkout dir
+#   (/opt/.../_work/next-gen/next-gen/) is a different path, which
+#   makes docker compose treat the running containers as orphans and
+#   the bind-mount data dirs would point to the runner's empty
+#   checkout. Migrating to CD-first deploys requires switching data
+#   dirs to named volumes (preserved across compose project locations)
+#   and changing the runner's working dir — see the project
+#   discussion in openspec/changes/ci-cd-pipeline/specs/ci-cd-pipeline/spec.md
+#   "Open Questions" if revisited.
+# When the migration is done, restore the push trigger:
+#   on:
+#     push:
+#       branches: [main]
+#     workflow_dispatch:
+#       ...
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only (do not actually deploy)"
+        required: false
+        default: "true"
+        type: boolean
+
+# CRITICAL: never cancel an in-flight deploy. See header comment.
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cd:
+    name: cd
+    runs-on: [self-hosted, linux, x64, production, next-gen, cd]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+
+      # .env is gitignored and lives on the runner host only
+      # (see docs/self-hosted-runner.md#prerequisites). Copy it into
+      # the workdir so scripts/ci-cd-check-runner-contract.sh,
+      # scripts/validate-env.sh, and scripts/safe-rebuild.sh all see
+      # the same file. The source path follows the runner setup guide
+      # ($HOME/.env, owned by the runner user, chmod 600).
+      - name: Prepare .env from runner host
+        run: |
+          set -eu
+          if [ ! -f "$HOME/.env" ]; then
+            echo "::error::Runner host is missing \$HOME/.env. See docs/self-hosted-runner.md#prerequisites."
+            exit 1
+          fi
+          cp "$HOME/.env" .env
+          chmod 600 .env
+          echo "Loaded .env from $HOME/.env ($(wc -l < .env) lines, mode $(stat -c %a .env))"
+
+      # Export every KEY=VALUE from .env into the workflow's GITHUB_ENV
+      # so subsequent steps see BACKUP_DIR, NEO4J_*, POSTGRES_*, etc.
+      # as real environment variables. safe-rebuild.sh and the runner
+      # contract script read these via shell env, not from .env directly
+      # (validate-env.sh is the only thing that reads .env).
+      #
+      # Filter rules:
+      #   - KEY must match POSIX env var conventions (uppercase, digits,
+      #     underscore; cannot start with a digit).
+      #   - Skip well-known shell-managed vars (PATH, HOME, PWD, UID, GID)
+      #     to avoid clobbering the runner's own env.
+      #   - Skip comment lines and blank lines.
+      - name: Export .env into workflow environment
+        id: export-env
+        run: |
+          set -eu
+          while IFS='=' read -r key value; do
+            case "$key" in
+              ''|\#*) continue ;;
+              PATH|HOME|PWD|UID|GID|SHLVL|_|* ) continue ;;
+            esac
+            case "$key" in
+              *[!A-Z0-9_]*|[0-9]*) continue ;;
+            esac
+            # Strip surrounding single/double quotes if present.
+            value="${value%\"}"
+            value="${value#\"}"
+            value="${value%\'}"
+            value="${value#\'}"
+            echo "$key<<EOF" >> "$GITHUB_ENV"
+            echo "$value" >> "$GITHUB_ENV"
+            echo "EOF" >> "$GITHUB_ENV"
+          done < .env
+
+      # R8 / T6.4: assert the runner contract. Failures here mean the
+      # runner itself is misconfigured (Docker missing, BACKUP_DIR not
+      # writable, gh unauthenticated, etc.). The CD job MUST fail loud
+      # rather than silently skip a contract violation.
+      #
+      # Pass GH_TOKEN to the contract script so gh auth via env-var
+      # token is accepted as an alternative to interactive gh auth login.
+      # The runner contract (scripts/ci-cd-check-runner-contract.sh)
+      # recognizes GITHUB_TOKEN / GH_TOKEN env vars and skips the
+      # interactive `gh auth status` check.
+      - name: Assert runner contract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sh scripts/ci-cd-check-runner-contract.sh
+
+      # R8: .env and BACKUP_DIR validated before any deploy step.
+      - name: Validate environment
+        run: sh scripts/validate-env.sh --check-backup-dir
+
+      # R8: always print the deploy plan. Even on real deploy this gives
+      # operators a single-screen summary of what safe-rebuild.sh is
+      # about to do.
+      - name: Pre-flight dry-run
+        run: sh scripts/safe-rebuild.sh --dry-run
+
+      # v1 (2026-06-20): Real deploy is DISABLED via `if: false`. The CD
+      # lane's workflow_dispatch path runs contract + env + dry-run
+      # validation only. Real `sh scripts/safe-rebuild.sh` is kept as
+      # documentation for the future migration (Option B in the spec
+      # discussion: switch data dirs to named volumes, align runner
+      # working dir with /home/alex/nextgen/, then re-enable).
+      #
+      # To re-enable real deploys in the future:
+      #   1. Switch ./docker/*/data bind mounts in docker-compose.yml to
+      #      named volumes (preserve data across compose project dirs).
+      #   2. Make the runner's working dir /home/alex/nextgen/ (or a
+      #      symlink path the existing project recognizes).
+      #   3. Change `if: false` below back to
+      #      `if: ${{ inputs.dry_run != 'true' }}` AND restore the
+      #      `push: branches: [main]` trigger above.
+      #   4. Test with workflow_dispatch dry_run=false once before
+      #      relying on push-triggered deploys.
+      - name: Real deploy (DISABLED in v1)
+        if: false
+        run: sh scripts/safe-rebuild.sh
+
+      # Cleanup / status snapshot. ALWAYS runs so operators see the
+      # final compose state regardless of outcome.
+      - name: Cleanup (compose ps)
+        if: always()
+        run: docker compose ps
+
+      # R8 / R9: open a GitHub Issue labeled `cd-failure` on any
+      # failure. Body captures the run URL, commit SHA + message, the
+      # trigger context (push vs dispatch + dry_run), and a runbook
+      # pointer. The `if: failure()` covers every step above including
+      # runner-contract and validate-env.
+      #
+      # Source .env first so BACKUP_DIR is available for the issue body.
+      # Use parameter expansion (${BACKUP_DIR:-...}) as belt-and-suspenders
+      # so the issue creation script never aborts on set -eu due to a
+      # missing variable — losing the alert is worse than a slightly
+      # degraded message.
+      - name: Open cd-failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          # Source .env so BACKUP_DIR is bound in the heredoc body.
+          # Defensive: even if .env is missing, default to a path that
+          # tells the operator "look in the run log instead".
+          if [ -f .env ]; then
+            set -a
+            # shellcheck disable=SC1091
+            . ./.env
+            set +a
+          fi
+          BACKUP_DIR="${BACKUP_DIR:-<unset — see workflow run log for the deploy's BACKUP_DIR>}"
+          SHA=$(git rev-parse HEAD)
+          MSG=$(git log -1 --pretty=%s)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TITLE="CD failure: ${SHORT_SHA} run ${{ github.run_id }}"
+          TRIGGER_INFO="${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TRIGGER_INFO="workflow_dispatch (dry_run=${{ github.event.inputs.dry_run }})"
+          fi
+
+          cat > /tmp/cd-failure-body.md <<BODY
+          ## CD Failure
+
+          - Workflow run: ${RUN_URL}
+          - Commit: \`${SHA}\`
+          - Message: ${MSG}
+          - Trigger: ${TRIGGER_INFO}
+          - BACKUP_DIR: \`${BACKUP_DIR}\`
+
+          ## Recovery
+
+          See [docs/ci-cd-runbook.md](docs/ci-cd-runbook.md) for the manual
+          recovery procedure using the pre-rebuild backup captured at deploy
+          start. Key steps:
+
+          1. Read the captured run log linked above.
+          2. Inspect the BACKUP_DIR above for the pre-rebuild backup matching this deploy.
+          3. Follow [Failure recovery](docs/ci-cd-runbook.md#failure-recovery).
+          4. Acknowledge the issue per [Alert acknowledgment](docs/ci-cd-runbook.md#alert-acknowledgment).
+          BODY
+
+          gh issue create \
+            --label cd-failure \
+            --title "$TITLE" \
+            --body-file /tmp/cd-failure-body.md
+          rm -f /tmp/cd-failure-body.md

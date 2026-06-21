@@ -1,0 +1,24 @@
+# Ruff config for next-gen backend. PR1 lint is scoped to changed files only via
+# .github/workflows/lint.yml (tj-actions/changed-files) — legacy untouched files
+# do not block PR1 per openspec/changes/ci-cd-pipeline/spec.md R2.
+
+target-version = "py311"
+line-length = 100
+
+src = ["backend", "tests"]
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length is enforced by the formatter, not the linter
+
+[lint.per-file-ignores]
+"tests/**" = ["N802", "N803"]
+
+[lint.isort]
+known-first-party = ["backend"]
+combine-as-imports = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
