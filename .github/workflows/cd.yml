@@ -158,9 +158,11 @@ jobs:
             value="${value#\"}"
             value="${value%\'}"
             value="${value#\'}"
-            echo "$key<<EOF" >> "$GITHUB_ENV"
-            echo "$value" >> "$GITHUB_ENV"
-            echo "EOF" >> "$GITHUB_ENV"
+            {
+              echo "$key<<EOF"
+              echo "$value"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
           done < .env
 
       # R8 / T6.4: assert the runner contract. Failures here mean the
