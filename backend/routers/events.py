@@ -188,6 +188,10 @@ async def close_event(
         event_msg = event_detail.get("event", {}).get("message", "")
         ci_id = event_detail.get("event", {}).get("ci", {}).get("id", "")
         ci_name = event_detail.get("event", {}).get("ci", {}).get("label", "")
+        # REQ-CORR-5: pass the event's correlation_type so the escalation
+        # notifier can suppress PROPAGATED events. Cascades escalate once
+        # at the root, not per dependent event.
+        correlation_type = event_detail.get("event", {}).get("correlation_type")
         await notify_critical_event_escalation(
             ai_persona=str(current_user.role),
             ai_agent_id=current_user.username,
@@ -195,6 +199,7 @@ async def close_event(
             event_message=event_msg,
             ci_id=ci_id or event_id,
             ci_name=ci_name or "Unknown CI",
+            correlation_type=correlation_type,
         )
         record_operation(
             ai_persona=str(current_user.role),

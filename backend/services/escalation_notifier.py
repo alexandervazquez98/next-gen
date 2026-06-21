@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from config import get_mqtt_settings
+from services.event_service import _is_authoritative_event
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ async def notify_critical_event_escalation(
     event_message: str,
     ci_id: str,
     ci_name: str,
+    correlation_type: Optional[str] = None,
 ) -> dict:
     """Notify human reviewer that AI wants to close a CRITICAL event.
 
@@ -70,13 +72,37 @@ async def notify_critical_event_escalation(
         event_message: Event message/description
         ci_id: CI that triggered the event
         ci_name: Human-readable CI name
+        correlation_type: Optional event correlation type. When
+            ``correlation_type='PROPAGATED'`` the escalation is suppressed
+            (REQ-CORR-5): cascades escalate once at the root, not per
+            dependent event. Missing/None is treated as ROOT for backwards
+            compatibility with legacy events written before PR 1.
 
     Returns:
         Escalation info dict with keys:
-        - escalation_id: unique ID for this escalation
-        - timeout_at: ISO timestamp when escalation expires
+        - escalation_id: unique ID for this escalation (empty when suppressed)
+        - timeout_at: ISO timestamp when escalation expires (empty when suppressed)
         - topic: MQTT topic the escalation was published to
+        - success: True when published, False when suppressed or publish failed
+        - suppressed: True when the gate blocked escalation (PROPAGATED event)
     """
+    # REQ-CORR-5 gate: PROPAGATED events never escalate.
+    if not _is_authoritative_event({"correlation_type": correlation_type}):
+        logger.info(
+            "[ESCALATION] Suppressed escalation for PROPAGATED event %s (ci=%s)",
+            event_id,
+            ci_id,
+        )
+        return {
+            "escalation_id": "",
+            "timeout_at": "",
+            "topic": "alerts/human/escalation",
+            "success": False,
+            "suppressed": True,
+            "event_id": event_id,
+            "reason": "event_correlation_type=PROPAGATED",
+        }
+
     escalation_id = str(uuid.uuid4())
     timeout_at = (
         datetime.now(timezone.utc) + timedelta(minutes=ESCALATION_TIMEOUT_MINUTES)
