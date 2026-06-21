@@ -118,6 +118,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p docker/postgres/data docker/neo4j/data docker/neo4j/logs .docker/backups
+          # The bind-mount source directories must be owned by the UID/GID
+          # the container process runs as, otherwise postgres (UID 999) and
+          # neo4j (UID 7474) refuse to write to the mount. The runner user
+          # created them with the runner's UID; chown via sudo (hosted
+          # runners have unrestricted sudo).
+          sudo chown -R 999:999  docker/postgres/data .docker/backups
+          sudo chown -R 7474:7474 docker/neo4j/data docker/neo4j/logs
           ls -la docker/postgres/data docker/neo4j/data docker/neo4j/logs .docker/backups
 
       # Materialize a test-only .env from .env.example with throwaway
