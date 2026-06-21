@@ -203,10 +203,15 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       # corepack pins pnpm to the version declared in package.json
-      # (`packageManager: pnpm@10.12.1`). The frontend preinstall guard
-      # blocks npm — see frontend/package.json.
-      - name: Enable Corepack
-        run: corepack enable
+      # (`packageManager: pnpm@10.12.1`). Without `corepack prepare`, the
+      # node-bundled pnpm 11.x is used, which refuses to switch versions
+      # and aborts with "Your current pnpm is v11.x". The frontend
+      # preinstall guard also blocks npm — see frontend/package.json.
+      - name: Enable Corepack + activate pinned pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
 
       - name: Install frontend dependencies (frozen lockfile)
         run: pnpm --dir frontend install --frozen-lockfile
