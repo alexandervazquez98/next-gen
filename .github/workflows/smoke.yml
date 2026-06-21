@@ -199,14 +199,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "pnpm"
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # corepack pins pnpm to the version declared in package.json
       # (`packageManager: pnpm@10.12.1`). Without `corepack prepare`, the
       # node-bundled pnpm 11.x is used, which refuses to switch versions
       # and aborts with "Your current pnpm is v11.x". The frontend
       # preinstall guard also blocks npm — see frontend/package.json.
+      #
+      # Note: do NOT add `cache: pnpm` to setup-node above. That option
+      # invokes pnpm during setup-node, before corepack has activated
+      # the pinned version, and fails with "Unable to locate executable
+      # file: pnpm".
       - name: Enable Corepack + activate pinned pnpm
         run: |
           set -euo pipefail
