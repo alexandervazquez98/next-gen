@@ -233,6 +233,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
         run: |
           set -eu
           # Source .env so BACKUP_DIR is bound in the heredoc body.
@@ -248,10 +251,10 @@ jobs:
           SHA=$(git rev-parse HEAD)
           MSG=$(git log -1 --pretty=%s)
           SHORT_SHA=$(git rev-parse --short HEAD)
-          TITLE="CD failure: ${SHORT_SHA} run ${{ github.run_id }}"
-          TRIGGER_INFO="${{ github.event_name }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TRIGGER_INFO="workflow_dispatch (dry_run=${{ github.event.inputs.dry_run }})"
+          TITLE="CD failure: ${SHORT_SHA} run ${RUN_ID}"
+          TRIGGER_INFO="${EVENT_NAME}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TRIGGER_INFO="workflow_dispatch (dry_run=${DRY_RUN_INPUT})"
           fi
 
           cat > /tmp/cd-failure-body.md <<BODY
