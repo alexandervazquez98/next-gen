@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from database import get_db
 from fastapi import HTTPException
@@ -463,14 +463,28 @@ _SENSITIVE_CI_KEY_PARTS = (
 )
 
 
+def _is_authoritative_event(event_data: Mapping[str, Any]) -> bool:
+    """Generic authoritative-event predicate (REQ-CORR-4).
+
+    Returns False only when the event's `correlation_type` is `PROPAGATED`
+    (case-insensitive). Returns True for `ROOT`, missing values, ``None``,
+    unknown legacy values, and empty strings. Backward compatible: events
+    written before the correlation-type field existed are treated as
+    authoritative.
+    """
+    if event_data is None:
+        return True
+    correlation_type = str(event_data.get("correlation_type") or "").strip().upper()
+    return correlation_type != "PROPAGATED"
+
+
 def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
     event_type = str(event_data.get("event_type") or "").upper()
     availability_source = str(event_data.get("availability_source") or "").upper()
-    correlation_type = str(event_data.get("correlation_type") or "ROOT").upper()
     return (
         event_type == "AVAILABILITY"
         and availability_source in {"PING", "ICMP"}
-        and correlation_type != "PROPAGATED"
+        and _is_authoritative_event(event_data)
     )
 
 
