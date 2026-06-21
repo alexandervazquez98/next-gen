@@ -28,9 +28,18 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _run(coro):
-    """Synchronously run an async coroutine for testing."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+def _run_coro(coro):
+    """Synchronously run an async coroutine for testing.
+
+    Uses `asyncio.new_event_loop()` (Python 3.12+ safe — does not rely on a
+    thread-local event loop, which `get_event_loop()` deprecated when there
+    is no running loop).
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +58,7 @@ def _call_notify(*, correlation_type: str | None, event_id: str = "evt-001"):
     """Invoke notify_critical_event_escalation with sensible defaults."""
     from services.escalation_notifier import notify_critical_event_escalation
 
-    return _run(
+    return _run_coro(
         notify_critical_event_escalation(
             ai_persona="AI_OPERATOR",
             ai_agent_id="ai-agent-1",
@@ -163,11 +172,16 @@ class TestAuthoritativeEventsEscalate:
         """correlation_type explicitly passed as None → escalates."""
         from services import escalation_notifier
 
-        result = _call_notify(correlation_type=None, event_id="evt-explicit-none")
+        _call_notify(correlation_type=None, event_id="evt-explicit-none")
 
         with escalation_notifier._lock:
-            assert len(escalation_notifier._active_escalations) == 1
-        assert result["event_id"] == "evt-explicit-none"
+            stored = dict(escalation_notifier._active_escalations)
+        assert len(stored) == 1, (
+            f"correlation_type=None must escalate (legacy compat), "
+            f"found {len(stored)}: {stored!r}"
+        )
+        ticket = next(iter(stored.values()))
+        assert ticket["event_id"] == "evt-explicit-none"
 
 
 # ---------------------------------------------------------------------------
