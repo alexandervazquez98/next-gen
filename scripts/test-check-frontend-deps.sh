@@ -55,26 +55,25 @@ setup_fixture() {
   fi
 
   # Pre-populate stubs for every import except sonner
-  local IMPORTS_RAW
-  IMPORTS_RAW=$(grep -hoE "from ['\"][^./][^'\"]*['\"]" \
-    "$DIR/frontend/context/AuthContext.tsx" \
-    "$DIR/frontend/App.tsx" 2>/dev/null || true)
-  local IMP TOP
-  for IMP in $IMPORTS_RAW; do
-    IMP="${IMP#from }"
-    IMP="${IMP#[\"\'\`]}"; IMP="${IMP%[\"\'\`}]"
+  local LINE IMP TOP
+  while IFS= read -r LINE; do
+    [[ -z "$LINE" ]] && continue
+    IMP="${LINE#from }"
+    IMP=$(printf '%s' "$IMP" | sed -E "s/^['\"\`]+//; s/['\"\`]+$//")
     if [[ "$IMP" == @* ]]; then
       TOP=$(echo "$IMP" | cut -d/ -f1-2)
     else
       TOP=$(echo "$IMP" | cut -d/ -f1)
     fi
-    if [[ -z "$TOP" || "$TOP" == "sonner" ]]; then
+    if [[ -z "$TOP" || "$TOP" == "sonner" || "$TOP" == "from" ]]; then
       continue
     fi
     mkdir -p "$DIR/frontend/node_modules/$TOP"
     printf '{"name":"%s","version":"0.0.0"}\n' "$TOP" \
       > "$DIR/frontend/node_modules/$TOP/package.json"
-  done
+  done < <(grep -hoE "from ['\"][^./][^'\"]*['\"]" \
+      "$DIR/frontend/context/AuthContext.tsx" \
+      "$DIR/frontend/App.tsx" 2>/dev/null || true)
 }
 
 # Build a PATH shim that simulates `corepack pnpm install` behaviour.
