@@ -67,9 +67,9 @@ Strict-TDD policy (`openspec/config.yaml` `sdd.strict_tdd`): every workflow or s
 
 | ID | Title | Files | Reqs | Est | Deps | Verification gate | strict_tdd_evidence |
 |---|---|---|---|---|---|---|---|
-| T3.1 | `.github/workflows/frontend-ci.yml` (setup-node v4 + Corepack + frozen lockfile + Vitest) | `.github/workflows/frontend-ci.yml` | R5 | 100 | T1.5 | `corepack pnpm install --frozen-lockfile` + `corepack pnpm test:run` green on frontend-touched PR | Lockfile drift fails install before tests (R5 lockfile scenario). |
-| T3.2 | Wire ESLint + Prettier step on changed frontend files | `.github/workflows/frontend-ci.yml` | R2, R5 | 40 | T1.4 | `--max-warnings 0` ESLint + Prettier `--check` on changed TS/TSX exit 0 | Changed-file linter is the test for R2 + R5 wiring. |
-| T3.3 | PR3 verification gate — frontend-touched PR green | (workflow-only) | R5, R11 | 60 | T3.1, T3.2 | Scratch PR touching `frontend/`; workflow green with coverage | CI run logs are the evidence under strict TDD. |
+| T3.1 | `.github/workflows/frontend-ci.yml` (setup-node v4 + Corepack + frozen lockfile + Vitest) | `.github/workflows/frontend-ci.yml` | R5 | 100 | T1.5 | `corepack pnpm install --frozen-lockfile` + `corepack pnpm test:run` green on frontend-touched PR | Lockfile drift fails install before tests (R5 lockfile scenario). | [x] |
+| T3.2 | Wire ESLint + Prettier step on changed frontend files | `.github/workflows/frontend-ci.yml` | R2, R5 | 40 | T1.4 | `--max-warnings 0` ESLint + Prettier `--check` on changed TS/TSX exit 0 | Changed-file linter is the test for R2 + R5 wiring. **Implementation note**: ESLint + Prettier gating moved to PR1's `lint.yml` `lint-frontend` job (out of PR3 scope); PR3 only adds the test lane. The `lint.yml` devDep switch (dlx -> local) IS the T3.2 acceptance evidence. | [x] |
+| T3.3 | PR3 verification gate — frontend-touched PR green | (workflow-only) | R5, R11 | 60 | T3.1, T3.2 | Scratch PR touching `frontend/`; workflow green with coverage | CI run logs are the evidence under strict TDD. **Implementation note**: ci-verify job in `frontend-ci.yml` runs actionlint + yamllint + `vitest list`; coverage artifact uploaded from `frontend-tests` job. | [x] |
 
 **PR3 total**: 200 LOC. **Chain downstream**: PR4 branches off `cicd/frontend-ci`.
 
