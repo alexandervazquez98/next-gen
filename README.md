@@ -87,6 +87,30 @@ Comandos check-only: `sh scripts/safe-rebuild.sh --dry-run`, `sh -n scripts/*.sh
   - Backend: `python -m pytest backend/tests/test_event_service_smoke.py backend/tests/test_routers_metrics_events.py backend/tests/test_snmp_service_snapshots.py`
   - Frontend: `corepack pnpm --dir frontend run test:run -- hooks/queries/resourceQueries.test.tsx components/__tests__/EventDetailModal.acceptance.test.tsx`
 
+## Local frontend dev (no Docker)
+
+Si querés correr el frontend Vite/React directamente en tu maquina (sin
+levantar el stack completo con `docker compose up`), este flujo es para vos.
+**`docker compose up` ya cubre el frontend en su contenedor**, asi que no
+uses esta guia si vas por Docker: ahi el compose monta `frontend/` y corre
+la install adentro.
+
+Pasos resumidos (detalle completo en `frontend/README.md`):
+
+1. Habilita Corepack una vez por maquina: `corepack enable`.
+2. Desde la raiz del repo: `corepack pnpm install --frozen-lockfile`.
+3. Pre-flight de dependencias (opcional, recomendado): `corepack pnpm --dir frontend run check:deps`.
+4. Dev server: `corepack pnpm --dir frontend run dev` (sirve en `http://localhost:3000`).
+5. Tests focalizados: `corepack pnpm --dir frontend run test:run`.
+
+Troubleshooting rapido para el error mas comun
+(`Failed to resolve import "sonner" from context/AuthContext.tsx`): la
+propia dependencia esta declarada en `frontend/package.json` y en el
+lockfile, pero falta en `frontend/node_modules`. La causa tipica es no
+haber corrido `corepack pnpm install --frozen-lockfile` despues de un
+`git pull`. `pnpm run check:deps` detecta esto via el sentinel
+`frontend/.frontend-deps-ok` y corre el install automaticamente.
+
 ## Estado actual
 
 - El modal de detalle ya consume contexto real de negocio e ITSM mediante endpoint dedicado.

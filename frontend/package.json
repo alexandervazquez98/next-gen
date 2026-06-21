@@ -17,7 +17,8 @@
     "lint": "eslint --max-warnings=0",
     "lint:fix": "eslint --fix",
     "format": "prettier --write",
-    "format:check": "prettier --check"
+    "format:check": "prettier --check",
+    "check:deps": "bash ../scripts/check-frontend-deps.sh"
   },
   "dependencies": {
     "@google/genai": "1.37.0",
