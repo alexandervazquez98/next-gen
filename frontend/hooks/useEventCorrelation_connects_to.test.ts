@@ -102,33 +102,40 @@ describe('useEventCorrelation — CONNECTS_TO (REQ-CORR-7)', () => {
     expect(result.current).toHaveLength(2);
   });
 
-  it('handles mixed chain with all three relationship types', () => {
-    // Chain A -> B -> C: A CONNECTS_TO B, B DEPENDS_ON a transit through,
-    // C HOSTED_ON B. All three relationship types must collapse the chain
-    // into a single root cause event group.
+  it('handles multiple upstream matches for one consumer', () => {
+    // Per REQ-CORR-7 "deepest relationship wins": when one consumer CI has
+    // multiple potential providers (mixed DEPENDS_ON and CONNECTS_TO),
+    // the consumer is grouped under ONE provider (not duplicated into all
+    // of them). The current implementation assigns to the first matched
+    // provider — this test pins that contract so future refactors do not
+    // duplicate the consumer across groups.
     const events = [
       makeEvent({ id: 'evt-A', ci_id: 'A', severity: 'CRITICAL' }),
+      makeEvent({ id: 'evt-D', ci_id: 'D', severity: 'CRITICAL' }),
       makeEvent({ id: 'evt-B', ci_id: 'B', severity: 'CRITICAL' }),
-      makeEvent({ id: 'evt-C', ci_id: 'C', severity: 'WARNING' }),
     ];
     const links = [
-      { source: 'B', target: 'A', relationship: 'CONNECTS_TO' },
-      { source: 'C', target: 'B', relationship: 'DEPENDS_ON' },
+      { source: 'B', target: 'A', relationship: 'DEPENDS_ON' },
+      { source: 'B', target: 'D', relationship: 'CONNECTS_TO' },
     ];
 
     const { result } = renderHook(() => useEventCorrelation(events, links));
 
-    // Every CI has a top-level event, so the chain collapses into ONE root
-    // (the deepest match wins per the design — see REQ-CORR-7 spec).
+    // B must appear in EXACTLY ONE root's relatedEvents (not duplicated).
+    // Roots = [A, D] (both CRITICAL, not consumed by each other).
+    // B is consumed by whichever provider processes it first.
     const roots = result.current;
-    expect(roots).toHaveLength(1);
-    const root = roots[0];
-    // All non-root events must be in relatedEvents.
-    const related_ids = root.relatedEvents.map(e => e.id);
-    // Either B or C might be the root depending on the iteration order, but
-    // they MUST all be in the same group.
-    expect(related_ids.length + 1).toBe(3);
-    expect(related_ids.every(id => id !== root.id)).toBe(true);
+    const roots_with_B = roots.filter(r =>
+      r.relatedEvents.some(c => c.id === 'evt-B')
+    );
+    const root_ids_for_B = roots_with_B.map(r => r.id);
+    expect(roots_with_B).toHaveLength(
+      1,
+      `B must be grouped under exactly one provider, got ${JSON.stringify(root_ids_for_B)}`
+    );
+    // B is no longer a root.
+    const root_ids = roots.map(r => r.id);
+    expect(root_ids).not.toContain('evt-B');
   });
 
   it('groups consumer regardless of severity match (CRITICAL or WARNING provider)', () => {

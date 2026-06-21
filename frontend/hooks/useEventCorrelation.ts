@@ -85,8 +85,11 @@ const groupedEvents = useMemo(() => {
         // 3. Topology Correlation (Dependency-Based)
         // If Provider CI has a Dominant Event, Consumer CI's Dominant Events become children
         links.forEach(link => {
-            // If Source (Consumer) depends on Target (Provider)
-            if (link.relationship === 'DEPENDS_ON' || link.relationship === 'HOSTED_ON') {
+            // If Source (Consumer) depends on Target (Provider).
+            // REQ-CORR-7: CONNECTS_TO cascades collapse the same way as
+            // DEPENDS_ON and HOSTED_ON — topological RCA treats all three
+            // relationship types as propagation paths.
+            if (link.relationship === 'DEPENDS_ON' || link.relationship === 'HOSTED_ON' || link.relationship === 'CONNECTS_TO') {
                 const providerId = link.target;
                 const consumerId = link.source;
 
