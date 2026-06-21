@@ -31,6 +31,19 @@ if [ "${RUNNER_CONTRACT_LIB_ONLY:-0}" = "1" ]; then
     }
 fi
 
+# Source .env if present so BACKUP_DIR, NEO4J_*, etc. are available as
+# env vars even when the workflow didn't export them via GITHUB_ENV.
+# The cd.yml workflow has an 'Export .env' step that does this too,
+# but sourcing here makes the contract check robust regardless of how
+# the workflow is wired. set -a exports every var assigned during the
+# source; set +a reverts.
+if [ -f .env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env
+    set +a
+fi
+
 failures=0
 
 fail() {
