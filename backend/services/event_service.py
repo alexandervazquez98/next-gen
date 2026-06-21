@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from database import get_db
 from fastapi import HTTPException
@@ -486,6 +487,108 @@ def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
         and availability_source in {"PING", "ICMP"}
         and _is_authoritative_event(event_data)
     )
+
+
+# ---------------------------------------------------------------------------
+# Correlation resolver — write-side helper for Path A / Path C / CLI workers
+# ---------------------------------------------------------------------------
+
+# Default TTL (seconds) for the per-poll-cycle memo cache used by
+# `resolve_correlation_fields`. Matches the design's ~5s per-cycle memoization
+# window — long enough to dedupe a burst of dependent events inside the same
+# poll cycle, short enough that a recovered-then-rebroken cycle within ~5s
+# is reflected on the next cycle.
+_CORRELATION_CACHE_TTL_S = 5.0
+
+
+def _root_correlation_fields(ci_id: str) -> Dict[str, Any]:
+    """Build a ROOT correlation-fields dict. Used by every fail-safe path."""
+    return {
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": ci_id,
+    }
+
+
+def resolve_correlation_fields(
+    ci_id: str,
+    severity: str,
+    *,
+    can_propagate: bool = True,
+    cache: Optional[Dict[str, tuple]] = None,
+    now: Callable[[], float] = time.monotonic,
+) -> Dict[str, Any]:
+    """Resolve correlation fields for an event about `ci_id` (REQ-CORR-1/2/3).
+
+    Wraps `repositories.topology_repo.find_open_parent_event(ci_id, max_depth=3)`.
+    Returns a dict with keys:
+        - correlation_type: "ROOT" or "PROPAGATED"
+        - propagated_from: parent event id when PROPAGATED, else None
+        - root_cause_ci_id: own ci_id when ROOT, otherwise the parent's
+          root_cause_ci_id (inherited through the chain).
+
+    Parameters
+    ----------
+    ci_id : str
+        The CI id of the event being written.
+    severity : str
+        Severity string for the event (currently informational — kept in the
+        signature so Path A / Path C can pass it through without
+        re-plumbing).
+    can_propagate : bool, default True
+        When False, short-circuit to ROOT without consulting the topology
+        repo. Used by callers that want a "this is a fresh incident" opt-out.
+    cache : dict, optional
+        Module-local per-poll-cycle cache shared across calls in the same
+        poll cycle. Keys are `ci_id`; values are
+        ``(expires_at_monotonic, result_dict)``. The resolver also reads
+        from the cache before calling `find_open_parent_event` and writes
+        results back into it. Pass a dict from the caller scope to scope
+        the cache to one poll cycle (~5s).
+    now : Callable[[], float]
+        Monotonic clock used for TTL checks. Defaults to `time.monotonic`.
+        Injectable so tests can drive TTL expiry deterministically.
+
+    Fail-safe: any exception raised by `find_open_parent_event` is caught and
+    the resolver returns ROOT with the event's own CI. Collectors must not
+    block on topology hiccups.
+    """
+    if not can_propagate:
+        return _root_correlation_fields(ci_id)
+
+    cache_key = ci_id
+    if cache is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            expires_at, result = cached
+            if expires_at > now():
+                return dict(result)
+
+    try:
+        from repositories.topology_repo import find_open_parent_event
+
+        parent = find_open_parent_event(ci_id, max_depth=3)
+    except Exception:
+        return _root_correlation_fields(ci_id)
+
+    if not parent:
+        result = _root_correlation_fields(ci_id)
+    else:
+        parent_event_id = parent.get("parent_event_id")
+        root_cause_ci_id = (
+            parent.get("root_cause_ci_id")
+            or parent.get("parent_ci_id")
+            or ci_id
+        )
+        result = {
+            "correlation_type": "PROPAGATED",
+            "propagated_from": parent_event_id,
+            "root_cause_ci_id": root_cause_ci_id,
+        }
+
+    if cache is not None:
+        cache[cache_key] = (now() + _CORRELATION_CACHE_TTL_S, dict(result))
+    return dict(result)
 
 
 def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
