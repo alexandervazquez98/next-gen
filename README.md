@@ -111,6 +111,16 @@ haber corrido `corepack pnpm install --frozen-lockfile` despues de un
 `git pull`. `pnpm run check:deps` detecta esto via el sentinel
 `frontend/.frontend-deps-ok` y corre el install automaticamente.
 
+Cuando el frontend corre dentro de Docker (lo normal con `docker compose up`)
+y el lockfile cambio pero la imagen ya estaba construida, la propia
+`safe-rebuild.sh` detecta el cambio y renueva solo el volumen anonimo de
+`frontend /app/node_modules` con
+`docker compose up -d --force-recreate --renew-anon-volumes frontend`. Si
+necesitas hacerlo a mano despues de un cambio puntual del lockfile, usa
+`sh scripts/refresh-frontend-deps.sh` (acepta `--dry-run` para previsualizar).
+**No** borres volumenes con `docker compose down -v` ni `docker volume rm`:
+esos comandos tambien eliminan datos de PostgreSQL/Neo4j.
+
 ## Estado actual
 
 - El modal de detalle ya consume contexto real de negocio e ITSM mediante endpoint dedicado.

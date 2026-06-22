@@ -158,9 +158,11 @@ jobs:
             value="${value#\"}"
             value="${value%\'}"
             value="${value#\'}"
-            echo "$key<<EOF" >> "$GITHUB_ENV"
-            echo "$value" >> "$GITHUB_ENV"
-            echo "EOF" >> "$GITHUB_ENV"
+            {
+              echo "$key<<EOF"
+              echo "$value"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
           done < .env
 
       # R8 / T6.4: assert the runner contract. Failures here mean the
@@ -231,6 +233,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
         run: |
           set -eu
           # Source .env so BACKUP_DIR is bound in the heredoc body.
@@ -242,14 +247,14 @@ jobs:
             . ./.env
             set +a
           fi
-          BACKUP_DIR="${BACKUP_DIR:-<unset — see workflow run log for the deploy's BACKUP_DIR>}"
+          BACKUP_DIR="${BACKUP_DIR:-UNSET_SEE_WORKFLOW_RUN_LOG_FOR_BACKUP_DIR}"
           SHA=$(git rev-parse HEAD)
           MSG=$(git log -1 --pretty=%s)
           SHORT_SHA=$(git rev-parse --short HEAD)
-          TITLE="CD failure: ${SHORT_SHA} run ${{ github.run_id }}"
-          TRIGGER_INFO="${{ github.event_name }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TRIGGER_INFO="workflow_dispatch (dry_run=${{ github.event.inputs.dry_run }})"
+          TITLE="CD failure: ${SHORT_SHA} run ${RUN_ID}"
+          TRIGGER_INFO="${EVENT_NAME}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TRIGGER_INFO="workflow_dispatch (dry_run=${DRY_RUN_INPUT})"
           fi
 
           cat > /tmp/cd-failure-body.md <<BODY

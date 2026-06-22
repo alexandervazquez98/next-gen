@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Deferred to #311** (out of scope for this release): AI agent event filtering (`backend/services/ai_chat_service.py`), Path B (`snmp_collector_loop`) re-enable / deprecation decision, and the historical-event backfill migration for events written before this change.
   - Rollback: revert the PR; prior behavior (every event tagged ROOT) is preserved by `git revert`. No schema or data migration required.
 
+## [1.13.3] — 2026-06-21
+
+### Fixed
+
+- **Renew stale frontend `/app/node_modules` anonymous volume on safe rebuild** (PR #308, closes #306):
+  - `scripts/safe-rebuild.sh` now hashes `frontend/pnpm-lock.yaml` and compares against `$BACKUP_DIR/frontend-pnpm-lock.sha256`; on change, runs `docker compose up -d --force-recreate --renew-anon-volumes frontend` scoped to the `frontend` service only (never service-wide, to avoid touching future anonymous volumes).
+  - Sentinel write happens only after a successful frontend renew so a failed dependency refresh is not silently masked as up-to-date.
+  - Adds `scripts/refresh-frontend-deps.sh` operator recovery script for manual intervention when this surfaces between safe rebuilds.
+  - RED-first shell tests (`scripts/test-safe-rebuild-frontend-volume.sh`, `scripts/test-refresh-frontend-deps.sh`) cover all 8 requirements of the new `frontend-dependency-volume-renewal` capability.
+  - Docs clarify the data-volume vs build-artifact-volume distinction in `docs/backup-restore.md`; `README.md` troubleshooting points to the recovery script.
+  - Promotes capability spec to `openspec/specs/frontend-dependency-volume-renewal/spec.md`; audit trail under `openspec/changes/archive/2026-06-21-renew-frontend-node-modules-volumes/`.
+
 ## [1.13.2] — 2026-06-20
 
 ### Fixed
