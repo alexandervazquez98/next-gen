@@ -245,6 +245,33 @@ def _dedupe_snmp_collection_failures(failures):
     return list(deduped.values())
 
 
+def _resolve_correlation(cache, ci_id, metric_id):
+    """Return ``{correlation_type, propagated_from, root_cause_ci_id}`` for a failing (CI, metric).
+
+    Looks up the per-cycle cache built by ``build_open_parent_index``. The cache is
+    pre-filtered by ``MetricDef.can_propagate`` at build time, so non-propagating
+    metrics simply miss the cache and resolve to ROOT. No I/O; never raises.
+
+    Design Decision 3 (C2-corrected): no ``session`` parameter — this helper only
+    does dict lookups after the cache is built, keeping the hot CREATE path
+    exception-free.
+    """
+    try:
+        parent = cache.get((ci_id, metric_id)) if cache else None
+    except Exception:
+        # A malformed cache (wrong type, unhashable key, etc.) must not break the
+        # write path. Fall through to ROOT — matches the resilience contract.
+        parent = None
+    if parent and parent.get("parent_event_id"):
+        parent_event_id = parent["parent_event_id"]
+        return {
+            "correlation_type": "PROPAGATED",
+            "propagated_from": parent_event_id,
+            "root_cause_ci_id": parent.get("root_cause_ci_id") or parent_event_id,
+        }
+    return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
+
+
 def _refresh_snmp_collection_failures(session, failures):
     failures = _dedupe_snmp_collection_failures(failures)
     if not failures:
