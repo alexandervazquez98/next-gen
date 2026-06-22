@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Topology-aware event correlation (RCA) for production collectors** (issue #310, follow-ups tracked by #311):
+  - Production event writers across all three active paths now tag cascading events as `PROPAGATED` with `propagated_from=<root event id>` and `root_cause_ci_id=<root ci id>`:
+    - **Path A (legacy engine)**: `backend/engines/snmp_worker.py` writes `correlation_type`, `propagated_from`, and `root_cause_ci_id` at the three hardcoded ROOT sites (`_refresh_snmp_collection_failures`, `_refresh_icmp_availability_events`, `_refresh_icmp_latency_events`) via the shared `_tag_failure_with_correlation` helper backed by `resolve_correlation_fields`.
+    - **Path C (leased polling)**: `backend/polling/snmp_worker.py` pre-tags every leased-poll envelope with the same correlation fields before `event_writer.batch_update_events`. A per-cycle memo cache keeps traversal cost bounded.
+    - **CLI poll alerts**: `backend/engines/cli_worker.py` resolves the CI owning the MetricDef and tags `CLI_POLL_ALERT` events identically (fail-safe ROOT when the CI lookup or parent lookup raises).
+  - `resolve_correlation_fields(ci_id, severity)` wraps `topology_repo.find_open_parent_event(ci_id, max_depth=3)` and returns `{correlation_type, propagated_from, root_cause_ci_id}`. Fail-safe ROOT when no open parent exists, when the lookup raises, or when `can_propagate=False`.
+  - `_is_authoritative_event(event)` centralizes the `correlation_type != 'PROPAGATED'` rule. Reused by escalation gating and the events API default filter. `_is_authoritative_availability_event` now delegates to it (semantics preserved).
+  - Escalation gating: `services/escalation_notifier.notify_critical_event_escalation` takes `correlation_type` and short-circuits to `success=False, suppressed=True` for non-authoritative events. `routers/events.py:close_event` passes the event's `correlation_type` from `event_service.get_event_detail`.
+  - `GET /api/events` default now excludes `PROPAGATED` events. Consumers needing the full stream must opt in with `?include=propagated` or `?include=all`. Unknown `include` values fall back to the safe default (ROOT only).
+  - Frontend `useEventCorrelation` hook collapses `CONNECTS_TO` cascades alongside `DEPENDS_ON` and `HOSTED_ON` (MANAGED_BY stays excluded). On multiple-upstream match the deepest provider wins.
+  - Adds 80+ targeted tests across `backend/tests/` and `frontend/hooks/` covering: helper semantics, Path A fan-out / 3-hop / mixed-severity / depth coverage, Path C producer + writer round-trip, CLI poll alert correlation, escalation suppression (CRITICAL+PROPAGATED, WARNING+PROPAGATED, legacy compatibility), events API default + opt-in, memo cache TTL and per-cycle scope, and `CONNECTS_TO` grouping regression. Strict TDD: every RED test committed before its GREEN implementation.
+  - **Operator-visible KPI drift (intentional)**:
+    - Open-event counts in dashboards drop by design — cascading events collapse into their root cause instead of showing as N independent incidents.
+    - Escalation counts drop for the same reason.
+    - ITSM ticket creation now produces ONE ticket per dependency chain (root cause) rather than N tickets for N affected CIs.
+    - The MonitoringConsole event stream is unchanged visually (it already collapsed cascades client-side).
+  - **API consumer action**: if a downstream consumer of `GET /api/events` reports missing events, instruct them to add `?include=propagated` to their requests. See `docs/event-correlation-rca.md` for the full operator recalibration note.
+  - **Deferred to #311** (out of scope for this release): AI agent event filtering (`backend/services/ai_chat_service.py`), Path B (`snmp_collector_loop`) re-enable / deprecation decision, and the historical-event backfill migration for events written before this change.
+  - Rollback: revert the PR; prior behavior (every event tagged ROOT) is preserved by `git revert`. No schema or data migration required.
+
 ## [1.13.2] — 2026-06-20
 
 ### Fixed
