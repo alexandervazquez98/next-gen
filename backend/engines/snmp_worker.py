@@ -265,10 +265,16 @@ def _resolve_correlation(cache, ci_id, metric_id):
         parent = None
     if parent and parent.get("parent_event_id"):
         parent_event_id = parent["parent_event_id"]
+        # Contract: root_cause_ci_id must NEVER be an event id (recovery queries
+        # match it against e.ci_id). If the cache entry lacks a CI-level root
+        # cause, degrade to ROOT instead of writing an event id into a CI field.
+        root_cause_ci_id = parent.get("root_cause_ci_id")
+        if not root_cause_ci_id:
+            return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
         return {
             "correlation_type": "PROPAGATED",
             "propagated_from": parent_event_id,
-            "root_cause_ci_id": parent.get("root_cause_ci_id") or parent_event_id,
+            "root_cause_ci_id": root_cause_ci_id,
         }
     return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
 
@@ -530,6 +536,13 @@ def _recover_snmp_collection_failures(session, updates):
         WITH e
         CALL {
             WITH e
+            # SNMP recovery intentionally matches by root_cause_ci_id for
+            # FULL-CASCADE recovery: every descendant whose root cause is the
+            # recovering CI is closed in one pass. This differs from the ICMP
+            # recovery paths (_recover_icmp_availability_events and
+            # _recover_icmp_latency_events), which match by propagated_from = e.id
+            # (direct-child only). The asymmetry is deliberate and NOT changed
+            # by this PR — do not "fix" it without a deliberate design decision.
             MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
             WHERE pe.root_cause_ci_id = e.ci_id
               AND pe.correlation_type = 'PROPAGATED'

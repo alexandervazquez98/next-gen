@@ -68,15 +68,20 @@ def test_resolve_correlation_handles_missing_parent_event_id():
     assert result["correlation_type"] == "ROOT"
 
 
-def test_resolve_correlation_falls_back_to_parent_event_id_for_root_cause():
-    """If root_cause_ci_id is missing, use parent_event_id as the root cause."""
-    cache = {("ci-E", "cpu-load"): {"parent_event_id": "evt-A"}}
+def test_resolve_correlation_degrades_to_root_when_root_cause_ci_id_missing():
+    """If root_cause_ci_id is missing, degrades to ROOT rather than writing an
+    EVENT id into a CI-id field.
+
+    Contract: root_cause_ci_id must NEVER be an event id. If a valid CI-level
+    root cause cannot be resolved, the row must NOT be tagged PROPAGATED.
+    """
+    cache = {("ci-E", "cpu-load"): {"parent_event_id": "evt-A"}}  # no root_cause_ci_id
 
     result = _resolve_correlation(cache, "ci-E", "cpu-load")
 
-    assert result["correlation_type"] == "PROPAGATED"
-    assert result["propagated_from"] == "evt-A"
-    assert result["root_cause_ci_id"] == "evt-A"
+    assert result["correlation_type"] == "ROOT"
+    assert result["propagated_from"] is None
+    assert result["root_cause_ci_id"] == "ci-E"
 
 
 def test_resolve_correlation_uses_ci_metric_pair_key():
@@ -507,5 +512,71 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
         poll_snmp()  # cycle 2: cache-build returns dict → cache used
 
     assert mock_build.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Task — end-to-end poll_snmp cache-hit → PROPAGATED CREATE (C1 guard)
+# ---------------------------------------------------------------------------
+
+
+def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
+    """End-to-end: build_open_parent_index cache hit flows through poll_snmp()
+    into a PROPAGATED CREATE row.
+
+    Guards the C1 regression (cache built BEFORE the CREATE sites). Unlike the
+    Task-3 tests which patch build_open_parent_index to return {}, this test
+    populates the cache with a real parent entry and asserts the UNWIND CREATE
+    row captured on the fake session carries the propagated correlation fields.
+    """
+    import config as _config
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", [_POLL_RECORD])
+
+    populated_cache = {
+        ("ci-001", "CPU"): {
+            "parent_event_id": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
+    }
+
+    with patch("engines.snmp_worker.driver", mock_driver), \
+         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
+         patch("engines.snmp_worker.bulk_insert_metrics"), \
+         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
+         patch(
+             "engines.snmp_worker.build_open_parent_index",
+             return_value=populated_cache,
+         ) as mock_build:
+        from engines.snmp_worker import poll_snmp
+        poll_snmp()
+
+    # Cache-build was called with the (ci_id, metric_id) pairs set.
+    mock_build.assert_called_once()
+
+    # Find the UNWIND...CREATE call captured on the session and inspect the row.
+    create_calls = [
+        c for c in mock_session.queries
+        if "UNWIND" in c["query"] and "CREATE" in c["query"]
+    ]
+    assert create_calls, "expected a UNWIND ... CREATE call to be captured"
+
+    failures_param = create_calls[0]["params"].get("failures", [])
+    assert failures_param, "expected at least one failure row from poll_snmp"
+
+    propagated_rows = [
+        row for row in failures_param
+        if row.get("correlation_type") == "PROPAGATED"
+    ]
+    assert propagated_rows, (
+        "expected at least one PROPAGATED failure row when cache is populated"
+    )
+
+    row = propagated_rows[0]
+    assert row["correlation_type"] == "PROPAGATED"
+    assert row["propagated_from"] == "evt-A"
+    assert row["root_cause_ci_id"] == "ci-A"
 
 
