@@ -262,7 +262,11 @@ Notes:
   - Notes ITSM/escalation counts may also drop for cascades.
   - References #311 for AI agent filtering, Path B re-enable, and historical backfill migration.
   - Recommends dashboard recalibration review before next reporting cycle.
-- **Work-unit commits:** single commit `chore(release): note KPI drift and dashboard recalibration for #310 / #311`.
+- **Work-unit commits:** 2 commits per work-unit-commits discipline — one for CHANGELOG, one for the new operator runbook. They are independent deliverables (release notes vs operator guide) and review separately.
+- **Status:** ✅ completed.
+  - CHANGELOG: `b2b484c` — `docs(changelog): note topology-aware event correlation (RCA) for #310 / #311`.
+  - Ops runbook: `1df8565` — `docs(events): add operator runbook for KPI drift after #310 correlation fix`.
+  - Artifacts added under `[Unreleased]` in `CHANGELOG.md` and new file `docs/event-correlation-rca.md`. Both reference #310 (this change) and #311 (follow-ups).
 
 ## Strict TDD sequencing
 
