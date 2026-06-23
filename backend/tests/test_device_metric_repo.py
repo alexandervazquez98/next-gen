@@ -428,4 +428,55 @@ class TestListMetrics:
 # ---------------------------------------------------------------------------
 # Module-level singleton — added in Task 3a.3
 # ---------------------------------------------------------------------------
-# (singleton tests are added in the follow-up commit)
+
+
+class TestDeviceMetricRepoSingleton:
+    """get_device_metric_repo() \u2014 lazy, cached, overridable for tests."""
+
+    def test_singleton_returns_same_instance(self):
+        """get_device_metric_repo() returns the SAME instance on repeated calls."""
+        from repositories import device_metric_repo as mod
+
+        # Override with a stub so we don't depend on database.get_db()
+        sentinel = object()
+        mod.set_device_metric_repo(sentinel)  # type: ignore[arg-type]
+
+        first = mod.get_device_metric_repo()
+        second = mod.get_device_metric_repo()
+
+        assert first is second
+        assert first is sentinel
+
+    def test_singleton_overridable_for_tests(self):
+        """set_device_metric_repo(mock) makes the next get_device_metric_repo() return mock."""
+        from repositories import device_metric_repo as mod
+
+        sentinel_a = object()
+        sentinel_b = object()
+
+        mod.set_device_metric_repo(sentinel_a)  # type: ignore[arg-type]
+        assert mod.get_device_metric_repo() is sentinel_a
+
+        mod.set_device_metric_repo(sentinel_b)  # type: ignore[arg-type]
+        assert mod.get_device_metric_repo() is sentinel_b
+
+        # set_device_metric_repo(None) clears the cache; the next get will
+        # rebuild the repo from database.get_db() \u2014 it MUST NOT return
+        # the previous sentinel.
+        mod.set_device_metric_repo(None)
+        fresh = mod.get_device_metric_repo()
+        assert fresh is not sentinel_a
+        assert fresh is not sentinel_b
+        # And the cached value persists (singleton semantics)
+        assert mod.get_device_metric_repo() is fresh
+
+    def test_singleton_is_lazy_until_first_call(self):
+        """Until get_device_metric_repo() is called, the module global is None.
+
+        This guarantees that importing the module has no side effects on
+        database connection state.
+        """
+        from repositories import device_metric_repo as mod
+
+        mod.set_device_metric_repo(None)
+        assert mod._device_metric_repo is None

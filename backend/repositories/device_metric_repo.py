@@ -347,4 +347,32 @@ class DeviceMetricRepo:
 # ---------------------------------------------------------------------------
 # Module-level singleton (lazy) — added in Task 3a.3
 # ---------------------------------------------------------------------------
-# (singleton code is added in the follow-up commit)
+
+
+_device_metric_repo: Optional[DeviceMetricRepo] = None
+
+
+def get_device_metric_repo() -> DeviceMetricRepo:
+    """Return cached DeviceMetricRepo (singleton, lazy).
+
+    Mirrors the ``get_mqtt_settings()`` / ``get_event_batch_settings()`` pattern
+    in ``config.py``. The driver is created on first call via ``database.get_db()``
+    so importing this module is free.
+    """
+    global _device_metric_repo
+    if _device_metric_repo is None:
+        from database import get_db
+
+        driver = get_db()
+        _device_metric_repo = DeviceMetricRepo(driver)
+    return _device_metric_repo
+
+
+def set_device_metric_repo(repo: Optional[DeviceMetricRepo]) -> None:
+    """Override the singleton (for tests). Pass ``None`` to clear.
+
+    Used by ``tests/test_device_metric_repo.py::_reset_singleton`` (autouse) and
+    by any integration test that needs to inject a mock repo.
+    """
+    global _device_metric_repo
+    _device_metric_repo = repo
