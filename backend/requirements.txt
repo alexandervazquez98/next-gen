@@ -17,3 +17,4 @@ alembic==1.13.1
 apscheduler==3.10.4
 schedule>=1.2.0
 paramiko>=3.4.0
+aiomqtt>=2.0.0
