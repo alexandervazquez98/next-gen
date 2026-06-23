@@ -6,8 +6,21 @@ the heart of the PR2 dispatch path — every subscriber test depends on it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
-from services.mqtt.topic_router import MQTTMatcher
+from services.mqtt.topic_router import MQTTMatcher, TopicRouter
+
+# ── Fixtures ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _StubParser:
+    """Minimal Parser-shaped object for router tests."""
+
+    name: str
+    topic_patterns: tuple[str, ...] = ()
+
 
 # ── Task 2a.1: MQTTMatcher with MQTT wildcard semantics ─────────────────────
 
@@ -90,3 +103,45 @@ class TestSpecificityScoring:
         matcher["foo/#"] = "fallback"
         matcher["foo/+/bar"] = "specific"
         assert matcher.match("foo/x/bar") == "specific"
+
+
+# ── Task 2a.3: TopicRouter.resolve + subscribe_patterns ─────────────────────
+
+
+class TestTopicRouterResolve:
+    def test_router_resolves_most_specific_parser(self) -> None:
+        bliiot = _StubParser(name="bliiot", topic_patterns=("rtu/+/+/telemetry",))
+        generic = _StubParser(name="generic", topic_patterns=("#",))
+        router = TopicRouter([bliiot, generic])
+        assert router.resolve("rtu/loc/rtu/telemetry") is bliiot
+
+    def test_router_fallback_to_hash_parser(self) -> None:
+        bliiot = _StubParser(name="bliiot", topic_patterns=("rtu/+/+/telemetry",))
+        generic = _StubParser(name="generic", topic_patterns=("#",))
+        router = TopicRouter([bliiot, generic])
+        # No specific match — the `#` fallback parser wins.
+        assert router.resolve("tenants/acme/sensors/123") is generic
+
+    def test_router_no_match_returns_none(self) -> None:
+        # No `#` fallback registered.
+        bliiot = _StubParser(name="bliiot", topic_patterns=("rtu/+/+/telemetry",))
+        router = TopicRouter([bliiot])
+        assert router.resolve("tenants/acme/sensors/123") is None
+
+    def test_subscribe_patterns_dedupes(self) -> None:
+        a = _StubParser(name="a", topic_patterns=("foo/+", "bar/+"))
+        b = _StubParser(name="b", topic_patterns=("foo/+", "baz/#"))  # foo/+ shared
+        router = TopicRouter([a, b])
+        patterns = router.subscribe_patterns()
+        # `foo/+` appears in both parsers — must be deduped.
+        assert patterns.count("foo/+") == 1
+        # All declared patterns present.
+        assert set(patterns) == {"foo/+", "bar/+", "baz/#"}
+        # Sorted for determinism.
+        assert patterns == sorted(patterns)
+
+    def test_subscribe_patterns_includes_fallback(self) -> None:
+        bliiot = _StubParser(name="bliiot", topic_patterns=("rtu/+/+/telemetry",))
+        generic = _StubParser(name="generic", topic_patterns=("#",))
+        router = TopicRouter([bliiot, generic])
+        assert "#" in router.subscribe_patterns()

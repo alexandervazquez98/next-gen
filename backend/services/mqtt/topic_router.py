@@ -13,7 +13,12 @@ heart of the PR2 dispatch path and must be exhaustively unit-tested.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from services.mqtt.parsers import all_parsers
+
+if TYPE_CHECKING:
+    from services.mqtt.parsers.base import Parser
 
 
 class MQTTMatcher:
@@ -106,3 +111,44 @@ def _specificity(segments: list[str]) -> tuple[int, int]:
     literal_count = sum(1 for seg in segments if seg not in ("+", "#"))
     no_hash = 0 if "#" in segments else 1
     return (literal_count, no_hash)
+
+
+class TopicRouter:
+    """Resolves a topic to a parser, evaluating patterns in specificity order.
+
+    On construction, the router registers every pattern declared by each
+    parser. Patterns ending in ``/#`` (including the catch-all ``#``) are
+    remembered as fallback candidates — used when no specific pattern
+    matches the topic.
+    """
+
+    def __init__(self, parsers: list[Parser] | None = None) -> None:
+        # Use the registered parsers by default; the parameter is for tests.
+        self._parsers: list[Parser] = list(parsers if parsers is not None else all_parsers())
+        self._matcher: MQTTMatcher = MQTTMatcher()
+        self._fallback_parser: Parser | None = None
+        for parser in self._parsers:
+            for pattern in parser.topic_patterns:
+                if pattern.endswith("/#"):
+                    self._fallback_parser = parser
+                self._matcher[pattern] = parser
+
+    def resolve(self, topic: str) -> Parser | None:
+        """Return the matching parser, or the ``#`` fallback parser, or None.
+
+        Specificity (via :class:`MQTTMatcher`) determines which parser
+        wins when multiple patterns match. If no specific pattern matches
+        but a ``#`` parser was registered, that fallback parser is returned.
+        """
+        result = self._matcher.match(topic)
+        if result is not None:
+            return result  # type: ignore[no-any-return]
+        return self._fallback_parser
+
+    def subscribe_patterns(self) -> list[str]:
+        """Return the deduplicated union of all parser patterns (sorted)."""
+        seen: set[str] = set()
+        for parser in self._parsers:
+            for pattern in parser.topic_patterns:
+                seen.add(pattern)
+        return sorted(seen)
