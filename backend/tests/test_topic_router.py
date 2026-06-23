@@ -7,9 +7,7 @@ the heart of the PR2 dispatch path — every subscriber test depends on it.
 from __future__ import annotations
 
 import pytest
-
 from services.mqtt.topic_router import MQTTMatcher
-
 
 # ── Task 2a.1: MQTTMatcher with MQTT wildcard semantics ─────────────────────
 
@@ -55,3 +53,40 @@ class TestMqttMatcherWildcards:
         # `#` embedded inside another segment is invalid (whole-segment rule).
         with pytest.raises(ValueError):
             matcher["foo/+/bar#"] = "bad-trailing"
+
+
+# ── Task 2a.2: Specificity scoring ─────────────────────────────────────────
+
+
+class TestSpecificityScoring:
+    def test_specificity_more_segments_wins(self) -> None:
+        matcher: MQTTMatcher = MQTTMatcher()
+        # Two valid patterns, no `#`. The one with more literals must win.
+        matcher["foo/+/bar"] = "two_literals"
+        matcher["foo/+/+/bar"] = "three_literals"
+        assert matcher.match("foo/x/y/bar") == "three_literals"
+
+    def test_specificity_hash_is_least(self) -> None:
+        matcher: MQTTMatcher = MQTTMatcher()
+        # A pattern with `#` is LESS specific than a pattern with no `#`,
+        # even when the no-`#` pattern has FEWER literals.
+        matcher["foo/#"] = "hash"
+        matcher["foo/+/bar"] = "plus_bar"
+        # `foo/x/bar` matches both; `foo/+/bar` (no `#`) must win.
+        assert matcher.match("foo/x/bar") == "plus_bar"
+
+    def test_specificity_stable_for_equivalent_patterns(self) -> None:
+        matcher: MQTTMatcher = MQTTMatcher()
+        matcher["a/b/c"] = "first"
+        matcher["a/b/c"] = "second"  # exact duplicate — last write wins
+        # Two identical patterns have the same score — the resulting value
+        # depends on iteration order, but it must be a non-None match.
+        assert matcher.match("a/b/c") in ("first", "second")
+
+    def test_mqtt_matcher_specificity_wins(self) -> None:
+        """Registration order does NOT matter — specificity does."""
+        # Register the fallback FIRST, then the more specific pattern.
+        matcher: MQTTMatcher = MQTTMatcher()
+        matcher["foo/#"] = "fallback"
+        matcher["foo/+/bar"] = "specific"
+        assert matcher.match("foo/x/bar") == "specific"

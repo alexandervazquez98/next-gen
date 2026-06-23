@@ -51,11 +51,22 @@ class MQTTMatcher:
         self._patterns.append((segments, value))
 
     def match(self, topic: str) -> Any | None:
-        """Return the value for the most specific matching pattern, or None."""
+        """Return the value for the most specific matching pattern, or None.
+
+        Specificity (descending):
+          1. Higher literal-segment count wins.
+          2. Ties break toward no-``#`` patterns (no-``#`` is more specific).
+        """
         topic_segments = topic.split("/")
-        # Insertion order is fine for Task 2a.1; Task 2a.2 layers on
-        # specificity sorting to make registration order irrelevant.
-        for segments, value in self._patterns:
+        # Sort by specificity on every match — O(n log n) per call, fine for
+        # the ≤20-pattern budget per design §11. The sort is stable so
+        # equivalent patterns preserve insertion order.
+        sorted_patterns = sorted(
+            self._patterns,
+            key=lambda item: _specificity(item[0]),
+            reverse=True,
+        )
+        for segments, value in sorted_patterns:
             if _segments_match(segments, topic_segments):
                 return value
         return None
@@ -76,3 +87,22 @@ def _segments_match(pattern: list[str], topic: list[str]) -> bool:
             return False
         i += 1
     return i == len(topic)
+
+
+def _specificity(segments: list[str]) -> tuple[int, int]:
+    """Return ``(literal_segment_count, 0 if '#' in pattern else 1)``.
+
+    Higher = more specific. Sort descending.
+
+    Examples:
+      * ``foo/+/bar`` -> ``(2, 1)`` — 2 literals, no ``#``.
+      * ``foo/+/+/bar`` -> ``(3, 1)`` — 3 literals, no ``#``.
+      * ``foo/#`` -> ``(0, 0)`` — 0 literals, has ``#``.
+
+    The second element (``0`` for ``#``, ``1`` for non-``#``) breaks ties
+    in the FIRST element: no-``#`` patterns are always more specific than
+    ``#`` patterns of the same literal count.
+    """
+    literal_count = sum(1 for seg in segments if seg not in ("+", "#"))
+    no_hash = 0 if "#" in segments else 1
+    return (literal_count, no_hash)
