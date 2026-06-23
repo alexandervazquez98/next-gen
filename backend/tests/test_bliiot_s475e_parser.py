@@ -257,6 +257,114 @@ class TestSensorSkipOnValueError:
         assert svc.get_or_create_sensor.call_count == 3  # all three attempted
 
 
+# ── Pure-parser contract (architecture regression guard) ────────────────────
+
+
+class TestBliiotParserIsPure:
+    """Regression tests guarding the pure-parser architecture contract.
+
+    Per the design (section 2.2), :class:`BliiotS475EParser` is a PURE parser
+    that produces :class:`Reading` objects only — it must NOT call
+    ``RTUService`` or any persistence layer. Persistence is the subscriber's
+    responsibility (PR3b will route through ``DeviceMetricRepo``).
+
+    NOTE: the module-level :func:`process_telemetry_message` function BELOW
+    the parser class DOES call ``RTUService`` — that is intentional legacy
+    back-compat behavior. Only the ``BliiotS475EParser`` CLASS must be pure.
+
+    Triggered by sdd-verify-minimax FAIL (PR1, critical 5) — the verify grep
+    found actual ``rtu_service.get_or_create_*`` calls under
+    ``services/mqtt/``. The fix is to (a) confirm the parser class is pure
+    via these tests, and (b) keep the legacy function's RTUService calls
+    explicitly acknowledged as the back-compat path.
+    """
+
+    def test_parse_works_without_any_rtu_service(self) -> None:
+        """Runtime contract: ``parse()`` produces a Reading with no service param.
+
+        ``BliiotS475EParser.parse`` does NOT accept a service parameter and
+        must not touch ``RTUService`` indirectly. We patch
+        ``services.rtu_service.RTUService`` and assert the patch is never
+        accessed. This guards against accidentally re-coupling the parser to
+        the persistence layer.
+        """
+        from unittest.mock import patch
+
+        from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser
+
+        parser = BliiotS475EParser()
+        sample_payload = (
+            b'{"timestamp": "2026-01-01T00:00:00Z", '
+            b'"sensors": [{"register_addr": 0, "value": 2375, "unit": "0.01\xc2\xb0C"}]}'
+        )
+
+        with patch("services.rtu_service.RTUService") as mock_rtu_class:
+            readings = parser.parse("rtu/loc-1/rtu-1/telemetry", sample_payload)
+
+        # Positive: parse() produced the expected Reading without any service
+        assert len(readings) == 1
+        assert readings[0].device_id == "rtu-1"
+        assert readings[0].location_id == "loc-1"
+        assert len(readings[0].metrics) == 1
+        assert readings[0].metrics[0].name == "register_0"
+        assert readings[0].metrics[0].value == 2375
+
+        # Negative: RTUService class was never instantiated or accessed.
+        # This is the architectural contract — the parser is a pure producer.
+        mock_rtu_class.assert_not_called()
+        assert mock_rtu_class.mock_calls == []
+
+    def test_parser_class_source_has_no_rtu_service_references(self) -> None:
+        """Static contract: ``BliiotS475EParser`` source must not mention RTUService.
+
+        ``unittest.mock.patch`` cannot reliably catch a future regression
+        where someone re-introduces persistence via ``from services.rtu_service
+        import RTUService`` (the binding is captured at import time). Static
+        source inspection is deterministic and catches both call patterns
+        and import statements regardless of when the module is loaded.
+        """
+        import inspect
+
+        from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser
+
+        # Source of the class only — NOT the whole module. The legacy
+        # ``process_telemetry_message`` function intentionally uses RTUService.
+        source = inspect.getsource(BliiotS475EParser)
+
+        forbidden_tokens = (
+            "RTUService",
+            "get_or_create_rtu",
+            "get_or_create_sensor",
+            "from services.rtu_service",
+            "from services import rtu_service",
+        )
+        leaked = [t for t in forbidden_tokens if t in source]
+        assert not leaked, (
+            f"BliiotS475EParser source contains forbidden tokens: {leaked}. "
+            f"The parser must be a pure producer of Reading objects; "
+            f"persistence is the subscriber's responsibility (PR3b)."
+        )
+
+    def test_parser_parse_signature_takes_no_persistence_params(self) -> None:
+        """Structural contract: ``parse`` signature is exactly ``(self, topic, payload)``.
+
+        Defense-in-depth: even a defaulted ``rtu_service=None`` parameter
+        would let a future caller wire persistence into the parser. Locking
+        the signature makes that mistake obvious in code review.
+        """
+        import inspect
+
+        from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser
+
+        sig = inspect.signature(BliiotS475EParser.parse)
+        param_names = list(sig.parameters.keys())
+
+        assert param_names == ["self", "topic", "payload"], (
+            f"BliiotS475EParser.parse signature must be (self, topic, payload) "
+            f"— no rtu_service or persistence params. Got: {param_names}"
+        )
+
+
 # ── Parser identity / registration metadata ─────────────────────────────────
 
 
