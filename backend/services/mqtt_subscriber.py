@@ -16,11 +16,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional
 
-from models.rtu_sensor import TelemetryMessage
-from services.rtu_service import RTUService
 from config import get_mqtt_settings
+from models.rtu_sensor import TelemetryMessage
+
+# BLIIoT parser logic moved to services.mqtt.parsers.bliiot_s475e — collapse to shim in Task 1.4
+from services.mqtt.parsers.bliiot_s475e import (  # noqa: F401  (re-exported for back-compat)
+    TelemetryMessage as _BliiotTelemetryMessage,  # re-exported alias
+    parse_telemetry_topic,
+    process_telemetry_message,
+)
+from services.rtu_service import RTUService
 
 logger = logging.getLogger(__name__)
 
@@ -28,124 +34,11 @@ logger = logging.getLogger(__name__)
 _mqtt_settings = get_mqtt_settings()
 
 MQTT_BROKER_URL: str = _mqtt_settings.broker_url
-MQTT_USERNAME: Optional[str] = _mqtt_settings.username
-MQTT_PASSWORD: Optional[str] = _mqtt_settings.password
+MQTT_USERNAME: str | None = _mqtt_settings.username
+MQTT_PASSWORD: str | None = _mqtt_settings.password
 MQTT_CLIENT_ID: str = _mqtt_settings.client_id
 MQTT_WILDCARD_TOPIC: str = _mqtt_settings.wildcard_topic
 MQTT_QOS: int = _mqtt_settings.qos
-
-# ── Topic Parsing ─────────────────────────────────────────────────────────────
-
-
-def parse_telemetry_topic(topic: str) -> tuple[str, str]:
-    """Extract (location_id, rtu_id) from an MQTT telemetry topic.
-
-    Topic structure: rtu/{location_id}/{rtu_id}/telemetry
-
-    Args:
-        topic: Full MQTT topic string
-
-    Returns:
-        Tuple of (location_id, rtu_id) as strings
-
-    Raises:
-        ValueError: If topic does not match the expected structure
-    """
-    if not topic:
-        raise ValueError("Topic cannot be empty")
-
-    segments = topic.split("/")
-
-    if len(segments) != 4:
-        raise ValueError(
-            f"Expected 4 topic segments (rtu/{{location_id}}/{{rtu_id}}/telemetry), "
-            f"got {len(segments)}: '{topic}'"
-        )
-
-    prefix, location_id, rtu_id, suffix = segments
-
-    if prefix != "rtu":
-        raise ValueError(f"Topic must start with 'rtu/', got '{topic}'")
-
-    if suffix != "telemetry":
-        raise ValueError(f"Topic must end with 'telemetry', got '{topic}'")
-
-    return location_id, rtu_id
-
-
-# ── Message Processing ────────────────────────────────────────────────────────
-
-
-def process_telemetry_message(
-    topic: str,
-    msg: TelemetryMessage,
-    rtu_service: RTUService,
-) -> dict:
-    """Process a parsed TelemetryMessage and upsert RTU/Sensor nodes into Neo4j.
-
-    Args:
-        topic: Full MQTT topic string (used for error messages)
-        msg: Parsed TelemetryMessage Pydantic model
-        rtu_service: RTUService instance for Neo4j operations
-
-    Returns:
-        Dict with keys:
-          - status: "processed" | "error"
-          - rtu_id: The RTU id (on success)
-          - sensor_count: Number of sensors upserted
-          - error: Error message (on failure)
-    """
-    try:
-        location_id, rtu_id = parse_telemetry_topic(topic)
-    except ValueError as e:
-        logger.error("[MQTT] Invalid topic '%s': %s", topic, e)
-        return {"status": "error", "error": f"Invalid topic: {e}"}
-
-    try:
-        # Upsert RTU node (get-or-create)
-        rtu_service.get_or_create_rtu(
-            rtu_id=rtu_id,
-            location_id=location_id,
-            name=f"RTU-{rtu_id[:8]}",
-            ip=None,
-        )
-
-        # Upsert each sensor from the payload
-        sensor_count = 0
-        for sensor in msg.sensors:
-            try:
-                rtu_service.get_or_create_sensor(
-                    rtu_id=rtu_id,
-                    register_addr=sensor.register_addr,
-                    name=f"Sensor-{sensor.register_addr}",
-                    unit=sensor.unit,
-                    sensor_type="analog_input",
-                )
-                sensor_count += 1
-            except ValueError as e:
-                # Invalid sensor register — skip this sensor, continue processing
-                logger.warning(
-                    "[MQTT] Skipping sensor at addr %s for RTU %s: %s",
-                    sensor.register_addr,
-                    rtu_id,
-                    e,
-                )
-                continue
-
-        return {
-            "status": "processed",
-            "rtu_id": rtu_id,
-            "sensor_count": sensor_count,
-        }
-
-    except Exception as e:
-        logger.error(
-            "[MQTT] Failed to process telemetry from %s: %s",
-            topic,
-            e,
-            exc_info=True,
-        )
-        return {"status": "error", "error": str(e)}
 
 
 # ── MQTT Subscriber Loop ───────────────────────────────────────────────────────
