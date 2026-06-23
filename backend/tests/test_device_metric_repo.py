@@ -14,11 +14,9 @@ Cypher contracts under test (per design \u00a74):
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import patch
+from datetime import UTC, datetime
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -166,9 +164,7 @@ class TestUpsertDevice:
 
     def test_upsert_device_stores_extra_as_json(self, repo, mock_neo4j_driver):
         """extra dict is serialized to JSON string for Neo4j property safety."""
-        mock_neo4j_driver.mock_session.set_response(
-            "merge (d:device", [_make_device_record()]
-        )
+        mock_neo4j_driver.mock_session.set_response("merge (d:device", [_make_device_record()])
 
         repo.upsert_device(
             device_id="dev-1",
@@ -185,9 +181,7 @@ class TestUpsertDevice:
 
     def test_upsert_device_no_extra_stores_empty_json(self, repo, mock_neo4j_driver):
         """When extra is None, store the JSON literal '{}' (not None)."""
-        mock_neo4j_driver.mock_session.set_response(
-            "merge (d:device", [_make_device_record()]
-        )
+        mock_neo4j_driver.mock_session.set_response("merge (d:device", [_make_device_record()])
 
         repo.upsert_device(
             device_id="dev-1",
@@ -253,7 +247,7 @@ class TestUpsertMetric:
             name="temp",
             value=23.5,
             unit="C",
-            ts=datetime(2026, 6, 23, 10, 0, 0, tzinfo=timezone.utc),
+            ts=datetime(2026, 6, 23, 10, 0, 0, tzinfo=UTC),
             tags={"register_addr": "100"},
         )
 
@@ -294,7 +288,7 @@ class TestUpsertMetric:
             name="temp",
             value=99.9,
             unit="C",
-            ts=datetime(2026, 6, 23, 11, 0, 0, tzinfo=timezone.utc),
+            ts=datetime(2026, 6, 23, 11, 0, 0, tzinfo=UTC),
         )
 
         assert result["last_value"] == 99.9
@@ -303,9 +297,7 @@ class TestUpsertMetric:
 
     def test_upsert_metric_no_tags_stores_empty_json(self, repo, mock_neo4j_driver):
         """tags=None \u2192 '{}' (JSON), never NULL (Neo4j doesn't index NULL well)."""
-        mock_neo4j_driver.mock_session.set_response(
-            "has_metric", [_make_metric_record()]
-        )
+        mock_neo4j_driver.mock_session.set_response("has_metric", [_make_metric_record()])
 
         repo.upsert_metric(
             metric_id="dev-1:temp",
@@ -313,7 +305,7 @@ class TestUpsertMetric:
             name="temp",
             value=1.0,
             unit=None,
-            ts=datetime(2026, 6, 23, 10, 0, 0, tzinfo=timezone.utc),
+            ts=datetime(2026, 6, 23, 10, 0, 0, tzinfo=UTC),
         )
 
         params = mock_neo4j_driver.mock_session.queries[0]["params"]
@@ -392,9 +384,7 @@ class TestListMetrics:
 
         assert result == []
 
-    def test_same_metric_name_on_two_devices_yields_distinct_metrics(
-        self, repo, mock_neo4j_driver
-    ):
+    def test_same_metric_name_on_two_devices_yields_distinct_metrics(self, repo, mock_neo4j_driver):
         """Metric 'temp' on device A is distinct from Metric 'temp' on device B.
 
         The repo must pass ``device_id`` as a Cypher parameter so the composite

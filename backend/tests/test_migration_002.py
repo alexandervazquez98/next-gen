@@ -17,12 +17,10 @@ The 5 expected artifacts (per design \u00a73):
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,7 +29,9 @@ import pytest
 
 # Repository path: backend/tests/test_migration_002.py
 # Migration path: backend/migrations/002_generic_device_schema.cypher
-MIGRATION_FILE = Path(__file__).resolve().parent.parent / "migrations" / "002_generic_device_schema.cypher"
+MIGRATION_FILE = (
+    Path(__file__).resolve().parent.parent / "migrations" / "002_generic_device_schema.cypher"
+)
 
 
 def _read_migration() -> str:
@@ -111,9 +111,7 @@ class TestConstraints:
             r"CREATE\s+CONSTRAINT\s+device_id_unique.*?FOR\s*\(\s*d\s*:\s*Device\s*\)",
             re.IGNORECASE | re.DOTALL,
         )
-        assert pattern.search(content), (
-            "device_id_unique constraint must target (d:Device)."
-        )
+        assert pattern.search(content), "device_id_unique constraint must target (d:Device)."
 
     def test_metric_constraint_targets_metric_label(self):
         content = _read_migration()
@@ -122,9 +120,7 @@ class TestConstraints:
             r"CREATE\s+CONSTRAINT\s+metric_id_unique.*?FOR\s*\(\s*m\s*:\s*Metric\s*\)",
             re.IGNORECASE | re.DOTALL,
         )
-        assert pattern.search(content), (
-            "metric_id_unique constraint must target (m:Metric)."
-        )
+        assert pattern.search(content), "metric_id_unique constraint must target (m:Metric)."
 
 
 # ---------------------------------------------------------------------------

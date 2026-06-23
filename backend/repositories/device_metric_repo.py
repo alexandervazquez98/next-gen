@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -120,14 +120,13 @@ def _iso(ts: datetime) -> str:
     Neo4j's ``datetime()`` function accepts ISO strings. Keeping an explicit
     suffix prevents timezone ambiguity.
     """
-    from datetime import timezone as _tz
 
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=_tz.utc)
+        ts = ts.replace(tzinfo=UTC)
     return ts.isoformat().replace("+00:00", "Z")
 
 
-def _serialize_extra(extra: Optional[dict[str, Any]]) -> str:
+def _serialize_extra(extra: dict[str, Any] | None) -> str:
     """Serialize the ``extra`` dict to a JSON string.
 
     ``None`` becomes ``'{}'`` so the column is never NULL (Neo4j indexes NULL
@@ -250,10 +249,10 @@ class DeviceMetricRepo:
         self,
         device_id: str,
         name: str,
-        location_id: Optional[str],
+        location_id: str | None,
         source_topic: str,
         parser_name: str,
-        extra: Optional[dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update a Device node. Idempotent (MERGE).
 
@@ -287,9 +286,9 @@ class DeviceMetricRepo:
         device_id: str,
         name: str,
         value: Any,
-        unit: Optional[str],
+        unit: str | None,
         ts: datetime,
-        tags: Optional[dict[str, Any]] = None,
+        tags: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update a Metric node and HAS_METRIC relationship. Idempotent.
 
@@ -318,7 +317,7 @@ class DeviceMetricRepo:
 
     # ----- read ------------------------------------------------------------
 
-    def get_device(self, device_id: str) -> Optional[dict[str, Any]]:
+    def get_device(self, device_id: str) -> dict[str, Any] | None:
         """Return the device dict or None."""
         try:
             with self._driver.session() as session:
@@ -349,7 +348,7 @@ class DeviceMetricRepo:
 # ---------------------------------------------------------------------------
 
 
-_device_metric_repo: Optional[DeviceMetricRepo] = None
+_device_metric_repo: DeviceMetricRepo | None = None
 
 
 def get_device_metric_repo() -> DeviceMetricRepo:
@@ -363,12 +362,17 @@ def get_device_metric_repo() -> DeviceMetricRepo:
     if _device_metric_repo is None:
         from database import get_db
 
-        driver = get_db()
+        # database.get_db() is untyped at the source (database.py:21,27,33
+        # all lack return annotations). This is a pre-existing condition
+        # shared with topology_repo and rtu_sensor_repo. The runtime contract
+        # is documented in repositories/__init__.py: every Neo4j-backed module
+        # here takes a driver via get_db() or as a constructor arg.
+        driver = cast(Any, get_db())  # type: ignore[no-untyped-call]
         _device_metric_repo = DeviceMetricRepo(driver)
     return _device_metric_repo
 
 
-def set_device_metric_repo(repo: Optional[DeviceMetricRepo]) -> None:
+def set_device_metric_repo(repo: DeviceMetricRepo | None) -> None:
     """Override the singleton (for tests). Pass ``None`` to clear.
 
     Used by ``tests/test_device_metric_repo.py::_reset_singleton`` (autouse) and
