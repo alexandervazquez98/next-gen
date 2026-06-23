@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
 from services.mqtt.parsers.base import MetricReading, Reading
 
 pytestmark = [pytest.mark.unit]
@@ -201,10 +200,15 @@ class TestDispatchPersistFailure:
 
 
 class TestDispatchBliiotPersist:
-    """BLIIoT readings delegate to the legacy process_telemetry_message path."""
+    """BLIIoT readings persist via DeviceMetricRepo (PR3b clean cutover, Q6)."""
 
-    async def test_bliiot_parser_calls_process_telemetry_message(self):
-        """parser_name='bliiot_s475e' → _persist_reading invokes process_telemetry_message."""
+    async def test_bliiot_parser_persists_via_device_metric_repo(self):
+        """parser_name='bliiot_s475e' → _persist_reading calls device_metric_repo.
+
+        Verifies the Q6 cutover: BLIIoT messages now persist ONLY to Device+Metric
+        nodes. ``RTUService`` and ``process_telemetry_message`` are NOT called.
+        """
+        from repositories import device_metric_repo as repo_mod
         from services.mqtt.subscriber import _dispatch
 
         metric = MetricReading(
@@ -233,39 +237,50 @@ class TestDispatchBliiotPersist:
             ).encode("utf-8"),
         )
 
-        with (
-            patch(
-                "services.mqtt.subscriber.process_telemetry_message",
-                new=MagicMock(return_value={"status": "processed", "rtu_id": "rtu-1"}),
-            ) as mock_proc,
-            patch("services.mqtt.subscriber.RTUService") as mock_rtu_class,
-        ):
-            mock_rtu_class.return_value = MagicMock()
-            await _dispatch(message, router)
+        # Inject a mock DeviceMetricRepo singleton
+        mock_repo = MagicMock()
+        repo_mod.set_device_metric_repo(mock_repo)
 
-        mock_proc.assert_called_once()
-        # First positional arg is the source topic.
-        assert mock_proc.call_args.args[0] == "rtu/loc-1/rtu-1/telemetry"
-        # Second arg is the reconstructed TelemetryMessage (Pydantic instance).
-        msg_arg = mock_proc.call_args.args[1]
-        assert isinstance(msg_arg, BaseModel), (
-            f"expected Pydantic model, got {type(msg_arg).__name__}"
-        )
-        assert msg_arg.sensors[0].register_addr == 0
-        # Third arg is the RTUService instance.
-        assert mock_proc.call_args.args[2] is mock_rtu_class.return_value
+        try:
+            await _dispatch(message, router)
+        finally:
+            repo_mod.set_device_metric_repo(None)
+
+        # Device upsert called with correct identity/provenance
+        mock_repo.upsert_device.assert_called_once()
+        dev_kwargs = mock_repo.upsert_device.call_args.kwargs
+        assert dev_kwargs["device_id"] == "rtu-1"
+        assert dev_kwargs["location_id"] == "loc-1"
+        assert dev_kwargs["source_topic"] == "rtu/loc-1/rtu-1/telemetry"
+        assert dev_kwargs["parser_name"] == "bliiot_s475e"
+
+        # Metric upsert called once for the sensor
+        assert mock_repo.upsert_metric.call_count == 1
+        m_kwargs = mock_repo.upsert_metric.call_args.kwargs
+        assert m_kwargs["metric_id"] == "rtu-1/register_0"
+        assert m_kwargs["value"] == 2375
+        assert m_kwargs["unit"] == "0.01°C"
+
+        # Q6: NO legacy path was invoked
+        # (subscriber no longer imports RTUService or process_telemetry_message)
         message.ack.assert_awaited_once()
         message.nack.assert_not_called()
 
 
 class TestDispatchUnknownParser:
-    """Non-BLIIoT parsers raise NotImplementedError → NACK for redelivery."""
+    """Non-BLIIoT parsers persist via DeviceMetricRepo (PR3b cutover)."""
 
-    async def test_unknown_parser_raises_not_implemented(self):
-        """parser_name='some_other' → _persist_reading raises NotImplementedError."""
+    async def test_unknown_parser_persists_via_repo(self):
+        """parser_name='some_other' → _persist_reading calls repo (no NotImplementedError).
+
+        PR3b replaced the PR2b stub: every parser now persists via
+        DeviceMetricRepo. The dispatch still ACKs the message on success.
+        """
+        from repositories import device_metric_repo as repo_mod
         from services.mqtt.subscriber import _dispatch
 
-        reading = _make_reading(parser_name="some_other")
+        metric = MetricReading(name="reading_0", value=42.0)
+        reading = _make_reading(parser_name="some_other", metrics=(metric,))
         parser = MagicMock()
         parser.name = "some_other"
         parser.parse = MagicMock(return_value=[reading])
@@ -273,18 +288,28 @@ class TestDispatchUnknownParser:
         router = _make_router(parser)
         message = _make_message("other/topic/0/telemetry", b'{"foo": 1}')
 
-        await _dispatch(message, router)
+        mock_repo = MagicMock()
+        repo_mod.set_device_metric_repo(mock_repo)
 
-        # NACK because _persist_reading raised (per design: persist exception → NACK).
-        message.nack.assert_awaited_once()
-        message.ack.assert_not_called()
+        try:
+            await _dispatch(message, router)
+        finally:
+            repo_mod.set_device_metric_repo(None)
+
+        # Repo was called (no NotImplementedError)
+        mock_repo.upsert_device.assert_called_once()
+        mock_repo.upsert_metric.assert_called_once()
+        # ACK on success
+        message.ack.assert_awaited_once()
+        message.nack.assert_not_called()
 
 
 class TestDispatchBliiotExtra:
     """BLIIoT extras (digital_inputs, relays) survive the round-trip."""
 
     async def test_digital_inputs_and_relays_passed_through(self):
-        """reading.extra['digital_inputs']/'relays' end up in TelemetryMessage."""
+        """reading.extra['digital_inputs']/'relays' end up in repo.upsert_device(extra=...)."""
+        from repositories import device_metric_repo as repo_mod
         from services.mqtt.subscriber import _dispatch
 
         metric = MetricReading(
@@ -305,18 +330,17 @@ class TestDispatchBliiotExtra:
         router = _make_router(parser)
         message = _make_message("rtu/loc-1/rtu-1/telemetry", b"{}")
 
-        with (
-            patch(
-                "services.mqtt.subscriber.process_telemetry_message",
-                new=MagicMock(return_value={"status": "processed"}),
-            ) as mock_proc,
-            patch("services.mqtt.subscriber.RTUService"),
-        ):
-            await _dispatch(message, router)
+        mock_repo = MagicMock()
+        repo_mod.set_device_metric_repo(mock_repo)
 
-        msg_arg = mock_proc.call_args.args[1]
-        assert list(msg_arg.digital_inputs) == [1, 0, 1, 0]
-        assert list(msg_arg.relays) == [0, 1]
+        try:
+            await _dispatch(message, router)
+        finally:
+            repo_mod.set_device_metric_repo(None)
+
+        sent_extra = mock_repo.upsert_device.call_args.kwargs["extra"]
+        assert sent_extra["digital_inputs"] == [1, 0, 1, 0]
+        assert sent_extra["relays"] == [0, 1]
 
 
 # ── mqtt_subscriber_loop smoke ───────────────────────────────────────────────

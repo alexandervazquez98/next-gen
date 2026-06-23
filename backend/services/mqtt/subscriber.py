@@ -1,4 +1,4 @@
-"""MQTT subscriber loop — PR2b router-driven dispatcher.
+"""MQTT subscriber loop — router-driven dispatcher with DeviceMetricRepo persistence.
 
 This module is the runtime heart of the new subscriber. The legacy BLIIoT-only
 loop has been replaced with a generic dispatcher that:
@@ -12,13 +12,12 @@ loop has been replaced with a generic dispatcher that:
   5. Reconnects with exponential backoff (1s → 30s cap) on transient errors.
   6. Propagates ``asyncio.CancelledError`` so container shutdown works cleanly.
 
-Persistence is a PR2b stub:
-  * BLIIoT readings (parser_name == ``"bliiot_s475e"``) are persisted via the
-    legacy :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message`
-    helper. This keeps the legacy RTU/Sensor write path operational.
-  * All other parsers raise :class:`NotImplementedError` from
-    :func:`_persist_reading` until PR3b replaces the body with a
-    :class:`DeviceMetricRepo` integration.
+Persistence (PR3b): the new subscriber persists ONLY to :class:`Device` and
+:class:`Metric` nodes via :class:`DeviceMetricRepo`. The legacy RTU/Sensor
+path is intentionally NOT called from here — this is the Q6 clean cutover.
+The legacy helper :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message`
+remains importable for back-compat (tests, external callers) but is dead code
+from the subscriber's perspective.
 
 The :func:`mqtt_subscriber_loop` symbol is preserved so the back-compat shim
 in ``services/mqtt_subscriber`` keeps working without modification.
@@ -27,17 +26,15 @@ in ``services/mqtt_subscriber`` keeps working without modification.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from collections.abc import Mapping
-from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from config import get_mqtt_settings
+from repositories.device_metric_repo import get_device_metric_repo
 from services.mqtt.client import connect_mqtt
 from services.mqtt.parsers.base import ParseError
-from services.mqtt.parsers.bliiot_s475e import process_telemetry_message
 from services.mqtt.topic_router import TopicRouter
-from services.rtu_service import RTUService
 
 if TYPE_CHECKING:
     from services.mqtt.parsers.base import Reading
@@ -50,6 +47,12 @@ __all__ = ["mqtt_subscriber_loop", "_dispatch", "_persist_reading"]
 # Reconnect backoff bounds per design §2.6 and REQ-SUB-03.
 _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 30.0
+
+# 4 KB cap on the serialized ``extra`` blob per Q2 decision. The cap prevents
+# a single message from bloating Neo4j property storage; over-cap payloads are
+# replaced with a small truncation marker so downstream readers still see the
+# message landed.
+EXTRA_SIZE_CAP_BYTES = 4096
 
 
 # ── Public loop ─────────────────────────────────────────────────────────────
@@ -164,81 +167,80 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
 
 
 async def _persist_reading(reading: Reading) -> None:
-    """Persist a single :class:`Reading`.
+    """Persist a canonical :class:`Reading` via :class:`DeviceMetricRepo`.
 
-    PR2b stub: BLIIoT readings flow through the legacy
-    :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message` helper
-    so the existing RTU/Sensor Neo4j writes keep working. PR3b will replace
-    this body with :class:`DeviceMetricRepo` upserts so non-BLIIoT parsers can
-    persist via the generic Device+Metric model.
+    Replaces the PR2b stub. Implements the Q6 clean cutover: the new subscriber
+    persists ONLY to ``(:Device)-[:HAS_METRIC]->(:Metric)`` nodes — it never
+    calls the legacy :class:`RTUService` path. The legacy helper
+    :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message` is
+    intentionally NOT called from here; it remains in the codebase for
+    back-compat only (external callers + the legacy test suite).
+
+    Contract (per design §2.6 and Q1/Q2 decisions):
+
+      * Calls ``repo.upsert_device`` once, then ``repo.upsert_metric`` once per
+        :class:`MetricReading`. The repo's MERGE keeps every call idempotent,
+        so MQTT redelivery is safe.
+      * ``Reading.extra`` is capped at :data:`EXTRA_SIZE_CAP_BYTES` (4 KB,
+        Q2). When the serialized JSON exceeds the cap, the extra is replaced
+        with ``{"_truncated": True, "_original_size": N}`` and a warning is
+        logged so operators can spot abusive payloads.
+      * Any exception from the repo is wrapped in :class:`RuntimeError` with
+        the device id / metric id in the message. This gives the caller
+        (:func:`_dispatch`) a uniform error to NACK on per design §2.6.
+
+    Note: ``DeviceMetricRepo`` exposes SYNC methods (matching the
+    ``topology_repo`` / ``rtu_sensor_repo`` conventions — see
+    ``repositories/device_metric_repo.py`` docstring). This function is still
+    ``async def`` so the existing ``await _persist_reading(reading)`` call
+    site in :func:`_dispatch` does not need to change.
 
     Args:
         reading: A canonical :class:`Reading` produced by a registered parser.
 
     Raises:
-        NotImplementedError: The reading's parser is not yet wired to the new
-            DeviceMetricRepo. PR3b will replace this path with a repo call.
+        RuntimeError: Wrapped repo / driver error (caller NACKs the message).
     """
-    if reading.parser_name == "bliiot_s475e":
-        _persist_bliiot_reading(reading)
-        return
+    repo = get_device_metric_repo()
 
-    raise NotImplementedError(
-        f"_persist_reading not implemented for parser {reading.parser_name!r}; "
-        "PR3b will replace this stub with a DeviceMetricRepo.upsert_* call."
-    )
-
-
-def _persist_bliiot_reading(reading: Reading) -> None:
-    """Sync helper: convert a BLIIoT :class:`Reading` and call the legacy helper.
-
-    Pulled out of :func:`_persist_reading` so the conversion logic is easy to
-    test in isolation if we ever need it.
-    """
-    msg = _reading_to_telemetry_message(reading)
-    rtu_service = RTUService()
-    process_telemetry_message(reading.source_topic, msg, rtu_service)
-
-
-def _reading_to_telemetry_message(reading: Reading) -> Any:
-    """Reconstruct a :class:`TelemetryMessage` Pydantic model from a Reading.
-
-    The BLIIoT :class:`MetricReading` stores the Modbus register address in
-    the ``register_addr`` tag (a string). ``digital_inputs`` and ``relays``
-    survive through :attr:`Reading.extra`.
-    """
-    from models.rtu_sensor import TelemetryMessage
-
-    sensors_data: list[dict[str, Any]] = []
-    for metric in reading.metrics:
-        # ``tags["register_addr"]`` is stored as a string by the parser.
-        raw_addr = metric.tags.get("register_addr", "0")
-        try:
-            register_addr = int(raw_addr)
-        except (TypeError, ValueError):
-            register_addr = 0
-        sensors_data.append(
-            {
-                "register_addr": register_addr,
-                "value": metric.value,
-                "unit": metric.unit,
-            }
+    # 4 KB cap on extra (Q2). Serialization cost is negligible per message.
+    extra = dict(reading.extra or {})
+    extra_json = json.dumps(extra, default=str)
+    if len(extra_json) > EXTRA_SIZE_CAP_BYTES:
+        original_size = len(extra_json)
+        extra = {"_truncated": True, "_original_size": original_size}
+        logger.warning(
+            "Reading extra truncated: %d bytes > %d cap (device_id=%s)",
+            original_size,
+            EXTRA_SIZE_CAP_BYTES,
+            reading.device_id,
         )
 
-    msg_dict: dict[str, Any] = {"sensors": sensors_data}
+    # Upsert device (idempotent MERGE on Device.id).
+    try:
+        repo.upsert_device(
+            device_id=reading.device_id,
+            name=reading.device_id,  # default name to id until we have richer metadata
+            location_id=reading.location_id,
+            source_topic=reading.source_topic,
+            parser_name=reading.parser_name,
+            extra=extra,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Device upsert failed for {reading.device_id!r}: {e}") from e
 
-    ts = reading.timestamp
-    if ts is not None:
-        # ``datetime.isoformat()`` returns "+00:00" suffixes — TelemetryMessage
-        # accepts those; only the trailing "Z" needs normalizing (legacy code
-        # path via ``TelemetryMessage`` pydantic-validates ISO 8601 directly).
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        msg_dict["timestamp"] = ts.isoformat()
-
-    if isinstance(reading.extra, Mapping):
-        for key in ("digital_inputs", "relays"):
-            if key in reading.extra:
-                msg_dict[key] = list(reading.extra[key])
-
-    return TelemetryMessage.model_validate(msg_dict)
+    # Upsert each metric.
+    for metric in reading.metrics:
+        metric_id = f"{reading.device_id}/{metric.name}"
+        try:
+            repo.upsert_metric(
+                metric_id=metric_id,
+                device_id=reading.device_id,
+                name=metric.name,
+                value=metric.value,
+                unit=metric.unit,
+                ts=reading.timestamp,
+                tags=dict(metric.tags or {}),
+            )
+        except Exception as e:
+            raise RuntimeError(f"Metric upsert failed for {metric_id!r}: {e}") from e
