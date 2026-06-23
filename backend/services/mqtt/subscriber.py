@@ -171,7 +171,7 @@ async def _persist_reading(reading: Reading) -> None:
 
     Replaces the PR2b stub. Implements the Q6 clean cutover: the new subscriber
     persists ONLY to ``(:Device)-[:HAS_METRIC]->(:Metric)`` nodes — it never
-    calls the legacy :class:`RTUService` path. The legacy helper
+    calls the legacy persistence path. The legacy helper
     :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message` is
     intentionally NOT called from here; it remains in the codebase for
     back-compat only (external callers + the legacy test suite).
