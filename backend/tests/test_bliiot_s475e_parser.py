@@ -269,3 +269,53 @@ class TestParserMetadata:
         assert parser.name == "bliiot_s475e"
         assert parser.topic_patterns == ("rtu/+/+/telemetry",)
         assert isinstance(parser, Parser)
+
+
+# ── Parser registry ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def clear_registry():
+    """Reset the global registry before each test in this module.
+
+    The package __init__ auto-registers BLIIoT at import time, which would
+    pollute test state across the suite. _clear_registry is intentionally
+    private (underscore-prefixed) so production code cannot use it.
+    """
+    from services.mqtt.parsers import _clear_registry
+
+    _clear_registry()
+    yield
+    _clear_registry()
+
+
+class TestParserRegistry:
+    def test_registry_register_twice_raises(self) -> None:
+        """Re-registering a parser with the same name raises ValueError."""
+        from services.mqtt.parsers import _clear_registry, register
+        from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser
+
+        _clear_registry()
+        register(BliiotS475EParser())
+        with pytest.raises(ValueError, match="bliiot_s475e"):
+            register(BliiotS475EParser())
+
+    def test_registry_get_unknown_raises(self) -> None:
+        """get() with an unknown name raises KeyError."""
+        from services.mqtt.parsers import _clear_registry, get
+
+        _clear_registry()
+        with pytest.raises(KeyError):
+            get("nonexistent")
+
+    def test_registry_all_parsers_returns_registered(self) -> None:
+        """After register(), all_parsers() includes the new parser."""
+        from services.mqtt.parsers import _clear_registry, all_parsers, register
+        from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser
+
+        _clear_registry()
+        register(BliiotS475EParser())
+
+        parsers = all_parsers()
+        assert len(parsers) == 1
+        assert parsers[0].name == "bliiot_s475e"
