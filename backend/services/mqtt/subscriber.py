@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from config import get_mqtt_settings
 from repositories.device_metric_repo import get_device_metric_repo
 from services.mqtt.client import connect_mqtt
+from services.mqtt.metrics import metrics
 from services.mqtt.parsers.base import ParseError
 from services.mqtt.topic_router import TopicRouter
 
@@ -116,6 +117,10 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
       * Persistence exception → log, NACK (Neo4j transient — redeliver).
       * Success → persist all readings, ACK.
 
+    Per-parser metrics (PR4): every outcome increments a counter on the
+    module-level :data:`services.mqtt.metrics.metrics` store. Keys are
+    ``name{parser=<parser_name>}`` so operators can slice per device family.
+
     Args:
         message: An aiomqtt message exposing ``topic`` (str), ``payload`` (bytes),
             and async ``ack()`` / ``nack()`` methods.
@@ -125,6 +130,8 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
     parser = router.resolve(topic)
 
     if parser is None:
+        # No parser → no counter (we don't know which parser to attribute to).
+        # This is the only outcome that does NOT touch the metrics store.
         logger.error("[MQTT] No parser for topic %r — ACKing to drop the message", topic)
         await message.ack()
         return
@@ -133,6 +140,7 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
         readings = parser.parse(topic, message.payload)
     except Exception as e:
         if isinstance(e, ParseError):
+            metrics.inc("parse_fail", parser=parser.name)
             logger.error(
                 "[MQTT] Parser %r failed on topic %r: %s — ACKing (payload is unrecoverable)",
                 parser.name,
@@ -142,6 +150,7 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
             await message.ack()
             return
 
+        metrics.inc("nack", parser=parser.name)
         logger.exception(
             "[MQTT] Parser %r raised unexpected exception on topic %r: %s — NACKing",
             parser.name,
@@ -155,10 +164,13 @@ async def _dispatch(message: Any, router: TopicRouter) -> None:
         for reading in readings:
             await _persist_reading(reading)
     except Exception as e:
+        metrics.inc("nack", parser=parser.name)
         logger.exception("[MQTT] Persistence failed for topic %r: %s — NACKing", topic, e)
         await message.nack()
         return
 
+    # Success path — count once per message with the number of readings produced.
+    metrics.inc("parsed_ok", count=len(readings), parser=parser.name)
     logger.debug("[MQTT] Processed %d reading(s) for topic %r", len(readings), topic)
     await message.ack()
 

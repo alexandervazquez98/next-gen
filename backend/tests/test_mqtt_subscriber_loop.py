@@ -346,6 +346,78 @@ class TestDispatchBliiotExtra:
 # ── mqtt_subscriber_loop smoke ───────────────────────────────────────────────
 
 
+class TestDispatchMetrics:
+    """PR4 — ``_dispatch`` increments :class:`MqttMetrics` counters on every path.
+
+    The subscriber uses an in-process metrics store (see
+    :class:`services.mqtt.metrics.MqttMetrics`) to record per-parser outcomes.
+    Each test isolates its own counter state via :func:`metrics.reset` so the
+    module-level singleton never bleeds between tests.
+    """
+
+    async def test_dispatch_increments_parsed_ok_on_success(self):
+        """Successful dispatch → ``parsed_ok{parser=bliiot_s475e}`` increments."""
+        from repositories import device_metric_repo as repo_mod
+        from services.mqtt.metrics import metrics
+        from services.mqtt.subscriber import _dispatch
+
+        metrics.reset()
+        try:
+            parser = MagicMock()
+            parser.name = "bliiot_s475e"
+            reading = _make_reading()
+            parser.parse = MagicMock(return_value=[reading])
+
+            router = _make_router(parser)
+            message = _make_message("rtu/loc-1/rtu-1/telemetry", b'{"sensors": []}')
+
+            mock_repo = MagicMock()
+            repo_mod.set_device_metric_repo(mock_repo)
+            try:
+                await _dispatch(message, router)
+            finally:
+                repo_mod.set_device_metric_repo(None)
+
+            snap = metrics.snapshot()
+            # Counter fired exactly once for the success path.
+            assert snap.get("parsed_ok{parser=bliiot_s475e}") == 1
+            # Failure-path counters did NOT fire.
+            assert "parse_fail{parser=bliiot_s475e}" not in snap
+            assert "nack{parser=bliiot_s475e}" not in snap
+            message.ack.assert_awaited_once()
+        finally:
+            metrics.reset()
+
+    async def test_dispatch_increments_parse_fail_on_parse_error(self):
+        """``ParseError`` → ``parse_fail{parser=bliiot_s475e}`` increments."""
+        from services.mqtt.metrics import metrics
+        from services.mqtt.parsers.base import ParseError
+        from services.mqtt.subscriber import _dispatch
+
+        metrics.reset()
+        try:
+            parser = MagicMock()
+            parser.name = "bliiot_s475e"
+            parser.parse = MagicMock(side_effect=ParseError("malformed JSON"))
+
+            router = _make_router(parser)
+            message = _make_message("rtu/loc-1/rtu-1/telemetry", b"not json")
+
+            await _dispatch(message, router)
+
+            snap = metrics.snapshot()
+            # Parse-failure counter fired exactly once.
+            assert snap.get("parse_fail{parser=bliiot_s475e}") == 1
+            # No success or NACK counters fired.
+            assert "parsed_ok{parser=bliiot_s475e}" not in snap
+            assert "nack{parser=bliiot_s475e}" not in snap
+            # ACK on parse-failure per design §2.6 (drop — payload unrecoverable).
+            message.ack.assert_awaited_once()
+            message.nack.assert_not_called()
+        finally:
+            metrics.reset()
+
+
 class TestLoopSmoke:
     """Smoke test for mqtt_subscriber_loop: starts, gets cancelled, propagates."""
 
