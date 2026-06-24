@@ -62,3 +62,11 @@ def _clear_registry() -> None:
 from services.mqtt.parsers.bliiot_s475e import BliiotS475EParser  # noqa: E402
 
 register(BliiotS475EParser())
+
+# Generic JSON parser (PR4) — claims the ``#`` wildcard, so the
+# :class:`~services.mqtt.topic_router.TopicRouter` falls back to it whenever
+# no specific parser matches a topic. Importing this module alone is enough
+# to make ad-hoc MQTT devices work without code changes.
+from services.mqtt.parsers.generic_json import GenericJsonParser  # noqa: E402
+
+register(GenericJsonParser())
