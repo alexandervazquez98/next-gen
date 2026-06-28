@@ -12,6 +12,7 @@ from typing import Any, Dict
 from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.metric_service import metric_matches_ci
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
@@ -22,6 +23,10 @@ from services.polling_event_lifecycle import (
     is_snmp_no_response_failure,
     normalized_protocol,
 )
+
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 logger = logging.getLogger(__name__)
 
@@ -416,226 +421,253 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
         except ValueError:
             pass
 
-    if numeric_value is not None:
-        pg_db = SessionLocal()
-        try:
-            insert_metric_value(pg_db, ci.get("id"), metric_def["id"], numeric_value)
-        except Exception:
-            pg_db.rollback()
-            logger.exception(
-                "[Collector] Failed to persist metric %s for CI %s",
-                metric_def.get("id"),
-                ci.get("id"),
-            )
-        finally:
-            pg_db.close()
+    # #322 / design §3 — Restructure session lifetime. ONE
+    # `with SessionLocal() as pg_db:` block wraps BOTH the Timescale metric
+    # insert AND the Neo4j Event write so the pg_advisory_xact_lock acquired
+    # BEFORE the line-493 Neo4j read is held until the Neo4j transaction
+    # commits. Without this restructure the lock would be released at line
+    # 431 (old close) BEFORE the Neo4j session at line 433, defeating the
+    # cross-writer serialization guarantee.
+    needs_pg_session = numeric_value is not None or is_breach
 
-    with driver.session() as session:
-        session.run(
-            """
-            MATCH (n:CI {id: $nid})
-            MATCH (m:MetricDef {id: $mid})
-            MERGE (n)-[r:HAS_METRIC]->(m)
-            SET r.last_value = $val, r.last_updated = datetime(), r.status = $status, r.last_message = $msg
-
-            CREATE (res:MetricResult {
-                timestamp: datetime(),
-                value: $val,
-                status: $status
-            })
-            CREATE (n)-[:HAS_RESULT]->(res)
-            CREATE (res)-[:FOR_METRIC]->(m)
-        """,
-            nid=ci.get("id"),
-            mid=metric_def["id"],
-            val=str(val),
-            status=status,
-            msg=message,
-        )
-
-        if numeric_value is not None:
+    def _neo4j_write(pg_db=None):
+        with driver.session() as session:
             session.run(
                 """
-                MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
-                WHERE e.status IN ['OPEN', 'ACK']
-                  AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
-                  AND (
-                    e.event_type = 'COLLECTION_FAILURE'
-                    OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
-                  )
-                  AND ($source_protocol IS NULL OR e.source_protocol IS NULL OR toUpper(e.source_protocol) = $source_protocol)
-                  AND (
-                    $source_protocol <> 'SNMP'
-                    OR e.failure_family = 'SNMP_NO_RESPONSE'
-                    OR e.failure_family IS NULL
-                  )
-                SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
-                WITH e
-                CALL {
-                    WITH e
-                    MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
-                    WHERE pe.root_cause_ci_id = e.ci_id
-                      AND pe.correlation_type = 'PROPAGATED'
-                      AND pe.status IN ['OPEN', 'ACK']
-                      AND coalesce(m.can_propagate, true) = true
-                    SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
-                    RETURN count(pe) AS propagated_recovered
-                }
-                RETURN e
+                MATCH (n:CI {id: $nid})
+                MATCH (m:MetricDef {id: $mid})
+                MERGE (n)-[r:HAS_METRIC]->(m)
+                SET r.last_value = $val, r.last_updated = datetime(), r.status = $status, r.last_message = $msg
+
+                CREATE (res:MetricResult {
+                    timestamp: datetime(),
+                    value: $val,
+                    status: $status
+                })
+                CREATE (n)-[:HAS_RESULT]->(res)
+                CREATE (res)-[:FOR_METRIC]->(m)
             """,
                 nid=ci.get("id"),
                 mid=metric_def["id"],
-                source_protocol=source_protocol,
-                msg=f"Metric collection recovered. Value: {val}",
+                val=str(val),
+                status=status,
+                msg=message,
             )
 
-        if is_breach:
-            existing = session.run(
-                """
-                MATCH (existing:Event)
-                WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK', 'RECOVERED']
-                  AND (
-                    existing.event_type = $event_type
-                    OR ($event_type = 'COLLECTION_FAILURE' AND existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
-                  )
-                  AND (
-                    ($failure_family IS NOT NULL AND (existing.failure_family = $failure_family OR existing.failure_family IS NULL))
-                    OR ($failure_family IS NULL AND existing.failure_family IS NULL)
-                  )
-                  AND ($source_protocol IS NULL OR existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = $source_protocol)
-                RETURN elementId(existing) AS existing_element_id, existing.status AS existing_status
-                LIMIT 1
-            """,
-                nid=ci.get("id"),
-                mid=metric_def["id"],
-                event_type=event_type,
-                failure_family=failure_family,
-                source_protocol=source_protocol,
-            ).single()
-
-            if existing:
-                existing_element_id = existing.get("existing_element_id")
+            if numeric_value is not None:
                 session.run(
                     """
-                    MATCH (existing:Event)
-                    WHERE elementId(existing) = $existing_element_id
-                    SET existing.status = 'OPEN',
-                        existing.last_seen = datetime(),
-                        existing.message = $msg,
-                        existing.severity = $sev,
-                        existing.recovered_at = NULL,
-                        existing.event_type = $event_type,
-                        existing.failure_family = $failure_family,
-                        existing.source_protocol = $source_protocol,
-                        existing.availability_source = $availability_source
-                """,
-                    existing_element_id=existing_element_id,
-                    msg=message,
-                    sev=severity,
-                    event_type=event_type,
-                    failure_family=failure_family,
-                    source_protocol=source_protocol,
-                    availability_source=availability_source,
-                )
-            else:
-                snapshot = resolve_event_snapshot(session, ci.get("id"))
-
-                # --- Correlation check: only if metric CAN propagate ---
-                correlation_type = "ROOT"
-                propagated_from = None
-                root_cause_ci_id = ci.get("id")
-
-                if metric_def.get("can_propagate", True):
-                    try:
-                        from repositories.topology_repo import find_open_parent_event
-                        parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
-                        if parent_info:
-                            correlation_type = "PROPAGATED"
-                            propagated_from = parent_info["parent_event_id"]
-                            root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
-                    except Exception as exc:
-                        logger.warning("Topology correlation check failed for CI %s metric %s: %s",
-                                       ci.get("id"), metric_def.get("id"), exc)
-                # --- End correlation check ---
-
-                session.run(
-                    """
-                    MATCH (n:CI {id: $nid})
-                    MATCH (m:MetricDef {id: $mid})
-                    CREATE (e:Event {
-                        id: randomUUID(),
-                        ci_id: $nid,
-                        metric_id: $mid,
-                        status: 'OPEN',
-                        severity: $sev,
-                        message: $msg,
-                        event_type: $event_type,
-                        failure_family: $failure_family,
-                        source_protocol: $source_protocol,
-                        availability_source: $availability_source,
-                        created_at: datetime(),
-                        last_seen: datetime(),
-                        ack: false,
-                        business_service_id: $business_service_id,
-                        business_service_name: $business_service_name,
-                        business_service_tier: $business_service_tier,
-                        owner_t1: $owner_t1,
-                        owner_t2: $owner_t2,
-                        owner_t3: $owner_t3,
-                        impacted_users: $impacted_users,
-                        site: $site,
-                        service_catalog_id: $service_catalog_id,
-                        service_category: $service_category,
-                        service_tier: $service_tier,
-                        sla_minutes: $sla_minutes,
-                        propagated_from: $propagated_from,
-                        correlation_type: $correlation_type,
-                        root_cause_ci_id: $root_cause_ci_id
-                    })
-                    MERGE (n)-[:HAS_EVENT]->(e)
-                    MERGE (e)-[:TRIGGERED_BY]->(m)
+                    MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
+                    WHERE e.status IN ['OPEN', 'ACK']
+                      AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+                      AND (
+                        e.event_type = 'COLLECTION_FAILURE'
+                        OR (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+                      )
+                      AND ($source_protocol IS NULL OR e.source_protocol IS NULL OR toUpper(e.source_protocol) = $source_protocol)
+                      AND (
+                        $source_protocol <> 'SNMP'
+                        OR e.failure_family = 'SNMP_NO_RESPONSE'
+                        OR e.failure_family IS NULL
+                      )
+                    SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
+                    WITH e
+                    CALL {
+                        WITH e
+                        MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+                        WHERE pe.root_cause_ci_id = e.ci_id
+                          AND pe.correlation_type = 'PROPAGATED'
+                          AND pe.status IN ['OPEN', 'ACK']
+                          AND coalesce(m.can_propagate, true) = true
+                        SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                        RETURN count(pe) AS propagated_recovered
+                    }
+                    RETURN e
                 """,
                     nid=ci.get("id"),
                     mid=metric_def["id"],
-                    sev=severity,
-                    msg=message,
+                    source_protocol=source_protocol,
+                    msg=f"Metric collection recovered. Value: {val}",
+                )
+
+            if is_breach:
+                # Acquire advisory lock BEFORE the Neo4j read at the
+                # existing-Event lookup. Lock MUST be held in the same
+                # Postgres transaction as the Neo4j write (transaction-
+                # scoped advisory lock semantics).
+                if pg_db is not None:
+                    acquire_event_triplet_lock(
+                        pg_db,
+                        ci.get("id"),
+                        metric_def["id"],
+                        event_type,
+                    )
+                existing = session.run(
+                    """
+                    MATCH (existing:Event)
+                    WHERE existing.ci_id = $nid AND existing.metric_id = $mid AND existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+                      AND (
+                        existing.event_type = $event_type
+                        OR ($event_type = 'COLLECTION_FAILURE' AND existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
+                      )
+                      AND (
+                        ($failure_family IS NOT NULL AND (existing.failure_family = $failure_family OR existing.failure_family IS NULL))
+                        OR ($failure_family IS NULL AND existing.failure_family IS NULL)
+                      )
+                      AND ($source_protocol IS NULL OR existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = $source_protocol)
+                    RETURN elementId(existing) AS existing_element_id, existing.status AS existing_status
+                    LIMIT 1
+                """,
+                    nid=ci.get("id"),
+                    mid=metric_def["id"],
                     event_type=event_type,
                     failure_family=failure_family,
                     source_protocol=source_protocol,
-                    availability_source=availability_source,
-                    propagated_from=propagated_from,
-                    correlation_type=correlation_type,
-                    root_cause_ci_id=root_cause_ci_id,
-                    **snapshot,
-                )
-        else:
-            # Recovery path for threshold/availability events; SNMP collection failures
-            # are recovered independently above so threshold lifecycles stay separate.
-            session.run(
-                """
-                MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
-                WHERE e.status IN ['OPEN', 'ACK']
-                  AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
-                  AND (e.event_type IS NULL OR e.event_type <> 'COLLECTION_FAILURE')
-                  AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
-                SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
-                WITH e
-                CALL {
+                ).single()
+
+                if existing:
+                    existing_element_id = existing.get("existing_element_id")
+                    session.run(
+                        """
+                        MATCH (existing:Event)
+                        WHERE elementId(existing) = $existing_element_id
+                        SET existing.status = 'OPEN',
+                            existing.last_seen = datetime(),
+                            existing.message = $msg,
+                            existing.severity = $sev,
+                            existing.recovered_at = NULL,
+                            existing.event_type = $event_type,
+                            existing.failure_family = $failure_family,
+                            existing.source_protocol = $source_protocol,
+                            existing.availability_source = $availability_source,
+                            existing.poll_collector_id = $poll_collector_id
+                    """,
+                        existing_element_id=existing_element_id,
+                        msg=message,
+                        sev=severity,
+                        event_type=event_type,
+                        failure_family=failure_family,
+                        source_protocol=source_protocol,
+                        availability_source=availability_source,
+                        poll_collector_id=POLL_COLLECTOR_ID,
+                    )
+                else:
+                    snapshot = resolve_event_snapshot(session, ci.get("id"))
+
+                    # --- Correlation check: only if metric CAN propagate ---
+                    correlation_type = "ROOT"
+                    propagated_from = None
+                    root_cause_ci_id = ci.get("id")
+
+                    if metric_def.get("can_propagate", True):
+                        try:
+                            from repositories.topology_repo import find_open_parent_event
+                            parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
+                            if parent_info:
+                                correlation_type = "PROPAGATED"
+                                propagated_from = parent_info["parent_event_id"]
+                                root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
+                        except Exception as exc:
+                            logger.warning("Topology correlation check failed for CI %s metric %s: %s",
+                                           ci.get("id"), metric_def.get("id"), exc)
+                    # --- End correlation check ---
+
+                    session.run(
+                        """
+                        MATCH (n:CI {id: $nid})
+                        MATCH (m:MetricDef {id: $mid})
+                        CREATE (e:Event {
+                            id: randomUUID(),
+                            ci_id: $nid,
+                            metric_id: $mid,
+                            status: 'OPEN',
+                            severity: $sev,
+                            message: $msg,
+                            event_type: $event_type,
+                            failure_family: $failure_family,
+                            source_protocol: $source_protocol,
+                            availability_source: $availability_source,
+                            poll_collector_id: $poll_collector_id,
+                            created_at: datetime(),
+                            last_seen: datetime(),
+                            ack: false,
+                            business_service_id: $business_service_id,
+                            business_service_name: $business_service_name,
+                            business_service_tier: $business_service_tier,
+                            owner_t1: $owner_t1,
+                            owner_t2: $owner_t2,
+                            owner_t3: $owner_t3,
+                            impacted_users: $impacted_users,
+                            site: $site,
+                            service_catalog_id: $service_catalog_id,
+                            service_category: $service_category,
+                            service_tier: $service_tier,
+                            sla_minutes: $sla_minutes,
+                            propagated_from: $propagated_from,
+                            correlation_type: $correlation_type,
+                            root_cause_ci_id: $root_cause_ci_id
+                        })
+                        MERGE (n)-[:HAS_EVENT]->(e)
+                        MERGE (e)-[:TRIGGERED_BY]->(m)
+                    """,
+                        nid=ci.get("id"),
+                        mid=metric_def["id"],
+                        sev=severity,
+                        msg=message,
+                        event_type=event_type,
+                        failure_family=failure_family,
+                        source_protocol=source_protocol,
+                        availability_source=availability_source,
+                        poll_collector_id=POLL_COLLECTOR_ID,
+                        propagated_from=propagated_from,
+                        correlation_type=correlation_type,
+                        root_cause_ci_id=root_cause_ci_id,
+                        **snapshot,
+                    )
+            else:
+                # Recovery path for threshold/availability events; SNMP collection failures
+                # are recovered independently above so threshold lifecycles stay separate.
+                session.run(
+                    """
+                    MATCH (n:CI {id: $nid})-[:HAS_EVENT]->(e:Event {metric_id: $mid})
+                    WHERE e.status IN ['OPEN', 'ACK']
+                      AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+                      AND (e.event_type IS NULL OR e.event_type <> 'COLLECTION_FAILURE')
+                      AND NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')
+                    SET e.status = 'RECOVERED', e.recovered_at = datetime(), e.message = $msg
                     WITH e
-                    MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
-                    WHERE pe.root_cause_ci_id = e.ci_id
-                      AND pe.correlation_type = 'PROPAGATED'
-                      AND pe.status IN ['OPEN', 'ACK']
-                      AND coalesce(m.can_propagate, true) = true
-                    SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
-                    RETURN count(pe) AS propagated_recovered
-                }
-                RETURN e
-            """,
-                nid=ci.get("id"),
-                mid=metric_def["id"],
-                msg=message,
-            )
+                    CALL {
+                        WITH e
+                        MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+                        WHERE pe.root_cause_ci_id = e.ci_id
+                          AND pe.correlation_type = 'PROPAGATED'
+                          AND pe.status IN ['OPEN', 'ACK']
+                          AND coalesce(m.can_propagate, true) = true
+                        SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+                        RETURN count(pe) AS propagated_recovered
+                    }
+                    RETURN e
+                """,
+                    nid=ci.get("id"),
+                    mid=metric_def["id"],
+                    msg=message,
+                )
+
+    if needs_pg_session:
+        with SessionLocal() as pg_db:
+            try:
+                if numeric_value is not None:
+                    insert_metric_value(pg_db, ci.get("id"), metric_def["id"], numeric_value)
+            except Exception:
+                pg_db.rollback()
+                logger.exception(
+                    "[Collector] Failed to persist metric %s for CI %s",
+                    metric_def.get("id"),
+                    ci.get("id"),
+                )
+            _neo4j_write(pg_db)
+    else:
+        _neo4j_write()
 
 
 def run_diagnostic(ci, metric):

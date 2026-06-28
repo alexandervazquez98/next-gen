@@ -288,7 +288,18 @@ def run_writer_once(
         if latency_envelope is not None:
             event_payloads.append({**item, "envelope": latency_envelope})
     try:
-        event_writer.batch_update_events(neo4j_driver, [item["envelope"] for item in event_payloads])
+        # #322 / design §3 — pass the leased timescale_db as lock_db so
+        # the advisory lock acquired before each Event UNWIND is held by
+        # the same Postgres transaction that backs the metric insert.
+        # Lock lifecycle: lock_db stays open for the duration of the
+        # batch_update_events call; commit/close below releases the
+        # locks. timescale_db is passed (not queue_db) because the lock
+        # targets Timescale event correlation tables.
+        event_writer.batch_update_events(
+            neo4j_driver,
+            [item["envelope"] for item in event_payloads],
+            lock_db=timescale_db,
+        )
     except Exception as exc:
         retry_at = (now or _utc_now()) + timedelta(seconds=30)
         retried_result_ids = set()
