@@ -83,4 +83,4 @@ clean `main` checkout; PR1 introduces no new regressions.
 - Task 3 tests will reuse the same `_swap_in_real_psycopg2` helper from PR1. Both new tests should land RED initially (writers don't sort yet), then GREEN after Task 6.2 lands in PR2.
 
 ### PR link
-<filled in after `gh pr create`>
+https://github.com/alexandervazquez98/next-gen/pull/328
