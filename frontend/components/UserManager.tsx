@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../services/permissions';
 import RoleManager from './RoleManager';
 
 interface User {
@@ -19,15 +20,11 @@ interface Role {
     permissions: string[];
 }
 
-const ALL_PERMISSIONS = [
-    { category: "Event Management", perms: ["EVENT_VIEW", "EVENT_ACK", "EVENT_CLOSE"] },
-    { category: "CI Management", perms: ["CI_VIEW", "CI_EDIT", "CI_DELETE"] },
-    { category: "Diagnostics", perms: ["RUN_DIAGNOSTICS"] },
-    { category: "System", perms: ["USER_MANAGE", "ROLE_MANAGE", "AUDIT_VIEW"] }
-];
+
 
 const UserManager: React.FC = () => {
     const { hasPermission } = useAuth();
+    const { human, ai } = usePermissions();
     const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
     const [users, setUsers] = useState<User[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
@@ -168,6 +165,9 @@ const UserManager: React.FC = () => {
         return <div className="p-8 text-neutral-500">Access Denied.</div>;
     }
 
+    const activeRole = editingUser ? editingUser.role : newUser.role;
+    const isAiRole = activeRole.startsWith('AI_');
+
     const activeUser = editingUser || newUser;
 
     return (
@@ -250,6 +250,11 @@ const UserManager: React.FC = () => {
                                         <option key={r.name} value={r.name}>{r.name}</option>
                                     ))}
                                 </select>
+                                {isAiRole && !editingUser && (
+                                    <p className="text-[10px] text-brand-400 mt-1">
+                                        This is a service account. No password login.
+                                    </p>
+                                )}
                             </div>
 
                             {/* Granular Permissions Toggle */}
@@ -264,7 +269,13 @@ const UserManager: React.FC = () => {
 
                                 {showPerms && (
                                     <div className="p-3 bg-black/20 max-h-64 overflow-y-auto space-y-4">
-                                        {ALL_PERMISSIONS.map(cat => (
+                                        {([
+                                            { category: 'Event Management', perms: human.filter(p => ['EVENT_VIEW','EVENT_ACK','EVENT_CLOSE','EVENT_FORCED_CLOSE'].includes(p)) },
+                                            { category: 'CI Management',    perms: human.filter(p => ['CI_VIEW','CI_EDIT','CI_DELETE'].includes(p)) },
+                                            { category: 'Diagnostics',      perms: human.filter(p => p === 'RUN_DIAGNOSTICS') },
+                                            { category: 'System',           perms: human.filter(p => ['USER_MANAGE','ROLE_MANAGE','AUDIT_VIEW'].includes(p)) },
+                                            { category: 'Visualization',    perms: human.filter(p => p === 'METRICS_VIEW') },
+                                        ]).map(cat => (
                                             <div key={cat.category}>
                                                 <h5 className="text-[10px] text-neutral-500 font-bold uppercase mb-2">{cat.category}</h5>
                                                 <div className="space-y-1">
@@ -282,6 +293,24 @@ const UserManager: React.FC = () => {
                                                 </div>
                                             </div>
                                         ))}
+                                        {isAiRole && (
+                                            <div>
+                                                <h5 className="text-[10px] text-brand-400 font-bold uppercase mb-2">AI Permissions</h5>
+                                                <div className="space-y-1">
+                                                    {ai.map(p => (
+                                                        <label key={p} className="flex items-center gap-2 cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={activeUser.permissions.includes(p)}
+                                                                onChange={() => togglePermission(p)}
+                                                                className="w-3 h-3 rounded bg-black/40 text-brand-500 border-white/10"
+                                                            />
+                                                            <span className="text-[10px] text-brand-300">{p}</span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -312,7 +341,14 @@ const UserManager: React.FC = () => {
                             <tbody>
                                 {users.map(u => (
                                     <tr key={u.username} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                                        <td className="p-4 font-bold text-white">{u.username}</td>
+                                        <td className="p-4 font-bold text-white">
+                                            {u.username}
+                                            {u.role.startsWith('AI_') && (
+                                                <span className="ml-2 text-[9px] bg-brand-900/60 text-brand-300 border border-brand-500/30 px-1.5 py-0.5 rounded font-bold uppercase">
+                                                    AI
+                                                </span>
+                                            )}
+                                        </td>
                                         <td className="p-4">
                                             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-neutral-700 text-neutral-400">
                                                 {u.role}

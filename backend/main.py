@@ -141,7 +141,7 @@ def schedule_daily_backup() -> None:
 
 
 # Router Imports
-from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli, ai
+from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli, ai, permissions
 
 app = FastAPI(
     title="NEX-GEN API",
@@ -213,6 +213,7 @@ app.include_router(dictionaries.router, prefix="/api")
 app.include_router(cis.router, prefix="/api")
 app.include_router(cli.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(permissions.router, prefix="/api")
 
 
 @app.exception_handler(Exception)

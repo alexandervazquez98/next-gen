@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../services/permissions';
 
 interface Role {
     name: string;
@@ -10,25 +11,36 @@ interface Role {
     is_system: boolean;
 }
 
-const ALL_PERMISSIONS = [
-    { category: "Event Management", perms: ["EVENT_VIEW", "EVENT_ACK", "EVENT_CLOSE", "EVENT_FORCED_CLOSE"] },
-    { category: "CI Management", perms: ["CI_VIEW", "CI_EDIT", "CI_DELETE"] },
-    { category: "Diagnostics", perms: ["RUN_DIAGNOSTICS"] },
-    { category: "System", perms: ["USER_MANAGE", "ROLE_MANAGE", "AUDIT_VIEW"] },
-    { category: "Visualization", perms: ["METRICS_VIEW"] }
-];
-
 const RoleManager: React.FC = () => {
     const { hasPermission } = useAuth();
+    const { human, ai } = usePermissions();
     const [roles, setRoles] = useState<Role[]>([]);
     const [view, setView] = useState<'list' | 'edit'>('list');
     const [currentRole, setCurrentRole] = useState<Role>({
         name: '', description: '', permissions: [], is_system: false
     });
     const [isNew, setIsNew] = useState(false);
+    const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
 
     const canViewRoles = hasPermission('USER_MANAGE') || hasPermission('ROLE_MANAGE') || hasPermission('ADMIN');
     const canMutateRoles = hasPermission('ROLE_MANAGE') || hasPermission('ADMIN');
+
+    const toggleExpand = (name: string) => {
+        setExpandedRoles(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+        });
+    };
+
+    const humanCategories = [
+        { category: 'Event Management', perms: human.filter(p => ['EVENT_VIEW', 'EVENT_ACK', 'EVENT_CLOSE', 'EVENT_FORCED_CLOSE'].includes(p)) },
+        { category: 'CI Management',    perms: human.filter(p => ['CI_VIEW', 'CI_EDIT', 'CI_DELETE'].includes(p)) },
+        { category: 'Diagnostics',      perms: human.filter(p => p === 'RUN_DIAGNOSTICS') },
+        { category: 'System',           perms: human.filter(p => ['USER_MANAGE', 'ROLE_MANAGE', 'AUDIT_VIEW'].includes(p)) },
+        { category: 'Visualization',    perms: human.filter(p => p === 'METRICS_VIEW') },
+    ];
 
     useEffect(() => {
         if (!canViewRoles) {
@@ -139,7 +151,7 @@ const RoleManager: React.FC = () => {
                     <div>
                         <label className="block text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Permissions</label>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {ALL_PERMISSIONS.map(cat => (
+                            {humanCategories.map(cat => (
                                 <div key={cat.category} className="bg-white/5 p-4 rounded-xl">
                                     <h4 className="text-sm font-bold text-neutral-300 uppercase mb-3 border-b border-white/10 pb-2">{cat.category}</h4>
                                     <div className="space-y-2">
@@ -202,6 +214,37 @@ const RoleManager: React.FC = () => {
                                 </span>
                             ))}
                         </div>
+
+                        {role.name.startsWith('AI_') && role.is_system && (
+                            <div className="mb-4">
+                                <button
+                                    onClick={() => toggleExpand(role.name)}
+                                    className="text-[10px] text-brand-400 hover:text-brand-200 flex items-center gap-1 font-bold uppercase"
+                                    aria-label={`Toggle AI permissions for ${role.name}`}
+                                >
+                                    <span className="material-symbols-outlined text-sm">
+                                        {expandedRoles.has(role.name) ? 'expand_less' : 'expand_more'}
+                                    </span>
+                                    AI Permissions
+                                </button>
+
+                                {expandedRoles.has(role.name) && (
+                                    <div className="mt-2 space-y-1 pl-2 border-l border-brand-500/20">
+                                        {ai.map(p => (
+                                            <label key={p} className="flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={role.permissions.includes(p)}
+                                                    disabled
+                                                    className="w-3 h-3 rounded bg-black/40 border-white/10 cursor-not-allowed opacity-60"
+                                                />
+                                                <span className="text-[10px] text-brand-400">{p}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             {canMutateRoles && !role.is_system && (
