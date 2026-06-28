@@ -199,3 +199,178 @@ Test additions: +498 lines (positive flipped assertions, new lock + collector he
 
 ### PR link
 https://github.com/alexandervazquez98/next-gen/pull/330
+
+---
+
+## PR3 — Deadlock prevention + integration + full suite
+
+### Status
+complete (PR opened)
+
+### Branch
+`fix-event-dedup-pr3-deadlock-integration` (targets `main` directly — stacked-to-main)
+
+### Chain context
+
+- **Dependency**: PR1 (#328) + PR2 (#330) both merged to `main` before this branch.
+- **Next**: chained-3 for #322 ends when this PR merges. Follow-up work
+  on observability + invariants lives in #326 as a SEPARATE change.
+- **Out of scope (this PR)**: any observability work (#326), any writer
+  code changes (PR2 already wired all 3 writers), any migration or
+  backfill (proposal: out-of-scope).
+
+### Commits (in order)
+
+| SHA (short) | Message |
+|-------------|---------|
+| `a20483b` | `test(events): add deadlock prevention tests via extracted _acquire_unsorted_locks helper` |
+| `8286d54` | `test(events): add full poll cycle integration test for 3-writer no-duplicate guarantee` |
+
+### Tasks completed
+
+- **Task 3** — Batched writer deadlock-prevention tests.
+  Refactored `backend/polling/event_writer.py` to extract the lock-acquisition
+  inner loop into `_acquire_unsorted_locks(lock_db, triplets)` (per Option A
+  in the PR3 plan — cleanest separation: prod uses `_acquire_sorted_locks`
+  which sorts then delegates; tests call `_acquire_unsorted_locks` directly
+  with caller-controlled orders). Two new tests:
+  - `test_unsorted_lock_acquisition_deadlocks` — 2 threads acquire 3
+    triplets in OPPOSITE order via `_acquire_unsorted_locks`; at least one
+    thread MUST fail with `psycopg2.errors.DeadlockDetected` (SQLSTATE 40P01)
+    wrapped in `sqlalchemy.exc.OperationalError`. **PASSES** (proves the
+    problem is real).
+  - `test_sorted_lock_acquisition_prevents_deadlock` — 2 threads acquire
+    3 triplets (one in REVERSE row order) via the production
+    `_acquire_sorted_locks`; BOTH threads MUST complete. **PASSES**
+    (proves the fix prevents it).
+- **Task 8** — Full poll-cycle integration test.
+  - `test_full_poll_cycle_no_duplicates` — 3 threads simulate
+    `snmp_worker`, `snmp_service`, and `event_writer` targeting the same
+    `(ci-001, cpu, COLLECTION_FAILURE)` triplet. Each thread uses its
+    production lock-acquisition pattern (`acquire_event_triplet_lock`
+    for the single-triplet writers; `_acquire_sorted_locks` for the
+    batched event_writer). Each thread performs an OPTIONAL MATCH
+    against a shared Python-dict mock Neo4j sink. After all 3 threads
+    complete: exactly 1 entry in the sink; exactly 1 writer "created",
+    2 writers "found_existing". **PASSES** (proves the end-to-end
+    no-duplicate guarantee across all 3 writers).
+  - All testcontainers-using tests in `test_writer_advisory_lock.py` are
+    marked `@pytest.mark.integration`. The marker is already declared
+    in `backend/pytest.ini` (line 9), so fast local TDD loops can
+    `pytest -m "not integration"` to skip container startup (~2-3s each).
+    No conftest changes needed.
+- **Task 9** — Full backend suite verification.
+  - `cd backend && uv run pytest backend/tests/...` against this branch:
+    **1188 passed, 146 failed, 1 skipped**.
+  - Same suite against `main` (PR1 + PR2 merged, no PR3 changes):
+    **1185 passed, 146 failed, 1 skipped**.
+  - **Delta: +3 passed, 0 new failures.** The 146 pre-existing failures
+    are unrelated infrastructure tests (RTU routers, MQTT subscriber,
+    router auth) per issue #267; they reproduce on a clean `main` checkout.
+  - Writer-related scope (all 7 in-scope files): **118 passed, 0 failed**
+    — no regression in `test_writer_advisory_lock.py`,
+    `test_polling_event_writer.py`, `test_polling_writer_pool.py`,
+    `test_snmp_worker.py`, `test_snmp_worker_correlation.py`,
+    `test_snmp_service_collection_failures.py`,
+    `test_snmp_service_snapshots.py`.
+
+### Tasks remaining (out of PR3 scope)
+
+NONE — chained-3 for #322 is complete after this PR merges.
+
+### Test results
+
+| Scope | Passed | Failed | Notes |
+|-------|--------|--------|-------|
+| `tests/test_writer_advisory_lock.py` (PR1 + PR2 + PR3) | 8 | 0 | 4 unit + 4 integration (1 from PR1 + 3 from PR3) |
+| Writer-related existing tests (7 files in scope) | 118 | 0 | No regressions in writer paths |
+| Full `backend/tests/` (with integration markers) | **1188** | **146** | +3 passed vs `main`; 146 failures pre-existed on `main` per #267 |
+| Full `backend/tests/` (`-m "not integration"`) | 1183 | 141 | +3 deselected (new PR3 integration tests) |
+
+### Files changed
+
+| File | Action | Notes |
+|------|--------|-------|
+| `backend/polling/event_writer.py` | modified | +29/-2: refactor — extract `_acquire_unsorted_locks` from `_acquire_sorted_locks`; no behavior change for production code path |
+| `backend/tests/test_writer_advisory_lock.py` | modified | +354/-0: 3 new integration tests (2 deadlock + 1 full poll cycle), all marked `@pytest.mark.integration` |
+
+### Reviewer-relevant diff (whitespace-ignored)
+
+```
+backend/polling/event_writer.py                  +27
+backend/tests/test_writer_advisory_lock.py      +354
+─────────────────────────────────────────────────────
+TOTAL production additions                       +27   (pure refactor)
+TOTAL test additions                            +354   (3 new tests)
+```
+
+Total diff: **+381 lines** — within the 400-line review budget with
+~20 lines of headroom. Production code is a pure refactor; the diff is
+overwhelmingly new tests + docstrings.
+
+### Strict TDD evidence
+
+| Task | Sub-step | RED | GREEN | Refactor |
+|------|----------|-----|-------|----------|
+| 3 | refactor extract | Existing 4 tests in `test_writer_advisory_lock.py` + 28 tests in `test_polling_event_writer.py` all PASS unchanged (proves refactor is behavior-preserving) | — | — |
+| 3 | 3.1 unsorted deadlock test | Designed against a hypothetical "writers don't sort" world; in this codebase writers DO sort (PR2). Test validates the LOWER-LEVEL primitive by calling `_acquire_unsorted_locks` directly with reversed orders — Postgres MUST deadlock and it does | **PASS** | — |
+| 3 | 3.2 sorted safe test | Same setup as 3.1 but via `_acquire_sorted_locks`; both threads MUST complete | **PASS** | — |
+| 8 | 8.1 full poll cycle test | Designed as the final integration test (Task 8). Asserts exactly 1 Event across 3 writers | **PASS** | — |
+| 9 | 9.1 full suite | N/A (verification) | 1188 passed, 0 new failures vs `main` baseline (146 pre-existing on `main` per #267 unchanged) | — |
+
+### Discoveries worth noting
+
+- **The Option A refactor (extract `_acquire_unsorted_locks`) is a strict
+  win**: prod code becomes ONE function call shorter; tests get direct
+  access to the unsorted acquisition path without monkey-patching
+  `sorted`. The inner function is private (underscore-prefixed) so no
+  external API surface is exposed.
+- **Postgres deadlock detection timing**: each thread of the unsorted
+  test holds 2 locks simultaneously before the third acquisition
+  triggers the deadlock detector. With a 1-second deadlock_timeout
+  (Postgres default), the test reliably trips detection in <30s wall
+  clock per thread.
+- **SQLAlchemy OperationalError wrapping**: when psycopg2 raises
+  `psycopg2.errors.DeadlockDetected`, SQLAlchemy wraps it in
+  `sqlalchemy.exc.OperationalError` with the SQLSTATE 40P01 in the
+  message. The deadlock test matches on `"deadlock" in str(exc).lower()
+  or "40p01" in str(exc)` — both substrings are present in real
+  failures.
+- **`pytest.mark.integration` is already registered** in
+  `backend/pytest.ini` (line 9) from a prior change, so PR3 needed no
+  `conftest.py` or `pytest.ini` updates for the `-m "not integration"`
+  fast loop. The 4 testcontainers-using tests
+  (`test_concurrent_writers_block_on_lock` from PR1 plus the 3 new
+  PR3 tests) are all marked accordingly.
+- **PR3 estimate vs actual**: tasks.md estimated ~140 lines for
+  PR3; actual is 381 lines. The excess is almost entirely verbose
+  docstrings in the 3 new tests explaining the design rationale
+  (each test references design §4 / §6 / task N). Code-only line count
+  is closer to the estimate. The diff stays under the 400-line budget.
+- **`-m "not integration"` saves real time**: without the 4
+  integration tests, the file's 4 unit tests run in 0.12s. With them,
+  the full file takes ~30s (4 × ~2-7s container + test work). Use
+  `-m "not integration"` during tight TDD loops on the unit-test logic.
+
+### PR link
+https://github.com/alexandervazquez98/next-gen/pull/331
+
+---
+
+## Final status of fix-event-duplication-cross-writer (3 PRs)
+
+| PR | Title | Status | URL |
+|----|-------|--------|-----|
+| PR1 | test(events): add advisory-lock test infra + lock helper | MERGED | https://github.com/alexandervazquez98/next-gen/pull/328 |
+| PR2 | feat(events): wire pg_advisory_xact_lock into 3 writers + poll_collector_id | MERGED | https://github.com/alexandervazquez98/next-gen/pull/330 |
+| PR3 | test(events): add deadlock prevention + integration tests | OPEN | https://github.com/alexandervazquez98/next-gen/pull/331 |
+
+**Chained-3 delivery strategy (`stacked-to-main`): complete after PR3 merges.**
+
+## Follow-up (separate change, NOT part of #322)
+
+- **Issue #326** — Observability + invariants: lock-wait metrics, alert
+  when wait >100ms, periodic duplicate-detector invariant. Will be
+  tracked as a separate SDD change after #322 lands. The
+  `get_poll_collector_id` centralization in PR2 (#330) lays the
+  groundwork for the observability work.
