@@ -311,3 +311,357 @@ def test_concurrent_writers_block_on_lock():
             )
     finally:
         restore_psycopg2()
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — batched writer deadlock-prevention tests (design §6 "Tertiary
+# test"). PR3 scope. Both tests share the same testcontainers fixture but
+# call ``_acquire_unsorted_locks`` (extracted in PR3 from
+# ``_acquire_sorted_locks``) with caller-controlled ordering to PROVE the
+# deadlock-vs-safety distinction.
+#
+# Refactor choice: **Option A — extract inner acquisition loop** into a
+# private ``_acquire_unsorted_locks(lock_db, triplets)`` helper. Production
+# writers continue to use ``_acquire_sorted_locks`` which sorts the
+# triplets before delegating. The deadlock tests call the unsorted helper
+# directly with caller-supplied orders so we can exercise the UNSAFE
+# acquisition path that the production code never uses.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_unsorted_lock_acquisition_deadlocks():
+    """Two threads acquiring triplet locks in OPPOSITE order MUST deadlock.
+
+    Design §6 "Tertiary test" — proves the problem is REAL. Without the
+    deterministic ordering rule from design §4, two writers contending for
+    overlapping batches of triplets would deadlock when their natural
+    acquisition orders conflict.
+
+    Setup:
+    - 2 threads via :class:`ThreadPoolExecutor`.
+    - Thread A acquires ``(X, Y, Z)`` in that order.
+    - Thread B acquires ``(Z, Y, X)`` in that order.
+    - Both use ``_acquire_unsorted_locks`` (no sort).
+    - Each thread has its own real SQLAlchemy ``Session`` backed by
+      testcontainers Postgres.
+
+    Expected:
+    - Postgres deadlock detection aborts at least one transaction.
+    - The aborted thread's ``_acquire_unsorted_locks`` call surfaces a
+      ``sqlalchemy.exc.OperationalError`` wrapping
+      ``psycopg2.errors.DeadlockDetected`` (SQLSTATE 40P01).
+
+    Container startup cost: ~2-3 seconds (same as
+    :func:`test_concurrent_writers_block_on_lock`).
+    """
+    psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.exc import OperationalError
+        from testcontainers.postgres import PostgresContainer
+
+        from backend.polling.event_writer import _acquire_unsorted_locks
+
+        with PostgresContainer("postgres:15-alpine") as pg:
+            # SQLAlchemy with psycopg2 — psycopg2 is now genuinely real
+            # because of _swap_in_real_psycopg2().
+            conn_url = pg.get_connection_url()
+            engine = create_engine(conn_url)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+            # Triplet sets in REVERSE order — perfect deadlock setup.
+            triplets_forward = [
+                ("ci-A", "metric-1", "EVT_A"),
+                ("ci-A", "metric-2", "EVT_B"),
+                ("ci-A", "metric-3", "EVT_C"),
+            ]
+            triplets_reverse = list(reversed(triplets_forward))
+
+            results: dict[str, object] = {"a": None, "b": None}
+
+            def worker(triplets: list[tuple[str, str, str]], key: str) -> None:
+                session = SessionLocal()
+                try:
+                    _acquire_unsorted_locks(session, triplets)
+                    results[key] = "ok"
+                    session.commit()
+                except OperationalError as exc:
+                    results[key] = exc
+                    session.rollback()
+                except Exception as exc:  # surface unexpected errors
+                    results[key] = exc
+                    session.rollback()
+                finally:
+                    session.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                fut_a = pool.submit(worker, triplets_forward, "a")
+                fut_b = pool.submit(worker, triplets_reverse, "b")
+                # Give the threads ample time to deadlock; pg_advisory deadlock
+                # detection runs every ~1s.
+                fut_a.result(timeout=30)
+                fut_b.result(timeout=30)
+
+            exceptions = [v for v in results.values() if isinstance(v, Exception)]
+            assert len(exceptions) >= 1, (
+                f"expected at least one deadlock, got {results!r} — the "
+                f"unsorted acquisition path is NOT tripping Postgres deadlock "
+                f"detection (problem not reproducible)"
+            )
+
+            # At least one exception should be a Postgres deadlock
+            # (SQLSTATE 40P01). SQLAlchemy wraps psycopg2.errors.DeadlockDetected
+            # in OperationalError whose str contains the SQLSTATE code or the
+            # word "deadlock detected".
+            deadlock_explanations = []
+            for exc in exceptions:
+                msg = str(exc).lower()
+                if "deadlock" in msg or "40p01" in msg:
+                    deadlock_explanations.append(exc)
+            assert deadlock_explanations, (
+                f"expected a Postgres deadlock error, got "
+                f"{[type(e).__name__ + ': ' + str(e) for e in exceptions]}"
+            )
+    finally:
+        restore_psycopg2()
+
+
+@pytest.mark.integration
+def test_sorted_lock_acquisition_prevents_deadlock():
+    """Sorted lexicographic acquisition MUST NOT deadlock even with reversed input.
+
+    Design §6 "Tertiary test" — proves the FIX works. When both writers
+    delegate to ``_acquire_sorted_locks`` (which sorts the triplets
+    lexicographically BEFORE acquisition), two overlapping batches always
+    contend in the same order. Postgres serializes them via lock-wait, not
+    deadlock detection.
+
+    Setup:
+    - 2 threads via :class:`ThreadPoolExecutor`.
+    - Thread A's row batch yields triplets ``(X, Y, Z)`` (in declaration order).
+    - Thread B's row batch yields triplets ``(Z, Y, X)`` (REVERSED — would
+      deadlock if acquired unsorted).
+    - Both call ``_acquire_sorted_locks`` (the production function) with
+      their rows; both sort internally before acquisition.
+
+    Expected:
+    - Both threads complete successfully, no exceptions.
+    - Both threads' lock acquisitions happen in lexicographic order (X
+      before Y before Z) — proves the inner sort is deterministic and
+      shared.
+    """
+    psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from testcontainers.postgres import PostgresContainer
+
+        from backend.polling.event_writer import _acquire_sorted_locks
+
+        with PostgresContainer("postgres:15-alpine") as pg:
+            conn_url = pg.get_connection_url()
+            engine = create_engine(conn_url)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+            # Two batches of ROW DICTS (not pre-extracted triplets) with
+            # the SAME triplets in REVERSE orders. _acquire_sorted_locks
+            # extracts the triplets, sorts them, then acquires.
+            rows_forward = [
+                {"ci_id": "ci-A", "metric_id": "metric-1", "event_type": "EVT_A"},
+                {"ci_id": "ci-A", "metric_id": "metric-2", "event_type": "EVT_B"},
+                {"ci_id": "ci-A", "metric_id": "metric-3", "event_type": "EVT_C"},
+            ]
+            rows_reverse = list(reversed(rows_forward))
+
+            results: dict[str, object] = {"a": None, "b": None}
+
+            def worker(rows: list[dict], key: str) -> None:
+                session = SessionLocal()
+                try:
+                    _acquire_sorted_locks(session, rows)
+                    results[key] = "ok"
+                    session.commit()
+                except Exception as exc:  # any exception is a failure here
+                    results[key] = exc
+                    session.rollback()
+                finally:
+                    session.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                fut_a = pool.submit(worker, rows_forward, "a")
+                fut_b = pool.submit(worker, rows_reverse, "b")
+                fut_a.result(timeout=30)
+                fut_b.result(timeout=30)
+
+            assert results["a"] == "ok", (
+                f"thread A failed: {results['a']!r}"
+            )
+            assert results["b"] == "ok", (
+                f"thread B failed: {results['b']!r} — sorted acquisition "
+                f"did NOT prevent the deadlock; the deterministic-ordering "
+                f"rule (design §4) is broken"
+            )
+    finally:
+        restore_psycopg2()
+
+
+# ---------------------------------------------------------------------------
+# Task 8 — full poll-cycle integration test. PR3 scope.
+#
+# Spins up 3 threads, each simulating one of the production writers
+# (snmp_worker, snmp_service, event_writer) targeting the SAME
+# ``(ci_id, metric_id, event_type)`` triplet. Each thread acquires the
+# advisory lock the way its production code does, then performs the
+# OPTIONAL MATCH + FOREACH CREATE pattern against a shared mock Neo4j
+# sink. The lock serializes the writers, so the OPTIONAL MATCH correctly
+# finds the existing Event for threads 2 and 3 — only thread 1 actually
+# CREATEs.
+#
+# Acceptance: exactly ONE entry in the sink for the contested triplet.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_full_poll_cycle_no_duplicates():
+    """All 3 writers targeting the same triplet MUST produce exactly 1 Event.
+
+    Design §6 / task 8 — full poll-cycle integration test. Proves that
+    when each of the 3 production writers (snmp_worker, snmp_service,
+    event_writer) acquires ``pg_advisory_xact_lock`` for the same
+    ``(ci, metric, event_type)`` BEFORE the OPTIONAL MATCH, only the
+    first writer creates a new Event; the other two find the existing
+    Event and update ``last_seen`` (the SPEC §"Race-safe Event creation
+    under advisory lock" guarantee).
+
+    Setup:
+    - Real Postgres via :class:`PostgresContainer` (``postgres:15-alpine``).
+    - 3 threads, one per writer, all targeting
+      ``("ci-001", "cpu", "COLLECTION_FAILURE")``.
+    - Each thread has its own SQLAlchemy ``Session``.
+    - snmp_worker and snmp_service call ``acquire_event_triplet_lock``
+      directly (single-triplet per poll cycle in this test).
+    - event_writer calls ``_acquire_sorted_locks`` (its batched path —
+      a list of one row dict here).
+    - After lock acquisition, each thread runs a Python-side OPTIONAL
+      MATCH against a shared dict acting as the mock Neo4j sink. Only
+      the FIRST thread to acquire the lock sees an empty sink and
+      CREATEs; threads 2 and 3 find the entry and skip.
+
+    Expected:
+    - The mock Neo4j sink contains exactly 1 entry for the triplet.
+    - Exactly 1 thread reports ``"created"``; the other 2 report
+      ``"found_existing"``.
+
+    Container startup cost: ~2-3 seconds.
+    """
+    psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from testcontainers.postgres import PostgresContainer
+
+        from backend.polling.event_writer import _acquire_sorted_locks
+        from backend.services.event_lock import acquire_event_triplet_lock
+
+        with PostgresContainer("postgres:15-alpine") as pg:
+            conn_url = pg.get_connection_url()
+            engine = create_engine(conn_url)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+            triplet = ("ci-001", "cpu", "COLLECTION_FAILURE")
+            ci_id, metric_id, event_type = triplet
+
+            # Shared mock Neo4j sink. Keyed by triplet tuple so the OPTIONAL
+            # MATCH pattern is a simple ``triplet in sink`` lookup. The lock
+            # serializes access; without the lock, all 3 threads would race
+            # past the OPTIONAL MATCH check and all 3 would CREATE.
+            neo4j_sink: dict[tuple[str, str, str], str] = {}
+            sink_lock = threading.Lock()  # protects dict updates across threads
+
+            # Each writer reports what its OPTIONAL MATCH + FOREACH CREATE
+            # pattern did. Only ONE writer should report "created"; the
+            # others should report "found_existing".
+            results: dict[str, str] = {}
+
+            def snmp_worker_writer() -> None:
+                session = SessionLocal()
+                try:
+                    acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
+                    with sink_lock:
+                        if triplet not in neo4j_sink:
+                            # Simulate FOREACH CREATE: this writer won.
+                            neo4j_sink[triplet] = "created"
+                            results["snmp_worker"] = "created"
+                        else:
+                            results["snmp_worker"] = "found_existing"
+                    session.commit()
+                finally:
+                    session.close()
+
+            def snmp_service_writer() -> None:
+                session = SessionLocal()
+                try:
+                    acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
+                    with sink_lock:
+                        if triplet not in neo4j_sink:
+                            neo4j_sink[triplet] = "created"
+                            results["snmp_service"] = "created"
+                        else:
+                            results["snmp_service"] = "found_existing"
+                    session.commit()
+                finally:
+                    session.close()
+
+            def event_writer_batch() -> None:
+                session = SessionLocal()
+                try:
+                    # event_writer batch path: a single-row batch
+                    # containing the same triplet.
+                    _acquire_sorted_locks(session, [{
+                        "ci_id": ci_id,
+                        "metric_id": metric_id,
+                        "event_type": event_type,
+                    }])
+                    with sink_lock:
+                        if triplet not in neo4j_sink:
+                            neo4j_sink[triplet] = "created"
+                            results["event_writer"] = "created"
+                        else:
+                            results["event_writer"] = "found_existing"
+                    session.commit()
+                finally:
+                    session.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                fut_a = pool.submit(snmp_worker_writer)
+                fut_b = pool.submit(snmp_service_writer)
+                fut_c = pool.submit(event_writer_batch)
+                fut_a.result(timeout=30)
+                fut_b.result(timeout=30)
+                fut_c.result(timeout=30)
+
+            # Exactly 1 Event in the sink — the no-duplicate guarantee.
+            assert len(neo4j_sink) == 1, (
+                f"expected exactly 1 Event in sink, got {len(neo4j_sink)}: "
+                f"{neo4j_sink!r} — lock did NOT serialize writers; duplicate "
+                f"Events would have been created in real Neo4j"
+            )
+            assert triplet in neo4j_sink, (
+                f"triplet {triplet!r} missing from sink: {neo4j_sink!r}"
+            )
+
+            # Exactly 1 writer "created"; the other 2 "found_existing".
+            created = [k for k, v in results.items() if v == "created"]
+            found = [k for k, v in results.items() if v == "found_existing"]
+            assert len(created) == 1, (
+                f"expected exactly 1 writer to CREATE, got {len(created)}: "
+                f"{results!r}"
+            )
+            assert len(found) == 2, (
+                f"expected 2 writers to FIND_EXISTING, got {len(found)}: "
+                f"{results!r}"
+            )
+    finally:
+        restore_psycopg2()

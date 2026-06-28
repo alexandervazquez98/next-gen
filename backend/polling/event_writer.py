@@ -130,6 +130,28 @@ def _non_collection_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str,
     ]
 
 
+def _acquire_unsorted_locks(lock_db, triplets: list[tuple[str, str, str]]) -> None:
+    """Acquire ``pg_advisory_xact_lock`` for each triplet in the order given.
+
+    This is the inner acquisition loop extracted from
+    :func:`_acquire_sorted_locks` so tests can call it directly with a
+    caller-controlled order. Production writers MUST NOT call this directly;
+    call :func:`_acquire_sorted_locks` instead so two concurrent batches
+    always converge on lexicographic order and never trip Postgres
+    deadlock detection.
+
+    Parameters
+    ----------
+    lock_db:
+        Open SQLAlchemy ``Session`` whose transaction will hold the locks.
+    triplets:
+        ``(ci_id, metric_id, event_type)`` tuples in EXACTLY the order the
+        caller wants the locks acquired. No sorting is performed here.
+    """
+    for ci_id, metric_id, event_type in triplets:
+        acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+
+
 def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
     """Acquire ``pg_advisory_xact_lock`` for each distinct triplet in ``rows``.
 
@@ -137,14 +159,17 @@ def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
     sorted lexicographically by ``(ci_id, metric_id, event_type)`` BEFORE
     acquisition so two overlapping batches contend in the same order and
     never trigger Postgres deadlock detection.
+
+    Implementation: extract distinct triplets, sort them, then delegate
+    to :func:`_acquire_unsorted_locks` so the acquisition loop is shared
+    with the deadlock-prevention tests.
     """
     distinct_triplets = sorted({
         (row.get("ci_id"), row.get("metric_id"), row.get("event_type"))
         for row in rows
         if row.get("ci_id") and row.get("metric_id") and row.get("event_type")
     })
-    for ci_id, metric_id, event_type in distinct_triplets:
-        acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+    _acquire_unsorted_locks(lock_db, distinct_triplets)
 
 
 def _latest_metric_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
