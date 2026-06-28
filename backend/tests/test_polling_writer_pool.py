@@ -74,7 +74,7 @@ def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monke
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
@@ -109,7 +109,7 @@ def test_writer_expands_failed_icmp_availability_to_packet_loss_sidecar(monkeypa
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: (_ for _ in ()).throw(AssertionError("latency lookup not expected")))
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
@@ -144,7 +144,7 @@ def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatc
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid))
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
@@ -181,7 +181,7 @@ def test_writer_emits_warning_latency_event_from_icmp_sidecar(monkeypatch):
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: None)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
@@ -202,7 +202,7 @@ def test_writer_batches_timescale_inserts_receipts_and_neo4j_updates(monkeypatch
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid))
 
     stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
