@@ -34,9 +34,14 @@ Concretely:
 - Mode: **stacked-to-main** (PR 1 of 3 — Slice 1 only)
 - Chain strategy: `stacked-to-main` — Slice 1 PR merges to `main` before
   Slice 2 opens. Slice 2 rebases on this PR's merge commit.
-- Size exception: not needed
-- Budget impact: 954 insertions / 18 deletions across 11 files (well under
-  the 400 changed-lines budget for the slice)
+- Size exception: NOT requested — see risk #6 below.
+- Budget impact: 954 insertions / 18 deletions across 11 code+test files
+  (1473 lines total including the `apply-progress.md` and `tasks.md`
+  updates). Strict TDD requires both RED test additions and GREEN
+  implementation in the same work-unit, which pushed Slice 1 over the
+  400-line review budget forecast (tasks.md forecast 200-300). The
+  implementation files alone (production code only, no tests, no SDD
+  artifacts) are 325 lines — within the original budget.
 
 ## Commit shape (work-unit-commits)
 
@@ -325,6 +330,19 @@ instruction (mirroring the #325 archive approach for diacritic-stripping):
    but any external direct callers of `topology_repo.create_link` will
    see the new parameter in their mock expectations. Verified by the
    updated `test_create_link_success` assertion.
+6. **Review budget overrun (WARN)** — Slice 1 totals 954 changed lines
+   (production + tests) vs. the 400-line budget forecast. Production
+   code is ~325 lines; the rest is RED-driven tests (~629 lines across
+   5 files). The strict TDD requirement made the test surface large.
+   Mitigation: the orchestrator should consider recording `size:exception`
+   for this PR or splitting the test files into a follow-up commit. The
+   PR is otherwise self-contained and does NOT touch Slice 2/3 territory.
+7. **`test_routers_links.py` test pollution** — in the full backend
+   suite, `tests/test_routers_links.py::TestLinksCreate::test_create_link_success`,
+   `test_create_link_no_auth_required`, and `test_create_tunnel_link_rejected_without_vpn_hub_endpoint`
+   plus `TestLinksDelete::test_delete_link_*` still fail due to
+   pre-existing test pollution. All pass when `test_routers_links.py` is
+   run alone.
 
 ## Slice boundary declaration
 
