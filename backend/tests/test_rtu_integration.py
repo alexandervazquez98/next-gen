@@ -30,6 +30,7 @@ class TestMQTTToNeo4jFlow:
     def mock_mqtt_client(self):
         """Create a mock aiomqtt client that yields canned messages."""
         mock_client = AsyncMock()
+
         # Build an async iterator that yields test messages
         async def fake_messages():
             location_id = str(uuid4())
@@ -53,9 +54,7 @@ class TestMQTTToNeo4jFlow:
         return mock_client
 
     @pytest.mark.integration
-    def test_full_mqtt_message_creates_rtu_and_sensor_nodes(
-        self, mock_neo4j_driver
-    ):
+    def test_full_mqtt_message_creates_rtu_and_sensor_nodes(self, mock_neo4j_driver):
         """A valid MQTT telemetry message creates RTU and Sensor nodes in Neo4j."""
         from services.mqtt_subscriber import process_telemetry_message
         from services.rtu_service import RTUService
@@ -89,19 +88,14 @@ class TestMQTTToNeo4jFlow:
 
         # The RTU upsert query contains "MERGE (r:RTU" and sets location
         rtu_upsert_queries = [
-            q for q in all_queries
-            if "MERGE (r:RTU" in q["query"]
-            and "l:Location" in q["query"]
+            q for q in all_queries if "MERGE (r:RTU" in q["query"] and "l:Location" in q["query"]
         ]
         assert len(rtu_upsert_queries) == 1
         assert rtu_upsert_queries[0]["params"]["rtu_id"] == rtu_id
         assert rtu_upsert_queries[0]["params"]["location_id"] == location_id
 
         # Each sensor triggers 2 queries: find_sensor_by_key (MATCH) + upsert_sensor (MERGE)
-        sensor_upsert_queries = [
-            q for q in all_queries
-            if "HAS_SENSOR" in q["query"]
-        ]
+        sensor_upsert_queries = [q for q in all_queries if "HAS_SENSOR" in q["query"]]
         assert len(sensor_upsert_queries) == 4  # 2 sensors x (1 MATCH lookup + 1 MERGE upsert)
         sensor_addrs = {q["params"]["register_addr"] for q in sensor_upsert_queries}
         assert sensor_addrs == {0, 2}
@@ -120,15 +114,29 @@ class TestMQTTToNeo4jFlow:
         assert loc == location_id
         assert rtu == rtu_id
 
-    # NOTE: test_mqtt_subscriber_loop_calls_process_for_each_message is skipped
-    # because mocking the aiomqtt async iterator with StopAsyncIteration inside
-    # an asyncio.create_task is unreliable when aiomqtt is not installed (stub is MagicMock).
-    # The full path is validated by test_full_mqtt_message_creates_rtu_and_sensor_nodes.
+    # NOTE: test_mqtt_subscriber_loop_calls_process_for_each_message is skipped.
+    # The test exercises the FULL async loop (mqtt_subscriber_loop) end-to-end
+    # with a mocked aiomqtt broker — but mocking the aiomqtt async iterator
+    # inside asyncio.create_task is unreliable without a live broker (tight
+    # reconnect loops don't yield proper cancellation points).
+    #
+    # PR2b splits the coverage:
+    #   - dispatch logic is tested directly in test_mqtt_subscriber_loop.py
+    #     (TestDispatchNoParser / TestDispatchSuccess / TestDispatchParseFailure /
+    #     TestDispatchPersistFailure / TestDispatchBliiotPersist / TestDispatchUnknownParser)
+    #   - the loop's reconnect/backoff/cancellation is tested in
+    #     TestLoopSmoke::test_loop_starts_subscribes_and_cancels
+    # The end-to-end live-broker path remains uncovered here (would require
+    # testcontainers-mosquitto; out of scope for PR2b).
     @pytest.mark.integration
-    @pytest.mark.skip(reason="aiomqtt async iterator mocking unreliable without live broker")
-    async def test_mqtt_subscriber_loop_calls_process_for_each_message(
-        self, mock_neo4j_driver
-    ):
+    @pytest.mark.skip(
+        reason=(
+            "Full async-loop test requires live broker (testcontainers-mosquitto); "
+            "PR2b covers the dispatch + loop behavior via unit tests in "
+            "test_mqtt_subscriber_loop.py"
+        )
+    )
+    async def test_mqtt_subscriber_loop_calls_process_for_each_message(self, mock_neo4j_driver):
         pass
 
     @pytest.mark.integration
@@ -251,9 +259,7 @@ class TestAPIAndServiceIntegration:
         return create_test_token("testuser", "ADMIN")
 
     @pytest.mark.integration
-    def test_post_rtu_then_get_rtus_includes_it(
-        self, mock_neo4j_driver
-    ):
+    def test_post_rtu_then_get_rtus_includes_it(self, mock_neo4j_driver):
         """Service-level test: get_or_create_rtu creates a new RTU when not found.
 
         We verify:
@@ -305,9 +311,7 @@ class TestAPIAndServiceIntegration:
         assert len(upsert_calls) >= 1, f"Expected upsert with LOCATED_AT, got: {all_queries}"
 
     @pytest.mark.integration
-    def test_delete_rtu_removes_node_and_relationships(
-        self, mock_neo4j_driver
-    ):
+    def test_delete_rtu_removes_node_and_relationships(self, mock_neo4j_driver):
         """DELETE /api/v1/rtus/{rtu_id} removes RTU and cascades to sensors."""
         import repositories.rtu_sensor_repo as repo
         from services.rtu_service import RTUService
@@ -337,7 +341,8 @@ class TestAPIAndServiceIntegration:
 
         # Verify DETACH DELETE was called
         delete_calls = [
-            q for q in mock_neo4j_driver.mock_session.queries
+            q
+            for q in mock_neo4j_driver.mock_session.queries
             if "detach" in q["query"].lower() and "delete" in q["query"].lower()
         ]
         assert len(delete_calls) == 1
