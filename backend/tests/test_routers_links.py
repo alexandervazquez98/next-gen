@@ -105,6 +105,37 @@ class TestLinksList:
         assert response.status_code != 401
         assert response.status_code != 403
 
+    def test_list_links_exposes_medium_when_set(self):
+        """Slice 1 / VPN-Rel R4 / Sc 8: /api/links propagates tunnel medium."""
+        sample_links = [
+            {
+                "source": "hub-a",
+                "source_label": "Hub-A",
+                "target": "router-b",
+                "target_label": "Router-B",
+                "relationship": "CONNECTS_TO",
+                "medium": "vpn",
+            },
+            {
+                "source": "hub-c",
+                "source_label": "Hub-C",
+                "target": "router-d",
+                "target_label": "Router-D",
+                "relationship": "CONNECTS_TO",
+                "medium": "satellite",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_links.return_value = sample_links
+
+            response = client.get("/api/links")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["medium"] == "vpn"
+        assert data[1]["medium"] == "satellite"
+
 
 class TestLinksCreate:
     """Tests for POST /api/links — create a relationship."""
@@ -153,6 +184,25 @@ class TestLinksCreate:
 
         assert response.status_code != 401
         assert response.status_code != 403
+
+    def test_create_tunnel_link_rejected_without_vpn_hub_endpoint(self):
+        """Slice 1 / VPN-Rel R3 / Sc 7: tunnel relation without vpn_hub endpoint
+        surfaces as HTTP 400."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            # Make repository.create_link see two router endpoints (no vpn_hub).
+            mock_repo.create_link.return_value = None
+
+            response = client.post(
+                "/api/links",
+                json={
+                    "source": "router-a",
+                    "target": "router-b",
+                    "relationship": "CONNECTS_TO",
+                    "medium": "vpn",
+                },
+            )
+
+        assert response.status_code == 400
 
 
 class TestLinksDelete:
@@ -338,3 +388,55 @@ class TestGraphFull:
         assert response.status_code == 200
         assert response.status_code != 401
         assert response.status_code != 403
+
+    def test_full_graph_exposes_medium_on_tunnel_links(self):
+        """Slice 1 / VPN-Rel R4 / Sc 8: /api/graph/full surfaces tunnel medium."""
+        raw_nodes = [
+            {"id": "hub-a", "name": "Hub-A", "status": "OK", "_labels": ["CI"]},
+            {"id": "router-b", "name": "Router-B", "status": "OK", "_labels": ["CI"]},
+        ]
+        raw_links = [
+            {
+                "source_node": {"id": "hub-a", "name": "Hub-A"},
+                "target_node": {"id": "router-b", "name": "Router-B"},
+                "type": "CONNECTS_TO",
+                "medium": "satellite",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, raw_links)
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["links"][0]["medium"] == "satellite"
+
+    def test_full_graph_does_not_change_node_status_or_event_fields(self):
+        """Slice 1 / VPN-Rel R4 / Sc 8: existing node status/event fields stay
+        untouched after Slice 1 changes."""
+        raw_nodes = [
+            {
+                "id": "ci-001",
+                "name": "Router-01",
+                "status": "ACTIVE",
+                "ip": "10.0.0.1",
+                "_labels": ["CI"],
+                "layer": "router",
+            },
+        ]
+        raw_links = []
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, raw_links)
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        node = data["nodes"][0]
+        assert node["status"] == "ACTIVE"
+        assert node["type"] == "router"
+        # Public IP is a NEW optional field; absence is allowed for legacy CIs.
+        assert "public_ip" not in node or node.get("public_ip") in (None, "")

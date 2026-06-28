@@ -63,3 +63,94 @@ describe("categoryIcons utility", () => {
 		expect(unknownEntry.materialSymbol).not.toBe("");
 	});
 });
+
+// ===========================================================================
+// Slice 1 (feat-324) — VPN/SD-WAN/satellite tunnel icon keys + vpn_hub
+// ===========================================================================
+
+describe("categoryIcons — VPN/SD-WAN/satellite tunnel entries", () => {
+	it("exposes the four new keys in the catalog with non-empty fixed Material Symbols", () => {
+		// Each new key resolves to a catalog entry with a fixed, non-empty
+		// Material Symbol name (we never want to fall back to "category" or
+		// the empty string for any tunnel technology).
+		const expected: Array<{
+			key: "vpn_tunnel" | "sd_wan_tunnel" | "satellite_link" | "vpn_hub";
+			symbol: string;
+		}> = [
+			{ key: "vpn_tunnel", symbol: "vpn_key" },
+			{ key: "sd_wan_tunnel", symbol: "hub" },
+			{ key: "satellite_link", symbol: "satellite_alt" },
+			{ key: "vpn_hub", symbol: "vpn_lock" },
+		];
+
+		for (const { key, symbol } of expected) {
+			const entry = getCategoryIconEntry(key);
+			expect(entry.key).toBe(key);
+			expect(entry.materialSymbol).toBe(symbol);
+			expect(entry.materialSymbol).not.toBe("");
+			expect(entry.materialSymbol).not.toBe("category");
+		}
+
+		// Sanity: the catalog really contains all four.
+		const catalogKeys = CATEGORY_ICON_CATALOG.map((e) => e.key);
+		for (const { key } of expected) {
+			expect(catalogKeys).toContain(key);
+		}
+	});
+
+	it("accepts the four new keys as controlled category icon keys", () => {
+		// isCategoryIconKey is the membership gate used by every consumer
+		// before reading catalog data; without these entries it would return
+		// false and force the generic fallback.
+		expect(isCategoryIconKey("vpn_tunnel")).toBe(true);
+		expect(isCategoryIconKey("sd_wan_tunnel")).toBe(true);
+		expect(isCategoryIconKey("satellite_link")).toBe(true);
+		expect(isCategoryIconKey("vpn_hub")).toBe(true);
+	});
+
+	it("finds each new entry by English search terms", () => {
+		const vpnResults = findCategoryIcons("vpn").map((e) => e.key);
+		expect(vpnResults).toContain("vpn_tunnel");
+		expect(vpnResults).toContain("vpn_hub");
+
+		const sdwanResults = findCategoryIcons("sd-wan").map((e) => e.key);
+		expect(sdwanResults).toContain("sd_wan_tunnel");
+
+		const satResults = findCategoryIcons("satellite").map((e) => e.key);
+		expect(satResults).toContain("satellite_link");
+	});
+
+	it("finds each new entry by Spanish search terms", () => {
+		// Tildes / accents must survive normalization for Spanish aliases to
+		// hit the catalog (matching the #325 diacritic-stripping change).
+		const vpnEs = findCategoryIcons("Concentrador VPN").map((e) => e.key);
+		expect(vpnEs).toContain("vpn_hub");
+
+		const satEs = findCategoryIcons("Satélite").map((e) => e.key);
+		expect(satEs).toContain("satellite_link");
+
+		const sdwanEs = findCategoryIcons("Túnel SD-WAN").map((e) => e.key);
+		expect(sdwanEs).toContain("sd_wan_tunnel");
+	});
+
+	it("infers default icon key from English vpn_hub category names", () => {
+		expect(resolveCategoryIconKey({ categoryName: "VPN Hub" })).toBe("vpn_hub");
+		expect(resolveCategoryIconKey({ categoryName: "vpn_hub" })).toBe("vpn_hub");
+	});
+
+	it("infers default icon key from Spanish vpn_hub category names", () => {
+		expect(resolveCategoryIconKey({ categoryName: "Concentrador VPN" })).toBe("vpn_hub");
+		expect(resolveCategoryIconKey({ categoryName: "Hub VPN" })).toBe("vpn_hub");
+	});
+
+	it("preserves the generic fallback for unrelated categories", () => {
+		// Negative case: even with the new entries present, an unknown
+		// category still falls back to "generic" so consumers can rely on
+		// the existing contract.
+		expect(resolveCategoryIconKey({ categoryName: "Mystery Category" })).toBe("generic");
+		expect(resolveCategoryIconKey({ iconKey: "vpn_tunnel" })).toBe("vpn_tunnel");
+		expect(resolveCategoryIconKey({ iconKey: "bogus-key", categoryName: "Mystery" })).toBe(
+			"generic",
+		);
+	});
+});
