@@ -8,6 +8,14 @@ def _load_snmp_service_module():
     return importlib.import_module("services.snmp_service")
 
 
+def _make_context_mock():
+    """MagicMock that supports the ``with`` statement and returns itself from ``__enter__``."""
+    fake = MagicMock()
+    fake.__enter__.return_value = fake
+    fake.__exit__.return_value = False
+    return fake
+
+
 def test_get_collector_status_exposes_last_cycle_metrics_processed(mock_neo4j_session):
     snmp_service = _load_snmp_service_module()
     mock_neo4j_session.set_response(
@@ -123,21 +131,24 @@ def test_store_metric_result_writes_snapshot_fields_on_new_event(mock_neo4j_driv
         ],
     )
 
-    snmp_service.store_metric_result(
-        {"id": "ci-002", "ip": "10.0.0.2", "name": "Payments-API"},
-        {
-            "id": "latency",
-            "name": "latency",
-            "protocol": "HTTP",
-            "criticality": 3,
-            "critical": 500,
-            "operator": ">=",
-        },
-        900,
-        "OK",
-        None,
-        mock_neo4j_driver,
-    )
+    fake_pg = _make_context_mock()
+
+    with patch("services.snmp_service.SessionLocal", return_value=fake_pg):
+        snmp_service.store_metric_result(
+            {"id": "ci-002", "ip": "10.0.0.2", "name": "Payments-API"},
+            {
+                "id": "latency",
+                "name": "latency",
+                "protocol": "HTTP",
+                "criticality": 3,
+                "critical": 500,
+                "operator": ">=",
+            },
+            900,
+            "OK",
+            None,
+            mock_neo4j_driver,
+        )
 
     create_event_query = session.queries[-1]
     assert "CREATE (e:Event" in create_event_query["query"]
@@ -151,7 +162,7 @@ def test_store_metric_result_writes_snapshot_fields_on_new_event(mock_neo4j_driv
 def test_store_metric_result_persists_numeric_values_to_timescale(mock_neo4j_driver):
     snmp_service = _load_snmp_service_module()
 
-    fake_pg = MagicMock()
+    fake_pg = _make_context_mock()
 
     with (
         patch("services.snmp_service.SessionLocal", return_value=fake_pg),
@@ -174,5 +185,8 @@ def test_store_metric_result_persists_numeric_values_to_timescale(mock_neo4j_dri
             mock_neo4j_driver,
         )
 
+    # After the #322 restructure, insert_metric_value receives the same
+    # MagicMock that was returned by SessionLocal (because __enter__ returns
+    # self). The session is now closed via __exit__, not close().
     mock_insert.assert_called_once_with(fake_pg, "ci-003", "cmb450i-cpu-util", 17.0)
-    fake_pg.close.assert_called_once()
+    fake_pg.__exit__.assert_called_once()
