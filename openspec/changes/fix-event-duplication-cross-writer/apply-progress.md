@@ -353,7 +353,7 @@ overwhelmingly new tests + docstrings.
   `-m "not integration"` during tight TDD loops on the unit-test logic.
 
 ### PR link
-https://github.com/alexandervazquez98/next-gen/pull/331
+https://github.com/alexandervazquez98/next-gen/pull/332
 
 ---
 
@@ -363,7 +363,7 @@ https://github.com/alexandervazquez98/next-gen/pull/331
 |----|-------|--------|-----|
 | PR1 | test(events): add advisory-lock test infra + lock helper | MERGED | https://github.com/alexandervazquez98/next-gen/pull/328 |
 | PR2 | feat(events): wire pg_advisory_xact_lock into 3 writers + poll_collector_id | MERGED | https://github.com/alexandervazquez98/next-gen/pull/330 |
-| PR3 | test(events): add deadlock prevention + integration tests | OPEN | https://github.com/alexandervazquez98/next-gen/pull/331 |
+| PR3 | test(events): add deadlock prevention + integration tests | OPEN | https://github.com/alexandervazquez98/next-gen/pull/332 |
 
 **Chained-3 delivery strategy (`stacked-to-main`): complete after PR3 merges.**
 
