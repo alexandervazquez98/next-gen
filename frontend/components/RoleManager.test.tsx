@@ -5,6 +5,7 @@ import RoleManager from './RoleManager';
 
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
+  usePermissions: vi.fn(),
   api: {
     get: vi.fn(),
     post: vi.fn(),
@@ -19,6 +20,10 @@ vi.mock('../context/AuthContext', () => ({
 
 vi.mock('../services/api', () => ({
   api: mocks.api,
+}));
+
+vi.mock('../services/permissions', () => ({
+  usePermissions: mocks.usePermissions,
 }));
 
 type Role = {
@@ -49,10 +54,29 @@ const setAuth = (allowedPerms: string[] = ['ROLE_MANAGE']) => {
   });
 };
 
+const AI_ROLE = {
+  name: 'AI_DIAGNOSTIC',
+  description: 'AI agent',
+  permissions: ['AI_VIEW_ALL'],
+  is_system: true,
+};
+
 describe('RoleManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setAuth();
+    mocks.usePermissions.mockReturnValue({
+      human: [
+        'EVENT_VIEW', 'EVENT_ACK', 'EVENT_CLOSE', 'EVENT_FORCED_CLOSE',
+        'CI_VIEW', 'CI_EDIT', 'CI_DELETE',
+        'RUN_DIAGNOSTICS',
+        'USER_MANAGE', 'ROLE_MANAGE', 'AUDIT_VIEW',
+        'METRICS_VIEW',
+      ],
+      ai: ['AI_VIEW_ALL', 'AI_EVENT_ACK'],
+      loading: false,
+      error: null,
+    });
     mocks.api.get.mockResolvedValue([]);
     mocks.api.post.mockResolvedValue(undefined);
     mocks.api.put.mockResolvedValue(undefined);
@@ -370,5 +394,45 @@ describe('RoleManager', () => {
 
     expect(screen.getByText(/available roles/i)).toBeInTheDocument();
     expect(mocks.api.post).not.toHaveBeenCalled();
+  });
+
+  describe('AI expand/collapse — role list cards', () => {
+    // R-1: AI system role card must show expand toggle button
+    it('R-1: shows AI Permissions expand toggle for AI system roles', async () => {
+      mocks.api.get.mockResolvedValue([AI_ROLE]);
+
+      render(<RoleManager />);
+
+      await waitFor(() => {
+        expect(screen.getByText('AI_DIAGNOSTIC')).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByRole('button', { name: /toggle ai permissions for ai_diagnostic/i }),
+      ).toBeInTheDocument();
+    });
+
+    // R-2: clicking the toggle reveals disabled checkboxes for each AI permission
+    it('R-2: clicking expand toggle reveals disabled AI permission checkboxes', async () => {
+      mocks.api.get.mockResolvedValue([AI_ROLE]);
+
+      render(<RoleManager />);
+
+      await waitFor(() => {
+        expect(screen.getByText('AI_DIAGNOSTIC')).toBeInTheDocument();
+      });
+
+      const toggle = screen.getByRole('button', {
+        name: /toggle ai permissions for ai_diagnostic/i,
+      });
+      fireEvent.click(toggle);
+
+      // All checkboxes rendered must be disabled
+      const checkboxes = screen.getAllByRole('checkbox');
+      checkboxes.forEach(cb => expect(cb).toBeDisabled());
+
+      // The mocked ai permission label is visible
+      expect(screen.getByText('AI_VIEW_ALL')).toBeInTheDocument();
+    });
   });
 });
