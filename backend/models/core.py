@@ -1,7 +1,8 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
+import ipaddress
 
 # --- Models -->
 
@@ -14,6 +15,12 @@ class Node(BaseModel):
     type: str
     status: Optional[str] = "OK"
     ip: Optional[str] = None
+    # Slice 1 (feat-324): VPN tunnel relations need a routable, externally
+    # reachable address to drive ICMP degradation probes. The CI `ip` field
+    # is intentionally kept untouched; `public_ip` is opt-in and validated as
+    # any IP address (v4 or v6). No backfill — CIs without an explicit
+    # public_ip keep public_ip = None.
+    public_ip: Optional[str] = None
     location: Optional[dict] = None
     metadata: Optional[dict] = {}
     # Flattened Fields (Optional)
@@ -27,6 +34,17 @@ class Node(BaseModel):
     firmwareVersion: Optional[str] = None
     metrics: Optional[List[Dict[str, Any]]] = []
 
+    @field_validator("public_ip")
+    @classmethod
+    def _validate_public_ip(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        try:
+            ipaddress.ip_address(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"public_ip is not a valid IP address: {value!r}") from exc
+        return value
+
 
 class Link(BaseModel):
     """Pydantic model representing a Relationship Link between CIs."""
@@ -37,6 +55,19 @@ class Link(BaseModel):
     id: Optional[str] = None
     source_label: Optional[str] = None
     target_label: Optional[str] = None
+    # Slice 1 (feat-324): tunnel relation medium. Optional — legacy
+    # non-tunnel links stay medium=None. Only the three documented values
+    # are accepted; link_service validates the hub-obligatorio rule.
+    medium: Optional[Literal["vpn", "sd_wan", "satellite"]] = None
+
+    @field_validator("medium")
+    @classmethod
+    def _validate_medium(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        if value not in ("vpn", "sd_wan", "satellite"):
+            raise ValueError(f"medium must be one of 'vpn', 'sd_wan', 'satellite': {value!r}")
+        return value
 
 
 class Category(BaseModel):

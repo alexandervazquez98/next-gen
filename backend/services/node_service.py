@@ -7,7 +7,7 @@ import pandas as pd
 import io
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from models.user import User, UserRole, UserPermission
 from models.core import Node
@@ -150,6 +150,19 @@ def create_update_node(node: Node, current_user: User) -> Dict[str, str]:
         raise HTTPException(
             status_code=403, detail="Permission denied: CI_EDIT required"
         )
+
+    # Slice 1 (feat-324): if the Node was constructed without validation
+    # (e.g. via model_construct or by raw dict coercion), surface any
+    # Pydantic ValidationError as HTTP 400 BEFORE any repository write.
+    # The service-level guard complements the model validator so callers
+    # that bypass Pydantic (tests, internal tools) get a 400, not a 500.
+    try:
+        node = Node.model_validate(node.model_dump())
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid CI payload: {exc.errors()[0].get('msg', 'validation failed')}",
+        ) from exc
 
     topology_repo.upsert_node(node)
 

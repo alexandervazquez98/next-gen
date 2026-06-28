@@ -50,6 +50,10 @@ def upsert_node(node: Node) -> None:
         n.location_name = $loc_name, n.brand = $brand, n.model = $model, n.serialNumber = $serial,
         n.firmwareVersion = $firmware, n.snmp = $snmp, n.pollingInterval = $polling, n.updated_at = datetime()
     """
+    # Slice 1 (feat-324): persist CI public_ip alongside the existing fields.
+    # The setter is included unconditionally so existing CIs without a public_ip
+    # are explicitly written as None (no backfill) and the column stays queryable.
+    query += ", n.public_ip = $public_ip"
     if node.location and 'lat' in node.location and 'long' in node.location:
         query += ", n.location = point({latitude: $lat, longitude: $lng})"
     query += "\nWITH n MERGE (c:Category {name: $type}) MERGE (n)-[:CATEGORIZED_AS]->(c)"
@@ -58,11 +62,12 @@ def upsert_node(node: Node) -> None:
     if node.brand and node.model:
         query += "\nWITH n MERGE (h:HardwareModel {brand: $brand, model: $model}) MERGE (n)-[:IS_MODEL]->(h)"
     with driver.session() as session:
-        session.run(query, id=node.id, label=node.label, type=node.type, status=node.status, ip=node.ip, 
+        session.run(query, id=node.id, label=node.label, type=node.type, status=node.status, ip=node.ip,
                     owner=node.owner, loc_name=node.location_name, brand=node.brand, model=node.model,
-                    serial=node.serialNumber or "", firmware=node.firmwareVersion or "", snmp=snmp_str, 
+                    serial=node.serialNumber or "", firmware=node.firmwareVersion or "", snmp=snmp_str,
                     polling=node.pollingInterval, lat=node.location.get('lat') if node.location else 0,
-                    lng=node.location.get('long') if node.location else 0)
+                    lng=node.location.get('long') if node.location else 0,
+                    public_ip=node.public_ip)
 
 def delete_node(node_id: str) -> None:
     driver = get_db()
@@ -132,15 +137,84 @@ def get_links(allowed_locations=None, is_admin=False):
         if not allowed_locations: return []
         query += " AND (a.location_name IN $allowed_locations OR b.location_name IN $allowed_locations) "
         params["allowed_locations"] = allowed_locations
-    query += " RETURN a.id as s, COALESCE(a.name, a.id) as sl, b.id as t, COALESCE(b.name, b.id) as tl, type(r) as rel"
+    # Slice 1 (feat-324): tunnel medium is an optional relationship property;
+    # return it only when present so legacy consumers see no shape change.
+    query += " RETURN a.id as s, COALESCE(a.name, a.id) as sl, b.id as t, COALESCE(b.name, b.id) as tl, type(r) as rel, r.medium as medium"
     with driver.session() as session:
-        return [{"source": r["s"], "source_label": r["sl"], "target": r["t"], "target_label": r["tl"], "relationship": r["rel"]} for r in session.run(query, **params)]
+        links = []
+        for r in session.run(query, **params):
+            link = {
+                "source": r["s"],
+                "source_label": r["sl"],
+                "target": r["t"],
+                "target_label": r["tl"],
+                "relationship": r["rel"],
+            }
+            medium = r.get("medium")
+            if medium:
+                link["medium"] = medium
+            links.append(link)
+        return links
 
-def create_link(source, target, relationship):
+def create_link(source, target, relationship, medium=None):
     driver = get_db()
     rel = _validate_relationship(relationship)
+    # Slice 1 (feat-324): persist tunnel medium on the relationship when set.
+    # Non-tunnel calls continue to pass medium=None which is a no-op setter.
+    set_clause = ""
+    params = {"s": source, "t": target}
+    if medium is not None:
+        set_clause = " SET r.medium = $medium"
+        params["medium"] = medium
+    query = f"MATCH (a {{id: $s}}), (b {{id: $t}}) WHERE a.id = $s AND b.id = $t MERGE (a)-[r:{rel}]->(b){set_clause}"
     with driver.session() as session:
-        session.run(f"MATCH (a {{id: $s}}), (b {{id: $t}}) WHERE a.id = $s AND b.id = $t MERGE (a)-[r:{rel}]->(b)", s=source, t=target)
+        session.run(query, **params)
+
+
+def get_endpoint_types(source_id: str, target_id: str) -> dict:
+    """Look up the `layer` of each endpoint CI by id.
+
+    Returns ``{"source_type": str | None, "target_type": str | None}`` so the
+    hub-obligatorio validator can reason about endpoints that arrive without
+    an explicit type (e.g. legacy CI records whose layer is stored only on
+    the node itself). Missing endpoints surface as ``None``.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        result = session.run(
+            "MATCH (a:CI {id: $source_id}), (b:CI {id: $target_id}) "
+            "RETURN a.layer AS source_type, b.layer AS target_type",
+            source_id=source_id,
+            target_id=target_id,
+        ).single()
+    if not result:
+        return {"source_type": None, "target_type": None}
+    return {
+        "source_type": result.get("source_type"),
+        "target_type": result.get("target_type"),
+    }
+
+
+def update_link(source, target, relationship, medium=None):
+    """Update an existing relationship, optionally setting `medium`.
+
+    If the relationship already carries a medium value, the new value (when
+    provided) overwrites it. Pass ``medium=None`` to leave the existing
+    value untouched.
+    """
+    driver = get_db()
+    rel = _validate_relationship(relationship)
+    set_clause = ""
+    params = {"s": source, "t": target}
+    if medium is not None:
+        set_clause = " SET r.medium = $medium"
+        params["medium"] = medium
+    query = (
+        f"MATCH (a {{id: $s}})-[r:{rel}]->(b {{id: $t}}) "
+        f"WHERE a.id = $s AND b.id = $t{set_clause}"
+    )
+    with driver.session() as session:
+        session.run(query, **params)
 
 def delete_link(source, target, relationship):
     driver = get_db()
@@ -349,7 +423,21 @@ def get_filtered_graph_data(layer=None, location=None, owner=None, allowed_locat
                 paired.append(f"({link_filters[i]} OR {link_filters[i+1]})")
             link_conditions.append(" AND ".join(paired))
         l_where = (" WHERE " + " AND ".join(link_conditions)) if link_conditions else ""
-        links = [{"source_node": dict(r["a"]), "target_node": dict(r["b"]), "type": r["r"].type} for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params)]
+        # Slice 1 (feat-324): include r.medium in the link payload when set;
+        # legacy non-tunnel links stay shape-compatible for downstream
+        # consumers (link_service.get_full_graph only forwards medium when
+        # truthy).
+        links = []
+        for r in session.run(f"MATCH (a:CI)-[r]->(b:CI){l_where} RETURN a, r, b", **params):
+            link_entry = {
+                "source_node": dict(r["a"]),
+                "target_node": dict(r["b"]),
+                "type": r["r"].type,
+            }
+            medium = getattr(r["r"], "medium", None)
+            if medium:
+                link_entry["medium"] = medium
+            links.append(link_entry)
         return nodes, links
 
 

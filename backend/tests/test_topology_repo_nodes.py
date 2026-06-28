@@ -300,7 +300,9 @@ def test_create_update_node_rejects_invalid_public_ip(monkeypatch):
         permissions=["CI_EDIT"],
         allowed_locations=[],
     )
-    bad_node = Node(
+    # Use model_construct to skip Pydantic's __init__ validation so we can
+    # exercise the service-level guard that converts ValidationError -> 400.
+    bad_node = Node.model_construct(
         id="ci-bad-ip",
         label="Hub-bad",
         type="vpn_hub",

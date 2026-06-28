@@ -157,7 +157,11 @@ class TestLinksCreate:
         assert response.status_code == 200
         data = response.json()
         assert "Link created" in data["message"]
-        mock_repo.create_link.assert_called_once_with("ci-001", "ci-002", "DEPENDS_ON")
+        # Slice 1 (feat-324): the repository signature gained an optional
+        # `medium` kwarg. Non-tunnel calls pass medium=None.
+        mock_repo.create_link.assert_called_once_with(
+            "ci-001", "ci-002", "DEPENDS_ON", medium=None
+        )
 
     def test_create_link_validates_required_fields(self):
         """Should reject request missing required fields (source, target, relationship)."""

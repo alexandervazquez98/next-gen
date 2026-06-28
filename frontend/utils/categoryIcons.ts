@@ -17,6 +17,10 @@ const CATEGORY_ICON_KEY_SET = new Set<string>([
 	"storage",
 	"camera",
 	"video_analytics",
+	"vpn_tunnel",
+	"sd_wan_tunnel",
+	"satellite_link",
+	"vpn_hub",
 ]);
 
 export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
@@ -74,6 +78,45 @@ export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
 		materialSymbol: "analytics",
 		aliases: ["analytics", "video analysis", "ai video"],
 	},
+	{
+		// Slice 1 (feat-324) — tunnel technology icons. These icons identify
+		// the transport only; health/state styling is rendered separately by
+		// the visual layer so an UP tunnel keeps showing the technology icon.
+		key: "vpn_tunnel",
+		label: "VPN Tunnel",
+		materialSymbol: "vpn_key",
+		aliases: ["vpn", "ipsec", "tls tunnel", "tunel vpn", "red privada virtual"],
+	},
+	{
+		key: "sd_wan_tunnel",
+		label: "SD-WAN Tunnel",
+		materialSymbol: "hub",
+		aliases: ["sd-wan", "sdwan", "wan", "overlay", "tunel sd-wan"],
+	},
+	{
+		key: "satellite_link",
+		label: "Satellite Link",
+		materialSymbol: "satellite_alt",
+		aliases: [
+			"satellite",
+			"sat link",
+			"satcom",
+			"satelite",
+			"enlace satelital",
+		],
+	},
+	{
+		key: "vpn_hub",
+		label: "VPN Hub",
+		materialSymbol: "vpn_lock",
+		aliases: [
+			"vpn hub",
+			"hub vpn",
+			"vpn concentrator",
+			"concentrador vpn",
+			"hub concentrator",
+		],
+	},
 ];
 
 const DEFAULT_ICON_KEY: CategoryIconKey = "generic";
@@ -93,6 +136,15 @@ const CATEGORY_NAME_TO_ICON: Record<string, CategoryIconKey> = {
 	"cameras": "camera",
 	"video analytics": "video_analytics",
 	"video_analytics": "video_analytics",
+	// Slice 1 (feat-324) — default icon inference for tunnel categories.
+	// Both English and Spanish spellings are accepted; the normalize pass
+	// (with diacritic stripping) collapses accented Spanish input to its
+	// ASCII dictionary form before this lookup runs.
+	"vpn hub": "vpn_hub",
+	"vpn_hub": "vpn_hub",
+	"hub vpn": "vpn_hub",
+	"concentrador vpn": "vpn_hub",
+	"vpn concentrator": "vpn_hub",
 };
 
 const INDEXED_CATALOG = new Map<string, CategoryIconEntry>(
@@ -113,6 +165,12 @@ export const normalizeCategoryName = (categoryName: string): string => {
 	return categoryName
 		.trim()
 		.toLowerCase()
+		// Strip combining diacritics first so accented Spanish input
+		// (e.g. "Concentrador VPN" — note the tilde on the o) collapses
+		// to its ASCII dictionary form ("concentrador vpn") instead of
+		// being treated as separate tokens by the [^a-z0-9]+ rule below.
+		.normalize("NFD")
+		.replace(/[\u0300-\u036f]/g, "")
 		.replace(/[^a-z0-9]+/g, " ")
 		.replace(/\blayer\s+2\b/g, "layer2")
 		.replace(/\blayer\s+3\b/g, "layer3")

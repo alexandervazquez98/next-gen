@@ -1,7 +1,15 @@
 from typing import List, Dict, Any, Optional
+from fastapi import HTTPException
 from models.core import Link
 from models.user import User
 from repositories import topology_repo
+
+# Slice 1 (feat-324): the three allowed tunnel mediums. Anything else is
+# rejected before persistence. Centralized so both the model validator and
+# the service-level guard agree.
+ALLOWED_TUNNEL_MEDIUMS = frozenset({"vpn", "sd_wan", "satellite"})
+VPN_HUB_LAYER = "vpn_hub"
+
 
 def get_links(current_user: Optional[User] = None) -> List[Dict[str, Any]]:
     """
@@ -14,12 +22,88 @@ def get_links(current_user: Optional[User] = None) -> List[Dict[str, Any]]:
     allowed_locations = current_user.allowed_locations if current_user else None
     return topology_repo.get_links(allowed_locations, is_admin)
 
+
+def validate_tunnel_endpoint_hub(
+    source_id: str,
+    target_id: str,
+    source_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    medium: Optional[str] = None,
+) -> None:
+    """Hub-obligatorio validator for tunnel relations.
+
+    Rules (Slice 1 / VPN-Rel R3):
+    - When ``medium`` is one of the allowed tunnel mediums, exactly two
+      endpoints must be present and at least one must have layer ``vpn_hub``.
+    - When ``medium`` is None, the function is a no-op (legacy non-tunnel
+      relation type — no hub rule applies).
+    - Unknown medium values raise ``HTTPException(400)`` before persistence.
+    - When endpoint types are not provided to the validator, they are
+      fetched from the repository so callers do not need a separate lookup.
+
+    Raises ``HTTPException(400)`` for any rule violation. Persistence must
+    not happen on this failure path — callers must call this BEFORE
+    ``topology_repo.create_link``.
+    """
+    if medium is None or medium == "":
+        return
+
+    if medium not in ALLOWED_TUNNEL_MEDIUMS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"medium must be one of {sorted(ALLOWED_TUNNEL_MEDIUMS)}; got {medium!r}"
+            ),
+        )
+
+    if source_type is None or target_type is None:
+        endpoint_types = topology_repo.get_endpoint_types(source_id, target_id)
+        source_type = source_type or endpoint_types.get("source_type")
+        target_type = target_type or endpoint_types.get("target_type")
+
+    if source_type == VPN_HUB_LAYER or target_type == VPN_HUB_LAYER:
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "tunnel relation must have at least one vpn_hub endpoint; "
+            f"got source_type={source_type!r}, target_type={target_type!r}"
+        ),
+    )
+
+
 def create_link(link: Link) -> Dict[str, str]:
     """
     Create a new relationship (edge) between two nodes.
+
+    Slice 1 (feat-324): enforces the hub-obligatorio rule for tunnel
+    relations BEFORE persistence so a validation failure never produces
+    a partial write.
     """
-    topology_repo.create_link(link.source, link.target, link.relationship)
+    validate_tunnel_endpoint_hub(
+        source_id=link.source,
+        target_id=link.target,
+        medium=link.medium,
+    )
+    topology_repo.create_link(link.source, link.target, link.relationship, medium=link.medium)
     return {"message": "Link created"}
+
+
+def update_link(link: Link) -> Dict[str, str]:
+    """Update an existing relationship, optionally changing its medium.
+
+    Slice 1 (feat-324): when medium is set, validates the hub rule
+    against the existing endpoints before any write.
+    """
+    validate_tunnel_endpoint_hub(
+        source_id=link.source,
+        target_id=link.target,
+        medium=link.medium,
+    )
+    topology_repo.update_link(link.source, link.target, link.relationship, medium=link.medium)
+    return {"message": "Link updated"}
+
 
 def delete_link(link: Link) -> Dict[str, str]:
     """
@@ -95,14 +179,22 @@ def get_full_graph(current_user: Optional[User] = None, layer: Optional[str] = N
     for link_data in raw_links:
         source_id = link_data["source_node"].get("id")
         target_id = link_data["target_node"].get("id")
-        
+
         if source_id and target_id:
-            links.append({
+            # Slice 1 (feat-324): tunnel medium is part of the payload when
+            # the underlying relationship carries it. Legacy links (medium
+            # unset) keep the original shape so existing consumers do not
+            # see a key that does not apply.
+            link_payload = {
                 "source": source_id,
                 "target": target_id,
-                "relationship": link_data["type"]
-            })
-            
+                "relationship": link_data["type"],
+            }
+            medium = link_data.get("medium")
+            if medium:
+                link_payload["medium"] = medium
+            links.append(link_payload)
+
     return {"nodes": nodes, "links": links}
 
 def simulate_bulk_links(current_user: User, source_filter: dict, target_filter: dict) -> Dict[str, Any]:

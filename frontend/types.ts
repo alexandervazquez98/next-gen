@@ -14,7 +14,11 @@ export type CategoryIconKey =
 	| "saas"
 	| "storage"
 	| "camera"
-	| "video_analytics";
+	| "video_analytics"
+	| "vpn_tunnel"
+	| "sd_wan_tunnel"
+	| "satellite_link"
+	| "vpn_hub";
 
 export interface SNMPConfig {
 	version: "v2c" | "v3";
@@ -103,6 +107,11 @@ export interface GraphLink {
 		| "RUNS_ON"
 		| "HAS_METRIC"
 		| "CATEGORIZED_AS";
+	/**
+	 * Slice 1 (feat-324): tunnel medium for VPN / SD-WAN / satellite links.
+	 * Optional — legacy non-tunnel links stay shape-compatible.
+	 */
+	medium?: "vpn" | "sd_wan" | "satellite";
 }
 
 export interface AvailabilityReportCI {
