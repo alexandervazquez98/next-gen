@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.4] — 2026-06-27
+
+### Added
+
+- **MQTT subscriber payload generalization** (PR #319, closes #320):
+  - Adds a pluggable MQTT parser registry, canonical `Reading`/`MetricReading` model, topic router with MQTT wildcard matching, and async subscriber dispatch path.
+  - Preserves BLIIoT S475E compatibility through a dedicated parser and back-compat shim while moving new subscriber writes to generic `Device` + `Metric` Neo4j nodes.
+  - Adds the additive `backend/migrations/002_generic_device_schema.cypher` migration for generic device/metric persistence; run it before deploying this release.
+  - Adds a generic JSON fallback parser and in-process MQTT metrics counters for ad-hoc device onboarding and parser observability.
+  - Adds focused backend coverage for parser contracts, topic routing, subscriber dispatch, DeviceMetricRepo persistence, migration structure, generic JSON parsing, and MQTT metrics.
+
 ## [1.13.3] — 2026-06-21
 
 ### Fixed
