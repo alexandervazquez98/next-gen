@@ -4,3 +4,4 @@ pytest-asyncio==0.23.5
 httpx==0.26.0          # Async test client for FastAPI
 pytest-cov==4.1.0      # Coverage reporting
 factory-boy==3.3.0     # Test data factories
+testcontainers[postgres]>=4.0   # Real Postgres container for advisory-lock concurrency tests
