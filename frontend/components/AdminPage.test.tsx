@@ -21,6 +21,10 @@ vi.mock('../context/AuthContext', () => ({
     useAuth: () => ({ hasPermission: () => true }),
 }));
 
+vi.mock('../services/permissions', () => ({
+    usePermissions: vi.fn(() => ({ human: [], ai: [], loading: false, error: null })),
+}));
+
 vi.mock('./MetricsManager', () => ({ default: () => <div>Metrics Manager</div> }));
 vi.mock('./DictionaryManager', () => ({ default: () => <div>Dictionary Manager</div> }));
 vi.mock('./CIEditor', () => ({
