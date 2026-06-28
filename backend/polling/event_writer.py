@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import socket
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterable, Mapping
 from uuid import UUID
 
-from services.event_lock import acquire_event_triplet_lock
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.polling_event_lifecycle import (
     COLLECTION_FAILURE_PREFIX,
     EVENT_TYPE_AVAILABILITY,
@@ -22,14 +20,9 @@ from services.polling_event_lifecycle import (
     normalized_protocol,
 )
 
-# poll_collector_id: cached at module load (HOSTNAME env var with
-# socket.gethostname() fallback). All Event CREATE / SET clauses pass
-# this constant so the host that observed the failure is recorded for
-# forensic correlation (issue #322 / spec §Poll collector identity persistence).
-POLL_COLLECTOR_ID = (
-    (os.getenv("HOSTNAME") or "").strip()
-    or socket.gethostname().strip()
-) or "unknown-poll-collector"
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 
 def _value(item: Any) -> Any:

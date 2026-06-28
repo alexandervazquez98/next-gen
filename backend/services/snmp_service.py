@@ -4,8 +4,6 @@ import asyncio
 import ast
 import json
 import logging
-import os
-import socket
 import subprocess
 import time
 from datetime import datetime
@@ -14,7 +12,7 @@ from typing import Any, Dict
 from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
-from services.event_lock import acquire_event_triplet_lock
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.metric_service import metric_matches_ci
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
@@ -26,14 +24,9 @@ from services.polling_event_lifecycle import (
     normalized_protocol,
 )
 
-# poll_collector_id: cached at module load (HOSTNAME env var with
-# socket.gethostname() fallback). All Event CREATE / SET clauses pass
-# this constant so the host that observed the failure is recorded for
-# forensic correlation (issue #322 / spec §Poll collector identity persistence).
-POLL_COLLECTOR_ID = (
-    (os.getenv("HOSTNAME") or "").strip()
-    or socket.gethostname().strip()
-) or "unknown-poll-collector"
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 logger = logging.getLogger(__name__)
 

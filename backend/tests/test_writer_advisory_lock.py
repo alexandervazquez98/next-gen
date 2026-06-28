@@ -91,6 +91,73 @@ def test_acquire_event_triplet_lock_helper():
     )
 
 
+def test_get_poll_collector_id_returns_non_empty_string():
+    """#322 / spec §Poll collector identity persistence — helper returns a
+    non-empty hostname string sourced from ``HOSTNAME`` env var with
+    ``socket.gethostname()`` fallback. Cached at module load so per-row
+    Event writes don't trigger repeated system calls.
+    """
+    import os
+    import socket
+
+    from backend.services.event_lock import get_poll_collector_id
+
+    value = get_poll_collector_id()
+    assert isinstance(value, str)
+    assert value.strip(), f"poll_collector_id must be non-empty; got {value!r}"
+
+    # The value MUST match the HOSTNAME env var OR socket.gethostname()
+    # — whichever is non-empty (HOSTNAME takes precedence per design §4).
+    expected = (os.getenv("HOSTNAME") or socket.gethostname()).strip()
+    assert value == expected, (
+        f"poll_collector_id must match HOSTNAME-or-gethostname; "
+        f"got {value!r}, expected {expected!r}"
+    )
+
+
+def test_get_poll_collector_id_is_cached_at_module_load(monkeypatch):
+    """Hostname MUST be read once at module load (design §4 / task 7).
+    Subsequent calls return the SAME object even if socket.gethostname()
+    is patched to return something different — proves the cache.
+    """
+    import socket
+
+    from backend.services import event_lock as event_lock_module
+
+    # Reset the cache to force re-evaluation against the patched hostname.
+    monkeypatch.setattr(event_lock_module, "_CACHED_HOSTNAME", None)
+    monkeypatch.setattr(socket, "gethostname", lambda: "sentinel-host")
+    monkeypatch.delenv("HOSTNAME", raising=False)
+
+    first = event_lock_module.get_poll_collector_id()
+    assert first == "sentinel-host", f"first call should use the patched hostname; got {first!r}"
+
+    # Mutate the source — second call MUST still return the cached value.
+    monkeypatch.setattr(socket, "gethostname", lambda: "different-host")
+    second = event_lock_module.get_poll_collector_id()
+    assert second == "sentinel-host", (
+        f"second call MUST return cached value (got {second!r}); "
+        f"hostname was not cached at module load"
+    )
+
+
+def test_get_poll_collector_id_raises_when_hostname_unavailable(monkeypatch):
+    """If both HOSTNAME env var AND socket.gethostname() are empty,
+    ``get_poll_collector_id`` MUST raise ``RuntimeError`` rather than
+    silently writing an empty string to the database.
+    """
+    import socket
+
+    from backend.services import event_lock as event_lock_module
+
+    monkeypatch.setattr(event_lock_module, "_CACHED_HOSTNAME", None)
+    monkeypatch.setenv("HOSTNAME", "")
+    monkeypatch.setattr(socket, "gethostname", lambda: "")
+
+    with pytest.raises(RuntimeError, match="Cannot determine poll_collector_id"):
+        event_lock_module.get_poll_collector_id()
+
+
 # ---------------------------------------------------------------------------
 # Task 2 — primary real-Postgres concurrency proof (design §6 "Primary test").
 # PR1 ships this in PASSING state because the test exercises the lock

@@ -1,6 +1,5 @@
 import os
 import platform
-import socket
 import time
 import schedule
 import random
@@ -36,7 +35,7 @@ from polling.icmp_measurements import (
     PingMeasurement,
     parse_ping_latency_ms,
 )
-from services.event_lock import acquire_event_triplet_lock
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
@@ -48,13 +47,9 @@ from services.polling_event_lifecycle import (
     normalized_protocol,
 )
 
-# poll_collector_id: cached at module load to avoid per-row socket calls.
-# Falls back to HOSTNAME env var (set automatically in Kubernetes/Docker pods)
-# and finally to socket.gethostname() for bare-metal deployments.
-POLL_COLLECTOR_ID = (
-    (os.getenv("HOSTNAME") or "").strip()
-    or socket.gethostname().strip()
-) or "unknown-poll-collector"
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 # SNMP Support
 try:
