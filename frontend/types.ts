@@ -14,7 +14,11 @@ export type CategoryIconKey =
 	| "saas"
 	| "storage"
 	| "camera"
-	| "video_analytics";
+	| "video_analytics"
+	| "radio_telecom"
+	| "trunk_link"
+	| "access_ci"
+	| "distribution_ci";
 
 export interface SNMPConfig {
 	version: "v2c" | "v3";

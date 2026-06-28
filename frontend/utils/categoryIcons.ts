@@ -17,6 +17,10 @@ const CATEGORY_ICON_KEY_SET = new Set<string>([
 	"storage",
 	"camera",
 	"video_analytics",
+	"radio_telecom",
+	"trunk_link",
+	"access_ci",
+	"distribution_ci",
 ]);
 
 export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
@@ -74,6 +78,37 @@ export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
 		materialSymbol: "analytics",
 		aliases: ["analytics", "video analysis", "ai video"],
 	},
+	{
+		key: "radio_telecom",
+		label: "Radio (Telecom)",
+		materialSymbol: "settings_input_antenna",
+		aliases: ["radio", "antenna", "wireless", "telecom radio", "radioenlace"],
+	},
+	{
+		key: "trunk_link",
+		label: "Trunk Link",
+		materialSymbol: "linear_scale",
+		aliases: ["trunk", "backbone", "uplink", "troncal", "troncal de red"],
+	},
+	{
+		key: "access_ci",
+		label: "Access CI",
+		materialSymbol: "input",
+		aliases: ["access", "access ci", "access node", "acceso", "nodo de acceso"],
+	},
+	{
+		key: "distribution_ci",
+		label: "Distribution CI",
+		materialSymbol: "layers",
+		aliases: [
+			"distribution",
+			"distribution ci",
+			"distribution layer",
+			"distribucion",
+			"distribución",
+			"capa distribucion",
+		],
+	},
 ];
 
 const DEFAULT_ICON_KEY: CategoryIconKey = "generic";
@@ -93,6 +128,18 @@ const CATEGORY_NAME_TO_ICON: Record<string, CategoryIconKey> = {
 	"cameras": "camera",
 	"video analytics": "video_analytics",
 	"video_analytics": "video_analytics",
+	"radio": "radio_telecom",
+	"radio telecom": "radio_telecom",
+	"radioenlace": "radio_telecom",
+	"trunk": "trunk_link",
+	"trunk link": "trunk_link",
+	"troncal": "trunk_link",
+	"access": "access_ci",
+	"access ci": "access_ci",
+	"acceso": "access_ci",
+	"distribution": "distribution_ci",
+	"distribution ci": "distribution_ci",
+	"distribucion": "distribution_ci",
 };
 
 const INDEXED_CATALOG = new Map<string, CategoryIconEntry>(
@@ -113,6 +160,11 @@ export const normalizeCategoryName = (categoryName: string): string => {
 	return categoryName
 		.trim()
 		.toLowerCase()
+		// Strip combining diacritics so accented Spanish terms (e.g. "Distribución")
+		// match their ASCII dictionary form ("distribucion") without leaving a
+		// placeholder space where the accent used to be.
+		.normalize("NFD")
+		.replace(/[\u0300-\u036f]/g, "")
 		.replace(/[^a-z0-9]+/g, " ")
 		.replace(/\blayer\s+2\b/g, "layer2")
 		.replace(/\blayer\s+3\b/g, "layer3")
