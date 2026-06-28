@@ -868,6 +868,73 @@ def test_refresh_icmp_latency_events_updates_open_or_ack_events_without_merge_du
     assert "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END" in query
 
 
+def test_refresh_icmp_latency_events_acquires_pg_advisory_lock_before_neo4j_write():
+    """#322 / design §6/§11 — POSITIVE flipped assertion.
+
+    The writer MUST acquire ``pg_advisory_xact_lock`` for the
+    ``(ci_id, metric_id, event_type)`` triplet BEFORE running the
+    Neo4j OPTIONAL MATCH + FOREACH(CREATE) block. Lock acquisition
+    serializes concurrent poll collectors so only one OPEN Event
+    is created per triplet.
+
+    Replaces the old negative "MERGE absent" check (line 866 before
+    the flip) with a positive "lock helper invoked" check. The MERGE
+    invariant stays as a defensive assertion in the sibling test.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from engines.snmp_worker import _refresh_icmp_latency_events
+
+    session = MockNeo4jSession()
+    lock_db = MagicMock()
+    call_order: list[str] = []
+
+    with patch("engines.snmp_worker.acquire_event_triplet_lock") as mock_lock:
+        mock_lock.side_effect = lambda *_a, **_kw: call_order.append("lock")
+
+        original_run = session.run
+
+        def tracking_run(query, **params):
+            call_order.append("neo4j")
+            return original_run(query, **params)
+
+        session.run = tracking_run
+
+        _refresh_icmp_latency_events(
+            session,
+            [{
+                "node_id": "ci-001",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "Latency warning",
+            }],
+            lock_db=lock_db,
+        )
+
+    # Lock helper MUST be called with the writer's open PG session and the triplet.
+    assert mock_lock.call_count == 1, (
+        f"expected acquire_event_triplet_lock called once, got {mock_lock.call_count}"
+    )
+    lock_args = mock_lock.call_args_list[0].args
+    assert lock_args[0] is lock_db, "lock helper must receive the writer's open PG session"
+    assert lock_args[1] == "ci-001"
+    assert lock_args[2] == "icmp_latency_ms"
+    assert lock_args[3] == "THRESHOLD_BREACH"
+
+    # Lock MUST be acquired BEFORE the Neo4j write — design §5 race-safety analysis.
+    assert call_order, "no calls recorded"
+    assert call_order[0] == "lock", (
+        f"expected lock acquisition first, got order={call_order}"
+    )
+    assert "neo4j" in call_order
+    assert call_order.index("lock") < call_order.index("neo4j"), (
+        f"lock must precede neo4j write; got order={call_order}"
+    )
+
+
 def test_recover_icmp_availability_events_excludes_propagated_direct_match_and_recovers_descendants():
     from engines.snmp_worker import _recover_icmp_availability_events
 
