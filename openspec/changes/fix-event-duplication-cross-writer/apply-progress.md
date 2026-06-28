@@ -198,4 +198,4 @@ Test additions: +498 lines (positive flipped assertions, new lock + collector he
 - Task 9 full suite verification: run `cd backend && uv run pytest backend/tests/...` and confirm 0 new failures. Pre-existing 139 failures on `main` are unrelated (RTU routers, MQTT subscriber) per issue #267.
 
 ### PR link
-<filled in after `gh pr create`>
+https://github.com/alexandervazquez98/next-gen/pull/330
