@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import text
 
 from repositories.metric_repo import insert_metric_value, bulk_insert_metrics
+from repositories.topology_repo import build_open_parent_index
 from postgres_db import SessionLocal
 from config import get_icmp_settings, get_polling_pipeline_settings
 from polling.icmp_measurements import (
@@ -245,10 +246,50 @@ def _dedupe_snmp_collection_failures(failures):
     return list(deduped.values())
 
 
-def _refresh_snmp_collection_failures(session, failures):
+def _resolve_correlation(cache, ci_id, metric_id):
+    """Return ``{correlation_type, propagated_from, root_cause_ci_id}`` for a failing (CI, metric).
+
+    Looks up the per-cycle cache built by ``build_open_parent_index``. The cache is
+    pre-filtered by ``MetricDef.can_propagate`` at build time, so non-propagating
+    metrics simply miss the cache and resolve to ROOT. No I/O; never raises.
+
+    Design Decision 3 (C2-corrected): no ``session`` parameter — this helper only
+    does dict lookups after the cache is built, keeping the hot CREATE path
+    exception-free.
+    """
+    try:
+        parent = cache.get((ci_id, metric_id)) if cache else None
+    except Exception:
+        # A malformed cache (wrong type, unhashable key, etc.) must not break the
+        # write path. Fall through to ROOT — matches the resilience contract.
+        parent = None
+    if parent and parent.get("parent_event_id"):
+        parent_event_id = parent["parent_event_id"]
+        # Contract: root_cause_ci_id must NEVER be an event id (recovery queries
+        # match it against e.ci_id). If the cache entry lacks a CI-level root
+        # cause, degrade to ROOT instead of writing an event id into a CI field.
+        root_cause_ci_id = parent.get("root_cause_ci_id")
+        if not root_cause_ci_id:
+            return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
+        return {
+            "correlation_type": "PROPAGATED",
+            "propagated_from": parent_event_id,
+            "root_cause_ci_id": root_cause_ci_id,
+        }
+    return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
+
+
+def _refresh_snmp_collection_failures(session, failures, cache=None):
     failures = _dedupe_snmp_collection_failures(failures)
     if not failures:
         return
+    # Decorate each row with topology-derived correlation fields (fix #310).
+    # _resolve_correlation is a pure dict lookup; default cache={} preserves the
+    # pre-fix all-ROOT behaviour for callers that don't pass a cache.
+    if cache is None:
+        cache = {}
+    for row in failures:
+        row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     session.run("""
         UNWIND $failures AS row
         MATCH (n:CI {id: row.node_id})
@@ -268,8 +309,10 @@ def _refresh_snmp_collection_failures(session, failures):
                 status: 'OPEN', severity: row.severity, message: row.message,
                 event_type: row.event_type, failure_family: row.failure_family,
                 source_protocol: row.source_protocol, created_at: datetime(),
-                last_seen: datetime(), ack: false, correlation_type: 'ROOT',
-                root_cause_ci_id: row.node_id
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -292,7 +335,7 @@ def _availability_source(value: Any) -> str | None:
     return source if source in {"PING", "ICMP"} else None
 
 
-def _refresh_icmp_availability_events(session, updates):
+def _refresh_icmp_availability_events(session, updates, cache=None):
     availability_events = [
         u
         for u in updates
@@ -302,6 +345,11 @@ def _refresh_icmp_availability_events(session, updates):
     ]
     if not availability_events:
         return
+    # Decorate each row with topology-derived correlation fields (fix #310).
+    if cache is None:
+        cache = {}
+    for row in availability_events:
+        row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     session.run("""
         UNWIND $availability_events AS row
         WITH row WHERE row.event_type = 'AVAILABILITY'
@@ -323,7 +371,9 @@ def _refresh_icmp_availability_events(session, updates):
                 event_type: row.event_type, source_protocol: row.source_protocol,
                 availability_source: row.availability_source,
                 created_at: datetime(), last_seen: datetime(), ack: false,
-                correlation_type: 'ROOT', root_cause_ci_id: row.node_id
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -378,7 +428,7 @@ def _recover_icmp_availability_events(session, updates):
     """, recoveries=recoveries)
 
 
-def _refresh_icmp_latency_events(session, updates):
+def _refresh_icmp_latency_events(session, updates, cache=None):
     breaches = [
         u
         for u in updates
@@ -389,6 +439,11 @@ def _refresh_icmp_latency_events(session, updates):
     ]
     if not breaches:
         return
+    # Decorate each row with topology-derived correlation fields (fix #310).
+    if cache is None:
+        cache = {}
+    for row in breaches:
+        row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     session.run("""
         UNWIND $breaches AS row
         MATCH (n:CI {id: row.node_id})
@@ -402,8 +457,10 @@ def _refresh_icmp_latency_events(session, updates):
                 id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                 event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                 message: row.message, source_protocol: row.source_protocol,
-                last_seen: datetime(), ack: false, correlation_type: 'ROOT',
-                root_cause_ci_id: row.node_id
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id
             })
             MERGE (n)-[:HAS_EVENT]->(created)
             MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -479,6 +536,13 @@ def _recover_snmp_collection_failures(session, updates):
         WITH e
         CALL {
             WITH e
+            # SNMP recovery intentionally matches by root_cause_ci_id for
+            # FULL-CASCADE recovery: every descendant whose root cause is the
+            # recovering CI is closed in one pass. This differs from the ICMP
+            # recovery paths (_recover_icmp_availability_events and
+            # _recover_icmp_latency_events), which match by propagated_from = e.id
+            # (direct-child only). The asymmetry is deliberate and NOT changed
+            # by this PR — do not "fix" it without a deliberate design decision.
             MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
             WHERE pe.root_cause_ci_id = e.ci_id
               AND pe.correlation_type = 'PROPAGATED'
@@ -722,7 +786,58 @@ def poll_snmp():
                 duration_current,
                 jobs_per_min,
             )
-            _refresh_snmp_collection_failures(session, failure_updates)
+
+            # ── Topology RCA cache (fix #310) ───────────────────────────────
+            # Build the open-parent cache ONCE per cycle, BEFORE any of the
+            # three CREATE sites run (C1 fix). The cache is a LOCAL variable —
+            # it does not leak across cycles. When ENABLE_TOPOLOGY_RCA=false or
+            # build_open_parent_index raises, the cache is empty and every event
+            # falls back to ROOT (identical to pre-fix behaviour).
+            #
+            # W2 blast radius: a single transient Neo4j error during the
+            # cache-build degrades correlation for the ENTIRE cycle (every event
+            # becomes ROOT). This is acceptable because (a) the next cycle
+            # rebuilds the cache automatically, and (b) ENABLE_TOPOLOGY_RCA=false
+            # is the deterministic operator kill-switch.
+            availability_pairs_updates = [
+                u for u in latest_updates
+                if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+                and _availability_source(u.get("availability_source")) is not None
+                and float(u.get("value") or 0) == 0.0
+            ]
+            latency_pairs_updates = [
+                u for u in latest_updates
+                if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+                and u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+                and u.get("event_type") == EVENT_TYPE_THRESHOLD_BREACH
+                and u.get("status") in {"WARNING", "CRITICAL"}
+            ]
+            correlation_pairs = set()
+            for u in failure_updates:
+                correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
+            for u in availability_pairs_updates:
+                correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
+            for u in latency_pairs_updates:
+                correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
+            # Drop any pair with a None component (cannot be a cache key).
+            correlation_pairs = {p for p in correlation_pairs if p[0] and p[1]}
+
+            cache = {}  # local to this cycle — never module-level
+            if polling_settings.enable_topology_rca and correlation_pairs:
+                try:
+                    cache = build_open_parent_index(session, correlation_pairs)
+                except Exception as exc:
+                    # Whole-cycle blast radius (W2): log once, fall back to ROOT
+                    # for every row this cycle. Next cycle rebuilds the cache.
+                    logger.warning(
+                        "topology_rca_cache_build_failed falling back to ROOT "
+                        "for entire cycle; pairs=%s error=%s",
+                        sorted(correlation_pairs),
+                        exc,
+                    )
+                    cache = {}
+
+            _refresh_snmp_collection_failures(session, failure_updates, cache=cache)
 
             # Perform Bulk Insert at the end of the cycle. Only publish latest
             # values to Neo4j after Timescale persistence succeeds, so the UI
@@ -746,10 +861,10 @@ def poll_snmp():
                             r.last_message = $msg
                     """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status=update["status"], msg=update["message"])
                 availability_updates = [u for u in latest_updates if u.get("metric_kind") == "availability"]
-                _refresh_icmp_availability_events(session, availability_updates)
+                _refresh_icmp_availability_events(session, availability_updates, cache=cache)
                 _recover_icmp_availability_events(session, availability_updates)
                 latency_updates = [u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID]
-                _refresh_icmp_latency_events(session, latency_updates)
+                _refresh_icmp_latency_events(session, latency_updates, cache=cache)
                 _recover_icmp_latency_events(session, latency_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")

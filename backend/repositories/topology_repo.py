@@ -442,6 +442,69 @@ def find_open_parent_event(ci_id: str, max_depth: int = 3) -> Optional[Dict[str,
         }
 
 
+def build_open_parent_index(
+    session, pairs: Set[tuple[str, str]]
+) -> Dict[tuple[str, str], Dict[str, Any]]:
+    """Batched variant of ``find_open_parent_event`` keyed by ``(ci_id, metric_id)``.
+
+    Walks upstream via ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO`` to depth 3 for every
+    requested pair in ONE Cypher pass, mirroring ``find_open_parent_event``.
+    Non-propagating metrics (``MetricDef.can_propagate = false``) are filtered
+    INSIDE the Cypher (``WHERE coalesce(m.can_propagate, true) = true``) so they
+    never appear as keys in the returned dict — callers treat a missing key as
+    ROOT (see ``engines.snmp_worker._resolve_correlation``).
+
+    Args:
+        session: an open Neo4j driver session.
+        pairs: set of ``(ci_id, metric_id)`` tuples to resolve.
+
+    Returns:
+        ``{(ci_id, metric_id): {"parent_event_id", "root_cause_ci_id",
+        "correlation_type"}}`` for hits. Missing keys = ROOT. Empty input →
+        empty dict (no query round-trip).
+    """
+    if not pairs:
+        return {}
+
+    records = session.run(
+        """
+        UNWIND $pairs AS pair
+        MATCH (ci:CI {id: pair.ci_id})
+        MATCH (m:MetricDef {id: pair.metric_id})
+        WHERE coalesce(m.can_propagate, true) = true
+        MATCH (ci)-[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3]->(parent:CI)
+        MATCH (parent)-[:HAS_EVENT]->(pe:Event)
+        WHERE pe.status IN ['OPEN', 'ACK']
+        WITH pair, pe, parent
+        ORDER BY pair.ci_id, pair.metric_id,
+                 CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC,
+                 pe.created_at ASC
+        WITH pair, head(collect(pe)) AS parent_event
+        RETURN pair.ci_id AS ci_id,
+               pair.metric_id AS metric_id,
+               parent_event.id AS parent_event_id,
+               parent_event.ci_id AS parent_ci_id,
+               parent_event.root_cause_ci_id AS root_cause_ci_id,
+               parent_event.correlation_type AS correlation_type
+        """,
+        pairs=[{"ci_id": ci_id, "metric_id": metric_id} for ci_id, metric_id in pairs],
+    )
+
+    index: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for row in records:
+        ci_id = row["ci_id"]
+        metric_id = row["metric_id"]
+        parent_event_id = row["parent_event_id"]
+        if not parent_event_id:
+            continue
+        index[(ci_id, metric_id)] = {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": row.get("root_cause_ci_id") or row.get("parent_ci_id"),
+            "correlation_type": "PROPAGATED",
+        }
+    return index
+
+
 def ensure_icmp_sidecar_metric_defs(session) -> None:
     icmp_settings = get_icmp_settings()
     session.run("""

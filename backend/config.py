@@ -159,6 +159,12 @@ class PollingPipelineSettings(BaseModel):
     db_writer_enabled: bool = False
     backpressure_enabled: bool = False
     metadata_cache_enabled: bool = False
+    # Topology-based root-cause analysis on the production snmp-engine write path
+    # (fix #310). When true, poll_snmp() builds a per-cycle open-parent cache and
+    # tags dependent events as PROPAGATED. When false, every event is ROOT —
+    # identical to pre-fix behaviour. Operator kill-switch: toggle + restart the
+    # snmp-engine container, no code redeploy required.
+    enable_topology_rca: bool = True
 
     target_cycle_seconds: int = Field(default=900, ge=1)
     worker_count: int = Field(default=8, ge=1)
@@ -188,6 +194,7 @@ class PollingPipelineSettings(BaseModel):
             db_writer_enabled=_env_bool("POLLING_DB_WRITER_ENABLED"),
             backpressure_enabled=_env_bool("POLLING_BACKPRESSURE_ENABLED"),
             metadata_cache_enabled=_env_bool("POLLING_METADATA_CACHE_ENABLED"),
+            enable_topology_rca=_env_bool("ENABLE_TOPOLOGY_RCA", default=True),
             target_cycle_seconds=int(os.getenv("POLLING_TARGET_CYCLE_SECONDS", "900")),
             worker_count=int(os.getenv("POLLING_WORKERS", "8")),
             db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),
