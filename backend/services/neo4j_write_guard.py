@@ -55,22 +55,33 @@ def is_poll_collector_id_undefined_error(error: Exception) -> bool:
     """Return ``True`` iff ``error`` is the specific undefined-``poll_collector_id``
     ``ClientError`` that triggers the fallback path.
 
-    The predicate is strict on three axes (design §8):
+    The predicate is strict on three axes (design §8, verify-report
+    CRITICAL #2):
 
     1. The exception MUST be a ``neo4j.exceptions.ClientError`` (not a
        ``ServerError``, ``DriverError``, or generic Python exception).
        The Neo4j Python driver wraps statement-syntax failures under
        ``ClientError``; the test is on the driver's exception class, not
        on Python's ``SyntaxError``.
-    2. The error message MUST contain the literal ``poll_collector_id``.
-    3. The error message MUST contain the literal ``not defined``.
+    2. The error ``message`` attribute MUST contain the literal
+       ``poll_collector_id``.
+    3. The error ``message`` attribute MUST contain the literal
+       ``not defined``.
+
+    Note: the predicate reads ``error.message`` (the canonical rejection
+    text exposed by the Neo4j Python driver), NOT ``str(error)``.
+    ``str(error)`` is broader — the driver formats ``ClientError`` with
+    extra context like the code prefix and bolt URL — and reading
+    ``str(error)`` would accept unrelated ``ClientError`` whose formatted
+    representation happens to mention the parameter. ``error.message`` is
+    the authoritative rejection text the server returns.
 
     Returning ``True`` lets the caller enter the fallback path.
     """
     return (
         isinstance(error, _CLIENT_ERROR_CLASS)
-        and "poll_collector_id" in str(error)
-        and "not defined" in str(error)
+        and "poll_collector_id" in error.message
+        and "not defined" in error.message
     )
 
 

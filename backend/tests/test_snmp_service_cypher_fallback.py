@@ -13,7 +13,16 @@ import pytest
 
 
 class _FakeClientError(Exception):
-    """Real exception class for neo4j.exceptions.ClientError in tests."""
+    """Real exception class for neo4j.exceptions.ClientError in tests.
+
+    Mirrors the Neo4j Python driver surface: ``.message`` attribute carries
+    the rejection text (verify-report CRITICAL #2 — predicate reads
+    ``error.message``).
+    """
+
+    def __init__(self, message=""):
+        super().__init__(message)
+        self.message = message
 
 
 @pytest.fixture

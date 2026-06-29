@@ -545,12 +545,24 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                             existing.availability_source = $availability_source,
                             existing.poll_collector_id = $poll_collector_id
                     """
-                    # Fallback omits the `existing.poll_collector_id = $poll_collector_id`
-                    # SET line so Neo4j stops rejecting the parameter when production
-                    # surfaces the undefined-parameter ClientError (#340).
-                    fallback_query = primary_query.replace(
-                        "existing.poll_collector_id = $poll_collector_id", ""
-                    )
+                    # Fallback Cypher — hand-written (see #340, verify-report
+                    # CRITICAL #1). Drops the trailing comma after
+                    # ``existing.availability_source = $availability_source``
+                    # that a naive ``.replace()`` would leave dangling at
+                    # the end of the SET clause.
+                    fallback_query = """
+                        MATCH (existing:Event)
+                        WHERE elementId(existing) = $existing_element_id
+                        SET existing.status = 'OPEN',
+                            existing.last_seen = datetime(),
+                            existing.message = $msg,
+                            existing.severity = $sev,
+                            existing.recovered_at = NULL,
+                            existing.event_type = $event_type,
+                            existing.failure_family = $failure_family,
+                            existing.source_protocol = $source_protocol,
+                            existing.availability_source = $availability_source
+                    """
                     primary_params = {
                         "existing_element_id": existing_element_id,
                         "msg": message,
@@ -628,13 +640,46 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         MERGE (n)-[:HAS_EVENT]->(e)
                         MERGE (e)-[:TRIGGERED_BY]->(m)
                     """
-                    # Fallback omits the `poll_collector_id: $poll_collector_id`
-                    # row-dict entry so Neo4j stops rejecting the parameter
-                    # when production surfaces the undefined-parameter
-                    # ClientError (#340).
-                    fallback_query = primary_query.replace(
-                        "poll_collector_id: $poll_collector_id,", ""
-                    )
+                    # Fallback Cypher — hand-written (see #340, verify-report
+                    # CRITICAL #1). The ``poll_collector_id`` row-dict entry
+                    # is removed; the trailing comma it carried is also gone,
+                    # so no cleanup of surrounding commas is needed.
+                    fallback_query = """
+                        MATCH (n:CI {id: $nid})
+                        MATCH (m:MetricDef {id: $mid})
+                        CREATE (e:Event {
+                            id: randomUUID(),
+                            ci_id: $nid,
+                            metric_id: $mid,
+                            status: 'OPEN',
+                            severity: $sev,
+                            message: $msg,
+                            event_type: $event_type,
+                            failure_family: $failure_family,
+                            source_protocol: $source_protocol,
+                            availability_source: $availability_source,
+                            created_at: datetime(),
+                            last_seen: datetime(),
+                            ack: false,
+                            business_service_id: $business_service_id,
+                            business_service_name: $business_service_name,
+                            business_service_tier: $business_service_tier,
+                            owner_t1: $owner_t1,
+                            owner_t2: $owner_t2,
+                            owner_t3: $owner_t3,
+                            impacted_users: $impacted_users,
+                            site: $site,
+                            service_catalog_id: $service_catalog_id,
+                            service_category: $service_category,
+                            service_tier: $service_tier,
+                            sla_minutes: $sla_minutes,
+                            propagated_from: $propagated_from,
+                            correlation_type: $correlation_type,
+                            root_cause_ci_id: $root_cause_ci_id
+                        })
+                        MERGE (n)-[:HAS_EVENT]->(e)
+                        MERGE (e)-[:TRIGGERED_BY]->(m)
+                    """
                     primary_params = {
                         "nid": ci.get("id"),
                         "mid": metric_def["id"],
