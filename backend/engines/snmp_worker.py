@@ -36,6 +36,10 @@ from polling.icmp_measurements import (
     parse_ping_latency_ms,
 )
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
+from services.neo4j_write_guard import (
+    is_poll_collector_id_undefined_error,
+    run_with_cypher_param_fallback,
+)
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
@@ -307,7 +311,7 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
         })
         for ci_id, metric_id, event_type in distinct_triplets:
             acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
-    session.run("""
+    primary_query = """
         UNWIND $failures AS row
         MATCH (n:CI {id: row.node_id})
         MATCH (m:MetricDef {id: row.metric_id})
@@ -346,7 +350,23 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, failures=failures, poll_collector_id=POLL_COLLECTOR_ID)
+    """
+    # Fallback query omits both `poll_collector_id: $poll_collector_id`
+    # (CREATE row-dict form) and `poll_collector_id = $poll_collector_id`
+    # (SET clause form) so Neo4j stops rejecting the parameter when
+    # production surfaces the undefined-parameter ClientError (#340).
+    fallback_query = primary_query.replace(
+        "poll_collector_id: $poll_collector_id", ""
+    ).replace("poll_collector_id = $poll_collector_id", "")
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {"failures": failures, "poll_collector_id": POLL_COLLECTOR_ID},
+        fallback_query,
+        {"failures": failures},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _availability_source(value: Any) -> str | None:
@@ -381,7 +401,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
         })
         for ci_id, metric_id, event_type in distinct_triplets:
             acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
-    session.run("""
+    primary_query = """
         UNWIND $availability_events AS row
         WITH row WHERE row.event_type = 'AVAILABILITY'
           AND row.source_protocol = 'ICMP'
@@ -421,7 +441,24 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, availability_events=availability_events, poll_collector_id=POLL_COLLECTOR_ID)
+    """
+    # Fallback omits both `poll_collector_id: $poll_collector_id` and
+    # `poll_collector_id = $poll_collector_id` — see #340.
+    fallback_query = primary_query.replace(
+        "poll_collector_id: $poll_collector_id", ""
+    ).replace("poll_collector_id = $poll_collector_id", "")
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {
+            "availability_events": availability_events,
+            "poll_collector_id": POLL_COLLECTOR_ID,
+        },
+        fallback_query,
+        {"availability_events": availability_events},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _recover_icmp_availability_events(session, updates):
@@ -489,7 +526,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
         })
         for ci_id, metric_id, event_type in distinct_triplets:
             acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
-    session.run("""
+    primary_query = """
         UNWIND $breaches AS row
         MATCH (n:CI {id: row.node_id})
         MATCH (m:MetricDef {id: row.metric_id})
@@ -524,7 +561,24 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, breaches=breaches, poll_collector_id=POLL_COLLECTOR_ID)
+    """
+    # Fallback omits both `poll_collector_id: $poll_collector_id` and
+    # `poll_collector_id = $poll_collector_id` — see #340.
+    fallback_query = primary_query.replace(
+        "poll_collector_id: $poll_collector_id", ""
+    ).replace("poll_collector_id = $poll_collector_id", "")
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {
+            "breaches": breaches,
+            "poll_collector_id": POLL_COLLECTOR_ID,
+        },
+        fallback_query,
+        {"breaches": breaches},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _recover_icmp_latency_events(session, updates):

@@ -13,6 +13,10 @@ from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
+from services.neo4j_write_guard import (
+    is_poll_collector_id_undefined_error,
+    run_with_cypher_param_fallback,
+)
 from services.metric_service import metric_matches_ci
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
@@ -527,8 +531,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
 
                 if existing:
                     existing_element_id = existing.get("existing_element_id")
-                    session.run(
-                        """
+                    primary_query = """
                         MATCH (existing:Event)
                         WHERE elementId(existing) = $existing_element_id
                         SET existing.status = 'OPEN',
@@ -541,15 +544,31 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                             existing.source_protocol = $source_protocol,
                             existing.availability_source = $availability_source,
                             existing.poll_collector_id = $poll_collector_id
-                    """,
-                        existing_element_id=existing_element_id,
-                        msg=message,
-                        sev=severity,
-                        event_type=event_type,
-                        failure_family=failure_family,
-                        source_protocol=source_protocol,
-                        availability_source=availability_source,
-                        poll_collector_id=POLL_COLLECTOR_ID,
+                    """
+                    # Fallback omits the `existing.poll_collector_id = $poll_collector_id`
+                    # SET line so Neo4j stops rejecting the parameter when production
+                    # surfaces the undefined-parameter ClientError (#340).
+                    fallback_query = primary_query.replace(
+                        "existing.poll_collector_id = $poll_collector_id", ""
+                    )
+                    primary_params = {
+                        "existing_element_id": existing_element_id,
+                        "msg": message,
+                        "sev": severity,
+                        "event_type": event_type,
+                        "failure_family": failure_family,
+                        "source_protocol": source_protocol,
+                        "availability_source": availability_source,
+                        "poll_collector_id": POLL_COLLECTOR_ID,
+                    }
+                    fallback_params = {
+                        k: v for k, v in primary_params.items()
+                        if k != "poll_collector_id"
+                    }
+                    run_with_cypher_param_fallback(
+                        session, primary_query, primary_params,
+                        fallback_query, fallback_params,
+                        is_poll_collector_id_undefined_error, logger,
                     )
                 else:
                     snapshot = resolve_event_snapshot(session, ci.get("id"))
@@ -572,8 +591,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                                            ci.get("id"), metric_def.get("id"), exc)
                     # --- End correlation check ---
 
-                    session.run(
-                        """
+                    primary_query = """
                         MATCH (n:CI {id: $nid})
                         MATCH (m:MetricDef {id: $mid})
                         CREATE (e:Event {
@@ -609,20 +627,37 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         })
                         MERGE (n)-[:HAS_EVENT]->(e)
                         MERGE (e)-[:TRIGGERED_BY]->(m)
-                    """,
-                        nid=ci.get("id"),
-                        mid=metric_def["id"],
-                        sev=severity,
-                        msg=message,
-                        event_type=event_type,
-                        failure_family=failure_family,
-                        source_protocol=source_protocol,
-                        availability_source=availability_source,
-                        poll_collector_id=POLL_COLLECTOR_ID,
-                        propagated_from=propagated_from,
-                        correlation_type=correlation_type,
-                        root_cause_ci_id=root_cause_ci_id,
+                    """
+                    # Fallback omits the `poll_collector_id: $poll_collector_id`
+                    # row-dict entry so Neo4j stops rejecting the parameter
+                    # when production surfaces the undefined-parameter
+                    # ClientError (#340).
+                    fallback_query = primary_query.replace(
+                        "poll_collector_id: $poll_collector_id,", ""
+                    )
+                    primary_params = {
+                        "nid": ci.get("id"),
+                        "mid": metric_def["id"],
+                        "sev": severity,
+                        "msg": message,
+                        "event_type": event_type,
+                        "failure_family": failure_family,
+                        "source_protocol": source_protocol,
+                        "availability_source": availability_source,
+                        "poll_collector_id": POLL_COLLECTOR_ID,
+                        "propagated_from": propagated_from,
+                        "correlation_type": correlation_type,
+                        "root_cause_ci_id": root_cause_ci_id,
                         **snapshot,
+                    }
+                    fallback_params = {
+                        k: v for k, v in primary_params.items()
+                        if k != "poll_collector_id"
+                    }
+                    run_with_cypher_param_fallback(
+                        session, primary_query, primary_params,
+                        fallback_query, fallback_params,
+                        is_poll_collector_id_undefined_error, logger,
                     )
             else:
                 # Recovery path for threshold/availability events; SNMP collection failures
