@@ -103,6 +103,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
+          separator: "\n"
           files: |
             scripts/**/*.sh
             docker/neo4j/entrypoint.sh
@@ -132,6 +133,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
+          separator: "\n"
           files: |
             backend/**/*.py
             backend/ruff.toml
@@ -152,7 +154,7 @@ jobs:
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
           py_files=()
           for f in "${files[@]}"; do
-            case "$f" in *.py) py_files+=("$f") ;; esac
+            case "$f" in backend/*.py) py_files+=("${f#backend/}") ;; esac
           done
           if [ ${#py_files[@]} -gt 0 ]; then
             ruff check --config ruff.toml "${py_files[@]}"
@@ -167,7 +169,7 @@ jobs:
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
           py_files=()
           for f in "${files[@]}"; do
-            case "$f" in *.py) py_files+=("$f") ;; esac
+            case "$f" in backend/*.py) py_files+=("${f#backend/}") ;; esac
           done
           if [ ${#py_files[@]} -gt 0 ]; then
             black --check --diff "${py_files[@]}"
@@ -189,6 +191,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
+          separator: "\n"
           files: |
             frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md}
             frontend/eslint.config.js
@@ -215,8 +218,10 @@ jobs:
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
           lint_files=()
           for f in "${files[@]}"; do
+            case "$f" in frontend/*) ;; *) continue ;; esac
             case "$f" in
-              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs) lint_files+=("$f") ;;
+              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs)
+                lint_files+=("${f#frontend/}") ;;
             esac
           done
           if [ ${#lint_files[@]} -gt 0 ]; then
@@ -232,8 +237,10 @@ jobs:
           mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
           fmt_files=()
           for f in "${files[@]}"; do
+            case "$f" in frontend/*) ;; *) continue ;; esac
             case "$f" in
-              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs|*.css|*.md|*.json) fmt_files+=("$f") ;;
+              *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs|*.css|*.md|*.json)
+                fmt_files+=("${f#frontend/}") ;;
             esac
           done
           if [ ${#fmt_files[@]} -gt 0 ]; then

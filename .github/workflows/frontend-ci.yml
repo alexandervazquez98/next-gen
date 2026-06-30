@@ -77,12 +77,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "pnpm"
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Enable Corepack
         if: steps.changed.outputs.any_changed == 'true'
-        run: corepack enable
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
 
       - name: Install frontend dependencies (frozen lockfile)
         if: steps.changed.outputs.any_changed == 'true'
