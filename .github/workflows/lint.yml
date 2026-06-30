@@ -103,7 +103,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          files_yaml: |
+          files: |
             scripts/**/*.sh
             docker/neo4j/entrypoint.sh
             monitor_performance.sh
@@ -132,7 +132,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          files_yaml: |
+          files: |
             backend/**/*.py
             backend/ruff.toml
             backend/pyproject.toml
@@ -189,7 +189,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          files_yaml: |
+          files: |
             frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md}
             frontend/eslint.config.js
             frontend/.prettierrc.json
