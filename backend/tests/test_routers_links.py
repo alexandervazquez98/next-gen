@@ -32,12 +32,18 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
 # TestClient
 # ---------------------------------------------------------------------------
 client = TestClient(app)
-app.dependency_overrides[get_current_active_user] = lambda: User(
-    username="test-admin",
-    role="ADMIN",
-    permissions=[],
-    allowed_locations=[],
-)
+
+
+@pytest.fixture(autouse=True)
+def authenticated_links_user():
+    app.dependency_overrides[get_current_active_user] = lambda: User(
+        username="test-admin",
+        role="ADMIN",
+        permissions=[],
+        allowed_locations=[],
+    )
+    yield
+    app.dependency_overrides.pop(get_current_active_user, None)
 
 
 # ===========================================================================
@@ -159,9 +165,7 @@ class TestLinksCreate:
         assert "Link created" in data["message"]
         # Slice 1 (feat-324): the repository signature gained an optional
         # `medium` kwarg. Non-tunnel calls pass medium=None.
-        mock_repo.create_link.assert_called_once_with(
-            "ci-001", "ci-002", "DEPENDS_ON", medium=None
-        )
+        mock_repo.create_link.assert_called_once_with("ci-001", "ci-002", "DEPENDS_ON", medium=None)
 
     def test_create_link_validates_required_fields(self):
         """Should reject request missing required fields (source, target, relationship)."""
@@ -207,6 +211,22 @@ class TestLinksCreate:
             )
 
         assert response.status_code == 400
+
+    def test_create_link_invalid_medium_returns_400_without_persistence(self):
+        """Invalid medium should return 400 at the route and avoid partial writes."""
+        with patch("services.link_service.topology_repo") as mock_repo:
+            response = client.post(
+                "/api/links",
+                json={
+                    "source": "hub-a",
+                    "target": "router-b",
+                    "relationship": "CONNECTS_TO",
+                    "medium": "microwave",
+                },
+            )
+
+        assert response.status_code == 400
+        mock_repo.create_link.assert_not_called()
 
 
 class TestLinksDelete:

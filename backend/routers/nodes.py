@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, File, UploadFile, Request
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from services.auth_service import check_permission, get_current_active_user
@@ -36,7 +37,9 @@ AUDIT_REASON_NOT_FOUND = "ci_not_found"
 AUDIT_REASON_INVALID_PAYLOAD = "invalid_ci_payload"
 
 
-def _record_ci_denied(db: Session, request: Request, actor: User, permission: str, target_id: str, reason: str | None):
+def _record_ci_denied(
+    db: Session, request: Request, actor: User, permission: str, target_id: str, reason: str | None
+):
     audit_service.record_denied(
         db=db,
         request=request,
@@ -88,7 +91,7 @@ async def get_nodes(current_user: User = Depends(get_current_active_user)):
 @router.post("")
 async def create_node(
     request: Request,
-    node: Node,
+    node_payload: dict[str, Any] = Body(...),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db),
 ):
@@ -96,16 +99,35 @@ async def create_node(
     Create or Update a Configuration Item (CI).
     Enforces CI_EDIT permission.
     """
+    raw_target_id = str(node_payload.get("id") or "unknown")
     if not check_permission(UserPermission.CI_EDIT, current_user):
         _record_ci_denied(
             db=db,
             request=request,
             actor=current_user,
             permission=UserPermission.CI_EDIT,
-            target_id=node.id,
+            target_id=raw_target_id,
             reason=AUDIT_REASON_MISSING_PERMISSION,
         )
         raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    try:
+        node = Node.model_validate(node_payload)
+    except ValidationError as exc:
+        if any(error.get("loc") == ("public_ip",) for error in exc.errors()):
+            _record_ci_change(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_CI_CREATE_OR_UPDATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                target_id=raw_target_id,
+                target_label=str(node_payload.get("label") or raw_target_id),
+                reason=AUDIT_REASON_INVALID_PAYLOAD,
+                context={"required_permission": UserPermission.CI_EDIT.value},
+            )
+            raise HTTPException(status_code=400, detail="invalid public_ip") from exc
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     try:
         result = node_service.create_update_node(node, current_user)
@@ -322,6 +344,7 @@ async def update_ci_metadata(
     # C3 fix: record operation for AI agents
     if ai_info is not None:
         from services.ai_guard_service import record_operation
+
         record_operation(
             ai_persona=str(current_user.role),
             ai_agent_id=current_user.username,
@@ -337,8 +360,7 @@ async def update_ci_metadata(
 
 @router.post("/upload")
 async def upload_nodes(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user)
+    file: UploadFile = File(...), current_user: User = Depends(get_current_active_user)
 ):
     """
     Bulk upload Configuration Items (CIs) from an Excel file.
@@ -358,8 +380,10 @@ async def upload_nodes(
     if size > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size allowed is 5MB.")
 
-    if not file.filename.endswith('.xlsx'):
-        raise HTTPException(status_code=400, detail="Invalid file format. Please upload an Excel file (.xlsx)")
+    if not file.filename.endswith(".xlsx"):
+        raise HTTPException(
+            status_code=400, detail="Invalid file format. Please upload an Excel file (.xlsx)"
+        )
 
     return await node_service.bulk_upload_nodes(contents, file.filename)
 
