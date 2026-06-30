@@ -86,6 +86,8 @@ services:
       - LM_STUDIO_TIMEOUT_SECONDS=${LM_STUDIO_TIMEOUT_SECONDS:-15}
       - LM_STUDIO_MAX_TOKENS=${LM_STUDIO_MAX_TOKENS:-800}
       - AI_PROMPTS_DIR=/data/ai
+      - ICMP_LATENCY_WARNING_MS=${ICMP_LATENCY_WARNING_MS:-100}
+      - ICMP_LATENCY_CRITICAL_MS=${ICMP_LATENCY_CRITICAL_MS:-500}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -161,6 +163,8 @@ services:
       - ICMP_TIMEOUT_MS=${ICMP_TIMEOUT_MS:-3000}
       - ICMP_RETRIES=${ICMP_RETRIES:-2}
       - ICMP_DEBOUNCE_COUNT=${ICMP_DEBOUNCE_COUNT:-3}
+      - ICMP_LATENCY_WARNING_MS=${ICMP_LATENCY_WARNING_MS:-100}
+      - ICMP_LATENCY_CRITICAL_MS=${ICMP_LATENCY_CRITICAL_MS:-500}
       # Scalable polling pipeline PR1 flags/defaults (behavior-changing flags remain off)
       - POLLING_PIPELINE_OBSERVE_ONLY=${POLLING_PIPELINE_OBSERVE_ONLY:-false}
       - POLLING_PG_QUEUE_ENABLED=${POLLING_PG_QUEUE_ENABLED:-false}
