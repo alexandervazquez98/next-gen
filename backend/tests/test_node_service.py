@@ -415,6 +415,61 @@ class TestGetNodes:
             assert result[0]["category"] == "Legacy Device"
             assert result[0]["category_icon_key"] == "generic"
 
+    def test_category_icon_key_defaults_to_vpn_hub_for_hub_categories(self):
+        """VPN hub categories should use the Slice 1 icon instead of generic."""
+        admin = _make_user(username="admin", role="ADMIN")
+        node_record = _make_full_record(
+            node_props=_make_node_record(layer="vpn_hub"),
+            category="vpn hub",
+            metrics=[],
+        )
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [
+                {
+                    **node_record,
+                    "category_icon_key": None,
+                }
+            ]
+
+            from services.node_service import get_nodes
+
+            result = get_nodes(admin)
+
+            assert result[0]["type"] == "vpn hub"
+            assert result[0]["category"] == "vpn hub"
+            assert result[0]["category_icon_key"] == "vpn_hub"
+
+    def test_category_icon_key_accepts_explicit_slice_1_icon_keys(self):
+        """Stored Slice 1 icon keys should pass through node payloads."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        for icon_key in (
+            "vpn_tunnel",
+            "sd_wan_tunnel",
+            "satellite_link",
+            "vpn_hub",
+        ):
+            node_record = _make_full_record(
+                node_props=_make_node_record(layer="custom"),
+                category="Custom",
+                metrics=[],
+            )
+
+            with patch("services.node_service.topology_repo") as mock_repo:
+                mock_repo.get_nodes.return_value = [
+                    {
+                        **node_record,
+                        "category_icon_key": icon_key,
+                    }
+                ]
+
+                from services.node_service import get_nodes
+
+                result = get_nodes(admin)
+
+                assert result[0]["category_icon_key"] == icon_key
+
     def test_empty_nodes_list_returns_empty(self):
         """When repo returns no nodes, result should be empty list."""
         admin = _make_user(username="admin", role="ADMIN")

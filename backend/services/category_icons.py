@@ -11,6 +11,10 @@ ALLOWED_CATEGORY_ICON_KEYS = {
     "storage",
     "camera",
     "video_analytics",
+    "vpn_tunnel",
+    "sd_wan_tunnel",
+    "satellite_link",
+    "vpn_hub",
 }
 
 
@@ -34,6 +38,10 @@ _CATEGORY_DEFAULT_ICON_BY_NAME = {
     "cameras": "camera",
     "videoanalytics": "video_analytics",
     "video_analytics": "video_analytics",
+    "vpnhub": "vpn_hub",
+    "hubvpn": "vpn_hub",
+    "concentradorvpn": "vpn_hub",
+    "vpnconcentrator": "vpn_hub",
 }
 
 
