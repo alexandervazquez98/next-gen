@@ -103,7 +103,6 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          separator: "\n"
           files: |
             scripts/**/*.sh
             docker/neo4j/entrypoint.sh
@@ -112,7 +111,7 @@ jobs:
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           shell_files=()
           for f in "${files[@]}"; do
             case "$f" in *.sh) shell_files+=("$f") ;; esac
@@ -133,7 +132,6 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          separator: "\n"
           files: |
             backend/**/*.py
             backend/ruff.toml
@@ -151,7 +149,7 @@ jobs:
         working-directory: backend
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           py_files=()
           for f in "${files[@]}"; do
             case "$f" in backend/*.py) py_files+=("${f#backend/}") ;; esac
@@ -166,7 +164,7 @@ jobs:
         working-directory: backend
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           py_files=()
           for f in "${files[@]}"; do
             case "$f" in backend/*.py) py_files+=("${f#backend/}") ;; esac
@@ -191,7 +189,6 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          separator: "\n"
           files: |
             frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md}
             frontend/eslint.config.js
@@ -215,7 +212,7 @@ jobs:
         working-directory: frontend
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           lint_files=()
           for f in "${files[@]}"; do
             case "$f" in frontend/*) ;; *) continue ;; esac
@@ -234,7 +231,7 @@ jobs:
         working-directory: frontend
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           fmt_files=()
           for f in "${files[@]}"; do
             case "$f" in frontend/*) ;; *) continue ;; esac
