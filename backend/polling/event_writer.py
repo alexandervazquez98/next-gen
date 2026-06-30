@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Iterable, Mapping
 from uuid import UUID
 
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.polling_event_lifecycle import (
     COLLECTION_FAILURE_PREFIX,
     EVENT_TYPE_AVAILABILITY,
@@ -18,6 +19,10 @@ from services.polling_event_lifecycle import (
     is_snmp_no_response_failure,
     normalized_protocol,
 )
+
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 
 def _value(item: Any) -> Any:
@@ -125,6 +130,48 @@ def _non_collection_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str,
     ]
 
 
+def _acquire_unsorted_locks(lock_db, triplets: list[tuple[str, str, str]]) -> None:
+    """Acquire ``pg_advisory_xact_lock`` for each triplet in the order given.
+
+    This is the inner acquisition loop extracted from
+    :func:`_acquire_sorted_locks` so tests can call it directly with a
+    caller-controlled order. Production writers MUST NOT call this directly;
+    call :func:`_acquire_sorted_locks` instead so two concurrent batches
+    always converge on lexicographic order and never trip Postgres
+    deadlock detection.
+
+    Parameters
+    ----------
+    lock_db:
+        Open SQLAlchemy ``Session`` whose transaction will hold the locks.
+    triplets:
+        ``(ci_id, metric_id, event_type)`` tuples in EXACTLY the order the
+        caller wants the locks acquired. No sorting is performed here.
+    """
+    for ci_id, metric_id, event_type in triplets:
+        acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+
+
+def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
+    """Acquire ``pg_advisory_xact_lock`` for each distinct triplet in ``rows``.
+
+    Per design §4 — Deterministic lock ordering (mandatory). Triplets are
+    sorted lexicographically by ``(ci_id, metric_id, event_type)`` BEFORE
+    acquisition so two overlapping batches contend in the same order and
+    never trigger Postgres deadlock detection.
+
+    Implementation: extract distinct triplets, sort them, then delegate
+    to :func:`_acquire_unsorted_locks` so the acquisition loop is shared
+    with the deadlock-prevention tests.
+    """
+    distinct_triplets = sorted({
+        (row.get("ci_id"), row.get("metric_id"), row.get("event_type"))
+        for row in rows
+        if row.get("ci_id") and row.get("metric_id") and row.get("event_type")
+    })
+    _acquire_unsorted_locks(lock_db, distinct_triplets)
+
+
 def _latest_metric_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     row_list = list(rows)
     non_collection_latest_ids = {id(row) for row in _dedupe_non_collection_latest_state(row_list)}
@@ -224,12 +271,35 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
             "service_category": metadata.get("service_category"),
             "service_tier": metadata.get("service_tier"),
             "sla_minutes": metadata.get("sla_minutes"),
+            "poll_collector_id": POLL_COLLECTOR_ID,
         })
     return rows
 
 
-def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
-    """Apply latest metric/result/event updates with batched UNWIND queries."""
+def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=None) -> int:
+    """Apply latest metric/result/event updates with batched UNWIND queries.
+
+    Parameters
+    ----------
+    driver:
+        Neo4j driver used to open the session for the UNWIND queries.
+    envelopes:
+        Normalized result envelopes to translate into Event / Metric rows.
+    lock_db:
+        Optional open SQLAlchemy ``Session``. When provided, advisory locks
+        (``pg_advisory_xact_lock``) are acquired for every distinct
+        ``(ci_id, metric_id, event_type)`` triplet in lexicographic order
+        BEFORE each UNWIND query that touches the Event collection. This
+        serializes concurrent writers across poll collectors (issue #322).
+        Lock acquisition is sorted lexicographically so two overlapping
+        batches contend in the same order and never trigger Postgres
+        deadlock detection.
+
+        When ``lock_db is None`` (default, e.g. in unit tests that only
+        exercise the Cypher shape), no lock is acquired. Production
+        callers (``writer_pool.run_writer_once``) always pass the leased
+        ``timescale_db`` as ``lock_db``.
+    """
     rows = build_event_rows(envelopes)
     if not rows:
         return 0
@@ -251,6 +321,10 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
             """,
             rows=latest_metric_rows,
         )
+
+        # COLLECTION_FAILURE batch — sorted lock acquisition per design §4.
+        if lock_db is not None and collection_failure_rows:
+            _acquire_sorted_locks(lock_db, collection_failure_rows)
         session.run(
             """
             UNWIND $rows AS row
@@ -280,7 +354,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                     business_service_tier: row.business_service_tier, owner_t1: row.owner_t1, owner_t2: row.owner_t2,
                     owner_t3: row.owner_t3, impacted_users: row.impacted_users, site: row.site,
                     service_catalog_id: row.service_catalog_id, service_category: row.service_category,
-                    service_tier: row.service_tier, sla_minutes: row.sla_minutes
+                    service_tier: row.service_tier, sla_minutes: row.sla_minutes,
+                    poll_collector_id: row.poll_collector_id
                 })
                 MERGE (n)-[:HAS_EVENT]->(created)
                 MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -290,13 +365,18 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                     existing.last_seen = datetime(), existing.ack = false, existing.recovered_at = NULL,
                     existing.event_type = row.event_type, existing.failure_family = row.failure_family,
                     existing.source_protocol = row.source_protocol,
-                    existing.availability_source = row.availability_source
+                    existing.availability_source = row.availability_source,
+                    existing.poll_collector_id = row.poll_collector_id
                 MERGE (n)-[:HAS_EVENT]->(existing)
                 MERGE (existing)-[:TRIGGERED_BY]->(m)
             )
             """,
             rows=collection_failure_rows,
         )
+
+        # Non-collection batch (threshold / availability) — sorted lock acquisition.
+        if lock_db is not None and non_collection_event_rows:
+            _acquire_sorted_locks(lock_db, non_collection_event_rows)
         session.run(
             """
             UNWIND $rows AS row
@@ -326,7 +406,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                     business_service_name: row.business_service_name, business_service_tier: row.business_service_tier,
                     owner_t1: row.owner_t1, owner_t2: row.owner_t2, owner_t3: row.owner_t3,
                     impacted_users: row.impacted_users, site: row.site, service_catalog_id: row.service_catalog_id,
-                    service_category: row.service_category, service_tier: row.service_tier, sla_minutes: row.sla_minutes
+                    service_category: row.service_category, service_tier: row.service_tier, sla_minutes: row.sla_minutes,
+                    poll_collector_id: row.poll_collector_id
                 })
                 MERGE (n)-[:HAS_EVENT]->(created)
                 MERGE (created)-[:TRIGGERED_BY]->(m)
@@ -355,7 +436,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]]) -> int:
                     existing.service_catalog_id = coalesce(existing.service_catalog_id, row.service_catalog_id),
                     existing.service_category = coalesce(existing.service_category, row.service_category),
                     existing.service_tier = coalesce(existing.service_tier, row.service_tier),
-                    existing.sla_minutes = coalesce(existing.sla_minutes, row.sla_minutes)
+                    existing.sla_minutes = coalesce(existing.sla_minutes, row.sla_minutes),
+                    existing.poll_collector_id = row.poll_collector_id
                 MERGE (n)-[:HAS_EVENT]->(existing)
                 MERGE (existing)-[:TRIGGERED_BY]->(m)
             )

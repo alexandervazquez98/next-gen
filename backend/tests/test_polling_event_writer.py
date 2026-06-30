@@ -178,20 +178,63 @@ def test_event_writer_direct_latency_recovery_excludes_propagated_events():
 
 
 def test_event_writer_threshold_breach_refresh_updates_open_or_ack_events_without_merge_duplicate():
+    from unittest.mock import MagicMock, patch
+
     from polling.event_writer import batch_update_events
 
     driver = MockNeo4jDriver()
-    batch_update_events(driver, [{
-        **_event_row(500.0),
-        "protocol": "ICMP",
-        "metric_id": "icmp_latency_ms",
-        "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
-    }])
+    lock_db = MagicMock()
+    # Track call ORDER between lock helper and session.run, tagged with the
+    # query so we can verify the lock precedes the SPECIFIC breach query
+    # (not just any neo4j call — earlier writes like ``latest_metric_rows``
+    # legitimately run before the lock for the breach batch).
+    call_order: list[tuple[str, str | None]] = []
+
+    with patch("polling.event_writer.acquire_event_triplet_lock") as mock_lock:
+        mock_lock.side_effect = lambda *_a, **_kw: call_order.append(("lock", None))
+        original_run = driver.mock_session.run
+
+        def tracking_run(query, **params):
+            call_order.append(("neo4j", query))
+            return original_run(query, **params)
+
+        driver.mock_session.run = tracking_run
+
+        batch_update_events(driver, [{
+            **_event_row(500.0),
+            "protocol": "ICMP",
+            "metric_id": "icmp_latency_ms",
+            "metadata": {"name": "ICMP Latency", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3},
+        }], lock_db=lock_db)
 
     breach_query = next(q for q in driver.mock_session.queries if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"])
     assert "existing.status IN ['OPEN', 'ACK']" in breach_query["query"]
     assert "coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')" in breach_query["query"]
     assert "coalesce(row.correlation_type, 'ROOT') <> 'PROPAGATED'" in breach_query["query"]
+    # #322 / design §6/§11 — POSITIVE flipped assertion: lock helper IS called
+    # with the open PG session and the breach triplet. Replaces the old
+    # negative MERGE-absent check.
+    assert mock_lock.call_count == 1, (
+        f"acquire_event_triplet_lock MUST be called once; got {mock_lock.call_count}"
+    )
+    lock_args = mock_lock.call_args_list[0].args
+    assert lock_args[0] is lock_db, "lock helper must receive the open PG session"
+    assert lock_args[1] == "ci-1"
+    assert lock_args[2] == "icmp_latency_ms"
+    assert lock_args[3] == "THRESHOLD_BREACH"
+    # Lock MUST be acquired BEFORE the breach query's session.run.
+    lock_idx = next(
+        i for i, (kind, _) in enumerate(call_order) if kind == "lock"
+    )
+    breach_idx = next(
+        i for i, (kind, q) in enumerate(call_order)
+        if kind == "neo4j" and "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in (q or "")
+    )
+    assert lock_idx < breach_idx, (
+        f"lock (idx {lock_idx}) must precede breach query (idx {breach_idx}); "
+        f"order={call_order!r}"
+    )
+    # Defensive regression: no MERGE pattern in the breach query.
     assert "MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN'})" not in breach_query["query"]
     assert "created_at: datetime(), last_seen: datetime()" in breach_query["query"]
     assert "SET existing.severity = row.severity" in breach_query["query"]
@@ -495,18 +538,126 @@ def test_event_writer_marks_valid_rows_for_collection_failure_recovery_even_on_b
 
 
 def test_event_writer_uses_discriminator_aware_event_queries():
+    from unittest.mock import MagicMock, patch
+
     from polling.event_writer import batch_update_events
 
     driver = MockNeo4jDriver()
-    batch_update_events(driver, [_event_row(None, status="NO_DATA"), _event_row(42.0)])
+    lock_db = MagicMock()
+
+    # Two envelopes that produce TWO distinct Event types in the same batch:
+    #   1. NO_DATA → COLLECTION_FAILURE (failure_family = SNMP_NO_RESPONSE)
+    #   2. value=500 + critical=100 → THRESHOLD_BREACH
+    with patch("polling.event_writer.acquire_event_triplet_lock") as mock_lock:
+        batch_update_events(
+            driver,
+            [
+                _event_row(None, status="NO_DATA"),  # COLLECTION_FAILURE
+                {**_event_row(500.0), "protocol": "SNMP", "metric_id": "cpu",
+                 "metadata": {"name": "cpu", "criticality": 3, "critical": 100, "warning": 80, "operator": ">="}},
+            ],
+            lock_db=lock_db,
+        )
 
     queries = "\n".join(q["query"] for q in driver.mock_session.queries)
     assert "event_type" in queries
     assert "failure_family" in queries
     assert "Metric Collection Failed:" in queries
+    # #322 / design §6/§11 — POSITIVE flipped assertion: lock helper IS called
+    # for each distinct triplet in the batch (one COLLECTION_FAILURE +
+    # one THRESHOLD_BREACH). Replaces the old negative MERGE-absent check
+    # on the union of queries.
+    assert mock_lock.call_count >= 2, (
+        f"acquire_event_triplet_lock MUST be called once per distinct triplet; "
+        f"got {mock_lock.call_count} calls"
+    )
+    triplets = [
+        (call.args[1], call.args[2], call.args[3])
+        for call in mock_lock.call_args_list
+        if len(call.args) >= 4
+    ]
+    # The collection-failure envelope and the threshold-breach envelope
+    # produce different triplets — both MUST be locked.
+    assert ("ci-1", "cpu", "COLLECTION_FAILURE") in triplets, (
+        f"collection-failure triplet MUST be locked; got {triplets!r}"
+    )
+    assert ("ci-1", "cpu", "THRESHOLD_BREACH") in triplets, (
+        f"threshold-breach triplet MUST be locked; got {triplets!r}"
+    )
+    # Defensive regression: no MERGE pattern in any of the queries.
     assert "MERGE (e:Event {ci_id: row.ci_id, metric_id: row.metric_id, status: 'OPEN'})" not in queries
     assert "COLLECTION_FAILURE" in queries
     assert "SNMP_NO_RESPONSE" in queries
+
+
+def test_event_writer_acquires_locks_in_lexicographic_order_across_batch():
+    """#322 / design §4 — deterministic lock ordering (mandatory).
+
+    When a batch contains MULTIPLE distinct triplets, lock acquisition MUST
+    be in lexicographic order by ``(ci_id, metric_id, event_type)`` BEFORE
+    the Neo4j UNWIND query. Without this rule, two concurrent batches with
+    overlapping triplets contended in opposite order would trigger
+    Postgres deadlock detection.
+
+    Reverse-ordered input proves the sort happens internally: the writer
+    sees envelopes in order Z, Y, X but MUST acquire locks in X, Y, Z order.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    lock_db = MagicMock()
+    lock_call_order: list[tuple[str, str, str]] = []
+
+    def _capture(lock_db_arg, ci_id, metric_id, event_type):
+        lock_call_order.append((ci_id, metric_id, event_type))
+
+    # Input ORDER is Z, Y, X — writer MUST sort to X, Y, Z internally.
+    envelopes_in_reverse = [
+        {**_event_row(500.0), "ci_id": "ci-Z", "metric_id": "metric-Z",
+         "protocol": "ICMP",
+         "metadata": {"name": "metric-Z", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3}},
+        {**_event_row(500.0), "ci_id": "ci-Y", "metric_id": "metric-Y",
+         "protocol": "ICMP",
+         "metadata": {"name": "metric-Y", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3}},
+        {**_event_row(500.0), "ci_id": "ci-X", "metric_id": "metric-X",
+         "protocol": "ICMP",
+         "metadata": {"name": "metric-X", "warning": 100, "critical": 500, "operator": ">=", "metric_kind": "telemetry", "criticality": 3}},
+    ]
+
+    with patch("polling.event_writer.acquire_event_triplet_lock", side_effect=_capture):
+        batch_update_events(driver, envelopes_in_reverse, lock_db=lock_db)
+
+    # Acquisitions MUST be in lexicographic order regardless of input order.
+    assert lock_call_order == [
+        ("ci-X", "metric-X", "THRESHOLD_BREACH"),
+        ("ci-Y", "metric-Y", "THRESHOLD_BREACH"),
+        ("ci-Z", "metric-Z", "THRESHOLD_BREACH"),
+    ], (
+        f"locks MUST be acquired in lexicographic order; got {lock_call_order!r}"
+    )
+
+
+def test_event_writer_persists_poll_collector_id_on_event_create():
+    """#322 / spec §Poll collector identity persistence — every Event row
+    built by ``build_event_rows`` MUST include ``poll_collector_id`` so the
+    writer can persist it on CREATE / SET.
+    """
+    from polling.event_writer import build_event_rows
+
+    rows = build_event_rows([
+        _event_row(500.0, metadata={"name": "cpu", "criticality": 3, "critical": 90}),
+    ])
+
+    assert rows, "expected at least one row"
+    for row in rows:
+        assert "poll_collector_id" in row, (
+            f"row MUST carry poll_collector_id; got keys={list(row.keys())!r}"
+        )
+        assert row["poll_collector_id"], (
+            f"poll_collector_id MUST be non-empty; got {row['poll_collector_id']!r}"
+        )
 
 
 def test_event_writer_collection_failure_matching_does_not_treat_null_family_as_wildcard():

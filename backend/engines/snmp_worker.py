@@ -35,6 +35,11 @@ from polling.icmp_measurements import (
     PingMeasurement,
     parse_ping_latency_ms,
 )
+from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
+from services.neo4j_write_guard import (
+    is_poll_collector_id_undefined_error,
+    run_with_cypher_param_fallback,
+)
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
@@ -45,6 +50,10 @@ from services.polling_event_lifecycle import (
     is_snmp_no_response_failure,
     normalized_protocol,
 )
+
+# poll_collector_id is sourced from services.event_lock.get_poll_collector_id
+# (cached at module load from HOSTNAME env var with socket.gethostname()
+# fallback) — see services/event_lock.py for the canonical implementation.
 
 # SNMP Support
 try:
@@ -279,7 +288,7 @@ def _resolve_correlation(cache, ci_id, metric_id):
     return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
 
 
-def _refresh_snmp_collection_failures(session, failures, cache=None):
+def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=None):
     failures = _dedupe_snmp_collection_failures(failures)
     if not failures:
         return
@@ -290,7 +299,65 @@ def _refresh_snmp_collection_failures(session, failures, cache=None):
         cache = {}
     for row in failures:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
-    session.run("""
+    # Serialize concurrent writers for the same (ci_id, metric_id, event_type)
+    # triplet before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block
+    # (issue #322). Locks are sorted lexicographically so two batches do not
+    # trigger Postgres deadlock detection when they overlap on different keys.
+    if lock_db is not None:
+        distinct_triplets = sorted({
+            (row.get("node_id"), row.get("metric_id"), row.get("event_type"))
+            for row in failures
+            if row.get("node_id") and row.get("metric_id") and row.get("event_type")
+        })
+        for ci_id, metric_id, event_type in distinct_triplets:
+            acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+    primary_query = """
+        UNWIND $failures AS row
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
+        WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+          AND (
+            existing.event_type = 'COLLECTION_FAILURE'
+            OR (existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
+          )
+          AND (existing.failure_family = 'SNMP_NO_RESPONSE' OR existing.failure_family IS NULL)
+          AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
+        WITH row, n, m, head(collect(existing)) AS existing
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                status: 'OPEN', severity: row.severity, message: row.message,
+                event_type: row.event_type, failure_family: row.failure_family,
+                source_protocol: row.source_protocol, created_at: datetime(),
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id,
+                poll_collector_id: $poll_collector_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.status = 'OPEN', existing.severity = row.severity,
+                existing.message = row.message, existing.last_seen = datetime(),
+                existing.recovered_at = NULL, existing.ack = false,
+                existing.event_type = row.event_type,
+                existing.failure_family = row.failure_family,
+                existing.source_protocol = row.source_protocol,
+                poll_collector_id = $poll_collector_id
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """
+    # Fallback Cypher — hand-written to avoid dangling-comma artifacts
+    # that naive ``.replace()`` would leave in the SET clause
+    # (verify-report CRITICAL #1 — issue #340). The CREATE row-dict
+    # removal is safe because the next line is ``})``; the SET clause
+    # removal requires also dropping the trailing comma after
+    # ``existing.source_protocol = row.source_protocol``.
+    fallback_query = """
         UNWIND $failures AS row
         MATCH (n:CI {id: row.node_id})
         MATCH (m:MetricDef {id: row.metric_id})
@@ -327,7 +394,16 @@ def _refresh_snmp_collection_failures(session, failures, cache=None):
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, failures=failures)
+    """
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {"failures": failures, "poll_collector_id": POLL_COLLECTOR_ID},
+        fallback_query,
+        {"failures": failures},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _availability_source(value: Any) -> str | None:
@@ -335,7 +411,7 @@ def _availability_source(value: Any) -> str | None:
     return source if source in {"PING", "ICMP"} else None
 
 
-def _refresh_icmp_availability_events(session, updates, cache=None):
+def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None):
     availability_events = [
         u
         for u in updates
@@ -350,7 +426,64 @@ def _refresh_icmp_availability_events(session, updates, cache=None):
         cache = {}
     for row in availability_events:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
-    session.run("""
+    # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block (issue #322).
+    # Sorted lexicographic acquisition prevents Postgres deadlock detection
+    # from aborting one of two overlapping batches.
+    if lock_db is not None:
+        distinct_triplets = sorted({
+            (row.get("node_id"), row.get("metric_id"), row.get("event_type"))
+            for row in availability_events
+            if row.get("node_id") and row.get("metric_id") and row.get("event_type")
+        })
+        for ci_id, metric_id, event_type in distinct_triplets:
+            acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+    primary_query = """
+        UNWIND $availability_events AS row
+        WITH row WHERE row.event_type = 'AVAILABILITY'
+          AND row.source_protocol = 'ICMP'
+          AND row.availability_source IN ['PING', 'ICMP']
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
+        WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+          AND existing.event_type = 'AVAILABILITY'
+          AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+          AND existing.availability_source IN ['PING', 'ICMP']
+          AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
+        WITH row, n, m, head(collect(existing)) AS existing
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                status: 'OPEN', severity: row.severity, message: row.message,
+                event_type: row.event_type, source_protocol: row.source_protocol,
+                availability_source: row.availability_source,
+                created_at: datetime(), last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id,
+                poll_collector_id: $poll_collector_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.status = 'OPEN', existing.severity = row.severity,
+                existing.message = row.message, existing.last_seen = datetime(),
+                existing.recovered_at = NULL, existing.ack = false,
+                existing.event_type = row.event_type,
+                existing.source_protocol = row.source_protocol,
+                existing.availability_source = row.availability_source,
+                poll_collector_id = $poll_collector_id
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """
+    # Fallback Cypher — hand-written (see #340, verify-report CRITICAL #1).
+    # Drops the trailing comma after
+    # ``existing.availability_source = row.availability_source`` that a
+    # naive ``.replace()`` would leave dangling before ``MERGE``.
+    fallback_query = """
         UNWIND $availability_events AS row
         WITH row WHERE row.event_type = 'AVAILABILITY'
           AND row.source_protocol = 'ICMP'
@@ -388,7 +521,19 @@ def _refresh_icmp_availability_events(session, updates, cache=None):
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, availability_events=availability_events)
+    """
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {
+            "availability_events": availability_events,
+            "poll_collector_id": POLL_COLLECTOR_ID,
+        },
+        fallback_query,
+        {"availability_events": availability_events},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _recover_icmp_availability_events(session, updates):
@@ -428,7 +573,7 @@ def _recover_icmp_availability_events(session, updates):
     """, recoveries=recoveries)
 
 
-def _refresh_icmp_latency_events(session, updates, cache=None):
+def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
     breaches = [
         u
         for u in updates
@@ -444,7 +589,59 @@ def _refresh_icmp_latency_events(session, updates, cache=None):
         cache = {}
     for row in breaches:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
-    session.run("""
+    # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block (issue #322).
+    # Sorted lexicographic acquisition prevents Postgres deadlock detection
+    # from aborting one of two overlapping batches.
+    if lock_db is not None:
+        distinct_triplets = sorted({
+            (row.get("node_id"), row.get("metric_id"), row.get("event_type"))
+            for row in breaches
+            if row.get("node_id") and row.get("metric_id") and row.get("event_type")
+        })
+        for ci_id, metric_id, event_type in distinct_triplets:
+            acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+    primary_query = """
+        UNWIND $breaches AS row
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+        WHERE existing.status IN ['OPEN', 'ACK']
+          AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+        WITH row, n, m, head(collect(existing)) AS existing
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                message: row.message, source_protocol: row.source_protocol,
+                last_seen: datetime(), ack: false,
+                correlation_type: row.correlation_type,
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id,
+                poll_collector_id: $poll_collector_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.severity = row.status,
+                existing.message = row.message,
+                existing.source_protocol = row.source_protocol,
+                existing.last_seen = datetime(),
+                existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                existing.recovered_at = NULL,
+                existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id),
+                poll_collector_id = $poll_collector_id
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """
+    # Fallback Cypher — hand-written (see #340, verify-report CRITICAL #1).
+    # Drops the trailing comma after
+    # ``existing.root_cause_ci_id = coalesce(...)`` that a naive
+    # ``.replace()`` would leave dangling before ``MERGE``.
+    fallback_query = """
         UNWIND $breaches AS row
         MATCH (n:CI {id: row.node_id})
         MATCH (m:MetricDef {id: row.metric_id})
@@ -477,7 +674,19 @@ def _refresh_icmp_latency_events(session, updates, cache=None):
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
-    """, breaches=breaches)
+    """
+    run_with_cypher_param_fallback(
+        session,
+        primary_query,
+        {
+            "breaches": breaches,
+            "poll_collector_id": POLL_COLLECTOR_ID,
+        },
+        fallback_query,
+        {"breaches": breaches},
+        is_poll_collector_id_undefined_error,
+        logger,
+    )
 
 
 def _recover_icmp_latency_events(session, updates):
@@ -837,7 +1046,7 @@ def poll_snmp():
                     )
                     cache = {}
 
-            _refresh_snmp_collection_failures(session, failure_updates, cache=cache)
+            _refresh_snmp_collection_failures(session, failure_updates, cache=cache, lock_db=db)
 
             # Perform Bulk Insert at the end of the cycle. Only publish latest
             # values to Neo4j after Timescale persistence succeeds, so the UI
@@ -861,10 +1070,10 @@ def poll_snmp():
                             r.last_message = $msg
                     """, nid=update["node_id"], mid=update["metric_id"], val=update["value"], status=update["status"], msg=update["message"])
                 availability_updates = [u for u in latest_updates if u.get("metric_kind") == "availability"]
-                _refresh_icmp_availability_events(session, availability_updates, cache=cache)
+                _refresh_icmp_availability_events(session, availability_updates, cache=cache, lock_db=db)
                 _recover_icmp_availability_events(session, availability_updates)
                 latency_updates = [u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID]
-                _refresh_icmp_latency_events(session, latency_updates, cache=cache)
+                _refresh_icmp_latency_events(session, latency_updates, cache=cache, lock_db=db)
                 _recover_icmp_latency_events(session, latency_updates)
                 _recover_snmp_collection_failures(session, latest_updates)
                 print(f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB.")
