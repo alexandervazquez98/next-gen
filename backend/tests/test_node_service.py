@@ -15,19 +15,17 @@ Strategy:
 - Use conftest fixtures for User objects
 """
 
-import pytest
-import json
-import io
 import asyncio
-from unittest.mock import patch, MagicMock, call
+import io
+import json
 from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
-from fastapi.responses import JSONResponse
-
-from models.user import User, UserRole, UserPermission
+from fastapi.responses import JSONResponse, StreamingResponse
 from models.core import Node
-
+from models.user import User, UserPermission
 
 _UNSET = object()
 
@@ -76,9 +74,7 @@ def _make_node_record(
         "layer": layer,
         "location_name": location_name,
         "snmp": (
-            json.dumps({"version": "v2c", "readCommunity": "public"})
-            if snmp is _UNSET
-            else snmp
+            json.dumps({"version": "v2c", "readCommunity": "public"}) if snmp is _UNSET else snmp
         ),
         "location": None,
         "pollingInterval": 60,
@@ -531,7 +527,7 @@ class TestCreateUpdateNode:
         with (
             patch("services.node_service.check_permission", return_value=True),
             patch("services.node_service.topology_repo") as mock_repo,
-            patch("services.metric_service.reconcile_node_metrics") as mock_reconcile,
+            patch("services.metric_service.reconcile_node_metrics"),
         ):
             from services.node_service import create_update_node
 
@@ -553,7 +549,7 @@ class TestCreateUpdateNode:
         with (
             patch("services.node_service.check_permission", return_value=True),
             patch("services.node_service.topology_repo") as mock_repo,
-            patch("services.metric_service.reconcile_node_metrics") as mock_reconcile,
+            patch("services.metric_service.reconcile_node_metrics"),
         ):
             from services.node_service import create_update_node
 
@@ -576,9 +572,7 @@ class TestCreateUpdateNode:
 
             create_update_node(node, admin)
 
-            mock_repo.create_default_ping_metric.assert_called_once_with(
-                "ci-001", "Router-01"
-            )
+            mock_repo.create_default_ping_metric.assert_called_once_with("ci-001", "Router-01")
 
     def test_no_ping_metric_when_ip_absent(self):
         """When node has no IP, no PING metric should be created."""
@@ -846,10 +840,7 @@ class TestBulkUploadNodes:
             assert mock_repo.bulk_insert_node.call_count == 1
             # Check the response
             content = result
-            if isinstance(content, JSONResponse):
-                data = json.loads(content.body)
-            else:
-                data = content
+            data = json.loads(content.body) if isinstance(content, JSONResponse) else content
             assert "Successfully processed 1" in data["message"]
 
     def test_validation_error_invalid_owner(self):
@@ -917,10 +908,7 @@ class TestBulkUploadNodes:
             assert mock_repo.bulk_insert_node.call_count == 0
             assert isinstance(result, JSONResponse)
             data = json.loads(result.body)
-            assert (
-                data["errors"][0]
-                == "Row 2 (ID: CI-001): Owner 'UnknownOwner' not found."
-            )
+            assert data["errors"][0] == "Row 2 (ID: CI-001): Owner 'UnknownOwner' not found."
 
     def test_validation_error_invalid_layer(self):
         """Row with unknown NetworkLayer should be skipped and reported."""
@@ -1654,10 +1642,7 @@ class TestBulkUploadNodes:
 
             assert mock_repo.bulk_insert_node.call_count == 3
             content = result
-            if isinstance(content, JSONResponse):
-                data = json.loads(content.body)
-            else:
-                data = content
+            data = json.loads(content.body) if isinstance(content, JSONResponse) else content
             assert "Successfully processed 3" in data["message"]
 
 
@@ -1717,7 +1702,6 @@ class TestGetNodeTemplate:
 
             content = _read_streaming_body(result)
 
-            import openpyxl
             import pandas as pd
 
             owners_df = pd.read_excel(io.BytesIO(content), sheet_name="Ref - Owners")
@@ -1743,9 +1727,7 @@ class TestGetNodeTemplate:
 
             import pandas as pd
 
-            layers_df = pd.read_excel(
-                io.BytesIO(content), sheet_name="Ref - Network Layers"
-            )
+            layers_df = pd.read_excel(io.BytesIO(content), sheet_name="Ref - Network Layers")
             assert list(layers_df["Available Network Layers"]) == [
                 "router",
                 "switch",
@@ -1782,10 +1764,6 @@ class TestSearchNodes:
     def test_admin_search_returns_all_nodes_no_location_filter(self):
         """Admin user should search all nodes with is_admin=True, no location filter."""
         admin = _make_user(username="admin", role="ADMIN")
-
-        node_record = _make_full_record(
-            node_props=_make_node_record(node_id="ci-001", name="Router-01"),
-        )
 
         with patch("services.node_service.topology_repo") as mock_repo:
             mock_repo.search_nodes.return_value = [

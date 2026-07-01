@@ -1,8 +1,8 @@
 import asyncio
 from unittest.mock import patch
 
-from repositories import topology_repo
 from models.user import User
+from repositories import topology_repo
 from routers.links import CiIdsPayload, get_cis_relationships
 from services import link_service
 
@@ -42,7 +42,9 @@ def test_cis_relationships_route_uses_scoped_service_path():
             permissions=["CI_VIEW"],
             allowed_locations=["HQ-Madrid"],
         )
-        with patch("routers.links.link_service.get_cis_relationships", return_value={"ci-a": {}}) as mock_service:
+        with patch(
+            "routers.links.link_service.get_cis_relationships", return_value={"ci-a": {}}
+        ) as mock_service:
             result = await get_cis_relationships(CiIdsPayload(ci_ids=["ci-a"]), user)
         return result, mock_service
 
@@ -71,17 +73,19 @@ def test_cis_relationship_summary_applies_non_admin_location_scope(mock_neo4j_dr
 
 
 def test_cis_relationship_summary_does_not_populate_disallowed_requested_ci(mock_neo4j_driver):
-    mock_neo4j_driver.mock_session.set_default_response([
-        {
-            "source_id": "allowed-ci",
-            "source_label": "Allowed CI",
-            "source_location": "HQ-Madrid",
-            "target_id": "blocked-ci",
-            "target_label": "Blocked CI",
-            "target_location": "Secret",
-            "rel_type": "CONNECTS_TO",
-        }
-    ])
+    mock_neo4j_driver.mock_session.set_default_response(
+        [
+            {
+                "source_id": "allowed-ci",
+                "source_label": "Allowed CI",
+                "source_location": "HQ-Madrid",
+                "target_id": "blocked-ci",
+                "target_label": "Blocked CI",
+                "target_location": "Secret",
+                "rel_type": "CONNECTS_TO",
+            }
+        ]
+    )
     user = User(
         username="operator",
         role="OPERATOR",
@@ -120,9 +124,7 @@ def test_link_model_accepts_medium():
     """Slice 1 / VPN-Rel R2 / Sc 4: Link.medium is a Literal['vpn','sd_wan','satellite']."""
     from models.core import Link
 
-    link = Link(
-        source="hub-a", target="router-b", relationship="CONNECTS_TO", medium="vpn"
-    )
+    link = Link(source="hub-a", target="router-b", relationship="CONNECTS_TO", medium="vpn")
     assert link.medium == "vpn"
 
 
@@ -160,16 +162,18 @@ def test_create_link_persists_medium(mock_neo4j_driver):
 
 def test_get_links_returns_medium_in_payload(mock_neo4j_driver):
     """Slice 1 / VPN-Rel R4 / Sc 8: topology_repo.get_links returns medium when set."""
-    mock_neo4j_driver.mock_session.set_default_response([
-        {
-            "s": "hub-a",
-            "sl": "Hub-A",
-            "t": "router-b",
-            "tl": "Router-B",
-            "rel": "CONNECTS_TO",
-            "medium": "vpn",
-        }
-    ])
+    mock_neo4j_driver.mock_session.set_default_response(
+        [
+            {
+                "s": "hub-a",
+                "sl": "Hub-A",
+                "t": "router-b",
+                "tl": "Router-B",
+                "rel": "CONNECTS_TO",
+                "medium": "vpn",
+            }
+        ]
+    )
 
     links = topology_repo.get_links(allowed_locations=[], is_admin=True)
 
@@ -188,16 +192,18 @@ def test_get_links_returns_medium_in_payload(mock_neo4j_driver):
 def test_get_links_omits_medium_when_unset(mock_neo4j_driver):
     """Slice 1 / VPN-Rel R4 / Sc 8: legacy links without medium expose no medium key
     so existing consumers stay unchanged."""
-    mock_neo4j_driver.mock_session.set_default_response([
-        {
-            "s": "hub-a",
-            "sl": "Hub-A",
-            "t": "router-b",
-            "tl": "Router-B",
-            "rel": "CONNECTS_TO",
-            "medium": None,
-        }
-    ])
+    mock_neo4j_driver.mock_session.set_default_response(
+        [
+            {
+                "s": "hub-a",
+                "sl": "Hub-A",
+                "t": "router-b",
+                "tl": "Router-B",
+                "rel": "CONNECTS_TO",
+                "medium": None,
+            }
+        ]
+    )
 
     links = topology_repo.get_links(allowed_locations=[], is_admin=True)
 
@@ -278,9 +284,11 @@ def test_validate_tunnel_endpoint_hub_requires_existing_endpoint_types(mock_neo4
     from fastapi import HTTPException
     from services.link_service import validate_tunnel_endpoint_hub
 
-    mock_neo4j_driver.mock_session.set_default_response([
-        {"layer": "router"},
-    ])
+    mock_neo4j_driver.mock_session.set_default_response(
+        [
+            {"layer": "router"},
+        ]
+    )
 
     raised = False
     try:
@@ -309,9 +317,11 @@ def test_create_link_service_runs_hub_validation(mock_neo4j_driver):
     def fake_create_link(*args, **kwargs):
         captured["called"] = True
 
-    mock_neo4j_driver.mock_session.set_default_response([
-        {"layer": "router"},
-    ])
+    mock_neo4j_driver.mock_session.set_default_response(
+        [
+            {"layer": "router"},
+        ]
+    )
     with patch.object(link_service.topology_repo, "create_link", fake_create_link):
         raised = False
         try:

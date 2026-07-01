@@ -16,11 +16,13 @@ Strategy:
 - Mock topology_repo functions for service-layer isolation
 """
 
-import pytest
 import json
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
-from io import BytesIO
+from models.user import User, UserPermission
+from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
@@ -28,10 +30,6 @@ from io import BytesIO
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
-    from database import get_db
-
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -1098,13 +1096,6 @@ class TestSearchNodes:
             return fake_user
 
         app.dependency_overrides[get_current_active_user] = override_get_current_active_user
-
-        node_record = _make_neo4j_node_record(
-            node_id="ci-001",
-            name="Router-01",
-            brand="Cisco",
-            model="ASR-1000",
-        )
 
         with patch("routers.nodes.node_service") as mock_service:
             mock_service.search_nodes.return_value = [

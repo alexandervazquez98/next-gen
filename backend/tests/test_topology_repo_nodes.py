@@ -198,8 +198,8 @@ def test_node_model_accepts_ipv6_public_ip():
 
 def test_node_model_rejects_invalid_public_ip():
     """Slice 1 / VPN-Rel R1 / Sc 2: invalid IP strings raise ValidationError."""
-    from pydantic import ValidationError
     from models.core import Node
+    from pydantic import ValidationError
 
     try:
         Node(
@@ -257,9 +257,7 @@ def test_upsert_node_passes_none_when_public_ip_missing(monkeypatch):
     driver, session = _mock_driver()
     monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
 
-    topology_repo.upsert_node(
-        Node(id="ci-101", label="Hub-101", type="vpn_hub")
-    )
+    topology_repo.upsert_node(Node(id="ci-101", label="Hub-101", type="vpn_hub"))
 
     query = session.run.call_args.args[0]
     params = session.run.call_args.kwargs
@@ -291,8 +289,8 @@ def test_create_update_node_rejects_invalid_public_ip(monkeypatch):
     from fastapi import HTTPException
     from models.core import Node
     from models.user import User
-    from services import node_service
     from repositories import topology_repo
+    from services import node_service
 
     user = User(
         username="admin",

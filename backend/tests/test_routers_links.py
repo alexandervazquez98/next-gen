@@ -14,8 +14,9 @@ Strategy:
 - Document the auth gap (no endpoint requires authentication)
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 from models.user import User
 from services.auth_service import get_current_active_user
@@ -26,7 +27,6 @@ from services.auth_service import get_current_active_user
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
-    from database import get_db
 
 # ---------------------------------------------------------------------------
 # TestClient
