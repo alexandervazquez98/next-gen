@@ -7,11 +7,7 @@ Implements the data access pattern following `topology_repo.py` conventions:
 - Validates Modbus register bounds before any write
 """
 
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from uuid import uuid4
-
-from database import get_db
+from typing import Any
 
 # ── Modbus bounds ─────────────────────────────────────────────────────────────
 
@@ -21,12 +17,12 @@ _MODBUS_REGISTER_COUNT_MIN = 1
 _MODBUS_REGISTER_COUNT_MAX = 4
 
 
-def _record_to_dict(record) -> Dict[str, Any]:
+def _record_to_dict(record) -> dict[str, Any]:
     """Convert Neo4j records and lightweight test doubles to plain dictionaries."""
     if hasattr(record, "data"):
         out = record.data()
     elif hasattr(record, "keys"):
-        out = {key: record[key] for key in record.keys()}
+        out = {key: record[key] for key in record.keys()}  # noqa: SIM118
     elif hasattr(record, "_data"):
         out = dict(record._data)
     else:
@@ -72,9 +68,9 @@ def upsert_rtu(
     location_id: str,
     mqtt_topic: str,
     name: str,
-    ip: Optional[str],
+    ip: str | None,
     status: str,
-    mqtt_config: Optional[Dict[str, Any]],
+    mqtt_config: dict[str, Any] | None,
 ) -> None:
     """Upsert an RTU node with LOCATED_AT relationship to Location.
 
@@ -117,7 +113,7 @@ def upsert_rtu(
     )
 
 
-def get_rtu(tx, rtu_id: str) -> Optional[Dict[str, Any]]:
+def get_rtu(tx, rtu_id: str) -> dict[str, Any] | None:
     """Fetch a single RTU node by id.
 
     Returns:
@@ -144,7 +140,7 @@ def get_rtu(tx, rtu_id: str) -> Optional[Dict[str, Any]]:
     return _record_to_dict(record)
 
 
-def list_rtus(tx, location_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_rtus(tx, location_id: str | None = None) -> list[dict[str, Any]]:
     """List all RTU nodes, optionally filtered by location_id.
 
     Args:
@@ -196,10 +192,10 @@ def list_rtus(tx, location_id: Optional[str] = None) -> List[Dict[str, Any]]:
 def update_rtu(
     tx,
     rtu_id: str,
-    name: Optional[str] = None,
-    ip: Optional[str] = None,
-    status: Optional[str] = None,
-    mqtt_config: Optional[Dict[str, Any]] = None,
+    name: str | None = None,
+    ip: str | None = None,
+    status: str | None = None,
+    mqtt_config: dict[str, Any] | None = None,
 ) -> bool:
     """Update RTU properties. Only non-None fields are written.
 
@@ -207,7 +203,7 @@ def update_rtu(
         True if RTU was found and updated, False if not found.
     """
     set_clauses = ["r.updated_at = datetime()"]
-    params: Dict[str, Any] = {"rtu_id": rtu_id}
+    params: dict[str, Any] = {"rtu_id": rtu_id}
 
     if name is not None:
         set_clauses.append("r.name = $name")
@@ -260,7 +256,7 @@ def upsert_sensor(
     register_addr: int,
     register_count: int,
     name: str,
-    unit: Optional[str],
+    unit: str | None,
     sensor_type: str,
 ) -> None:
     """Upsert a Sensor node with HAS_SENSOR relationship to parent RTU.
@@ -311,7 +307,7 @@ def upsert_sensor(
     )
 
 
-def get_sensor(tx, sensor_id: str) -> Optional[Dict[str, Any]]:
+def get_sensor(tx, sensor_id: str) -> dict[str, Any] | None:
     """Fetch a single Sensor node by id.
 
     Returns:
@@ -336,7 +332,7 @@ def get_sensor(tx, sensor_id: str) -> Optional[Dict[str, Any]]:
     return _record_to_dict(record)
 
 
-def list_sensors(tx, rtu_id: str) -> List[Dict[str, Any]]:
+def list_sensors(tx, rtu_id: str) -> list[dict[str, Any]]:
     """List all Sensor nodes for a given RTU.
 
     Returns:
@@ -366,8 +362,8 @@ def update_sensor(
     tx,
     rtu_id: str,
     sensor_id: str,
-    name: Optional[str] = None,
-    unit: Optional[str] = None,
+    name: str | None = None,
+    unit: str | None = None,
 ) -> bool:
     """Update Sensor properties. Only non-None fields are written.
 
@@ -375,7 +371,7 @@ def update_sensor(
         True if Sensor was found and updated, False if not found.
     """
     set_clauses = ["s.updated_at = datetime()"]
-    params: Dict[str, Any] = {"rtu_id": rtu_id, "sensor_id": sensor_id}
+    params: dict[str, Any] = {"rtu_id": rtu_id, "sensor_id": sensor_id}
 
     if name is not None:
         set_clauses.append("s.name = $name")
@@ -401,7 +397,7 @@ def find_sensor_by_key(
     rtu_id: str,
     register_addr: int,
     sensor_type: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Find a Sensor node by its composite key (rtu_id, register_addr, sensor_type).
 
     Returns:

@@ -2,13 +2,14 @@
 CI Dictionary Exclusion Router — Per-CI exclusion endpoints.
 Handles AppliedDictionary customization at CI level.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
 
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from models.user import User
+from pydantic import BaseModel
 from services import dictionary_service
 from services.auth_service import get_current_active_user
-from models.user import User, UserPermission
 
 router = APIRouter(
     prefix="/cis",
@@ -32,8 +33,8 @@ def _require_editor(current_user: User):
 
 
 class ExclusionUpdateRequest(BaseModel):
-    excluded_metrics: Optional[List[str]] = None
-    extra_metrics: Optional[List[str]] = None
+    excluded_metrics: list[str] | None = None
+    extra_metrics: list[str] | None = None
 
 
 class AppliedDictionaryResponse(BaseModel):
@@ -41,16 +42,16 @@ class AppliedDictionaryResponse(BaseModel):
     dictionary_name: str
     dictionary_brand: str
     dictionary_model: str
-    dictionary_metric_ids: List[str]
-    excluded_metrics: List[str]
-    extra_metrics: List[str]
-    applied_at: Optional[str]
+    dictionary_metric_ids: list[str]
+    excluded_metrics: list[str]
+    extra_metrics: list[str]
+    applied_at: str | None
 
 
-@router.get("/{ci_id}/applied-dictionary", response_model=Optional[Dict[str, Any]])
+@router.get("/{ci_id}/applied-dictionary", response_model=Optional[dict[str, Any]])  # noqa: UP045
 async def get_applied_dictionary(
     ci_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Get the AppliedDictionary for a CI with full details.
@@ -73,11 +74,11 @@ async def get_applied_dictionary(
     return result
 
 
-@router.put("/{ci_id}/dictionary-exclusions", response_model=Dict[str, Any])
+@router.put("/{ci_id}/dictionary-exclusions", response_model=dict[str, Any])
 async def update_dictionary_exclusions(
     ci_id: str,
     body: ExclusionUpdateRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Update excluded_metrics and/or extra_metrics for a CI's AppliedDictionary.
@@ -97,16 +98,18 @@ async def update_dictionary_exclusions(
     except ValueError as e:
         err_str = str(e)
         if "No AppliedDictionary found" in err_str:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_str)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_str)  # noqa: B904
         if "Invalid extra_metric_ids" in err_str:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=err_str)
-        raise HTTPException(status_code=status.HTTP_400, detail=err_str)
+            raise HTTPException(  # noqa: B904
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=err_str
+            )
+        raise HTTPException(status_code=status.HTTP_400, detail=err_str)  # noqa: B904
 
 
 @router.delete("/{ci_id}/applied-dictionary")
 async def remove_applied_dictionary(
     ci_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Remove the AppliedDictionary from a CI (un-apply dictionary).

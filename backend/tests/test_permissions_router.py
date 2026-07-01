@@ -19,14 +19,10 @@ _previous_snmp_service = sys.modules.get("services.snmp_service", _SNMP_SERVICE_
 
 if "services.snmp_service" not in sys.modules:
     _snmp_stub = types.ModuleType("services.snmp_service")
-    setattr(_snmp_stub, "snmp_collector_loop", lambda: None)
-    setattr(
-        _snmp_stub,
-        "get_collector_status",
-        lambda: {"last_run": None, "status": "STOPPED", "stats": {}},
-    )
-    setattr(_snmp_stub, "validate_snmp_oid", lambda *args, **kwargs: {"success": False})
-    setattr(_snmp_stub, "run_diagnostic", lambda *args, **kwargs: "diagnostic-ok")
+    _snmp_stub.snmp_collector_loop = lambda: None
+    _snmp_stub.get_collector_status = lambda: {"last_run": None, "status": "STOPPED", "stats": {}}
+    _snmp_stub.validate_snmp_oid = lambda *args, **kwargs: {"success": False}
+    _snmp_stub.run_diagnostic = lambda *args, **kwargs: "diagnostic-ok"
     sys.modules["services.snmp_service"] = _snmp_stub
 
 _mock_neo4j_driver = MagicMock()
@@ -39,9 +35,9 @@ if _previous_snmp_service is _SNMP_SERVICE_SENTINEL:
 else:
     sys.modules["services.snmp_service"] = _previous_snmp_service
 
-from fastapi.testclient import TestClient
-from models.user import User, UserPermission, AIPermission
-from services.auth_service import get_current_active_user
+from fastapi.testclient import TestClient  # noqa: E402
+from models.user import AIPermission, User, UserPermission  # noqa: E402
+from services.auth_service import get_current_active_user  # noqa: E402
 
 client = TestClient(app)
 

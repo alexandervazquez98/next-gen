@@ -1,13 +1,9 @@
 from datetime import datetime
+from typing import Any
 
+import services.event_service as event_service
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
-import services.event_service as event_service
-from services.auth_service import get_current_active_user, check_permission, get_current_ai_agent, AIAgentInfo
-from services.ai_guard_service import check_all_guards, record_operation, set_cooldown
-from services.escalation_notifier import notify_critical_event_escalation
 from models.core import (
     AvailabilityReportResponse,
     AvailabilitySnmpNoResponseResponse,
@@ -15,6 +11,13 @@ from models.core import (
     EventFeedSummary,
 )
 from models.user import AIPermission, User, UserPermission
+from pydantic import BaseModel
+from services.ai_guard_service import check_all_guards, record_operation, set_cooldown
+from services.auth_service import (
+    check_permission,
+    get_current_active_user,
+)
+from services.escalation_notifier import notify_critical_event_escalation
 
 router = APIRouter(
     prefix="/events",
@@ -28,12 +31,12 @@ class EventComment(BaseModel):
 
 
 class AckRequest(BaseModel):
-    comment_message: Optional[str] = None
+    comment_message: str | None = None
 
 
 class CloseRequest(BaseModel):
     forced: bool = False
-    comment_message: Optional[str] = None
+    comment_message: str | None = None
 
 
 def _is_ai_agent(current_user: User) -> bool:
@@ -44,8 +47,8 @@ def _has_ai_permission(permission: AIPermission, current_user: User) -> bool:
     return permission.value in current_user.permissions
 
 
-@router.get("", response_model=List[EventFeedSummary])
-async def get_events(status: Optional[str] = None):
+@router.get("", response_model=list[EventFeedSummary])
+async def get_events(status: str | None = None):
     """
     Fetch system events filtered by status.
     Args:
@@ -56,8 +59,8 @@ async def get_events(status: Optional[str] = None):
 
 @router.get("/availability-report", response_model=AvailabilityReportResponse)
 async def get_availability_report(
-    start: Optional[datetime] = Query(None, description="Inclusive report window start"),
-    end: Optional[datetime] = Query(None, description="Inclusive report window end"),
+    start: datetime | None = Query(None, description="Inclusive report window start"),  # noqa: B008
+    end: datetime | None = Query(None, description="Inclusive report window end"),  # noqa: B008
 ):
     """Fetch additive availability MTTR/MTBF metrics for the event dashboard."""
     return event_service.get_availability_report(start=start, end=end)
@@ -70,7 +73,7 @@ async def get_availability_report(
 async def get_availability_snmp_no_response(
     limit: int = Query(25, ge=1, le=100, description="Maximum affected CIs to return"),
     offset: int = Query(0, ge=0, description="Affected CI pagination offset"),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """Fetch affected CIs with active SNMP no-response collection failures."""
     if not check_permission(UserPermission.EVENT_VIEW, current_user):
@@ -83,7 +86,7 @@ async def get_availability_snmp_no_response(
 
 @router.get("/{event_id}", response_model=EventDetailResponse)
 async def get_event_detail(
-    event_id: str, current_user: User = Depends(get_current_active_user)
+    event_id: str, current_user: User = Depends(get_current_active_user)  # noqa: B008
 ):
     """Fetch modal-specific event detail without bloating the summary feed."""
     if not check_permission(UserPermission.EVENT_VIEW, current_user):
@@ -91,9 +94,9 @@ async def get_event_detail(
     return event_service.get_event_detail(event_id)
 
 
-@router.get("/related/{ci_id}", response_model=List[Dict[str, Any]])
+@router.get("/related/{ci_id}", response_model=list[dict[str, Any]])
 async def get_related_events(
-    ci_id: str, current_user: User = Depends(get_current_active_user)
+    ci_id: str, current_user: User = Depends(get_current_active_user)  # noqa: B008
 ):
     """
     Fetch all ACTIVE (OPEN, ACK) events for a specific CI.
@@ -106,12 +109,13 @@ async def get_related_events(
 @router.post("/{event_id}/ack")
 async def ack_event(
     event_id: str,
-    ack_req: AckRequest = AckRequest(),
-    current_user: User = Depends(get_current_active_user),
+    ack_req: AckRequest | None = None,
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Acknowledge an Event.
     """
+    ack_req = ack_req or AckRequest()
     is_ai_agent = _is_ai_agent(current_user)
     if is_ai_agent:
         if not _has_ai_permission(AIPermission.AI_EVENT_ACK, current_user):
@@ -120,9 +124,7 @@ async def ack_event(
                 detail="Not authorized to acknowledge events",
             )
     elif not check_permission(UserPermission.EVENT_ACK, current_user):
-        raise HTTPException(
-            status_code=403, detail="Not authorized to acknowledge events"
-        )
+        raise HTTPException(status_code=403, detail="Not authorized to acknowledge events")
 
     # AI agent guard check
     ai_info = None
@@ -157,14 +159,15 @@ async def ack_event(
 @router.post("/{event_id}/close")
 async def close_event(
     event_id: str,
-    close_req: CloseRequest = CloseRequest(),
-    current_user: User = Depends(get_current_active_user),
+    close_req: CloseRequest | None = None,
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Close an Event manually.
     If forced=True, the caller must also hold EVENT_FORCED_CLOSE permission.
     AI agents cannot force-close events.
     """
+    close_req = close_req or CloseRequest()
     is_ai_agent = _is_ai_agent(current_user)
     if is_ai_agent:
         if not _has_ai_permission(AIPermission.AI_EVENT_CLOSE, current_user):
@@ -176,9 +179,7 @@ async def close_event(
             status_code=403,
             detail="AI agents cannot force-close events",
         )
-    if close_req.forced and not check_permission(
-        UserPermission.EVENT_FORCED_CLOSE, current_user
-    ):
+    if close_req.forced and not check_permission(UserPermission.EVENT_FORCED_CLOSE, current_user):
         raise HTTPException(
             status_code=403,
             detail="Not authorized to force-close events (EVENT_FORCED_CLOSE required)",
@@ -249,7 +250,7 @@ async def close_event(
 async def add_event_comment(
     event_id: str,
     comment: EventComment,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     Append a user comment to the Event history.
@@ -261,16 +262,14 @@ async def add_event_comment(
         authorized = check_permission(UserPermission.EVENT_ACK, current_user)
 
     if not authorized:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to comment on events"
-        )
-    return event_service.add_event_comment(
-        event_id, current_user.username, comment.message
-    )
+        raise HTTPException(status_code=403, detail="Not authorized to comment on events")
+    return event_service.add_event_comment(event_id, current_user.username, comment.message)
 
 
 @router.post("/prune")
-async def prune_recovered_events(current_user: User = Depends(get_current_active_user)):
+async def prune_recovered_events(
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+):
     """
     Bulk Close all 'RECOVERED' events (sync version).
     """
@@ -281,8 +280,8 @@ async def prune_recovered_events(current_user: User = Depends(get_current_active
 
 async def _sse_event_generator(
     user: str,
-    batch_size: Optional[int] = None,
-    last_event_id: Optional[str] = None,
+    batch_size: int | None = None,
+    last_event_id: str | None = None,
 ):
     """
     Async generator that yields SSE-formatted progress events.
@@ -295,6 +294,7 @@ async def _sse_event_generator(
     Generator releases lock when stream ends (client disconnect or completion).
     """
     import json
+
     try:
         async for progress in event_service.event_batch_pruner(
             user=user,
@@ -307,13 +307,14 @@ async def _sse_event_generator(
         # WARNING #4 fix: explicit cleanup when client disconnects
         # Release distributed lock when SSE stream ends
         from services.event_service import release_prune_lock
+
         release_prune_lock(owner=user)
 
 
 @router.get("/bulk/stream-progress")
 async def stream_prune_progress(
     request: Request,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """
     SSE endpoint that streams batch pruning progress in real-time.
@@ -332,6 +333,7 @@ async def stream_prune_progress(
 
     # Check distributed lock BEFORE starting SSE stream
     from services.event_service import acquire_prune_lock
+
     if not acquire_prune_lock(owner=current_user.username, ttl_seconds=300):
         raise HTTPException(
             status_code=409,
@@ -340,7 +342,7 @@ async def stream_prune_progress(
 
     # WARNING #6 fix: validate batch_size is a positive integer, cap at max 10000
     batch_size_str = request.query_params.get("batch_size")
-    batch_size: Optional[int] = None
+    batch_size: int | None = None
     if batch_size_str:
         try:
             batch_size = int(batch_size_str)
@@ -355,7 +357,7 @@ async def stream_prune_progress(
                     detail="batch_size must not exceed 10000",
                 )
         except ValueError:
-            raise HTTPException(
+            raise HTTPException(  # noqa: B904
                 status_code=400,
                 detail="batch_size must be a valid integer",
             )
@@ -380,7 +382,7 @@ async def stream_prune_progress(
 
 @router.post("/{event_id}/diagnose")
 async def run_event_diagnostic_endpoint(
-    event_id: str, current_user: User = Depends(get_current_active_user)
+    event_id: str, current_user: User = Depends(get_current_active_user)  # noqa: B008
 ):
     """
     Run an on-demand diagnostic (Ping/SNMP) for the CI related to this event.

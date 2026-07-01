@@ -2,10 +2,10 @@
 Unit tests for dictionary_service.py — CRUD operations for MetricDictionary nodes.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from models.core import MetricDictionary, DictionaryCreate, DictionaryUpdate
+import pytest
+from models.core import DictionaryUpdate, MetricDictionary
 
 
 class TestDictionaryServiceImports:
@@ -162,17 +162,20 @@ class TestDictionaryServiceCRUD:
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary_by_brand_model calls get_dictionary
             mock_neo4j_session.set_response("metricdictionary {brand", [{"id": "existing-dict"}])
-            mock_neo4j_session.set_response("return md.id as id, md.name", [
-                {
-                    "id": "existing-dict",
-                    "name": "Existing Dictionary",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "existing-dict",
+                        "name": "Existing Dictionary",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
             mock_neo4j_session.set_response("has_metric", [])
 
             from services.dictionary_service import create_dictionary
@@ -203,17 +206,20 @@ class TestDictionaryServiceCRUD:
                 [[{"id": "cpu-load"}], [{"id": "mem-used"}]],
             )
             # Final get_dictionary after creation
-            mock_neo4j_session.set_response("return md.id as id, md.name", [
-                {
-                    "id": "new-dict",
-                    "name": "New Dictionary",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "new-dict",
+                        "name": "New Dictionary",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
             mock_neo4j_session.set_response("has_metric", [{"metric_id": "cpu-load"}])
 
             from services.dictionary_service import create_dictionary
@@ -241,31 +247,36 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary existing
-            mock_neo4j_session.set_sequence_response("return md.id as id, md.name", [
+            mock_neo4j_session.set_sequence_response(
+                "return md.id as id, md.name",
                 [
-                    {
-                        "id": "dict-1",
-                        "name": "Old Name",
-                        "brand": "Cisco",
-                        "model": "Catalyst-2960",
-                        "polling_interval": 60,
-                        "created_at": None,
-                        "updated_at": None,
-                    }
+                    [
+                        {
+                            "id": "dict-1",
+                            "name": "Old Name",
+                            "brand": "Cisco",
+                            "model": "Catalyst-2960",
+                            "polling_interval": 60,
+                            "created_at": None,
+                            "updated_at": None,
+                        }
+                    ],
+                    [
+                        {
+                            "id": "dict-1",
+                            "name": "New Name",
+                            "brand": "Cisco",
+                            "model": "Catalyst-2960",
+                            "polling_interval": 90,
+                            "created_at": None,
+                            "updated_at": None,
+                        }
+                    ],
                 ],
-                [
-                    {
-                        "id": "dict-1",
-                        "name": "New Name",
-                        "brand": "Cisco",
-                        "model": "Catalyst-2960",
-                        "polling_interval": 90,
-                        "created_at": None,
-                        "updated_at": None,
-                    }
-                ],
-            ])
-            mock_neo4j_session.set_sequence_response("has_metric", [[], [{"metric_id": "new-metric"}]])
+            )
+            mock_neo4j_session.set_sequence_response(
+                "has_metric", [[], [{"metric_id": "new-metric"}]]
+            )
             # Check brand+model conflict — no conflict
             mock_neo4j_session.set_response("where md.id <>", [])
             # Update SET query
@@ -295,17 +306,20 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary existing
-            mock_neo4j_session.set_response("return md.id as id, md.name", [
-                {
-                    "id": "dict-to-delete",
-                    "name": "To Delete",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "dict-to-delete",
+                        "name": "To Delete",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
             mock_neo4j_session.set_response("has_metric", [])
             # Cascade delete AppliedDictionary
             mock_neo4j_session.set_response("applieddictionary", [])

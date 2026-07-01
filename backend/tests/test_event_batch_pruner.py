@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 _SNMP_SERVICE_SENTINEL = object()
 
 
@@ -27,7 +26,7 @@ def _load_event_service_module():
     sys.modules.pop("services.event_service", None)
     sys.modules.pop("services.snmp_service", None)
     stub = types.ModuleType("services.snmp_service")
-    setattr(stub, "run_diagnostic", lambda ci, metric: "diagnostic-ok")
+    stub.run_diagnostic = lambda ci, metric: "diagnostic-ok"
     sys.modules["services.snmp_service"] = stub
     return importlib.import_module("services.event_service")
 
@@ -46,8 +45,10 @@ def restore_snmp_service_stub():
 # Mock infrastructure — mirrors conftest.py MockNeo4j* classes
 # ---------------------------------------------------------------------------
 
+
 class MockNeo4jRecord:
     """Simulates a Neo4j record dict-like access."""
+
     def __init__(self, data):
         self._data = data if isinstance(data, dict) else {}
 
@@ -184,6 +185,7 @@ def _patch_get_db(mock_driver, event_service):
     to the database module so get_db() returns our custom driver.
     """
     import database
+
     original_driver = database.driver
     database.driver = mock_driver  # driver.session() will return our mock session
     original_get_db = event_service.get_db
@@ -194,6 +196,7 @@ def _patch_get_db(mock_driver, event_service):
 
 def _restore_get_db(original_driver, original_get_db, event_service):
     import database
+
     database.driver = original_driver
     event_service.get_db = original_get_db
 
@@ -221,11 +224,13 @@ class TestEventBatchPrunerChunkCounting:
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             chunks = []
+
             async def consume():
                 async for progress in event_service.event_batch_pruner(
                     user="system", batch_delay_ms=0
                 ):
                     chunks.append(progress)
+
             _run_async(consume())
 
             # Initial (batch=0) + one processing chunk (batch=1)
@@ -255,11 +260,13 @@ class TestEventBatchPrunerChunkCounting:
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             chunks = []
+
             async def consume():
                 async for progress in event_service.event_batch_pruner(
                     user="system", batch_size=500, batch_delay_ms=0
                 ):
                     chunks.append(progress)
+
             _run_async(consume())
 
             # Initial (batch=0) + 3 batches = 4
@@ -283,11 +290,13 @@ class TestEventBatchPrunerChunkCounting:
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             chunks = []
+
             async def consume():
                 async for progress in event_service.event_batch_pruner(
                     user="system", batch_delay_ms=0
                 ):
                     chunks.append(progress)
+
             _run_async(consume())
 
             assert len(chunks) == 1
@@ -318,9 +327,11 @@ class TestEventBatchPrunerIdempotency:
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             progress_list = []
+
             async def consume():
                 async for p in event_service.event_batch_pruner(user="system", batch_delay_ms=0):
                     progress_list.append(p)
+
             _run_async(consume())
 
             # Initial + one batch
@@ -346,6 +357,7 @@ class TestEventBatchPrunerTimeout:
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
+
             async def consume():
                 progress_list = []
                 async for progress in event_service.event_batch_pruner(
@@ -378,17 +390,15 @@ class TestEventBatchPrunerSafetyGuards:
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
+
             async def consume():
-                async for _ in event_service.event_batch_pruner(
-                    user="system", batch_delay_ms=0
-                ):
+                async for _ in event_service.event_batch_pruner(user="system", batch_delay_ms=0):
                     pass
+
             _run_async(consume())
 
             close_queries = [
-                q["query"]
-                for q in session.queries
-                if "RETURN e.id AS closed_id" in q["query"]
+                q["query"] for q in session.queries if "RETURN e.id AS closed_id" in q["query"]
             ]
             assert close_queries, "Expected guarded close query to run"
             close_query = close_queries[0]
@@ -413,20 +423,24 @@ class TestEventBatchPrunerSafetyGuards:
                 [{"event_id": "evt-3", "status": "RECOVERED"}],
             ],
         )
-        session.set_close_results([
-            [{"closed_id": "first-page-close"}],
-            [],
-            [{"closed_id": "evt-3"}],
-        ])
+        session.set_close_results(
+            [
+                [{"closed_id": "first-page-close"}],
+                [],
+                [{"closed_id": "evt-3"}],
+            ]
+        )
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             progress_list = []
+
             async def consume():
                 async for p in event_service.event_batch_pruner(
                     user="system", batch_size=2, batch_delay_ms=0
                 ):
                     progress_list.append(p)
+
             _run_async(consume())
 
             assert [p["batch"] for p in progress_list] == [0, 1, 2]
@@ -459,11 +473,11 @@ class TestEventBatchPrunerProgressShape:
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
             progress_list = []
+
             async def consume():
-                async for p in event_service.event_batch_pruner(
-                    user="system", batch_delay_ms=0
-                ):
+                async for p in event_service.event_batch_pruner(user="system", batch_delay_ms=0):
                     progress_list.append(p)
+
             _run_async(consume())
 
             assert len(progress_list) == 2  # initial + one chunk

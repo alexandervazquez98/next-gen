@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import importlib
-import subprocess
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -134,9 +133,9 @@ class TestBackupConfigOperations:
 
         saved_config = {}
         # Patch both the read (to avoid DB) and write (to capture)
-        with patch.object(backup_service, "_get_config_from_db", return_value=None):
+        with patch.object(backup_service, "_get_config_from_db", return_value=None):  # noqa: SIM117
             with patch.object(backup_service, "_save_config_to_db", saved_config.update):
-                result = backup_service.update_backup_config(
+                backup_service.update_backup_config(
                     schedule_type="manual",
                     scheduled_time="04:00",
                     enabled=True,
@@ -164,7 +163,7 @@ class TestBackupConfigOperations:
             "updated_by": "admin",
         }
 
-        with patch.object(backup_service, "_get_config_from_db", return_value=None):
+        with patch.object(backup_service, "_get_config_from_db", return_value=None):  # noqa: SIM117
             with patch.object(backup_service, "_save_config_to_db", return_value=expected_result):
                 result = backup_service.update_backup_config(
                     schedule_type="daily",
@@ -188,12 +187,16 @@ class TestManualBackup:
         """trigger_manual_backup returns a success dict on success."""
         backup_service = _load_backup_service_module()
 
-        with patch.object(backup_service, "_get_config_from_db", return_value=DEFAULT_CONFIG):
-            with patch.object(backup_service, "_run_pg_dump", return_value="/backups/manual_20260502_120000.dump"):
-                with patch.object(backup_service, "_record_backup_history", return_value=None):
-                    with patch.object(backup_service, "_cleanup_old_backups", return_value=0):
-                        with patch.object(backup_service, "_emit_backup_event", return_value=None):
-                            result = backup_service.trigger_manual_backup(triggered_by="admin")
+        with (
+            patch.object(backup_service, "_get_config_from_db", return_value=DEFAULT_CONFIG),
+            patch.object(
+                backup_service, "_run_pg_dump", return_value="/backups/manual_20260502_120000.dump"
+            ),
+            patch.object(backup_service, "_record_backup_history", return_value=None),
+            patch.object(backup_service, "_cleanup_old_backups", return_value=0),
+            patch.object(backup_service, "_emit_backup_event", return_value=None),
+        ):
+            result = backup_service.trigger_manual_backup(triggered_by="admin")
 
         assert result["status"] == "SUCCESS"
         assert "filename" in result
@@ -204,15 +207,17 @@ class TestManualBackup:
         """trigger_manual_backup returns FAILURE status when pg_dump fails."""
         backup_service = _load_backup_service_module()
 
-        with patch.object(backup_service, "_get_config_from_db", return_value=DEFAULT_CONFIG):
-            with patch.object(
+        with (
+            patch.object(backup_service, "_get_config_from_db", return_value=DEFAULT_CONFIG),
+            patch.object(
                 backup_service,
                 "_run_pg_dump",
                 side_effect=RuntimeError("pg_dump failed: connection refused"),
-            ):
-                with patch.object(backup_service, "_record_backup_history", return_value=None):
-                    with patch.object(backup_service, "_emit_backup_event", return_value=None) as mock_event:
-                        result = backup_service.trigger_manual_backup(triggered_by="admin")
+            ),
+            patch.object(backup_service, "_record_backup_history", return_value=None),
+            patch.object(backup_service, "_emit_backup_event", return_value=None) as mock_event,
+        ):
+            result = backup_service.trigger_manual_backup(triggered_by="admin")
 
         assert result["status"] == "FAILURE"
         assert "pg_dump failed" in result["error_message"]
@@ -226,7 +231,7 @@ class TestBackupHistory:
     def test_get_backup_history_returns_list(self, mock_neo4j_session):
         """get_backup_history returns a list of history records."""
         backup_service = _load_backup_service_module()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         stored_records = [
             {
@@ -268,6 +273,7 @@ class TestBackupHistory:
         backup_service = _load_backup_service_module()
 
         captured_limit = {}
+
         def fake_get_history(limit=None):
             captured_limit["value"] = limit
             return []
@@ -284,7 +290,7 @@ class TestBackupMetrics:
     def test_get_backup_metrics_returns_stats(self, mock_neo4j_session):
         """get_backup_metrics aggregates statistics from history."""
         backup_service = _load_backup_service_module()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         stored_records = [
             {
@@ -320,14 +326,13 @@ class TestPgDump:
         """_run_pg_dump returns a path string when pg_dump succeeds."""
         backup_service = _load_backup_service_module()
 
-        with patch("os.makedirs") as mock_makedirs:
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                with patch("os.path.getsize", return_value=2048000):
-                    result = backup_service._run_pg_dump(
-                        output_path="/backups",
-                        db_name="nexgen_auth",
-                    )
+        with patch("os.makedirs") as mock_makedirs, patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("os.path.getsize", return_value=2048000):
+                result = backup_service._run_pg_dump(
+                    output_path="/backups",
+                    db_name="nexgen_auth",
+                )
 
         mock_makedirs.assert_called_once_with("/backups", exist_ok=True)
 
@@ -342,53 +347,57 @@ class TestPgDump:
         assert "-Fc" in call_args
         assert "-f" in call_args
         assert any(str(arg).replace("\\", "/").startswith("/backups/backup_") for arg in call_args)
-        assert ["-d", "nexgen_auth"] == call_args[-2:]
+        assert call_args[-2:] == ["-d", "nexgen_auth"]
 
     def test_run_pg_dump_uses_postgres_env_vars(self):
         """_run_pg_dump passes Compose-compatible env vars as pg_dump args."""
         backup_service = _load_backup_service_module()
 
-        with patch.dict(
-            "os.environ",
-            {
-                "POSTGRES_USER": "custom_user",
-                "POSTGRES_PASSWORD": "custom_password",
-                "POSTGRES_HOST": "custom_postgres",
-                "POSTGRES_PORT": "15432",
-                "POSTGRES_DB": "custom_db",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_USER": "custom_user",
+                    "POSTGRES_PASSWORD": "custom_password",
+                    "POSTGRES_HOST": "custom_postgres",
+                    "POSTGRES_PORT": "15432",
+                    "POSTGRES_DB": "custom_db",
+                },
+            ),
+            patch("os.makedirs"),
+            patch("subprocess.run") as mock_run,
         ):
-            with patch("os.makedirs"):
-                with patch("subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0)
-                    backup_service._run_pg_dump(output_path="/backups")
+            mock_run.return_value = MagicMock(returncode=0)
+            backup_service._run_pg_dump(output_path="/backups")
 
         call_args = mock_run.call_args[0][0]
         assert "postgresql://" not in " ".join(str(a) for a in call_args)
-        assert ["-h", "custom_postgres"] == call_args[4:6]
-        assert ["-p", "15432"] == call_args[6:8]
-        assert ["-U", "custom_user"] == call_args[8:10]
-        assert ["-d", "custom_db"] == call_args[10:12]
+        assert call_args[4:6] == ["-h", "custom_postgres"]
+        assert call_args[6:8] == ["-p", "15432"]
+        assert call_args[8:10] == ["-U", "custom_user"]
+        assert call_args[10:12] == ["-d", "custom_db"]
 
     def test_run_pg_dump_keeps_special_character_password_out_of_args(self):
         """_run_pg_dump sends passwords through PGPASSWORD, not argv."""
         backup_service = _load_backup_service_module()
         password = "p@ss:word/with?special&chars='\"$"
 
-        with patch.dict(
-            "os.environ",
-            {
-                "POSTGRES_USER": "custom_user",
-                "POSTGRES_PASSWORD": password,
-                "POSTGRES_HOST": "custom_postgres",
-                "POSTGRES_PORT": "15432",
-                "POSTGRES_DB": "custom_db",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_USER": "custom_user",
+                    "POSTGRES_PASSWORD": password,
+                    "POSTGRES_HOST": "custom_postgres",
+                    "POSTGRES_PORT": "15432",
+                    "POSTGRES_DB": "custom_db",
+                },
+            ),
+            patch("os.makedirs"),
+            patch("subprocess.run") as mock_run,
         ):
-            with patch("os.makedirs"):
-                with patch("subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0)
-                    backup_service._run_pg_dump(output_path="/backups")
+            mock_run.return_value = MagicMock(returncode=0)
+            backup_service._run_pg_dump(output_path="/backups")
 
         call_args = mock_run.call_args[0][0]
         call_kwargs = mock_run.call_args.kwargs
@@ -399,11 +408,10 @@ class TestPgDump:
         """_run_pg_dump raises RuntimeError when pg_dump fails."""
         backup_service = _load_backup_service_module()
 
-        with patch("os.makedirs"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=1, stderr=b"connection refused")
-                with pytest.raises(RuntimeError, match="pg_dump failed"):
-                    backup_service._run_pg_dump(output_path="/backups", db_name="nexgen_auth")
+        with patch("os.makedirs"), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stderr=b"connection refused")
+            with pytest.raises(RuntimeError, match="pg_dump failed"):
+                backup_service._run_pg_dump(output_path="/backups", db_name="nexgen_auth")
 
 
 class TestCleanupOldBackups:
@@ -418,15 +426,18 @@ class TestCleanupOldBackups:
         def fake_remove(path):
             deleted_files.append(path)
 
-        with patch("os.path.exists", return_value=True):
+        with patch("os.path.exists", return_value=True):  # noqa: SIM117
             with patch("os.listdir") as mock_listdir:
                 with patch("os.path.getmtime") as mock_getmtime:
                     with patch("os.remove", fake_remove):
                         # Simulate two files: one old (deleted), one recent (kept)
                         import time
+
                         now = time.time()
                         mock_listdir.return_value = ["old.dump", "recent.dump"]
-                        mock_getmtime.side_effect = lambda p: now - (8 * 86400) if "old" in p else now - (1 * 86400)
+                        mock_getmtime.side_effect = lambda p: (
+                            now - (8 * 86400) if "old" in p else now - (1 * 86400)
+                        )
 
                         removed_count = backup_service._cleanup_old_backups(
                             backup_dir="/backups",

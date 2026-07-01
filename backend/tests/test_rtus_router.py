@@ -18,10 +18,11 @@ Strategy:
 - Mock RTUService for service-layer isolation
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
 from uuid import uuid4
+
+import pytest
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
@@ -29,10 +30,9 @@ from uuid import uuid4
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
-    from database import get_db
 
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
+from models.user import User, UserPermission  # noqa: E402
+from services.auth_service import get_current_active_user  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # TestClient (real app)
@@ -474,9 +474,7 @@ class TestSensorsRouter:
                 f"/api/v1/rtus/{rtu_id}/sensors/{sensor_id}",
                 json={"name": "Sensor Updated"},
             )
-            delete_response = client.delete(
-                f"/api/v1/rtus/{rtu_id}/sensors/{sensor_id}"
-            )
+            delete_response = client.delete(f"/api/v1/rtus/{rtu_id}/sensors/{sensor_id}")
 
             assert create_response.status_code == 403
             assert update_response.status_code == 403
