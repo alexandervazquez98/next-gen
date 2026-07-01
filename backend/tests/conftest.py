@@ -15,12 +15,13 @@ Also provides shared pytest fixtures and configuration for NEX-GEN backend tests
 - Helpers for creating test users/tokens without hitting the DB
 """
 
-import sys
 import os
-import pytest
-from unittest.mock import MagicMock, patch
+import sys
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Set test JWT secret BEFORE importing auth_service modules
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-for-unit-tests"
@@ -169,7 +170,7 @@ def valid_test_token(create_test_token: callable) -> str:
 class MockNeo4jResult:
     """Helper to simulate Neo4j query results in tests."""
 
-    def __init__(self, records: List[Dict[str, Any]]):
+    def __init__(self, records: list[dict[str, Any]]):
         self._records = records
         self._index = 0
 
@@ -194,7 +195,7 @@ class MockNeo4jResult:
 class MockNeo4jRecord:
     """Simulates a Neo4j record dict-like access."""
 
-    def __init__(self, data: Dict[str, Any]):
+    def __init__(self, data: dict[str, Any]):
         self._data = data
 
     def __getitem__(self, key):
@@ -211,15 +212,22 @@ class MockNeo4jSession:
     """Simulates a Neo4j session with controllable query responses."""
 
     def __init__(self):
-        self.queries: List[Dict[str, Any]] = []
-        self._response_map: Dict[str, List[Dict[str, Any]]] = {}
-        self._default_response: List[Dict[str, Any]] = []
+        self.queries: list[dict[str, Any]] = []
+        self._response_map: dict[str, list[dict[str, Any]]] = {}
+        self._response_sequences: dict[str, list[list[dict[str, Any]]]] = {}
+        self._default_response: list[dict[str, Any]] = []
 
-    def set_response(self, query_contains: str, records: List[Dict[str, Any]]):
+    def set_response(self, query_contains: str, records: list[dict[str, Any]]):
         """Set a canned response for queries containing the given substring."""
         self._response_map[query_contains.lower()] = records
 
-    def set_default_response(self, records: List[Dict[str, Any]]):
+    def set_sequence_response(
+        self, query_contains: str, record_batches: list[list[dict[str, Any]]]
+    ):
+        """Set ordered canned responses for repeated queries containing the substring."""
+        self._response_sequences[query_contains.lower()] = list(record_batches)
+
+    def set_default_response(self, records: list[dict[str, Any]]):
         """Set a fallback response for any unmatched query."""
         self._default_response = records
 
@@ -227,6 +235,11 @@ class MockNeo4jSession:
         """Capture the query and return the matching canned response."""
         self.queries.append({"query": query, "params": params})
         query_lower = query.lower()
+        for key, batches in self._response_sequences.items():
+            if key in query_lower:
+                if batches:
+                    return MockNeo4jResult(batches.pop(0))
+                return MockNeo4jResult([])
         for key, records in self._response_map.items():
             if key in query_lower:
                 return MockNeo4jResult(records)
@@ -305,7 +318,7 @@ def mock_neo4j_driver():
     driver = MockNeo4jDriver()
 
     # Patch at the database module level (where driver global lives)
-    with patch("database.driver", driver):
+    with patch("database.driver", driver):  # noqa: SIM117
         with patch("database.verify_connection", return_value=None):
             yield driver
 

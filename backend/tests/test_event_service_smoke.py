@@ -2,21 +2,33 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import importlib
 import sys
 import types
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+
+_SNMP_SERVICE_SENTINEL = object()
 
 
 def _load_event_service_module():
     sys.modules.pop("services.event_service", None)
     stub = types.ModuleType("services.snmp_service")
-    setattr(stub, "run_diagnostic", lambda ci, metric: "diagnostic-ok")
+    stub.run_diagnostic = lambda ci, metric: "diagnostic-ok"
     sys.modules["services.snmp_service"] = stub
     return importlib.import_module("services.event_service")
+
+
+@pytest.fixture(autouse=True)
+def restore_snmp_service_stub():
+    previous = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
+    yield
+    if previous is _SNMP_SERVICE_SENTINEL:
+        sys.modules.pop("services.snmp_service", None)
+    else:
+        sys.modules["services.snmp_service"] = previous
 
 
 class TestEventServiceImports:
@@ -71,7 +83,9 @@ class TestEventServiceSmoke:
         assert "$status = 'ACTIVE' AND e.status IN ['OPEN', 'ACK']" in query
         assert "$status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
         assert "$status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status" in query
-        assert query.index("WHERE (\n                $status IS NULL") < query.index("OPTIONAL MATCH")
+        assert query.index("WHERE (\n                $status IS NULL") < query.index(
+            "OPTIONAL MATCH"
+        )
 
     def test_get_events_console_filter_includes_recovered(self, mock_neo4j_session):
         """CONSOLE feed should keep recovered events visible until close/prune logic runs."""
@@ -95,8 +109,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 5, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -107,8 +121,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 },
@@ -119,8 +133,8 @@ class TestEventServiceSmoke:
                         "status": "CLOSED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 2, 20, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 2, 20, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 },
@@ -131,7 +145,7 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=UTC),
                         "recovered_at": None,
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
@@ -148,7 +162,7 @@ class TestEventServiceSmoke:
                         "status": "OPEN",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 4, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 }
@@ -172,12 +186,10 @@ class TestEventServiceSmoke:
         assert row["active_downtime_seconds"] == 3600
         assert row["availability_percentage"] == 70.0
 
-    def test_get_availability_report_includes_snmp_coverage_summary(
-        self, mock_neo4j_session
-    ):
+    def test_get_availability_report_includes_snmp_coverage_summary(self, mock_neo4j_session):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "return count(ci) as total_ci_with_snmp",
             [
@@ -206,10 +218,8 @@ class TestEventServiceSmoke:
     def test_get_availability_snmp_no_response_drilldown_returns_affected_cis(
         self, mock_neo4j_session
     ):
-        get_drilldown = (
-            _load_event_service_module().get_availability_snmp_no_response_drilldown
-        )
-        now = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+        get_drilldown = _load_event_service_module().get_availability_snmp_no_response_drilldown
+        now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "return count(distinct ci) as total_ci_with_no_response",
             [
@@ -293,9 +303,7 @@ class TestEventServiceSmoke:
     def test_get_availability_snmp_no_response_drilldown_bounds_pagination(
         self, mock_neo4j_session
     ):
-        get_drilldown = (
-            _load_event_service_module().get_availability_snmp_no_response_drilldown
-        )
+        get_drilldown = _load_event_service_module().get_availability_snmp_no_response_drilldown
 
         report = get_drilldown(limit=500, offset=-4)
 
@@ -307,8 +315,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 5, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -319,8 +327,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 },
@@ -336,7 +344,7 @@ class TestEventServiceSmoke:
                         "status": "ACK",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 },
@@ -355,8 +363,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -367,8 +375,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
                     },
                     "ci": {
                         "id": "ci-1",
@@ -394,7 +402,7 @@ class TestEventServiceSmoke:
                         "snmp_community": "public",
                         "credentials": {"username": "admin", "password": "secret"},
                         "api_token": "token-value",
-                        "installed_at": datetime(2025, 12, 1, 10, 0, tzinfo=timezone.utc),
+                        "installed_at": datetime(2025, 12, 1, 10, 0, tzinfo=UTC),
                         "location": object(),
                     },
                     "category": "Routers",
@@ -444,8 +452,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
 
         get_availability_report(start=start, end=end, now=end)
 
@@ -466,12 +474,10 @@ class TestEventServiceSmoke:
         assert "RETURN e, ci, category" in recovered_query
         assert "RETURN e, ci, category" in active_query
 
-    def test_get_availability_report_queries_scope_to_availability_events(
-        self, mock_neo4j_session
-    ):
+    def test_get_availability_report_queries_scope_to_availability_events(self, mock_neo4j_session):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
 
         get_availability_report(start=start, end=end, now=end)
 
@@ -487,9 +493,7 @@ class TestEventServiceSmoke:
             and "NOT e.status IN ['OPEN', 'ACK']" not in query["query"]
         )["query"]
         snmp_query = next(
-            query
-            for query in mock_neo4j_session.queries
-            if "total_ci_with_snmp" in query["query"]
+            query for query in mock_neo4j_session.queries if "total_ci_with_snmp" in query["query"]
         )["query"]
 
         assert "e.event_type = 'AVAILABILITY'" in recovered_query
@@ -509,8 +513,8 @@ class TestEventServiceSmoke:
     ):
         """Only availability incidents should drive MTTR/MTBF/availability rows."""
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 4, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -521,8 +525,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "OK"},
                 },
@@ -532,8 +536,8 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "RECOVERED",
                         "event_type": "THRESHOLD_BREACH",
-                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "DEGRADED"},
                 },
@@ -543,8 +547,8 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-2",
                         "status": "CLOSED",
                         "event_type": "COLLECTION_FAILURE",
-                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 1, 15, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 1, 15, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-2", "name": "Switch-01", "status": "OK"},
                 },
@@ -556,8 +560,8 @@ class TestEventServiceSmoke:
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
                         "correlation_type": "PROPAGATED",
-                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 1, 30, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-3", "name": "Propagated Switch", "status": "OK"},
                 },
@@ -573,7 +577,7 @@ class TestEventServiceSmoke:
                         "status": "ACK",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 3, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "DOWN"},
                 },
@@ -583,7 +587,7 @@ class TestEventServiceSmoke:
                         "ci_id": "ci-1",
                         "status": "OPEN",
                         "event_type": "COLLECTION_FAILURE",
-                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "UNKNOWN"},
                 },
@@ -595,7 +599,7 @@ class TestEventServiceSmoke:
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
                         "correlation_type": "propagated",
-                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-4", "name": "Impacted Radio", "status": "DOWN"},
                 },
@@ -618,8 +622,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -631,8 +635,8 @@ class TestEventServiceSmoke:
                         "event_type": "AVAILABILITY",
                         "availability_source": "PING",
                         "metric_id": "PING-CHECK",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01", "status": "OK"},
                 },
@@ -644,8 +648,8 @@ class TestEventServiceSmoke:
                         "event_type": "AVAILABILITY",
                         "source_protocol": "ICMP",
                         "metric_id": "PING-CHECK",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-2", "name": "Legacy Ping", "status": "OK"},
                 },
@@ -656,8 +660,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "metric_id": "mariadb-GS",
-                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-3", "name": "MariaDB", "status": "OK"},
                 },
@@ -674,8 +678,8 @@ class TestEventServiceSmoke:
     ):
         """CI state at event time should not change event-status availability math."""
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 6, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 6, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "not e.status in ['open', 'ack']",
             [
@@ -686,8 +690,8 @@ class TestEventServiceSmoke:
                         "status": "RECOVERED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 1, 20, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 1, 20, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-online", "name": "Router Online", "status": "OK"},
                 },
@@ -698,8 +702,8 @@ class TestEventServiceSmoke:
                         "status": "CLOSED",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
-                        "recovered_at": datetime(2026, 1, 1, 2, 45, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
+                        "recovered_at": datetime(2026, 1, 1, 2, 45, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-maint", "name": "Router Maintenance", "status": "MAINTENANCE"},
                 },
@@ -715,7 +719,7 @@ class TestEventServiceSmoke:
                         "status": "OPEN",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 1, 1, 5, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-down", "name": "Router Down", "status": "DOWN"},
                 }
@@ -738,12 +742,10 @@ class TestEventServiceSmoke:
         assert rows["ci-down"]["active_downtime_seconds"] == 3600
         assert rows["ci-down"]["availability_percentage"] == 83.3333
 
-    def test_get_availability_report_queries_filter_window_in_cypher(
-        self, mock_neo4j_session
-    ):
+    def test_get_availability_report_queries_filter_window_in_cypher(self, mock_neo4j_session):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
 
         get_availability_report(start=start, end=end, now=end)
 
@@ -775,8 +777,8 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
-        start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
         mock_neo4j_session.set_response("not e.status in ['open', 'ack']", [])
         mock_neo4j_session.set_response(
             "e.status in ['open', 'ack']",
@@ -788,7 +790,7 @@ class TestEventServiceSmoke:
                         "status": "OPEN",
                         "event_type": "AVAILABILITY",
                         "availability_source": "ICMP",
-                        "created_at": datetime(2025, 12, 31, 23, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2025, 12, 31, 23, 0, tzinfo=UTC),
                     },
                     "ci": {"id": "ci-1", "name": "Router-01"},
                 }
@@ -807,7 +809,7 @@ class TestEventServiceSmoke:
 
     def test_get_availability_report_defaults_to_last_30_days(self, mock_neo4j_session):
         get_availability_report = _load_event_service_module().get_availability_report
-        now = datetime(2026, 2, 1, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 2, 1, 12, 0, tzinfo=UTC)
 
         report = get_availability_report(now=now)
 
@@ -815,11 +817,9 @@ class TestEventServiceSmoke:
         assert report["window_start"] == (now - timedelta(days=30)).isoformat()
         assert report["window_days"] == 30
 
-    def test_get_events_returns_legacy_event_without_metric_relationship(
-        self, mock_neo4j_session
-    ):
+    def test_get_events_returns_legacy_event_without_metric_relationship(self, mock_neo4j_session):
         get_events = _load_event_service_module().get_events
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_neo4j_session.set_response(
             "return e, ci, m",
             [
@@ -871,7 +871,7 @@ class TestEventServiceSmoke:
         self, mock_neo4j_session
     ):
         get_events = _load_event_service_module().get_events
-        last_seen = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        last_seen = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         mock_neo4j_session.set_response(
             "return e, ci, m",
             [
@@ -926,11 +926,9 @@ class TestEventServiceSmoke:
         assert "metric_name" not in result[0]
         assert "metric_protocol" not in result[0]
 
-    def test_get_events_strips_audit_heavy_fields_from_public_summary(
-        self, mock_neo4j_session
-    ):
+    def test_get_events_strips_audit_heavy_fields_from_public_summary(self, mock_neo4j_session):
         get_events = _load_event_service_module().get_events
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_neo4j_session.set_response(
             "return e, ci, m",
             [
@@ -965,9 +963,7 @@ class TestEventServiceSmoke:
     def test_ack_event_sets_ack_status(self, mock_neo4j_session):
         """ack_event should set status to ACK."""
         ack_event = _load_event_service_module().ack_event
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         ack_event("evt-001", "testuser")
 
@@ -984,9 +980,7 @@ class TestEventServiceSmoke:
             "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
         )
         # 2. Update query
-        mock_neo4j_session.set_response(
-            "set e.status = 'closed'", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("set e.status = 'closed'", [{"event_id": "evt-001"}])
 
         close_event(
             "evt-001",
@@ -1002,9 +996,7 @@ class TestEventServiceSmoke:
     def test_add_event_comment_appends_comment(self, mock_neo4j_session):
         """add_event_comment should append to comments array."""
         add_event_comment = _load_event_service_module().add_event_comment
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         add_event_comment("evt-001", "testuser", "Investigating...")
 
@@ -1027,7 +1019,7 @@ class TestEventServiceSmoke:
 
     def test_build_event_detail_prefers_snapshot_values_and_sla_math(self):
         event_service = _load_event_service_module()
-        now = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
         created_at = now - timedelta(minutes=35)
 
         detail = event_service.build_event_detail_response(
@@ -1060,7 +1052,6 @@ class TestEventServiceSmoke:
                     "ip": "10.0.0.1",
                     "location_name": "Sede Central",
                 },
-
                 "m": {"id": "cpu-load", "protocol": "SNMP"},
                 "bs": {
                     "id": "svc-live",
@@ -1082,10 +1073,7 @@ class TestEventServiceSmoke:
 
         assert detail["event"]["ci_ref"]["id"] == "ci-001"
         assert detail["business_context"]["source"] == "snapshot"
-        assert (
-            detail["business_context"]["business_service"]["name"]
-            == "Corp-WAN Snapshot"
-        )
+        assert detail["business_context"]["business_service"]["name"] == "Corp-WAN Snapshot"
         assert "tier" not in detail["business_context"]["business_service"]
         assert detail["business_context"]["service_catalog"]["id"] == "sla-snapshot"
         assert detail["business_context"]["service_catalog"]["service_tier"] == "Gold"
@@ -1097,7 +1085,7 @@ class TestEventServiceSmoke:
         self,
     ):
         event_service = _load_event_service_module()
-        now = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
         created_at = now - timedelta(minutes=5)
 
         detail = event_service.build_event_detail_response(
@@ -1120,7 +1108,6 @@ class TestEventServiceSmoke:
                     "ip": "10.0.0.1",
                     "location_name": "Sede Central",
                 },
-
                 "m": {"id": "ping", "protocol": "ICMP"},
                 "bs": {
                     "id": "svc-live",
@@ -1144,9 +1131,7 @@ class TestEventServiceSmoke:
         assert detail["business_context"]["source"] == "resolved"
         assert detail["business_context"]["business_service"]["name"] == "Payments"
         assert detail["business_context"]["business_service"]["tier"] == "T2"
-        assert (
-            detail["business_context"]["service_catalog"]["service_tier"] == "Platinum"
-        )
+        assert detail["business_context"]["service_catalog"]["service_tier"] == "Platinum"
         assert detail["business_context"]["service_catalog"]["sla_minutes"] == 30
         assert detail["business_context"]["sla_remaining_minutes"] == 25
         assert detail["itsm_context"]["assignment_state"] == "assigned"
@@ -1154,7 +1139,7 @@ class TestEventServiceSmoke:
 
     def test_build_event_detail_marks_mixed_source_for_partial_snapshot(self):
         event_service = _load_event_service_module()
-        now = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
         created_at = now - timedelta(minutes=10)
 
         detail = event_service.build_event_detail_response(
@@ -1177,7 +1162,6 @@ class TestEventServiceSmoke:
                     "ip": "10.0.0.1",
                     "location_name": "Sede Central",
                 },
-
                 "m": {"id": "latency", "protocol": "HTTP"},
                 "bs": {
                     "id": "svc-live",
@@ -1246,8 +1230,8 @@ class TestEventServiceSmoke:
                     "status": "OPEN",
                     "severity": "WARNING",
                     "message": "Ticket sync degraded",
-                    "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
-                    "last_seen": datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
+                    "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+                    "last_seen": datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
                     "ack": False,
                     "external_ticket_status": "Open",
                 },
@@ -1282,27 +1266,19 @@ class TestEventServiceSmoke:
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Event not found: missing-event"
 
-    def test_close_event_rejects_normal_close_without_root_cause_and_note(
-        self, mock_neo4j_session
-    ):
+    def test_close_event_rejects_normal_close_without_root_cause_and_note(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         with pytest.raises(HTTPException) as exc_info:
-            close_event(
-                "evt-001", "testuser", forced=False, comment_message="Nota: corto"
-            )
+            close_event("evt-001", "testuser", forced=False, comment_message="Nota: corto")
 
         assert exc_info.value.status_code == 400
         assert "Causa raíz" in exc_info.value.detail
 
     def test_close_event_rejects_normal_close_with_short_note(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         with pytest.raises(HTTPException) as exc_info:
             close_event(
@@ -1317,9 +1293,7 @@ class TestEventServiceSmoke:
 
     def test_close_event_rejects_forced_close_without_reason(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         with pytest.raises(HTTPException) as exc_info:
             close_event("evt-001", "testuser", forced=True, comment_message="   ")
@@ -1327,9 +1301,7 @@ class TestEventServiceSmoke:
         assert exc_info.value.status_code == 400
         assert "Forced close requires a reason" in exc_info.value.detail
 
-    def test_add_event_comment_raises_404_when_event_is_missing(
-        self, mock_neo4j_session
-    ):
+    def test_add_event_comment_raises_404_when_event_is_missing(self, mock_neo4j_session):
         add_event_comment = _load_event_service_module().add_event_comment
 
         with pytest.raises(HTTPException) as exc_info:
@@ -1340,9 +1312,7 @@ class TestEventServiceSmoke:
 
     def test_ack_event_writes_ownership_comment_atomically(self, mock_neo4j_session):
         ack_event = _load_event_service_module().ack_event
-        mock_neo4j_session.set_response(
-            "return e.id as event_id", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("return e.id as event_id", [{"event_id": "evt-001"}])
 
         ack_event(
             "evt-001",
@@ -1361,9 +1331,7 @@ class TestEventServiceSmoke:
             "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
         )
         # 2. Update
-        mock_neo4j_session.set_response(
-            "set e.status = 'closed'", [{"event_id": "evt-001"}]
-        )
+        mock_neo4j_session.set_response("set e.status = 'closed'", [{"event_id": "evt-001"}])
 
         close_event(
             "evt-001",
@@ -1379,18 +1347,14 @@ class TestEventServiceSmoke:
             "Nota: Se reemplazó el módulo principal"
         )
 
-    def test_close_event_forced_writes_single_canonical_audit_entry(
-        self, mock_neo4j_session
-    ):
+    def test_close_event_forced_writes_single_canonical_audit_entry(self, mock_neo4j_session):
         close_event = _load_event_service_module().close_event
         # 1. State check
         mock_neo4j_session.set_response(
             "match (e:event {id: $eid}) return e.status", [{"status": "OPEN"}]
         )
         # 2. Update
-        mock_neo4j_session.set_response(
-            "set e.status = 'closed'", [{"event_id": "evt-002"}]
-        )
+        mock_neo4j_session.set_response("set e.status = 'closed'", [{"event_id": "evt-002"}])
 
         close_event(
             "evt-002",
@@ -1401,14 +1365,11 @@ class TestEventServiceSmoke:
 
         params = mock_neo4j_session.queries[1]["params"]
         assert params["audit_message"] == (
-            "[AUDIT][FORCED_CLOSE] Cierre forzado por testuser\n"
-            "Motivo: Ventana de mantenimiento"
+            "[AUDIT][FORCED_CLOSE] Cierre forzado por testuser\n" "Motivo: Ventana de mantenimiento"
         )
         assert "forced" not in params
 
-    def test_get_event_detail_query_collapses_multiple_sla_matches(
-        self, mock_neo4j_session
-    ):
+    def test_get_event_detail_query_collapses_multiple_sla_matches(self, mock_neo4j_session):
         mock_neo4j_session.set_response(
             "return e, ci, m, bs, sc",
             [
@@ -1419,7 +1380,7 @@ class TestEventServiceSmoke:
                         "status": "OPEN",
                         "severity": "WARNING",
                         "message": "Latency spike",
-                        "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
+                        "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
                         "ack": False,
                     },
                     "ci": {"id": "ci-010", "name": "Router-10", "ip": "10.0.0.10"},
@@ -1436,13 +1397,9 @@ class TestEventServiceSmoke:
 
         assert detail["business_context"]["service_catalog"]["id"] == "sla-010"
         query = mock_neo4j_session.queries[0]["query"]
-        assert (
-            "head([item in collect(sc) where item is not null]) as sc" in query.lower()
-        )
+        assert "head([item in collect(sc) where item is not null]) as sc" in query.lower()
 
-    def test_get_event_detail_raises_404_when_event_is_missing(
-        self, mock_neo4j_session
-    ):
+    def test_get_event_detail_raises_404_when_event_is_missing(self, mock_neo4j_session):
         mock_neo4j_session.set_response("match (e:event {id: $event_id})", [])
 
         get_event_detail = _load_event_service_module().get_event_detail

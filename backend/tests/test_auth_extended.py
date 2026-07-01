@@ -8,29 +8,27 @@ Focus areas:
 - Permission enforcement patterns (role hierarchy, explicit vs implicit permissions)
 """
 
-import pytest
-from datetime import timedelta, datetime
-from jose import jwt, JWTError
-from pydantic import ValidationError
+from datetime import datetime, timedelta
 
-from services.auth_service import (
-    create_access_token,
-    check_permission,
-    get_current_active_user,
-    SECRET_KEY,
-    ALGORITHM,
-)
+import pytest
+from jose import JWTError, jwt
 from models.user import (
+    PasswordChangeRequest,
+    TokenData,
     User,
-    UserInDB,
-    UserUpdate,
+    UserPermission,
     UserResetRequest,
     UserRole,
-    UserPermission,
-    TokenData,
-    PasswordChangeRequest,
+    UserUpdate,
 )
-
+from pydantic import ValidationError
+from services.auth_service import (
+    ALGORITHM,
+    SECRET_KEY,
+    check_permission,
+    create_access_token,
+    get_current_active_user,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures — extended Phase 2
@@ -493,17 +491,13 @@ class TestPasswordChangeFlow:
 
     def test_valid_password_change_request(self):
         """PasswordChangeRequest should accept valid old and new passwords."""
-        req = PasswordChangeRequest(
-            old_password="OldP@ss123", new_password="NewP@ss456"
-        )
+        req = PasswordChangeRequest(old_password="OldP@ss123", new_password="NewP@ss456")
         assert req.old_password == "OldP@ss123"
         assert req.new_password == "NewP@ss456"
 
     def test_same_old_and_new_password_is_valid_model(self):
         """Model allows same old/new password (business logic should reject)."""
-        req = PasswordChangeRequest(
-            old_password="SamePass123", new_password="SamePass123"
-        )
+        req = PasswordChangeRequest(old_password="SamePass123", new_password="SamePass123")
         assert req.old_password == req.new_password
 
     def test_empty_old_password_is_valid_model(self):
@@ -619,6 +613,7 @@ class TestPermissionSecurity:
             UserPermission.RUN_DIAGNOSTICS,
             UserPermission.USER_MANAGE,
             UserPermission.ROLE_MANAGE,
+            UserPermission.AUDIT_VIEW,
             UserPermission.METRICS_VIEW,
         }
 

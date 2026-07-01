@@ -21,10 +21,11 @@ Strategy:
 - Override Neo4j driver (database.get_db) for roles router
 """
 
-import pytest
 from datetime import datetime, timedelta
-from fastapi import HTTPException
 from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -36,39 +37,32 @@ _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     # Import the main app (which imports database.py)
     from main import app
-    from database import get_db
 
-from models.user import (
-    User,
-    UserInDB,
+from middleware import rate_limit  # noqa: E402
+from models.rate_limit_attempt import RateLimitAttempt  # noqa: E402
+from models.user import (  # noqa: E402
     CurrentUser,
     CurrentUserSessionPolicy,
-    UserCreate,
-    UserUpdate,
+    User,
+    UserInDB,
     UserPermission,
-    PasswordChangeRequest,
-    UserResetRequest,
-    Role,
-    RoleCreate,
 )
-from postgres_db import Base, get_pg_db
-from services.auth_service import get_current_active_user
-from repositories import user_repo
-from middleware import rate_limit
-from models.rate_limit_attempt import RateLimitAttempt
-from routers.auth import (
+from postgres_db import Base, get_pg_db  # noqa: E402
+from repositories import user_repo  # noqa: E402
+from routers.auth import (  # noqa: E402
     AUDIT_OUTCOME_DENIED,
     AUDIT_OUTCOME_FAILURE,
     AUDIT_OUTCOME_SUCCESS,
     AUTH_EVENT_LOGIN_FAILURE,
     AUTH_EVENT_LOGIN_SUCCESS,
     AUTH_EVENT_LOGOUT,
-    AUTH_REASON_INCORRECT_CREDENTIALS,
     AUTH_REASON_INACTIVE_USER,
-    AUTH_REASON_RATE_LIMITED,
+    AUTH_REASON_INCORRECT_CREDENTIALS,
     AUTH_REASON_LOGIN_SUCCESS,
     AUTH_REASON_LOGOUT_SUCCESS,
+    AUTH_REASON_RATE_LIMITED,
 )
+from services.auth_service import get_current_active_user  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -126,6 +120,7 @@ def _make_pydantic_current_user(
         ),
     )
 
+
 def _make_pydantic_user_in_db(
     username: str = "testuser",
     role: str = "OPERATOR",
@@ -170,15 +165,20 @@ def _make_mock_pg_user(
     return mock
 
 
-def _assert_audit_request_context(kwargs: dict, user_agent: str | None = None, request_id: str | None = None) -> None:
+def _assert_audit_request_context(
+    kwargs: dict,
+    user_agent: str | None = None,
+    request_id: str | None = None,
+    forwarded_for: str | None = None,
+) -> None:
     """Assert auth audit calls receive a Request with context needed for IP/UA enrichment."""
     request = kwargs["request"]
     if user_agent:
         assert request.headers["user-agent"] == user_agent
     if request_id:
         assert request.headers["x-request-id"] == request_id
-    assert request.client is not None
-    assert request.client.host
+    if forwarded_for:
+        assert request.headers["x-forwarded-for"] == forwarded_for
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ def rate_limit_db(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)  # noqa: N806
     Base.metadata.create_all(bind=engine, tables=[RateLimitAttempt.__table__])
     monkeypatch.setattr(rate_limit, "SessionLocal", TestingSessionLocal)
     yield TestingSessionLocal
@@ -370,7 +370,11 @@ class TestAuthToken:
             response = client.post(
                 "/api/auth/token",
                 data={"username": "testuser", "password": "wrong_password"},
-                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-1"},
+                headers={
+                    "User-Agent": "pytest-agent",
+                    "X-Request-ID": "req-auth-1",
+                    "X-Forwarded-For": "203.0.113.10",
+                },
             )
 
         assert response.status_code == 401
@@ -380,7 +384,12 @@ class TestAuthToken:
         assert kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
         assert kwargs["actor_username"] == "testuser"
         assert kwargs["reason"] == AUTH_REASON_INCORRECT_CREDENTIALS
-        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-1")
+        _assert_audit_request_context(
+            kwargs,
+            user_agent="pytest-agent",
+            request_id="req-auth-1",
+            forwarded_for="203.0.113.10",
+        )
         context = kwargs.get("context") or {}
         assert "password" not in context
         assert "token" not in context
@@ -398,14 +407,20 @@ class TestAuthToken:
         with (
             patch(
                 "routers.auth.check_rate_limit",
-                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts."),
+                side_effect=HTTPException(
+                    status_code=429, detail="Too many failed login attempts."
+                ),
             ),
             patch("routers.auth.audit_service.record_auth_event") as mock_record,
         ):
             response = client.post(
                 "/api/auth/token",
                 data={"username": "testuser", "password": "wrong_password"},
-                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-precheck"},
+                headers={
+                    "User-Agent": "pytest-agent",
+                    "X-Request-ID": "req-auth-precheck",
+                    "X-Forwarded-For": "203.0.113.11",
+                },
             )
 
         assert response.status_code == 429
@@ -415,7 +430,12 @@ class TestAuthToken:
         assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
         assert kwargs["actor_username"] == "testuser"
         assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
-        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-precheck")
+        _assert_audit_request_context(
+            kwargs,
+            user_agent="pytest-agent",
+            request_id="req-auth-precheck",
+            forwarded_for="203.0.113.11",
+        )
 
         app.dependency_overrides.pop(get_pg_db, None)
 
@@ -442,7 +462,11 @@ class TestAuthToken:
             patch("routers.auth.audit_service.record_auth_event") as mock_record,
             patch(
                 "routers.auth.raise_rate_limit_locked",
-                side_effect=HTTPException(status_code=429, detail="Too many failed login attempts. Account temporarily locked.", headers={"Retry-After": "900"}),
+                side_effect=HTTPException(
+                    status_code=429,
+                    detail="Too many failed login attempts. Account temporarily locked.",
+                    headers={"Retry-After": "900"},
+                ),
             ),
         ):
             response = client.post(
@@ -620,9 +644,7 @@ class TestAuthUsersMe:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/auth/users/me")
 
@@ -647,9 +669,7 @@ class TestAuthUsersMe:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/auth/users/me")
 
@@ -678,9 +698,7 @@ class TestAuthUsersMe:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/auth/users/me")
 
@@ -709,9 +727,7 @@ class TestAuthUsersMe:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/auth/users/me")
 
@@ -737,9 +753,7 @@ class TestAuthUsersMe:
                 raise HTTPException(status_code=400, detail="Inactive user")
             return disabled_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/auth/users/me")
 
@@ -757,9 +771,10 @@ class TestAuthUsersMe:
         """`get_current_user` must call record_session_activity with the JWT sid
         and the resolved DB user id when a valid access token is presented."""
         import asyncio
-        from services import auth_service as auth_service_module
+
         from jose import jwt
-        from services.auth_service import SECRET_KEY, ALGORITHM
+        from services import auth_service as auth_service_module
+        from services.auth_service import ALGORITHM, SECRET_KEY
 
         # Build a real access token carrying `sid` (the get_current_user flow
         # decodes the JWT to read the sid claim).
@@ -799,19 +814,20 @@ class TestAuthUsersMe:
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
 
-        with patch.object(
-            auth_service_module,
-            "record_session_activity",
-            return_value=True,
-        ) as mock_record, patch.object(
-            auth_service_module,
-            "user_repo",
-        ) as mock_user_repo:
+        with (
+            patch.object(
+                auth_service_module,
+                "record_session_activity",
+                return_value=True,
+            ) as mock_record,
+            patch.object(
+                auth_service_module,
+                "user_repo",
+            ) as mock_user_repo,
+        ):
             mock_user_repo.get_user_by_username.return_value = mock_db_user
             # get_current_user is async — run it to completion.
-            result = asyncio.run(
-                auth_service_module.get_current_user(request=request, db=mock_db)
-            )
+            result = asyncio.run(auth_service_module.get_current_user(request=request, db=mock_db))
 
         assert result.username == "testuser"
         mock_record.assert_called_once()
@@ -824,9 +840,10 @@ class TestAuthUsersMe:
         NOT be invoked (it is a no-op, but we still avoid the call to keep
         the hot path tight)."""
         import asyncio
-        from services import auth_service as auth_service_module
+
         from jose import jwt
-        from services.auth_service import SECRET_KEY, ALGORITHM
+        from services import auth_service as auth_service_module
+        from services.auth_service import ALGORITHM, SECRET_KEY
 
         token = jwt.encode(
             {
@@ -863,18 +880,19 @@ class TestAuthUsersMe:
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
 
-        with patch.object(
-            auth_service_module,
-            "record_session_activity",
-            return_value=True,
-        ) as mock_record, patch.object(
-            auth_service_module,
-            "user_repo",
-        ) as mock_user_repo:
+        with (
+            patch.object(
+                auth_service_module,
+                "record_session_activity",
+                return_value=True,
+            ) as mock_record,
+            patch.object(
+                auth_service_module,
+                "user_repo",
+            ) as mock_user_repo,
+        ):
             mock_user_repo.get_user_by_username.return_value = mock_db_user
-            asyncio.run(
-                auth_service_module.get_current_user(request=request, db=mock_db)
-            )
+            asyncio.run(auth_service_module.get_current_user(request=request, db=mock_db))
 
         mock_record.assert_not_called()
 
@@ -902,9 +920,7 @@ class TestAuthChangePassword:
         def override_get_db():
             yield mock_db
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.auth.verify_password", return_value=True):
@@ -935,9 +951,7 @@ class TestAuthChangePassword:
         def override_get_db():
             yield mock_db
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.auth.verify_password", return_value=False):
@@ -962,9 +976,7 @@ class TestAuthChangePassword:
         def override_get_db():
             yield mock_db
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.auth.verify_password", return_value=True):
@@ -1005,9 +1017,7 @@ class TestUsersList:
         def override_get_db():
             yield mock_db
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         response = client.get("/api/users/")
@@ -1032,9 +1042,7 @@ class TestUsersList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/users/")
 
@@ -1070,14 +1078,12 @@ class TestUsersCreate:
         # user_repo.create_user has a pre-existing bug: it accesses
         # user.disabled and user.force_password_change which don't exist
         # on UserCreate. We must mock the repo call entirely.
-        with patch.object(user_repo, "get_user_by_username", return_value=None):
+        with patch.object(user_repo, "get_user_by_username", return_value=None):  # noqa: SIM117
             with (
                 patch.object(user_repo, "create_user", return_value=new_pg_user),
                 patch("routers.users.audit_service.record_critical_change") as mock_record,
             ):
-                app.dependency_overrides[get_current_active_user] = (
-                    override_get_current_active_user
-                )
+                app.dependency_overrides[get_current_active_user] = override_get_current_active_user
                 app.dependency_overrides[get_pg_db] = override_get_db
 
                 response = client.post(
@@ -1102,6 +1108,7 @@ class TestUsersCreate:
 
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_pg_db, None)
+
     def test_create_user_duplicate_username(self, mock_db):
         """Creating a user with existing username should return 400."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
@@ -1113,13 +1120,9 @@ class TestUsersCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        mock_db.query.return_value.filter.return_value.first.return_value = (
-            existing_pg_user
-        )
+        mock_db.query.return_value.filter.return_value.first.return_value = existing_pg_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1151,9 +1154,7 @@ class TestUsersCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.users.audit_service.record_denied") as mock_record:
             response = client.post(
@@ -1189,13 +1190,9 @@ class TestUsersUpdate:
             return fake_user
 
         # update_user calls get_user_by_username internally
-        mock_db.query.return_value.filter.return_value.first.return_value = (
-            updated_pg_user
-        )
+        mock_db.query.return_value.filter.return_value.first.return_value = updated_pg_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1225,9 +1222,7 @@ class TestUsersUpdate:
 
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1256,9 +1251,7 @@ class TestUsersUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.users.audit_service.record_denied") as mock_record:
             response = client.put(
@@ -1286,13 +1279,11 @@ class TestUsersDelete:
             return fake_user
 
         # delete_user calls get_user_by_username
-        mock_db.query.return_value.filter.return_value.first.return_value = (
-            _make_mock_pg_user(username="testuser")
+        mock_db.query.return_value.filter.return_value.first.return_value = _make_mock_pg_user(
+            username="testuser"
         )
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1321,9 +1312,7 @@ class TestUsersDelete:
 
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1349,9 +1338,7 @@ class TestUsersDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.users.audit_service.record_denied") as mock_record:
             response = client.delete("/api/users/testuser")
@@ -1379,13 +1366,9 @@ class TestUsersResetPassword:
         async def override_get_current_active_user():
             return fake_user
 
-        mock_db.query.return_value.filter.return_value.first.return_value = (
-            target_pg_user
-        )
+        mock_db.query.return_value.filter.return_value.first.return_value = target_pg_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1415,9 +1398,7 @@ class TestUsersResetPassword:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         # Sending empty JSON body triggers Pydantic validation error (422)
@@ -1442,9 +1423,7 @@ class TestUsersResetPassword:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.users.audit_service.record_critical_change") as mock_record:
@@ -1472,9 +1451,7 @@ class TestUsersResetPassword:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.users.audit_service.record_denied") as mock_record:
             response = client.post(
@@ -1525,9 +1502,7 @@ class TestRolesList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         # roles.py calls get_db_driver() directly, not via Depends()
         # so we must patch the function at the router module level
@@ -1565,9 +1540,7 @@ class TestRolesList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/roles/")
 
@@ -1586,9 +1559,7 @@ class TestRolesList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.roles.get_db_driver", return_value=mock_neo4j_driver):
             mock_neo4j_driver.execute_query.return_value = ([], None, None)
@@ -1621,9 +1592,7 @@ class TestRolesCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         # First execute_query: check exists (empty results)
         # Second execute_query: create (with result)
@@ -1678,9 +1647,7 @@ class TestRolesCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
@@ -1718,9 +1685,7 @@ class TestRolesCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
@@ -1746,9 +1711,7 @@ class TestRolesCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_existing_node = _FakeNeo4jNode({"name": "ExistingRole"})
         mock_record = {"r": mock_existing_node}
@@ -1782,9 +1745,7 @@ class TestRolesCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.roles.audit_service.record_denied") as mock_record:
             response = client.post(
@@ -1809,24 +1770,28 @@ class TestRolesUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        mock_record = {"r": _FakeNeo4jNode(
-            {
-                "name": "CustomRole",
-                "description": "Updated description",
-                "permissions": ["EVENT_ACK", "METRICS_VIEW"],
-                "is_system": False,
-            }
-        )}
+        mock_record = {
+            "r": _FakeNeo4jNode(
+                {
+                    "name": "CustomRole",
+                    "description": "Updated description",
+                    "permissions": ["EVENT_ACK", "METRICS_VIEW"],
+                    "is_system": False,
+                }
+            )
+        }
 
         def mock_execute(*args, **kwargs):
             # First call: lookup by name; second call: update
             if mock_execute.call_count == 0:
                 mock_execute.call_count += 1
-                return ([{"r": _FakeNeo4jNode({"name": "CustomRole", "is_system": False})}], None, None)
+                return (
+                    [{"r": _FakeNeo4jNode({"name": "CustomRole", "is_system": False})}],
+                    None,
+                    None,
+                )
             mock_execute.call_count += 1
             return ([mock_record], None, None)
 
@@ -1865,9 +1830,7 @@ class TestRolesUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_node = _FakeNeo4jNode(
             {"name": "CustomRole", "description": "Existing", "is_system": False}
@@ -1908,9 +1871,7 @@ class TestRolesUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.roles.audit_service.record_denied") as mock_record:
             response = client.put(
@@ -1930,9 +1891,7 @@ class TestRolesUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_node = _FakeNeo4jNode(
             {
@@ -1972,9 +1931,7 @@ class TestRolesUpdate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
@@ -2008,9 +1965,7 @@ class TestRolesDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         call_count = [0]
 
@@ -2053,9 +2008,7 @@ class TestRolesDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_node = _FakeNeo4jNode({"name": "ADMIN", "is_system": True})
         mock_record = {"r": mock_node}
@@ -2083,9 +2036,7 @@ class TestRolesDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         call_count = [0]
 
@@ -2128,9 +2079,7 @@ class TestRolesDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_neo4j_driver.execute_query.return_value = ([], None, None)
 
@@ -2160,9 +2109,7 @@ class TestRolesDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.roles.audit_service.record_denied") as mock_record:
             response = client.delete("/api/roles/CustomRole")

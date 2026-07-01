@@ -1,20 +1,19 @@
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-import logging
 import asyncio
+import logging
 import os
+import platform
 import re
 import shutil
-import platform
 import threading
-from datetime import datetime, timedelta, timezone
-from database import get_db, verify_connection
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from database import verify_connection
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -96,10 +95,11 @@ def _reload_system_status_env_settings() -> None:
         minimum=60,
     )
 
-from services.snmp_service import snmp_collector_loop, get_collector_status
-from seed_admin import seed_admin
-from seed_roles import seed_roles
-from middleware.rate_limit import RateLimitMiddleware
+
+from middleware.rate_limit import RateLimitMiddleware  # noqa: E402
+from seed_admin import seed_admin  # noqa: E402
+from seed_roles import seed_roles  # noqa: E402
+from services.snmp_service import get_collector_status, snmp_collector_loop  # noqa: E402
 
 # Global scheduler instance
 backup_scheduler = AsyncIOScheduler()
@@ -141,7 +141,24 @@ def schedule_daily_backup() -> None:
 
 
 # Router Imports
-from routers import audit, auth, users, roles, nodes, metrics, catalog, links, events, backup, dictionaries, cis, cli, ai, permissions
+from routers import (  # noqa: E402
+    ai,
+    audit,
+    auth,
+    backup,
+    catalog,
+    cis,
+    cli,
+    dictionaries,
+    events,
+    links,
+    metrics,
+    nodes,
+    permissions,
+    roles,
+    rtus,
+    users,
+)
 
 app = FastAPI(
     title="NEX-GEN API",
@@ -169,32 +186,82 @@ def _ensure_refresh_token_schema_migration(engine) -> None:
     try:
         with engine.connect() as conn:
             sql = __import__("sqlalchemy").text
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS session_id VARCHAR"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS policy_profile VARCHAR DEFAULT 'standard'"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMP"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by_token_id INTEGER REFERENCES refresh_tokens(id)"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason VARCHAR"))
-            conn.execute(sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS stale_recovery_count INTEGER DEFAULT 0"))
+            conn.execute(
+                sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS session_id VARCHAR")
+            )
+            conn.execute(
+                sql(
+                    "ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS policy_profile VARCHAR DEFAULT 'standard'"
+                )
+            )
+            conn.execute(
+                sql(
+                    "ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP"
+                )
+            )
+            conn.execute(
+                sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMP")
+            )
+            conn.execute(
+                sql(
+                    "ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by_token_id INTEGER REFERENCES refresh_tokens(id)"
+                )
+            )
+            conn.execute(
+                sql("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason VARCHAR")
+            )
+            conn.execute(
+                sql(
+                    "ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS stale_recovery_count INTEGER DEFAULT 0"
+                )
+            )
             # Backfill existing rows so runtime non-null assumptions are still safe.
-            conn.execute(sql("UPDATE refresh_tokens SET session_id = COALESCE(session_id, CONCAT('legacy-', id::text)) WHERE session_id IS NULL"))
-            conn.execute(sql("UPDATE refresh_tokens SET policy_profile = COALESCE(policy_profile, 'standard') WHERE policy_profile IS NULL"))
-            conn.execute(sql("UPDATE refresh_tokens SET last_activity_at = COALESCE(last_activity_at, created_at, NOW()) WHERE last_activity_at IS NULL"))
-            conn.execute(sql("UPDATE refresh_tokens SET stale_recovery_count = COALESCE(stale_recovery_count, 0) WHERE stale_recovery_count IS NULL"))
-            conn.execute(sql("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_session_id ON refresh_tokens (session_id)"))
-            conn.execute(sql("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_policy_profile ON refresh_tokens (policy_profile)"))
+            conn.execute(
+                sql(
+                    "UPDATE refresh_tokens SET session_id = COALESCE(session_id, CONCAT('legacy-', id::text)) WHERE session_id IS NULL"
+                )
+            )
+            conn.execute(
+                sql(
+                    "UPDATE refresh_tokens SET policy_profile = COALESCE(policy_profile, 'standard') WHERE policy_profile IS NULL"
+                )
+            )
+            conn.execute(
+                sql(
+                    "UPDATE refresh_tokens SET last_activity_at = COALESCE(last_activity_at, created_at, NOW()) WHERE last_activity_at IS NULL"
+                )
+            )
+            conn.execute(
+                sql(
+                    "UPDATE refresh_tokens SET stale_recovery_count = COALESCE(stale_recovery_count, 0) WHERE stale_recovery_count IS NULL"
+                )
+            )
+            conn.execute(
+                sql(
+                    "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_session_id ON refresh_tokens (session_id)"
+                )
+            )
+            conn.execute(
+                sql(
+                    "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_policy_profile ON refresh_tokens (policy_profile)"
+                )
+            )
             conn.commit()
     except Exception as migration_err:
-        logger.warning(f"Migration warning (refresh_tokens session-policy columns): {migration_err}")
+        logger.warning(
+            f"Migration warning (refresh_tokens session-policy columns): {migration_err}"
+        )
+
+
 """
 ROUTING ARCHITECTURE CONVENTIONS:
 1. Centralized Prefix: All routers are included with the '/api' prefix here in main.py.
 2. No Trailing Slashes: Routes are defined WITHOUT trailing slashes to maintain consistency.
-3. Pragmatic REST for Bulk Ops: 
+3. Pragmatic REST for Bulk Ops:
    - Single resource mutations use standard verbs (GET, POST, PUT, DELETE).
-   - Bulk/Mass operations use POST for compatibility with corporate proxies and firewalls 
+   - Bulk/Mass operations use POST for compatibility with corporate proxies and firewalls
      that often intercept or misinterpret PUT/DELETE on batch endpoints.
-4. Static vs Dynamic Priority: Static routes (like /bulk-update) MUST be registered 
+4. Static vs Dynamic Priority: Static routes (like /bulk-update) MUST be registered
    before dynamic routes (like /{id}) in their respective routers to prevent collisions.
 """
 
@@ -214,6 +281,7 @@ app.include_router(cis.router, prefix="/api")
 app.include_router(cli.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(rtus.router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)
@@ -242,13 +310,8 @@ async def startup_event():
 
     # Initialize TimescaleDB Hypertables
     try:
-        from postgres_db import SessionLocal, engine, Base
+        from postgres_db import Base, SessionLocal, engine
         from repositories.metric_repo import create_hypertable
-        from models.timescale_models import MetricValue  # Import to register model
-        from models.audit_event import AuditEvent  # Import to register model
-        from models.rate_limit_attempt import RateLimitAttempt  # Import to register model
-        from models.system_status_history import SystemStatusSnapshot  # Import to register model
-        from models.ai_chat import AIChatMessage  # Import to register model
 
         # Create Tables (includes backup_config, backup_history, rate_limit_attempts, system status history, and audit events)
         Base.metadata.create_all(bind=engine)
@@ -297,12 +360,19 @@ async def startup_event():
         logger.error(f"Failed to seed AI prompts: {e}")
 
     # Start Background SNMP Collector
-    disable_collector = os.getenv("DISABLE_BACKEND_COLLECTOR", "false").lower() in ("true", "1", "yes", "on")
+    disable_collector = os.getenv("DISABLE_BACKEND_COLLECTOR", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
     if not disable_collector:
         asyncio.create_task(snmp_collector_loop())
         logger.info("Background SNMP Collector started in backend process")
     else:
-        logger.info("Background SNMP Collector in backend process is disabled (DISABLE_BACKEND_COLLECTOR=true)")
+        logger.info(
+            "Background SNMP Collector in backend process is disabled (DISABLE_BACKEND_COLLECTOR=true)"
+        )
 
     # Start Backup Scheduler
     schedule_daily_backup()
@@ -358,7 +428,7 @@ def _is_diskstats_device(device_name: str) -> bool:
         return True
     if re.fullmatch(r"nvme\d+n\d+", device_name):
         return True
-    if re.fullmatch(r"mmcblk\d+", device_name):
+    if re.fullmatch(r"mmcblk\d+", device_name):  # noqa: SIM103
         return True
     return False
 
@@ -370,7 +440,7 @@ def _collect_disk_io_sample(path: str = "/proc/diskstats", sampled_at: datetime 
     busy_ms = 0
 
     try:
-        with open(path, "r", encoding="utf-8") as diskstats:
+        with open(path, encoding="utf-8") as diskstats:
             lines = diskstats.readlines()
     except OSError:
         return None
@@ -443,9 +513,7 @@ def _build_disk_io_status(current, previous=None):
 
     status["read_bytes_per_sec"] = round(read_delta / elapsed_seconds, 2)
     status["write_bytes_per_sec"] = round(write_delta / elapsed_seconds, 2)
-    status["busy_percentage"] = round(
-        min((busy_delta / (elapsed_seconds * 1000)) * 100, 100), 1
-    )
+    status["busy_percentage"] = round(min((busy_delta / (elapsed_seconds * 1000)) * 100, 100), 1)
     return status
 
 
@@ -525,8 +593,8 @@ def _build_system_status_snapshot(status: dict, recorded_at: datetime):
 def _utc_isoformat(value: datetime) -> str:
     """Serialize stored UTC datetimes with an explicit timezone marker for clients."""
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _serialize_system_status_snapshot(snapshot):
@@ -570,25 +638,25 @@ def _build_system_status_payload() -> dict:
             load = os.getloadavg()
             # Approximation: Load / Cores * 100 (Simplified)
             cpu_percent = min((load[0] / os.cpu_count()) * 100, 100)
-    except:
+    except Exception:
         pass
 
     try:
         # Disk Usage
         total, used, free = shutil.disk_usage("/")
         disk_percent = (used / total) * 100
-    except:
+    except Exception:
         pass
 
     # RAM (Linux /proc/meminfo parsing)
     if platform.system() == "Linux":
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo") as f:
                 lines = f.readlines()
                 mem_total = int(lines[0].split()[1])
                 mem_available = int(lines[2].split()[1])  # MemAvailable usually
                 ram_percent = ((mem_total - mem_available) / mem_total) * 100
-        except:
+        except Exception:
             pass
 
     # 2. Service Status
@@ -596,17 +664,18 @@ def _build_system_status_payload() -> dict:
     try:
         verify_connection(max_retries=1, retry_delay=0)
         neo4j_status = "CONNECTED"
-    except:
+    except Exception:
         neo4j_status = "DISCONNECTED"
 
     postgres_status = "UNKNOWN"
     try:
         from postgres_db import engine
         from sqlalchemy import text
+
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         postgres_status = "CONNECTED"
-    except:
+    except Exception:
         postgres_status = "DISCONNECTED"
 
     collector = get_collector_status()
@@ -655,12 +724,12 @@ def _register_system_status_snapshot_job() -> bool:
 
 def _record_system_status_snapshot(status: dict, now: datetime | None = None) -> bool:
     """Persist a throttled operational snapshot and prune data older than configured retention."""
-    from postgres_db import SessionLocal
     from models.system_status_history import SystemStatusSnapshot
+    from postgres_db import SessionLocal
 
-    recorded_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    recorded_at = now or datetime.now(UTC).replace(tzinfo=None)
     if recorded_at.tzinfo is not None:
-        recorded_at = recorded_at.astimezone(timezone.utc).replace(tzinfo=None)
+        recorded_at = recorded_at.astimezone(UTC).replace(tzinfo=None)
     with _SYSTEM_STATUS_HISTORY_LOCK:
         db = SessionLocal()
         try:
@@ -674,9 +743,9 @@ def _record_system_status_snapshot(status: dict, now: datetime | None = None) ->
 
             db.add(_build_system_status_snapshot(status, recorded_at))
             cutoff = recorded_at - timedelta(days=_SYSTEM_STATUS_HISTORY_RETENTION_DAYS)
-            db.query(SystemStatusSnapshot).filter(
-                SystemStatusSnapshot.recorded_at < cutoff
-            ).delete(synchronize_session=False)
+            db.query(SystemStatusSnapshot).filter(SystemStatusSnapshot.recorded_at < cutoff).delete(
+                synchronize_session=False
+            )
             db.commit()
             return True
         except Exception as exc:
@@ -689,12 +758,12 @@ def _record_system_status_snapshot(status: dict, now: datetime | None = None) ->
 
 def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = None):
     """Read compact system status history rows newest-first."""
-    from postgres_db import SessionLocal
     from models.system_status_history import SystemStatusSnapshot
+    from postgres_db import SessionLocal
 
-    generated_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    generated_at = now or datetime.now(UTC).replace(tzinfo=None)
     if generated_at.tzinfo is not None:
-        generated_at = generated_at.astimezone(timezone.utc).replace(tzinfo=None)
+        generated_at = generated_at.astimezone(UTC).replace(tzinfo=None)
     cutoff = generated_at - timedelta(hours=hours)
     db = SessionLocal()
     try:
@@ -718,7 +787,9 @@ def _fetch_system_status_history(hours: int, limit: int, now: datetime | None = 
             "retention_days": _SYSTEM_STATUS_HISTORY_RETENTION_DAYS,
             "snapshot_interval_seconds": _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS,
             "stale_threshold_seconds": _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS,
-            "latest_recorded_at": _utc_isoformat(latest_recorded_at) if latest_recorded_at else None,
+            "latest_recorded_at": (
+                _utc_isoformat(latest_recorded_at) if latest_recorded_at else None
+            ),
             "is_stale": is_stale,
             "rows": [_serialize_system_status_snapshot(row) for row in snapshots],
         }

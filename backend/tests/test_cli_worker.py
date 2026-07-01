@@ -9,11 +9,11 @@ Covers:
 Uses paramiko mock to avoid requiring live SSH connectivity.
 """
 
-import sys
-import os
 import math
+import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "engines"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engines"))
 
 from unittest.mock import MagicMock, patch
 
@@ -210,6 +210,7 @@ class TestResolveCredential:
         """Given a credential ref, resolves USER and PASS from env."""
         with patch.dict(os.environ, {"MYDEV_USER": "admin", "MYDEV_PASS": "secret123"}):
             from cli_worker import resolve_credential
+
             username, password = resolve_credential("MYDEV")
 
             assert username == "admin"
@@ -224,11 +225,20 @@ class TestResolveCredential:
             os.environ["CLI_DEFAULT_USER"] = "default_user"
             os.environ["CLI_DEFAULT_PASS"] = "default_pass"
             # MYDEV_* not set
-            with patch.dict(os.environ, {"CLI_DEFAULT_USER": "default_user", "CLI_DEFAULT_PASS": "default_pass"}, clear=False):
+            with patch.dict(
+                os.environ,
+                {"CLI_DEFAULT_USER": "default_user", "CLI_DEFAULT_PASS": "default_pass"},
+                clear=False,
+            ):
                 # Ensure MYDEV_* are not present
-                env = {k: v for k, v in os.environ.items() if k != "CLI_DEFAULT_USER" and k != "CLI_DEFAULT_PASS"}
+                env = {
+                    k: v
+                    for k, v in os.environ.items()
+                    if k != "CLI_DEFAULT_USER" and k != "CLI_DEFAULT_PASS"
+                }
                 with patch.dict(os.environ, env, clear=False):
                     from cli_worker import resolve_credential
+
                     username, password = resolve_credential("MYDEV")
 
                     assert username == "default_user"
@@ -245,8 +255,13 @@ class TestResolveCredential:
 
     def test_none_ref_defaults_to_cli_default(self):
         """When cli_credential_ref is None, uses CLI_DEFAULT_*."""
-        with patch.dict(os.environ, {"CLI_DEFAULT_USER": "fallback_user", "CLI_DEFAULT_PASS": "fallback_pass"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"CLI_DEFAULT_USER": "fallback_user", "CLI_DEFAULT_PASS": "fallback_pass"},
+            clear=False,
+        ):
             from cli_worker import resolve_credential
+
             username, password = resolve_credential(None)
 
             assert username == "fallback_user"
@@ -254,8 +269,13 @@ class TestResolveCredential:
 
     def test_partial_env_falls_back_correctly(self):
         """If only USER is set, PASS falls back even if specific ref provided."""
-        with patch.dict(os.environ, {"MYDEV_USER": "specific_user", "CLI_DEFAULT_PASS": "fallback_pass"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"MYDEV_USER": "specific_user", "CLI_DEFAULT_PASS": "fallback_pass"},
+            clear=False,
+        ):
             from cli_worker import resolve_credential
+
             username, password = resolve_credential("MYDEV")
 
             assert username == "specific_user"
@@ -306,6 +326,7 @@ class TestApplyEscalation:
 
         result = apply_escalation(mock_client, "enable\nsecret_password")
 
+        assert result is True
         assert mock_client.send.call_count == 2
         mock_client.send.assert_any_call("enable\r")
         mock_client.send.assert_any_call("secret_password\r")
@@ -321,6 +342,7 @@ class TestApplyEscalation:
 
         result = apply_escalation(mock_client, "  enable  \n  secret_password  ")
 
+        assert result is True
         assert mock_client.send.call_count == 2
         mock_client.send.assert_any_call("enable\r")
 
@@ -335,6 +357,7 @@ class TestApplyEscalation:
 
         result = apply_escalation(mock_client, "enable\n\nsecret_password\n")
 
+        assert result is True
         assert mock_client.send.call_count == 2
 
     def test_no_hash_in_response_returns_false(self):
@@ -368,7 +391,7 @@ class TestNanRateLimiter:
     """Tests for NaN rate limiting logic."""
 
     def test_consecutive_nan_increments_counter(self):
-        from cli_worker import _nan_tracker, check_nan_threshold, nan_rate_limiter
+        from cli_worker import _nan_tracker, nan_rate_limiter
 
         # Reset tracker
         _nan_tracker.clear()
@@ -376,11 +399,11 @@ class TestNanRateLimiter:
         metric_id = "test-cli-metric"
 
         # First NaN
-        nan_rate_limiter(metric_id, float('nan'), "raw output", "Router-01")
+        nan_rate_limiter(metric_id, float("nan"), "raw output", "Router-01")
         assert _nan_tracker.get(metric_id, 0) == 1
 
         # Second NaN
-        nan_rate_limiter(metric_id, float('nan'), "raw output 2", "Router-01")
+        nan_rate_limiter(metric_id, float("nan"), "raw output 2", "Router-01")
         assert _nan_tracker.get(metric_id, 0) == 2
 
     def test_valid_value_resets_counter(self):
@@ -407,7 +430,7 @@ class TestNanRateLimiter:
             mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
             for i in range(3):
-                check_nan_threshold(metric_id, float('nan'), f"raw-{i}", "Router-01")
+                check_nan_threshold(metric_id, float("nan"), f"raw-{i}", "Router-01")
 
             # After 3rd NaN, should have emitted alert
             mock_session.run.assert_called()

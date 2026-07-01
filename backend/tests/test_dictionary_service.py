@@ -2,10 +2,10 @@
 Unit tests for dictionary_service.py — CRUD operations for MetricDictionary nodes.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from models.core import MetricDictionary, DictionaryCreate, DictionaryUpdate
+import pytest
+from models.core import DictionaryUpdate, MetricDictionary
 
 
 class TestDictionaryServiceImports:
@@ -77,7 +77,7 @@ class TestDictionaryServiceCRUD:
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # Query 1: get_dictionary node query
             mock_neo4j_session.set_response(
-                "dict_node_query",
+                "return md.id as id, md.name",
                 [
                     {
                         "id": "cisco-2960-v1",
@@ -92,7 +92,7 @@ class TestDictionaryServiceCRUD:
             )
             # Query 2: get_metrics_from_dictionary (HAS_METRIC relationships)
             mock_neo4j_session.set_response(
-                "dict_metrics_query",
+                "has_metric",
                 [
                     {"metric_id": "cpu-load"},
                     {"metric_id": "mem-used"},
@@ -118,7 +118,7 @@ class TestDictionaryServiceCRUD:
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # Query 1: list_dictionaries node query
             mock_neo4j_session.set_response(
-                "dict_list_query",
+                "match (md:metricdictionary)",
                 [
                     {
                         "id": "dict-1",
@@ -141,9 +141,9 @@ class TestDictionaryServiceCRUD:
                 ],
             )
             # Query 2: get_metrics_from_dictionary for dict-1
-            mock_neo4j_session.set_response("dict1_metrics", [])
+            mock_neo4j_session.set_sequence_response("has_metric", [[], []])
             # Query 3: get_metrics_from_dictionary for dict-2
-            mock_neo4j_session.set_response("dict2_metrics", [])
+            mock_neo4j_session.set_response("has_metric", [])
 
             from services.dictionary_service import list_dictionaries
 
@@ -161,8 +161,22 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary_by_brand_model calls get_dictionary
-            mock_neo4j_session.set_response("dict_brand_model_node", [{"id": "existing-dict"}])
-            mock_neo4j_session.set_response("dict_brand_model_metrics", [])
+            mock_neo4j_session.set_response("metricdictionary {brand", [{"id": "existing-dict"}])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "existing-dict",
+                        "name": "Existing Dictionary",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
+            mock_neo4j_session.set_response("has_metric", [])
 
             from services.dictionary_service import create_dictionary
 
@@ -185,24 +199,28 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary_by_brand_model → get_dictionary (node query returns nothing)
-            mock_neo4j_session.set_response("dict_brand_model_node", [])
-            mock_neo4j_session.set_response("dict_brand_model_metrics", [])
+            mock_neo4j_session.set_response("metricdictionary {brand", [])
             # MetricDef checks for cpu-load and mem-used
-            mock_neo4j_session.set_response("metricdef_cpu", [{"id": "cpu-load"}])
-            mock_neo4j_session.set_response("metricdef_mem", [{"id": "mem-used"}])
+            mock_neo4j_session.set_sequence_response(
+                "metricdef {id",
+                [[{"id": "cpu-load"}], [{"id": "mem-used"}]],
+            )
             # Final get_dictionary after creation
-            mock_neo4j_session.set_response("dict_brand_model_node", [
-                {
-                    "id": "new-dict",
-                    "name": "New Dictionary",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
-            mock_neo4j_session.set_response("dict_brand_model_metrics", [{"metric_id": "cpu-load"}])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "new-dict",
+                        "name": "New Dictionary",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
+            mock_neo4j_session.set_response("has_metric", [{"metric_id": "cpu-load"}])
 
             from services.dictionary_service import create_dictionary
 
@@ -229,39 +247,45 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary existing
-            mock_neo4j_session.set_response("dict_update_get_node", [
-                {
-                    "id": "dict-1",
-                    "name": "Old Name",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
-            mock_neo4j_session.set_response("dict_update_get_metrics", [])
+            mock_neo4j_session.set_sequence_response(
+                "return md.id as id, md.name",
+                [
+                    [
+                        {
+                            "id": "dict-1",
+                            "name": "Old Name",
+                            "brand": "Cisco",
+                            "model": "Catalyst-2960",
+                            "polling_interval": 60,
+                            "created_at": None,
+                            "updated_at": None,
+                        }
+                    ],
+                    [
+                        {
+                            "id": "dict-1",
+                            "name": "New Name",
+                            "brand": "Cisco",
+                            "model": "Catalyst-2960",
+                            "polling_interval": 90,
+                            "created_at": None,
+                            "updated_at": None,
+                        }
+                    ],
+                ],
+            )
+            mock_neo4j_session.set_sequence_response(
+                "has_metric", [[], [{"metric_id": "new-metric"}]]
+            )
             # Check brand+model conflict — no conflict
-            mock_neo4j_session.set_response("dict_update_conflict_check", [])
+            mock_neo4j_session.set_response("where md.id <>", [])
             # Update SET query
-            mock_neo4j_session.set_response("dict_update_set_props", [])
+            mock_neo4j_session.set_response("set md.name", [])
             # Delete existing HAS_METRIC
-            mock_neo4j_session.set_response("dict_update_delete_metrics", [])
+            mock_neo4j_session.set_response("delete r", [])
             # Create new HAS_METRIC
-            mock_neo4j_session.set_response("dict_update_new_metric", [{"id": "new-metric"}])
+            mock_neo4j_session.set_response("metricdef {id", [{"id": "new-metric"}])
             # Final get_dictionary
-            mock_neo4j_session.set_response("dict_update_get_node", [
-                {
-                    "id": "dict-1",
-                    "name": "New Name",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 90,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
-            mock_neo4j_session.set_response("dict_update_get_metrics", [{"metric_id": "new-metric"}])
 
             from services.dictionary_service import update_dictionary
 
@@ -282,22 +306,25 @@ class TestDictionaryServiceCRUD:
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
             # get_dictionary existing
-            mock_neo4j_session.set_response("dict_delete_get_node", [
-                {
-                    "id": "dict-to-delete",
-                    "name": "To Delete",
-                    "brand": "Cisco",
-                    "model": "Catalyst-2960",
-                    "polling_interval": 60,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            ])
-            mock_neo4j_session.set_response("dict_delete_get_metrics", [])
+            mock_neo4j_session.set_response(
+                "return md.id as id, md.name",
+                [
+                    {
+                        "id": "dict-to-delete",
+                        "name": "To Delete",
+                        "brand": "Cisco",
+                        "model": "Catalyst-2960",
+                        "polling_interval": 60,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ],
+            )
+            mock_neo4j_session.set_response("has_metric", [])
             # Cascade delete AppliedDictionary
-            mock_neo4j_session.set_response("dict_delete_cascade", [])
+            mock_neo4j_session.set_response("applieddictionary", [])
             # DETACH DELETE MetricDictionary
-            mock_neo4j_session.set_response("dict_delete_detach", [])
+            mock_neo4j_session.set_response("detach delete md", [])
 
             from services.dictionary_service import delete_dictionary
 
@@ -314,7 +341,7 @@ class TestDictionaryServiceCRUD:
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
-            mock_neo4j_session.set_response("dict_delete_get_node", [])
+            mock_neo4j_session.set_response("return md.id as id, md.name", [])
 
             from services.dictionary_service import delete_dictionary
 
@@ -329,14 +356,10 @@ class TestDictionaryServiceCRUD:
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
-            # validate_metric_ids uses "MATCH (m:MetricDef {id: $mid})"
+            # validate_metric_ids uses a single IN query over MetricDef ids.
             mock_neo4j_session.set_response(
-                "metricdef {id",
-                [{"id": "cpu-load"}],
-            )
-            mock_neo4j_session.set_response(
-                "metricdef {id",
-                [{"id": "mem-used"}],
+                "match (m:metricdef)",
+                [{"id": "cpu-load"}, {"id": "mem-used"}],
             )
 
             from services.dictionary_service import validate_metric_ids
@@ -353,10 +376,8 @@ class TestDictionaryServiceCRUD:
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("services.dictionary_service.get_db", return_value=mock_driver):
-            # cpu-load not found
-            mock_neo4j_session.set_response("metricdef {id", [])
-            # mem-used found
-            mock_neo4j_session.set_response("metricdef {id", [{"id": "mem-used"}])
+            # cpu-load not found, mem-used found
+            mock_neo4j_session.set_response("match (m:metricdef)", [{"id": "mem-used"}])
 
             from services.dictionary_service import validate_metric_ids
 

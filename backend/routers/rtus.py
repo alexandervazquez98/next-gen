@@ -5,22 +5,20 @@ Router prefix: /api/v1 (applied in main.py)
 Tags: ["RTUs"]
 """
 
-from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ValidationError
-
 from models.rtu_sensor import (
     RTUCreate,
-    RTUUpdate,
     RTUResponse,
+    RTUUpdate,
     SensorCreate,
-    SensorUpdate,
     SensorResponse,
+    SensorUpdate,
 )
-from models.user import User
-from services.auth_service import get_current_active_user
+from models.user import User, UserPermission
+from pydantic import BaseModel
+from services.auth_service import check_permission, get_current_active_user
 from services.rtu_service import RTUService
 
 router = APIRouter(
@@ -41,13 +39,21 @@ def get_rtu_service() -> RTUService:
     return RTUService()
 
 
+def _require_permission(permission: UserPermission, current_user: User) -> None:
+    if not check_permission(permission, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: {permission.value} required",
+        )
+
+
 # ── Request/Response schemas ─────────────────────────────────────────────────
 
 
 class ErrorDetail(BaseModel):
     error: str
     message: str
-    details: Optional[List[dict]] = None
+    details: list[dict] | None = None
 
 
 class SensorCreateInternal(SensorCreate):
@@ -61,16 +67,17 @@ class SensorCreateInternal(SensorCreate):
 
 @router.get(
     "",
-    response_model=List[RTUResponse],
+    response_model=list[RTUResponse],
     summary="List all RTUs",
     description="Returns all RTU nodes, optionally filtered by location_id query param.",
 )
 async def list_rtus(
-    location_id: Optional[UUID] = Query(None, description="Filter by location UUID"),
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
-) -> List[RTUResponse]:
+    location_id: UUID | None = Query(None, description="Filter by location UUID"),  # noqa: B008
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
+) -> list[RTUResponse]:
     """GET /api/v1/rtus — list all RTUs (optionally filtered by location)."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     rtus = service.list_rtus(location_id=location_id)
     return [RTUResponse(**rtu) for rtu in rtus]
 
@@ -83,10 +90,11 @@ async def list_rtus(
 )
 async def get_rtu(
     rtu_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> RTUResponse:
     """GET /api/v1/rtus/{rtu_id} — get RTU by ID."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     rtu = service.get_rtu(str(rtu_id))
     if rtu is None:
         raise HTTPException(status_code=404, detail=f"RTU {rtu_id} not found")
@@ -102,10 +110,11 @@ async def get_rtu(
 )
 async def create_rtu(
     rtu_in: RTUCreate,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> RTUResponse:
     """POST /api/v1/rtus — create a new RTU node."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     rtu = service.create_rtu(
         name=rtu_in.name,
         location_id=rtu_in.location_id,
@@ -124,10 +133,11 @@ async def create_rtu(
 async def update_rtu(
     rtu_id: UUID,
     rtu_in: RTUUpdate,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> RTUResponse:
     """PUT /api/v1/rtus/{rtu_id} — update RTU properties."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     rtu = service.update_rtu(
         rtu_id=str(rtu_id),
         name=rtu_in.name,
@@ -148,10 +158,11 @@ async def update_rtu(
 )
 async def delete_rtu(
     rtu_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> None:
     """DELETE /api/v1/rtus/{rtu_id} — delete RTU (cascade sensors)."""
+    _require_permission(UserPermission.CI_DELETE, current_user)
     deleted = service.delete_rtu(str(rtu_id))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"RTU {rtu_id} not found")
@@ -162,16 +173,17 @@ async def delete_rtu(
 
 @router.get(
     "/{rtu_id}/sensors",
-    response_model=List[SensorResponse],
+    response_model=list[SensorResponse],
     summary="List sensors for RTU",
     description="Returns all Sensor nodes attached to this RTU via HAS_SENSOR.",
 )
 async def list_sensors(
     rtu_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
-) -> List[SensorResponse]:
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
+) -> list[SensorResponse]:
     """GET /api/v1/rtus/{rtu_id}/sensors — list sensors for an RTU."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     sensors = service.list_sensors(str(rtu_id))
     return [SensorResponse(**s) for s in sensors]
 
@@ -186,10 +198,11 @@ async def list_sensors(
 async def create_sensor(
     rtu_id: UUID,
     sensor_in: SensorCreate,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> SensorResponse:
     """POST /api/v1/rtus/{rtu_id}/sensors — create sensor on RTU."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     sensor = service.create_sensor(
         rtu_id=str(rtu_id),
         name=sensor_in.name,
@@ -211,10 +224,11 @@ async def update_sensor(
     rtu_id: UUID,
     sensor_id: UUID,
     sensor_in: SensorUpdate,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> SensorResponse:
     """PUT /api/v1/rtus/{rtu_id}/sensors/{sensor_id} — update sensor."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     sensor = service.update_sensor(
         rtu_id=str(rtu_id),
         sensor_id=str(sensor_id),
@@ -235,10 +249,11 @@ async def update_sensor(
 async def delete_sensor(
     rtu_id: UUID,
     sensor_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: RTUService = Depends(get_rtu_service),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    service: RTUService = Depends(get_rtu_service),  # noqa: B008
 ) -> None:
     """DELETE /api/v1/rtus/{rtu_id}/sensors/{sensor_id} — delete sensor."""
+    _require_permission(UserPermission.CI_DELETE, current_user)
     deleted = service.delete_sensor(rtu_id=str(rtu_id), sensor_id=str(sensor_id))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Sensor {sensor_id} not found")
