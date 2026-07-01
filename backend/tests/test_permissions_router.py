@@ -14,6 +14,9 @@ from unittest.mock import MagicMock, patch
 # Stub heavy infrastructure BEFORE importing main (conftest already stubs
 # neo4j/psycopg2, but we need the snmp_service stub to avoid import errors)
 # ---------------------------------------------------------------------------
+_SNMP_SERVICE_SENTINEL = object()
+_previous_snmp_service = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
+
 if "services.snmp_service" not in sys.modules:
     _snmp_stub = types.ModuleType("services.snmp_service")
     setattr(_snmp_stub, "snmp_collector_loop", lambda: None)
@@ -30,6 +33,11 @@ _mock_neo4j_driver = MagicMock()
 
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
+
+if _previous_snmp_service is _SNMP_SERVICE_SENTINEL:
+    sys.modules.pop("services.snmp_service", None)
+else:
+    sys.modules["services.snmp_service"] = _previous_snmp_service
 
 from fastapi.testclient import TestClient
 from models.user import User, UserPermission, AIPermission

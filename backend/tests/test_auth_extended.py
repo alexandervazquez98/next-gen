@@ -619,6 +619,7 @@ class TestPermissionSecurity:
             UserPermission.RUN_DIAGNOSTICS,
             UserPermission.USER_MANAGE,
             UserPermission.ROLE_MANAGE,
+            UserPermission.AUDIT_VIEW,
             UserPermission.METRICS_VIEW,
         }
 

@@ -62,6 +62,17 @@ def _make_pydantic_user(
     )
 
 
+def _override_auth_and_service(user: User, mock_rtu_service):
+    from routers import rtus as rtus_module
+
+    async def override_get_current_active_user():
+        return user
+
+    app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+    app.dependency_overrides[rtus_module.get_rtu_service] = lambda: mock_rtu_service
+    return rtus_module
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -79,7 +90,11 @@ def fake_user():
     return _make_pydantic_user(
         username="testuser",
         role="ADMIN",
-        permissions=[],
+        permissions=[
+            UserPermission.CI_VIEW,
+            UserPermission.CI_EDIT,
+            UserPermission.CI_DELETE,
+        ],
     )
 
 
@@ -173,6 +188,27 @@ class TestRTUsRouter:
 
         assert response.status_code == 404
 
+    def test_read_rtu_routes_reject_low_privilege_user(self, mock_rtu_service):
+        """RTU read endpoints require CI_VIEW permission."""
+        rtus_module = _override_auth_and_service(
+            _make_pydantic_user(role="VIEWER", permissions=[]),
+            mock_rtu_service,
+        )
+
+        try:
+            rtu_id = str(uuid4())
+
+            list_response = client.get("/api/v1/rtus")
+            get_response = client.get(f"/api/v1/rtus/{rtu_id}")
+
+            assert list_response.status_code == 403
+            assert get_response.status_code == 403
+            mock_rtu_service.list_rtus.assert_not_called()
+            mock_rtu_service.get_rtu.assert_not_called()
+        finally:
+            app.dependency_overrides.pop(get_current_active_user, None)
+            app.dependency_overrides.pop(rtus_module.get_rtu_service, None)
+
     def test_post_rtu_creates_rtu(self, auth_override, mock_rtu_service):
         """POST /api/v1/rtus creates a new RTU."""
         location_id = uuid4()
@@ -262,6 +298,37 @@ class TestRTUsRouter:
 
         assert response.status_code == 404
 
+    def test_mutating_rtu_routes_reject_low_privilege_user(self, mock_rtu_service):
+        """RTU create/update/delete require CI edit/delete permissions."""
+        rtus_module = _override_auth_and_service(
+            _make_pydantic_user(role="VIEWER", permissions=[UserPermission.CI_VIEW]),
+            mock_rtu_service,
+        )
+
+        try:
+            rtu_id = str(uuid4())
+            location_id = str(uuid4())
+
+            create_response = client.post(
+                "/api/v1/rtus",
+                json={"name": "RTU-New", "location_id": location_id},
+            )
+            update_response = client.put(
+                f"/api/v1/rtus/{rtu_id}",
+                json={"name": "RTU-Updated"},
+            )
+            delete_response = client.delete(f"/api/v1/rtus/{rtu_id}")
+
+            assert create_response.status_code == 403
+            assert update_response.status_code == 403
+            assert delete_response.status_code == 403
+            mock_rtu_service.create_rtu.assert_not_called()
+            mock_rtu_service.update_rtu.assert_not_called()
+            mock_rtu_service.delete_rtu.assert_not_called()
+        finally:
+            app.dependency_overrides.pop(get_current_active_user, None)
+            app.dependency_overrides.pop(rtus_module.get_rtu_service, None)
+
 
 # ---------------------------------------------------------------------------
 # Sensor Endpoint Tests
@@ -324,6 +391,24 @@ class TestSensorsRouter:
         assert response.status_code == 201
         mock_rtu_service.create_sensor.assert_called_once()
 
+    def test_read_sensor_routes_reject_low_privilege_user(self, mock_rtu_service):
+        """Sensor read endpoints require CI_VIEW permission."""
+        rtus_module = _override_auth_and_service(
+            _make_pydantic_user(role="VIEWER", permissions=[]),
+            mock_rtu_service,
+        )
+
+        try:
+            rtu_id = str(uuid4())
+
+            response = client.get(f"/api/v1/rtus/{rtu_id}/sensors")
+
+            assert response.status_code == 403
+            mock_rtu_service.list_sensors.assert_not_called()
+        finally:
+            app.dependency_overrides.pop(get_current_active_user, None)
+            app.dependency_overrides.pop(rtus_module.get_rtu_service, None)
+
     def test_post_sensor_returns_422_on_invalid_register_bounds(self, auth_override):
         """POST with register_addr > 319 returns 422."""
         rtu_id = str(uuid4())
@@ -369,6 +454,39 @@ class TestSensorsRouter:
         response = client.delete(f"/api/v1/rtus/{uuid4()}/sensors/{sensor_id}")
 
         assert response.status_code == 204
+
+    def test_mutating_sensor_routes_reject_low_privilege_user(self, mock_rtu_service):
+        """Sensor create/update/delete require CI edit/delete permissions."""
+        rtus_module = _override_auth_and_service(
+            _make_pydantic_user(role="VIEWER", permissions=[UserPermission.CI_VIEW]),
+            mock_rtu_service,
+        )
+
+        try:
+            rtu_id = str(uuid4())
+            sensor_id = str(uuid4())
+
+            create_response = client.post(
+                f"/api/v1/rtus/{rtu_id}/sensors",
+                json={"name": "Sensor", "register_addr": 1, "sensor_type": "temperature"},
+            )
+            update_response = client.put(
+                f"/api/v1/rtus/{rtu_id}/sensors/{sensor_id}",
+                json={"name": "Sensor Updated"},
+            )
+            delete_response = client.delete(
+                f"/api/v1/rtus/{rtu_id}/sensors/{sensor_id}"
+            )
+
+            assert create_response.status_code == 403
+            assert update_response.status_code == 403
+            assert delete_response.status_code == 403
+            mock_rtu_service.create_sensor.assert_not_called()
+            mock_rtu_service.update_sensor.assert_not_called()
+            mock_rtu_service.delete_sensor.assert_not_called()
+        finally:
+            app.dependency_overrides.pop(get_current_active_user, None)
+            app.dependency_overrides.pop(rtus_module.get_rtu_service, None)
 
 
 # Mark entire module as api tests

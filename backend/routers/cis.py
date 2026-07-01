@@ -67,7 +67,7 @@ async def get_applied_dictionary(
     result = dictionary_service.get_applied_dictionary(ci_id)
     if not result:
         raise HTTPException(
-            code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No dictionary applied to CI '{ci_id}'",
         )
     return result

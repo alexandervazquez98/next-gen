@@ -170,15 +170,20 @@ def _make_mock_pg_user(
     return mock
 
 
-def _assert_audit_request_context(kwargs: dict, user_agent: str | None = None, request_id: str | None = None) -> None:
+def _assert_audit_request_context(
+    kwargs: dict,
+    user_agent: str | None = None,
+    request_id: str | None = None,
+    forwarded_for: str | None = None,
+) -> None:
     """Assert auth audit calls receive a Request with context needed for IP/UA enrichment."""
     request = kwargs["request"]
     if user_agent:
         assert request.headers["user-agent"] == user_agent
     if request_id:
         assert request.headers["x-request-id"] == request_id
-    assert request.client is not None
-    assert request.client.host
+    if forwarded_for:
+        assert request.headers["x-forwarded-for"] == forwarded_for
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +375,11 @@ class TestAuthToken:
             response = client.post(
                 "/api/auth/token",
                 data={"username": "testuser", "password": "wrong_password"},
-                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-1"},
+                headers={
+                    "User-Agent": "pytest-agent",
+                    "X-Request-ID": "req-auth-1",
+                    "X-Forwarded-For": "203.0.113.10",
+                },
             )
 
         assert response.status_code == 401
@@ -380,7 +389,12 @@ class TestAuthToken:
         assert kwargs["outcome"] == AUDIT_OUTCOME_FAILURE
         assert kwargs["actor_username"] == "testuser"
         assert kwargs["reason"] == AUTH_REASON_INCORRECT_CREDENTIALS
-        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-1")
+        _assert_audit_request_context(
+            kwargs,
+            user_agent="pytest-agent",
+            request_id="req-auth-1",
+            forwarded_for="203.0.113.10",
+        )
         context = kwargs.get("context") or {}
         assert "password" not in context
         assert "token" not in context
@@ -405,7 +419,11 @@ class TestAuthToken:
             response = client.post(
                 "/api/auth/token",
                 data={"username": "testuser", "password": "wrong_password"},
-                headers={"User-Agent": "pytest-agent", "X-Request-ID": "req-auth-precheck"},
+                headers={
+                    "User-Agent": "pytest-agent",
+                    "X-Request-ID": "req-auth-precheck",
+                    "X-Forwarded-For": "203.0.113.11",
+                },
             )
 
         assert response.status_code == 429
@@ -415,7 +433,12 @@ class TestAuthToken:
         assert kwargs["outcome"] == AUDIT_OUTCOME_DENIED
         assert kwargs["actor_username"] == "testuser"
         assert kwargs["reason"] == AUTH_REASON_RATE_LIMITED
-        _assert_audit_request_context(kwargs, user_agent="pytest-agent", request_id="req-auth-precheck")
+        _assert_audit_request_context(
+            kwargs,
+            user_agent="pytest-agent",
+            request_id="req-auth-precheck",
+            forwarded_for="203.0.113.11",
+        )
 
         app.dependency_overrides.pop(get_pg_db, None)
 

@@ -24,6 +24,8 @@ from fastapi.testclient import TestClient
 _mock_neo4j_driver = MagicMock()
 
 # Stub out snmp_service before it gets imported
+_SNMP_SERVICE_SENTINEL = object()
+_previous_snmp_service = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
 _snmp_service_stub = types.ModuleType("services.snmp_service")
 setattr(_snmp_service_stub, "snmp_collector_loop", lambda: None)
 setattr(
@@ -39,7 +41,12 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
     from database import get_db
 
-from models.user import User, UserPermission
+if _previous_snmp_service is _SNMP_SERVICE_SENTINEL:
+    sys.modules.pop("services.snmp_service", None)
+else:
+    sys.modules["services.snmp_service"] = _previous_snmp_service
+
+from models.user import AIPermission, User, UserPermission
 from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
@@ -48,17 +55,32 @@ from services.auth_service import get_current_active_user
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def restore_dependency_overrides_and_snmp_stub():
+    yield
+    app.dependency_overrides.pop(get_current_active_user, None)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _ai_user(username: str = "ai-agent-1", role: str = "AI_DIAGNOSTIC") -> User:
+def _ai_user(
+    username: str = "ai-agent-1",
+    role: str = "AI_DIAGNOSTIC",
+    permissions: list[AIPermission | str] | None = None,
+) -> User:
     """Create a fake AI agent user."""
     return User(
         username=username,
         role=role,
-        permissions=[],
+        permissions=[
+            AIPermission.AI_EVENT_ACK,
+            AIPermission.AI_EVENT_CLOSE,
+            AIPermission.AI_EVENT_COMMENT,
+            AIPermission.AI_RUN_DIAGNOSTIC,
+        ] if permissions is None else permissions,
         allowed_locations=[],
     )
 
@@ -149,6 +171,21 @@ class TestAckEvent:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_ai_agent_ack_without_ai_event_ack_denied_before_guard(self):
+        """AI agent without AI_EVENT_ACK must not reach ack guard logic."""
+        async def override():
+            return _ai_user(permissions=[AIPermission.AI_RUN_DIAGNOSTIC])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.check_all_guards") as mock_guards:
+            response = client.post("/api/events/evt-001/ack", json={})
+
+            assert response.status_code == 403
+            mock_guards.assert_not_called()
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_ai_agent_ack_records_operation_on_success(self):
         """When ack succeeds, record_operation is called with result='success'."""
         async def override():
@@ -169,6 +206,74 @@ class TestAckEvent:
             call_kwargs = mock_record.call_args
             assert call_kwargs[1]["result"] == "success"
             assert call_kwargs[1]["operation"] == "ack"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /api/events/{event_id}/comment
+# ---------------------------------------------------------------------------
+
+
+class TestCommentEvent:
+    """Tests for POST /api/events/{event_id}/comment endpoint permissions."""
+
+    def test_human_event_ack_can_comment(self):
+        async def override():
+            return _operator_user(permissions=[UserPermission.EVENT_ACK])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.add_event_comment.return_value = {"message": "Comment added"}
+
+            response = client.post(
+                "/api/events/evt-001/comment",
+                json={"message": "Checking this event"},
+            )
+
+            assert response.status_code == 200
+            mock_service.add_event_comment.assert_called_once_with(
+                "evt-001", "operator", "Checking this event"
+            )
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_without_ai_event_comment_denied(self):
+        async def override():
+            return _ai_user(permissions=[AIPermission.AI_EVENT_ACK])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            response = client.post(
+                "/api/events/evt-001/comment",
+                json={"message": "Checking this event"},
+            )
+
+            assert response.status_code == 403
+            mock_service.add_event_comment.assert_not_called()
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_with_ai_event_comment_can_comment(self):
+        async def override():
+            return _ai_user(permissions=[AIPermission.AI_EVENT_COMMENT])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.add_event_comment.return_value = {"message": "Comment added"}
+
+            response = client.post(
+                "/api/events/evt-001/comment",
+                json={"message": "AI note"},
+            )
+
+            assert response.status_code == 200
+            mock_service.add_event_comment.assert_called_once_with(
+                "evt-001", "ai-agent-1", "AI note"
+            )
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -265,6 +370,21 @@ class TestCloseEvent:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_ai_agent_close_without_ai_event_close_denied_before_guard(self):
+        """AI_DIAGNOSTIC with only AI_RUN_DIAGNOSTIC must not close events."""
+        async def override():
+            return _ai_user(permissions=[AIPermission.AI_RUN_DIAGNOSTIC])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.check_all_guards") as mock_guards:
+            response = client.post("/api/events/evt-001/close", json={})
+
+            assert response.status_code == 403
+            mock_guards.assert_not_called()
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_critical_event_close_triggers_escalation(self):
         """Closing a CRITICAL event must trigger escalation notification for all users."""
         async def override():
@@ -291,7 +411,7 @@ class TestCloseEvent:
             # notify_critical_event_escalation must have been called
             mock_notify.assert_called_once()
             call_kwargs = mock_notify.call_args[1]
-            assert call_kwargs["severity"] == "CRITICAL" or "event_message" in call_kwargs
+            assert "event_message" in call_kwargs
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -404,6 +524,21 @@ class TestDiagnoseEvent:
 
             assert response.status_code == 403
             assert "Cooldown active" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_ai_agent_diagnose_without_ai_run_diagnostic_denied_before_guard(self):
+        """AI agent without AI_RUN_DIAGNOSTIC must not reach diagnostic guards."""
+        async def override():
+            return _ai_user(permissions=[AIPermission.AI_EVENT_ACK])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.check_all_guards") as mock_guards:
+            response = client.post("/api/events/evt-001/diagnose")
+
+            assert response.status_code == 403
+            mock_guards.assert_not_called()
 
         app.dependency_overrides.pop(get_current_active_user, None)
 

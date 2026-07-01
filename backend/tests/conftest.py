@@ -213,11 +213,16 @@ class MockNeo4jSession:
     def __init__(self):
         self.queries: List[Dict[str, Any]] = []
         self._response_map: Dict[str, List[Dict[str, Any]]] = {}
+        self._response_sequences: Dict[str, List[List[Dict[str, Any]]]] = {}
         self._default_response: List[Dict[str, Any]] = []
 
     def set_response(self, query_contains: str, records: List[Dict[str, Any]]):
         """Set a canned response for queries containing the given substring."""
         self._response_map[query_contains.lower()] = records
+
+    def set_sequence_response(self, query_contains: str, record_batches: List[List[Dict[str, Any]]]):
+        """Set ordered canned responses for repeated queries containing the substring."""
+        self._response_sequences[query_contains.lower()] = list(record_batches)
 
     def set_default_response(self, records: List[Dict[str, Any]]):
         """Set a fallback response for any unmatched query."""
@@ -227,6 +232,11 @@ class MockNeo4jSession:
         """Capture the query and return the matching canned response."""
         self.queries.append({"query": query, "params": params})
         query_lower = query.lower()
+        for key, batches in self._response_sequences.items():
+            if key in query_lower:
+                if batches:
+                    return MockNeo4jResult(batches.pop(0))
+                return MockNeo4jResult([])
         for key, records in self._response_map.items():
             if key in query_lower:
                 return MockNeo4jResult(records)

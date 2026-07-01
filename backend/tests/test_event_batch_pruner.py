@@ -11,6 +11,9 @@ from unittest.mock import MagicMock
 import pytest
 
 
+_SNMP_SERVICE_SENTINEL = object()
+
+
 # ---------------------------------------------------------------------------
 # Stubs — must match conftest.py pattern so event_service imports cleanly
 # ---------------------------------------------------------------------------
@@ -27,6 +30,16 @@ def _load_event_service_module():
     setattr(stub, "run_diagnostic", lambda ci, metric: "diagnostic-ok")
     sys.modules["services.snmp_service"] = stub
     return importlib.import_module("services.event_service")
+
+
+@pytest.fixture(autouse=True)
+def restore_snmp_service_stub():
+    previous = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
+    yield
+    if previous is _SNMP_SERVICE_SENTINEL:
+        sys.modules.pop("services.snmp_service", None)
+    else:
+        sys.modules["services.snmp_service"] = previous
 
 
 # ---------------------------------------------------------------------------

@@ -19,8 +19,8 @@ from models.rtu_sensor import (
     SensorUpdate,
     SensorResponse,
 )
-from models.user import User
-from services.auth_service import get_current_active_user
+from models.user import User, UserPermission
+from services.auth_service import check_permission, get_current_active_user
 from services.rtu_service import RTUService
 
 router = APIRouter(
@@ -39,6 +39,14 @@ def get_rtu_service() -> RTUService:
     Allows tests to inject a mock service.
     """
     return RTUService()
+
+
+def _require_permission(permission: UserPermission, current_user: User) -> None:
+    if not check_permission(permission, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: {permission.value} required",
+        )
 
 
 # ── Request/Response schemas ─────────────────────────────────────────────────
@@ -71,6 +79,7 @@ async def list_rtus(
     service: RTUService = Depends(get_rtu_service),
 ) -> List[RTUResponse]:
     """GET /api/v1/rtus — list all RTUs (optionally filtered by location)."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     rtus = service.list_rtus(location_id=location_id)
     return [RTUResponse(**rtu) for rtu in rtus]
 
@@ -87,6 +96,7 @@ async def get_rtu(
     service: RTUService = Depends(get_rtu_service),
 ) -> RTUResponse:
     """GET /api/v1/rtus/{rtu_id} — get RTU by ID."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     rtu = service.get_rtu(str(rtu_id))
     if rtu is None:
         raise HTTPException(status_code=404, detail=f"RTU {rtu_id} not found")
@@ -106,6 +116,7 @@ async def create_rtu(
     service: RTUService = Depends(get_rtu_service),
 ) -> RTUResponse:
     """POST /api/v1/rtus — create a new RTU node."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     rtu = service.create_rtu(
         name=rtu_in.name,
         location_id=rtu_in.location_id,
@@ -128,6 +139,7 @@ async def update_rtu(
     service: RTUService = Depends(get_rtu_service),
 ) -> RTUResponse:
     """PUT /api/v1/rtus/{rtu_id} — update RTU properties."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     rtu = service.update_rtu(
         rtu_id=str(rtu_id),
         name=rtu_in.name,
@@ -152,6 +164,7 @@ async def delete_rtu(
     service: RTUService = Depends(get_rtu_service),
 ) -> None:
     """DELETE /api/v1/rtus/{rtu_id} — delete RTU (cascade sensors)."""
+    _require_permission(UserPermission.CI_DELETE, current_user)
     deleted = service.delete_rtu(str(rtu_id))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"RTU {rtu_id} not found")
@@ -172,6 +185,7 @@ async def list_sensors(
     service: RTUService = Depends(get_rtu_service),
 ) -> List[SensorResponse]:
     """GET /api/v1/rtus/{rtu_id}/sensors — list sensors for an RTU."""
+    _require_permission(UserPermission.CI_VIEW, current_user)
     sensors = service.list_sensors(str(rtu_id))
     return [SensorResponse(**s) for s in sensors]
 
@@ -190,6 +204,7 @@ async def create_sensor(
     service: RTUService = Depends(get_rtu_service),
 ) -> SensorResponse:
     """POST /api/v1/rtus/{rtu_id}/sensors — create sensor on RTU."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     sensor = service.create_sensor(
         rtu_id=str(rtu_id),
         name=sensor_in.name,
@@ -215,6 +230,7 @@ async def update_sensor(
     service: RTUService = Depends(get_rtu_service),
 ) -> SensorResponse:
     """PUT /api/v1/rtus/{rtu_id}/sensors/{sensor_id} — update sensor."""
+    _require_permission(UserPermission.CI_EDIT, current_user)
     sensor = service.update_sensor(
         rtu_id=str(rtu_id),
         sensor_id=str(sensor_id),
@@ -239,6 +255,7 @@ async def delete_sensor(
     service: RTUService = Depends(get_rtu_service),
 ) -> None:
     """DELETE /api/v1/rtus/{rtu_id}/sensors/{sensor_id} — delete sensor."""
+    _require_permission(UserPermission.CI_DELETE, current_user)
     deleted = service.delete_sensor(rtu_id=str(rtu_id), sensor_id=str(sensor_id))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Sensor {sensor_id} not found")

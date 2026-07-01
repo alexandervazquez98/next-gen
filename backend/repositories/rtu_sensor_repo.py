@@ -21,6 +21,23 @@ _MODBUS_REGISTER_COUNT_MIN = 1
 _MODBUS_REGISTER_COUNT_MAX = 4
 
 
+def _record_to_dict(record) -> Dict[str, Any]:
+    """Convert Neo4j records and lightweight test doubles to plain dictionaries."""
+    if hasattr(record, "data"):
+        out = record.data()
+    elif hasattr(record, "keys"):
+        out = {key: record[key] for key in record.keys()}
+    elif hasattr(record, "_data"):
+        out = dict(record._data)
+    else:
+        out = dict(record)
+
+    for key, value in out.items():
+        if hasattr(value, "isoformat"):
+            out[key] = value.isoformat()
+    return out
+
+
 def _validate_register_bounds(register_addr: int, register_count: int) -> None:
     """Validate Modbus register address and count against spec limits.
 
@@ -124,12 +141,7 @@ def get_rtu(tx, rtu_id: str) -> Optional[Dict[str, Any]]:
     record = result.single()
     if record is None:
         return None
-    # Serialize datetime objects
-    out = dict(record)
-    for key, value in out.items():
-        if hasattr(value, "isoformat"):
-            out[key] = value.isoformat()
-    return out
+    return _record_to_dict(record)
 
 
 def list_rtus(tx, location_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -177,11 +189,7 @@ def list_rtus(tx, location_id: Optional[str] = None) -> List[Dict[str, Any]]:
 
     rtus = []
     for record in result:
-        out = dict(record)
-        for key, value in out.items():
-            if hasattr(value, "isoformat"):
-                out[key] = value.isoformat()
-        rtus.append(out)
+        rtus.append(_record_to_dict(record))
     return rtus
 
 
@@ -325,11 +333,7 @@ def get_sensor(tx, sensor_id: str) -> Optional[Dict[str, Any]]:
     record = result.single()
     if record is None:
         return None
-    out = dict(record)
-    for key, value in out.items():
-        if hasattr(value, "isoformat"):
-            out[key] = value.isoformat()
-    return out
+    return _record_to_dict(record)
 
 
 def list_sensors(tx, rtu_id: str) -> List[Dict[str, Any]]:
@@ -354,11 +358,7 @@ def list_sensors(tx, rtu_id: str) -> List[Dict[str, Any]]:
     result = tx.run(cypher, rtu_id=rtu_id)
     sensors = []
     for record in result:
-        out = dict(record)
-        for key, value in out.items():
-            if hasattr(value, "isoformat"):
-                out[key] = value.isoformat()
-        sensors.append(out)
+        sensors.append(_record_to_dict(record))
     return sensors
 
 
@@ -423,11 +423,7 @@ def find_sensor_by_key(
     record = result.single()
     if record is None:
         return None
-    out = dict(record)
-    for key, value in out.items():
-        if hasattr(value, "isoformat"):
-            out[key] = value.isoformat()
-    return out
+    return _record_to_dict(record)
 
 
 def delete_sensor(tx, rtu_id: str, sensor_id: str) -> bool:

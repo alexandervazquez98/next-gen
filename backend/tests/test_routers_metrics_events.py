@@ -30,6 +30,8 @@ from sqlalchemy.orm import Session
 # The driver is created at module import time and tries to connect immediately
 # ---------------------------------------------------------------------------
 _mock_neo4j_driver = MagicMock()
+_SNMP_SERVICE_SENTINEL = object()
+_previous_snmp_service = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
 _snmp_service_stub = types.ModuleType("services.snmp_service")
 setattr(_snmp_service_stub, "snmp_collector_loop", lambda: None)
 setattr(
@@ -49,6 +51,11 @@ sys.modules["services.snmp_service"] = _snmp_service_stub
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
     from database import get_db
+
+if _previous_snmp_service is _SNMP_SERVICE_SENTINEL:
+    sys.modules.pop("services.snmp_service", None)
+else:
+    sys.modules["services.snmp_service"] = _previous_snmp_service
 
 from models.user import User, UserPermission
 from postgres_db import get_pg_db

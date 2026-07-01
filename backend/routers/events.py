@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import services.event_service as event_service
 from services.auth_service import get_current_active_user, check_permission, get_current_ai_agent, AIAgentInfo
-from services.ai_guard_service import check_all_guards, record_operation
+from services.ai_guard_service import check_all_guards, record_operation, set_cooldown
 from services.escalation_notifier import notify_critical_event_escalation
 from models.core import (
     AvailabilityReportResponse,
@@ -14,7 +14,7 @@ from models.core import (
     EventDetailResponse,
     EventFeedSummary,
 )
-from models.user import User, UserPermission
+from models.user import AIPermission, User, UserPermission
 
 router = APIRouter(
     prefix="/events",
@@ -34,6 +34,14 @@ class AckRequest(BaseModel):
 class CloseRequest(BaseModel):
     forced: bool = False
     comment_message: Optional[str] = None
+
+
+def _is_ai_agent(current_user: User) -> bool:
+    return bool(current_user.role and str(current_user.role).startswith("AI_"))
+
+
+def _has_ai_permission(permission: AIPermission, current_user: User) -> bool:
+    return permission.value in current_user.permissions
 
 
 @router.get("", response_model=List[EventFeedSummary])
@@ -104,20 +112,21 @@ async def ack_event(
     """
     Acknowledge an Event.
     """
-    if not check_permission(UserPermission.EVENT_ACK, current_user):
+    is_ai_agent = _is_ai_agent(current_user)
+    if is_ai_agent:
+        if not _has_ai_permission(AIPermission.AI_EVENT_ACK, current_user):
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to acknowledge events",
+            )
+    elif not check_permission(UserPermission.EVENT_ACK, current_user):
         raise HTTPException(
             status_code=403, detail="Not authorized to acknowledge events"
         )
 
     # AI agent guard check
     ai_info = None
-    if current_user.role and str(current_user.role).startswith("AI_"):
-        # Extract AI agent info from JWT
-        from services.auth_service import SECRET_KEY, ALGORITHM
-        from jose import jwt
-        from fastapi.security import OAuth2PasswordBearer
-        oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
-        # Get token from request context is complex; use role-based check instead
+    if is_ai_agent:
         # The check_all_guards function needs ai_agent_id - use username as id
         guard_result = check_all_guards(current_user.username, "ack", [event_id])
         if not guard_result.allowed:
@@ -156,8 +165,17 @@ async def close_event(
     If forced=True, the caller must also hold EVENT_FORCED_CLOSE permission.
     AI agents cannot force-close events.
     """
-    if not check_permission(UserPermission.EVENT_CLOSE, current_user):
+    is_ai_agent = _is_ai_agent(current_user)
+    if is_ai_agent:
+        if not _has_ai_permission(AIPermission.AI_EVENT_CLOSE, current_user):
+            raise HTTPException(status_code=403, detail="Not authorized to close events")
+    elif not check_permission(UserPermission.EVENT_CLOSE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to close events")
+    if close_req.forced and is_ai_agent:
+        raise HTTPException(
+            status_code=403,
+            detail="AI agents cannot force-close events",
+        )
     if close_req.forced and not check_permission(
         UserPermission.EVENT_FORCED_CLOSE, current_user
     ):
@@ -165,15 +183,10 @@ async def close_event(
             status_code=403,
             detail="Not authorized to force-close events (EVENT_FORCED_CLOSE required)",
         )
-    if close_req.forced and current_user.role and str(current_user.role).startswith("AI_"):
-        raise HTTPException(
-            status_code=403,
-            detail="AI agents cannot force-close events",
-        )
 
     # AI agent guard check
     ai_info = None
-    if current_user.role and str(current_user.role).startswith("AI_"):
+    if is_ai_agent:
         guard_result = check_all_guards(current_user.username, "close", [event_id])
         if not guard_result.allowed:
             raise HTTPException(status_code=403, detail=guard_result.reason)
@@ -208,7 +221,6 @@ async def close_event(
         )
         # C1 fix: still close the event (flagged as pending human review per spec)
         # C1 fix: set cooldown for CRITICAL events too
-        from services.ai_guard_service import set_cooldown
         set_cooldown(current_user.username, "close", event_id)
 
     result = event_service.close_event(
@@ -242,7 +254,13 @@ async def add_event_comment(
     """
     Append a user comment to the Event history.
     """
-    if not check_permission(UserPermission.EVENT_ACK, current_user):
+    is_ai_agent = _is_ai_agent(current_user)
+    if is_ai_agent:
+        authorized = _has_ai_permission(AIPermission.AI_EVENT_COMMENT, current_user)
+    else:
+        authorized = check_permission(UserPermission.EVENT_ACK, current_user)
+
+    if not authorized:
         raise HTTPException(
             status_code=403, detail="Not authorized to comment on events"
         )
@@ -367,12 +385,16 @@ async def run_event_diagnostic_endpoint(
     """
     Run an on-demand diagnostic (Ping/SNMP) for the CI related to this event.
     """
-    if not check_permission(UserPermission.RUN_DIAGNOSTICS, current_user):
+    is_ai_agent = _is_ai_agent(current_user)
+    if is_ai_agent:
+        if not _has_ai_permission(AIPermission.AI_RUN_DIAGNOSTIC, current_user):
+            raise HTTPException(status_code=403, detail="Not authorized to run diagnostics")
+    elif not check_permission(UserPermission.RUN_DIAGNOSTICS, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to run diagnostics")
 
     # AI agent guard check
     ai_info = None
-    if current_user.role and str(current_user.role).startswith("AI_"):
+    if is_ai_agent:
         guard_result = check_all_guards(current_user.username, "diagnose", [event_id])
         if not guard_result.allowed:
             raise HTTPException(status_code=403, detail=guard_result.reason)

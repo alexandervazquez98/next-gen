@@ -320,13 +320,16 @@ class TestPgDump:
         """_run_pg_dump returns a path string when pg_dump succeeds."""
         backup_service = _load_backup_service_module()
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch("os.path.getsize", return_value=2048000):
-                result = backup_service._run_pg_dump(
-                    output_path="/backups",
-                    db_name="nexgen_auth",
-                )
+        with patch("os.makedirs") as mock_makedirs:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch("os.path.getsize", return_value=2048000):
+                    result = backup_service._run_pg_dump(
+                        output_path="/backups",
+                        db_name="nexgen_auth",
+                    )
+
+        mock_makedirs.assert_called_once_with("/backups", exist_ok=True)
 
         # Normalize path for cross-platform comparison
         result_normalized = result.replace("\\", "/")
@@ -355,9 +358,10 @@ class TestPgDump:
                 "POSTGRES_DB": "custom_db",
             },
         ):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                backup_service._run_pg_dump(output_path="/backups")
+            with patch("os.makedirs"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0)
+                    backup_service._run_pg_dump(output_path="/backups")
 
         call_args = mock_run.call_args[0][0]
         assert "postgresql://" not in " ".join(str(a) for a in call_args)
@@ -381,9 +385,10 @@ class TestPgDump:
                 "POSTGRES_DB": "custom_db",
             },
         ):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                backup_service._run_pg_dump(output_path="/backups")
+            with patch("os.makedirs"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0)
+                    backup_service._run_pg_dump(output_path="/backups")
 
         call_args = mock_run.call_args[0][0]
         call_kwargs = mock_run.call_args.kwargs
@@ -394,10 +399,11 @@ class TestPgDump:
         """_run_pg_dump raises RuntimeError when pg_dump fails."""
         backup_service = _load_backup_service_module()
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stderr=b"connection refused")
-            with pytest.raises(RuntimeError, match="pg_dump failed"):
-                backup_service._run_pg_dump(output_path="/backups", db_name="nexgen_auth")
+        with patch("os.makedirs"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=1, stderr=b"connection refused")
+                with pytest.raises(RuntimeError, match="pg_dump failed"):
+                    backup_service._run_pg_dump(output_path="/backups", db_name="nexgen_auth")
 
 
 class TestCleanupOldBackups:
@@ -412,19 +418,20 @@ class TestCleanupOldBackups:
         def fake_remove(path):
             deleted_files.append(path)
 
-        with patch("os.listdir") as mock_listdir:
-            with patch("os.path.getmtime") as mock_getmtime:
-                with patch("os.remove", fake_remove):
-                    # Simulate two files: one old (deleted), one recent (kept)
-                    import time
-                    now = time.time()
-                    mock_listdir.return_value = ["old.dump", "recent.dump"]
-                    mock_getmtime.side_effect = lambda p: now - (8 * 86400) if "old" in p else now - (1 * 86400)
+        with patch("os.path.exists", return_value=True):
+            with patch("os.listdir") as mock_listdir:
+                with patch("os.path.getmtime") as mock_getmtime:
+                    with patch("os.remove", fake_remove):
+                        # Simulate two files: one old (deleted), one recent (kept)
+                        import time
+                        now = time.time()
+                        mock_listdir.return_value = ["old.dump", "recent.dump"]
+                        mock_getmtime.side_effect = lambda p: now - (8 * 86400) if "old" in p else now - (1 * 86400)
 
-                    removed_count = backup_service._cleanup_old_backups(
-                        backup_dir="/backups",
-                        retention_days=7,
-                    )
+                        removed_count = backup_service._cleanup_old_backups(
+                            backup_dir="/backups",
+                            retention_days=7,
+                        )
 
         assert removed_count == 1
         assert any("old.dump" in f for f in deleted_files)
@@ -434,7 +441,7 @@ class TestCleanupOldBackups:
         """_cleanup_old_backups returns 0 when backup dir doesn't exist."""
         backup_service = _load_backup_service_module()
 
-        with patch("os.listdir", side_effect=FileNotFoundError()):
+        with patch("os.path.exists", return_value=False):
             count = backup_service._cleanup_old_backups("/nonexistent", retention_days=7)
 
         assert count == 0
