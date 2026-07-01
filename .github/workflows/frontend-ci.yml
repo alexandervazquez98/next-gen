@@ -62,7 +62,7 @@ jobs:
         id: changed
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
         with:
-          files_yaml: |
+          files: |
             frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md,json}
             frontend/eslint.config.js
             frontend/.prettierrc.json
@@ -77,12 +77,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "pnpm"
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Enable Corepack
         if: steps.changed.outputs.any_changed == 'true'
-        run: corepack enable
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
 
       - name: Install frontend dependencies (frozen lockfile)
         if: steps.changed.outputs.any_changed == 'true'

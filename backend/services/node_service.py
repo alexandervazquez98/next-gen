@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import uuid
-import pandas as pd
-import io
-from typing import List, Dict, Any, Optional
-from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from contextlib import suppress
+from typing import Any
 
-from models.user import User, UserRole, UserPermission
+import pandas as pd
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 from models.core import Node
-from services.auth_service import check_permission
-from fastapi.responses import StreamingResponse, JSONResponse
-from services.category_icons import resolve_category_icon
+from models.user import User, UserPermission, UserRole
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from repositories import topology_repo
+from services.auth_service import check_permission
+from services.category_icons import resolve_category_icon
 
 logger = logging.getLogger(__name__)
 
@@ -24,24 +25,35 @@ logger = logging.getLogger(__name__)
 ALLOWED_AI_METADATA_FIELDS = {"status", "pollingInterval", "owner", "location_name", "metadata"}
 
 BLOCKED_AI_UPDATE_FIELDS = {
-    "id", "label", "type", "brand", "model", "serialNumber",
-    "firmwareVersion", "ip", "snmp", "location",
+    "id",
+    "label",
+    "type",
+    "brand",
+    "model",
+    "serialNumber",
+    "firmwareVersion",
+    "ip",
+    "snmp",
+    "location",
 }
 
 
 class NodeMetadataUpdate(BaseModel):
     """AI-safe subset of node fields for metadata update."""
-    status: Optional[str] = None
-    pollingInterval: Optional[int] = Field(None, ge=10, le=3600)
-    owner: Optional[str] = None
-    location_name: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: str | None = None
+    polling_interval: int | None = Field(None, ge=10, le=3600, alias="pollingInterval")
+    owner: str | None = None
+    location_name: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 def validate_ai_metadata_update(update_data: dict) -> tuple[bool, list[str]]:
     """Returns (is_valid, blocked_fields)"""
     blocked = []
-    for key in update_data.keys():
+    for key in update_data:
         if key in BLOCKED_AI_UPDATE_FIELDS:
             blocked.append(key)
     if blocked:
@@ -49,7 +61,7 @@ def validate_ai_metadata_update(update_data: dict) -> tuple[bool, list[str]]:
     return True, []
 
 
-def get_nodes(current_user: User) -> List[Dict[str, Any]]:
+def get_nodes(current_user: User) -> list[dict[str, Any]]:
     """
     Fetch all Configuration Items (CIs).
     Parses metadata and SNMP configurations for frontend consumption.
@@ -66,14 +78,12 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
         node = record["node"]
         loc = None
         if node.get("location"):
-            try:
+            with suppress(AttributeError, TypeError):
                 if hasattr(node.get("location"), "latitude"):
                     loc = {
                         "lat": node.get("location").latitude,
                         "long": node.get("location").longitude,
                     }
-            except:
-                pass
 
         # Serialize metadata props
         clean_metadata = {}
@@ -97,10 +107,8 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
                     "last_updated": None,
                 }
                 if m.get("last_updated"):
-                    try:
+                    with suppress(AttributeError, TypeError):
                         m_data["last_updated"] = m["last_updated"].isoformat()
-                    except:
-                        pass
                 metrics.append(m_data)
 
         category = record["category"]
@@ -109,9 +117,7 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
             "label": node.get("name"),
             "type": category or node.get("layer", "Unknown"),
             "category": category,
-            "category_icon_key": resolve_category_icon(
-                category, record.get("category_icon_key")
-            ),
+            "category_icon_key": resolve_category_icon(category, record.get("category_icon_key")),
             "status": node.get("status", "OK"),
             "ip": node.get("ip"),
             "owner": node.get("owner"),
@@ -130,7 +136,7 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
         if isinstance(node_data["snmp"], str):
             try:
                 node_data["snmp"] = json.loads(node_data["snmp"])
-            except:
+            except (json.JSONDecodeError, TypeError):
                 node_data["snmp"] = None  # Avoid Pydantic Validation Error
         elif node_data["snmp"] is None:
             node_data["snmp"] = None
@@ -140,16 +146,27 @@ def get_nodes(current_user: User) -> List[Dict[str, Any]]:
     return nodes
 
 
-def create_update_node(node: Node, current_user: User) -> Dict[str, str]:
+def create_update_node(node: Node, current_user: User) -> dict[str, str]:
     """
     Create or Update a Configuration Item (CI).
     Enforces CI_EDIT permission.
     """
     # Permission Check
     if not check_permission(UserPermission.CI_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied: CI_EDIT required")
+
+    # Slice 1 (feat-324): if the Node was constructed without validation
+    # (e.g. via model_construct or by raw dict coercion), surface any
+    # Pydantic ValidationError as HTTP 400 BEFORE any repository write.
+    # The service-level guard complements the model validator so callers
+    # that bypass Pydantic (tests, internal tools) get a 400, not a 500.
+    try:
+        node = Node.model_validate(node.model_dump())
+    except ValidationError as exc:
         raise HTTPException(
-            status_code=403, detail="Permission denied: CI_EDIT required"
-        )
+            status_code=400,
+            detail=f"invalid CI payload: {exc.errors()[0].get('msg', 'validation failed')}",
+        ) from exc
 
     topology_repo.upsert_node(node)
 
@@ -170,21 +187,19 @@ def create_update_node(node: Node, current_user: User) -> Dict[str, str]:
     return {"message": "Node created/updated", "id": node.id}
 
 
-def delete_node(node_id: str, current_user: User) -> Dict[str, str]:
+def delete_node(node_id: str, current_user: User) -> dict[str, str]:
     """
     Delete a Configuration Item (CI) by its ID.
     Enforces CI_DELETE permission.
     """
     if not check_permission(UserPermission.CI_DELETE, current_user):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: CI_DELETE required"
-        )
+        raise HTTPException(status_code=403, detail="Permission denied: CI_DELETE required")
 
     topology_repo.delete_node(node_id)
     return {"message": "Node deleted", "id": node_id}
 
 
-def get_node_usage(node_id: str) -> Dict[str, int]:
+def get_node_usage(node_id: str) -> dict[str, int]:
     """
     Check the usage of a CI (number of relationships).
     """
@@ -192,13 +207,14 @@ def get_node_usage(node_id: str) -> Dict[str, int]:
     return {"count": count}
 
 
-def update_node_metadata(node_id: str, metadata_update: NodeMetadataUpdate) -> Dict[str, str]:
+def update_node_metadata(node_id: str, metadata_update: NodeMetadataUpdate) -> dict[str, str]:
     """Update CI metadata fields (status, pollingInterval, owner, location_name, metadata).
 
     This is the AI-safe update path — field validation is done by the caller.
     """
     from repositories import topology_repo
-    update_data = metadata_update.dict(exclude_unset=True)
+
+    update_data = metadata_update.model_dump(exclude_unset=True, by_alias=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -217,9 +233,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
         # For compatibility with pandas read_excel, we wrap bytes in BytesIO
         df = pd.read_excel(io.BytesIO(file_contents), sheet_name=0)
     except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Error reading Excel file: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Error reading Excel file: {str(e)}") from e
 
     valid_owners, valid_layers = topology_repo.get_valid_owners_and_layers()
 
@@ -250,9 +264,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
 
         # Validation Logic
         if owner and owner not in valid_owners:
-            validation_errors.append(
-                f"Row {row_idx} (ID: {nid}): Owner '{owner}' not found."
-            )
+            validation_errors.append(f"Row {row_idx} (ID: {nid}): Owner '{owner}' not found.")
             continue
 
         if ntype != "INFRASTRUCTURE" and ntype not in valid_layers:
@@ -291,15 +303,11 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
 
         lat, long = 0.0, 0.0
         if "Latitude" in row and not pd.isna(row["Latitude"]):
-            try:
+            with suppress(TypeError, ValueError):
                 lat = float(row["Latitude"])
-            except:
-                pass
         if "Longitude" in row and not pd.isna(row["Longitude"]):
-            try:
+            with suppress(TypeError, ValueError):
                 long = float(row["Longitude"])
-            except:
-                pass
 
         # Polling Interval from Excel
         polling_val = row.get("PollingInterval")
@@ -333,13 +341,15 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
             owner,
         )
         # Collect node dict for metric reconciliation after all inserts
-        new_nodes.append({
-            "id": nid,
-            "name": label,
-            "brand": brand,
-            "model": model,
-            "layer": ntype,
-        })
+        new_nodes.append(
+            {
+                "id": nid,
+                "name": label,
+                "brand": brand,
+                "model": model,
+                "layer": ntype,
+            }
+        )
         processed_count += 1
 
     # Reconcile metrics for all newly inserted CIs
@@ -364,7 +374,7 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
     return {"message": f"Successfully processed {processed_count} CIs"}
 
 
-def search_nodes(current_user: User, term: str) -> List[Dict[str, Any]]:
+def search_nodes(current_user: User, term: str) -> list[dict[str, Any]]:
     """
     Search CI nodes by term with permission scoping.
 
@@ -404,9 +414,7 @@ def get_node_template() -> StreamingResponse:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        pd.DataFrame(template_data).to_excel(
-            writer, index=False, sheet_name="Data Entry Template"
-        )
+        pd.DataFrame(template_data).to_excel(writer, index=False, sheet_name="Data Entry Template")
         pd.DataFrame(owners_list, columns=["Available Owners"]).to_excel(
             writer, index=False, sheet_name="Ref - Owners"
         )
@@ -417,8 +425,6 @@ def get_node_template() -> StreamingResponse:
     output.seek(0)
     return StreamingResponse(
         output,
-        headers={
-            "Content-Disposition": 'attachment; filename="ci_import_template_v2.xlsx"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="ci_import_template_v2.xlsx"'},
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )

@@ -16,12 +16,13 @@ Strategy:
 - Mock topology_repo functions for service-layer isolation
 """
 
-import pytest
 import json
 from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
-from io import BytesIO
 
+import pytest
+from fastapi.testclient import TestClient
+from models.user import User, UserPermission
+from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
@@ -29,10 +30,6 @@ from io import BytesIO
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
-    from database import get_db
-
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -103,7 +100,9 @@ def _make_full_record(
     }
 
 
-def _assert_ci_audit_call(mock, event_type: str, outcome: str, target_id: str | None = None) -> None:
+def _assert_ci_audit_call(
+    mock, event_type: str, outcome: str, target_id: str | None = None
+) -> None:
     mock.assert_called_once()
     kwargs = mock.call_args.kwargs
     assert kwargs["event_type"] == event_type
@@ -156,9 +155,7 @@ class TestGetNodes:
                 raise HTTPException(status_code=400, detail="Inactive user")
             return disabled_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/nodes")
         assert response.status_code == 400
@@ -172,9 +169,7 @@ class TestGetNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         node_record = _make_neo4j_node_record(
             node_id="ci-001",
@@ -214,9 +209,7 @@ class TestGetNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         node_record = _make_neo4j_node_record(
             node_id="ci-002",
@@ -254,9 +247,7 @@ class TestGetNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         # topology_repo.get_nodes returns [] early when not admin and no locations
         with patch("services.node_service.topology_repo") as mock_repo:
@@ -277,9 +268,7 @@ class TestGetNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         node_record = _make_neo4j_node_record(node_id="ci-003", name="Server-01")
         metrics = [
@@ -313,9 +302,7 @@ class TestGetNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         snmp_json = json.dumps({"version": "v3", "readCommunity": "secure"})
         node_record = _make_neo4j_node_record(snmp=snmp_json)
@@ -365,9 +352,7 @@ class TestCreateNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.nodes.audit_service.record_denied") as mock_record_denied:
             response = client.post(
@@ -391,12 +376,12 @@ class TestCreateNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("routers.nodes.node_service") as mock_service:
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service") as mock_service,
+        ):
             mock_service.create_update_node.return_value = {
                 "message": "Node created/updated",
                 "id": "ci-new",
@@ -425,6 +410,7 @@ class TestCreateNode:
             )
 
         app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_create_node_operator_with_ci_edit(self):
         """Operator with CI_EDIT permission should create a node."""
         fake_user = _make_pydantic_user(
@@ -436,9 +422,7 @@ class TestCreateNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.nodes.node_service") as mock_service:
             mock_service.create_update_node.return_value = {
@@ -466,9 +450,7 @@ class TestCreateNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         # Missing required 'label' and 'type'
         response = client.post(
@@ -477,6 +459,40 @@ class TestCreateNode:
         )
 
         assert response.status_code == 422
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_create_node_invalid_public_ip_returns_400_and_audits(self):
+        """Invalid public_ip should return 400 from the route and avoid persistence."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service.create_update_node") as mock_create_update,
+        ):
+            response = client.post(
+                "/api/nodes",
+                json={
+                    "id": "ci-bad-public-ip",
+                    "label": "Bad Public IP",
+                    "type": "router",
+                    "public_ip": "not-an-ip",
+                },
+            )
+
+            assert response.status_code == 400
+            mock_create_update.assert_not_called()
+            _assert_ci_audit_call(
+                mock_record_critical,
+                event_type="CI_CREATE_OR_UPDATE",
+                outcome="VALIDATION_FAILURE",
+                target_id="ci-bad-public-ip",
+            )
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -505,9 +521,7 @@ class TestDeleteNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.nodes.audit_service.record_denied") as mock_record_denied:
             response = client.delete("/api/nodes/ci-001")
@@ -524,12 +538,12 @@ class TestDeleteNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("routers.nodes.node_service") as mock_service:
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service") as mock_service,
+        ):
             mock_service.delete_node.return_value = {
                 "message": "Node deleted",
                 "id": "ci-001",
@@ -557,12 +571,12 @@ class TestDeleteNode:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("routers.nodes.node_service.delete_node") as mock_delete_node:
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service.delete_node") as mock_delete_node,
+        ):
             from fastapi import HTTPException
 
             mock_delete_node.side_effect = HTTPException(status_code=404, detail="Node not found")
@@ -659,12 +673,19 @@ class TestUploadNodes:
     def test_upload_no_ci_edit_permission(self):
         """User without CI_EDIT should return 403."""
         from services.auth_service import get_current_active_user
+
         app.dependency_overrides[get_current_active_user] = lambda: User(
             id="op-01", username="op01", role="OPERATOR", permissions=[]
         )
         response = client.post(
             "/api/nodes/upload",
-            files={"file": ("data.xlsx", b"fake", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+            files={
+                "file": (
+                    "data.xlsx",
+                    b"fake",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
         )
         assert response.status_code == 403
         app.dependency_overrides.clear()
@@ -672,6 +693,7 @@ class TestUploadNodes:
     def test_upload_invalid_file_format(self):
         """Non-.xlsx file should return 400 (with auth)."""
         from services.auth_service import get_current_active_user
+
         app.dependency_overrides[get_current_active_user] = lambda: User(
             id="admin-01", username="admin", role="ADMIN", permissions=["CI_EDIT"]
         )
@@ -689,6 +711,7 @@ class TestUploadNodes:
     def test_upload_xlsx_accepted(self):
         """An .xlsx file should be accepted (service mocked, with auth)."""
         from services.auth_service import get_current_active_user
+
         app.dependency_overrides[get_current_active_user] = lambda: User(
             id="admin-01", username="admin", role="ADMIN", permissions=["CI_EDIT"]
         )
@@ -736,6 +759,7 @@ class TestGetNodeTemplate:
     def test_get_template_authenticated_success(self):
         """Template endpoint should be accessible with authentication and CI_EDIT."""
         from services.auth_service import get_current_active_user
+
         app.dependency_overrides[get_current_active_user] = lambda: User(
             id="user-01", username="user01", role="OPERATOR", permissions=["CI_EDIT"]
         )
@@ -794,14 +818,17 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_can_update_allowed_field_status(self):
         """AI agent can update 'status' field — it is in the allowed set."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.node_service") as mock_service, \
-             patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with (
+            patch("routers.nodes.node_service") as mock_service,
+            patch("services.ai_guard_service.SessionLocal") as mock_session,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+        ):
             mock_guards.return_value = MagicMock(allowed=True)
             mock_session.return_value = self._mock_session()
             mock_service.update_node_metadata.return_value = {
@@ -821,14 +848,17 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_can_update_allowed_field_polling_interval(self):
         """AI agent can update 'pollingInterval' field — it is in the allowed set."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.node_service") as mock_service, \
-             patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with (
+            patch("routers.nodes.node_service") as mock_service,
+            patch("services.ai_guard_service.SessionLocal") as mock_session,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+        ):
             mock_guards.return_value = MagicMock(allowed=True)
             mock_session.return_value = self._mock_session()
             mock_service.update_node_metadata.return_value = {
@@ -847,14 +877,17 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_can_update_allowed_field_owner(self):
         """AI agent can update 'owner' field — it is in the allowed set."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.node_service") as mock_service, \
-             patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with (
+            patch("routers.nodes.node_service") as mock_service,
+            patch("services.ai_guard_service.SessionLocal") as mock_session,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+        ):
             mock_guards.return_value = MagicMock(allowed=True)
             mock_session.return_value = self._mock_session()
             mock_service.update_node_metadata.return_value = {
@@ -873,14 +906,17 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_can_update_allowed_field_metadata_dict(self):
         """AI agent can update 'metadata' field — it is in the allowed set."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.node_service") as mock_service, \
-             patch("services.ai_guard_service.SessionLocal") as mock_session, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with (
+            patch("routers.nodes.node_service") as mock_service,
+            patch("services.ai_guard_service.SessionLocal") as mock_session,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+        ):
             mock_guards.return_value = MagicMock(allowed=True)
             mock_session.return_value = self._mock_session()
             mock_service.update_node_metadata.return_value = {
@@ -899,13 +935,16 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_blocked_when_guard_fails(self):
         """AI agent gets 403 when guard check fails (e.g., cooldown active) and is denied."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.audit_service.record_denied") as mock_record_denied, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards:
+        with (
+            patch("routers.nodes.audit_service.record_denied") as mock_record_denied,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+        ):
             mock_guards.return_value = MagicMock(
                 allowed=False,
                 reason="Cooldown active",
@@ -924,14 +963,17 @@ class TestUpdateNodeMetadata:
 
     def test_ai_agent_blocked_field_records_validation_audit(self):
         """AI metadata field restriction failures should emit validation-failure audit."""
+
         async def override():
             return self._ai_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("services.ai_guard_service.check_all_guards") as mock_guards, \
-             patch("routers.nodes.validate_ai_metadata_update", return_value=(False, ["brand"])):
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("services.ai_guard_service.check_all_guards") as mock_guards,
+            patch("routers.nodes.validate_ai_metadata_update", return_value=(False, ["brand"])),
+        ):
             mock_guards.return_value = MagicMock(allowed=True)
 
             response = client.put(
@@ -955,13 +997,16 @@ class TestUpdateNodeMetadata:
 
     def test_regular_operator_can_update_all_fields(self):
         """Regular operator with CI_EDIT can update any field (including blocked ones)."""
+
         async def override():
             return self._operator_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("routers.nodes.node_service") as mock_service:
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service") as mock_service,
+        ):
             mock_service.update_node_metadata.return_value = {
                 "message": "Node metadata updated",
                 "id": "ci-001",
@@ -983,13 +1028,16 @@ class TestUpdateNodeMetadata:
 
     def test_metadata_validation_failure(self):
         """Service validation failures should emit CI metadata validation-failure audit event."""
+
         async def override():
             return self._operator_user()
 
         app.dependency_overrides[get_current_active_user] = override
 
-        with patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical, \
-             patch("routers.nodes.node_service.update_node_metadata") as mock_update_node_metadata:
+        with (
+            patch("routers.nodes.audit_service.record_critical_change") as mock_record_critical,
+            patch("routers.nodes.node_service.update_node_metadata") as mock_update_node_metadata,
+        ):
             from fastapi import HTTPException
 
             mock_update_node_metadata.side_effect = HTTPException(
@@ -1032,9 +1080,7 @@ class TestSearchNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/nodes/search?q=a")
         assert response.status_code == 400
@@ -1049,16 +1095,7 @@ class TestSearchNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
-
-        node_record = _make_neo4j_node_record(
-            node_id="ci-001",
-            name="Router-01",
-            brand="Cisco",
-            model="ASR-1000",
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.nodes.node_service") as mock_service:
             mock_service.search_nodes.return_value = [
@@ -1093,9 +1130,7 @@ class TestSearchNodes:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.nodes.node_service") as mock_service:
             mock_service.search_nodes.return_value = []
