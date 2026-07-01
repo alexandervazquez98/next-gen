@@ -1,6 +1,5 @@
 import re
 
-
 ALLOWED_CATEGORY_ICON_KEYS = {
     "generic",
     "switch_l2",
