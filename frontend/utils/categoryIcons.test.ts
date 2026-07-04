@@ -207,9 +207,7 @@ describe("categoryIcons — radio/trunk/access/distribution entries", () => {
     for (const { query, expectedKey } of cases) {
       const results = findCategoryIcons(query);
       const keys = results.map((entry) => entry.key);
-      expect(keys, `search for "${query}" should include ${expectedKey}`).toContain(
-        expectedKey,
-      );
+      expect(keys, `search for "${query}" should include ${expectedKey}`).toContain(expectedKey);
     }
   });
 
@@ -224,9 +222,7 @@ describe("categoryIcons — radio/trunk/access/distribution entries", () => {
     for (const { query, expectedKey } of cases) {
       const results = findCategoryIcons(query);
       const keys = results.map((entry) => entry.key);
-      expect(keys, `search for "${query}" should include ${expectedKey}`).toContain(
-        expectedKey,
-      );
+      expect(keys, `search for "${query}" should include ${expectedKey}`).toContain(expectedKey);
     }
   });
 
