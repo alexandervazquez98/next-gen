@@ -34,6 +34,111 @@ def _env_float_bounded(name: str, default: float, *, minimum: float, maximum: fl
     return default
 
 
+def _env_int_bounded(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """Parse a bounded integer environment variable with a safe fallback."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if minimum <= value <= maximum:
+        return value
+    return default
+
+
+# ---------------------------------------------------------------------------
+# Event Lock Observability Settings
+# ---------------------------------------------------------------------------
+
+
+EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE = 500
+EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS = 20
+EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS = 250.0
+EVENT_LOCK_DEFAULT_WARNING_P95_MS = 1000.0
+EVENT_LOCK_DEFAULT_CRITICAL_P99_MS = 5000.0
+EVENT_LOCK_MIN_THRESHOLD_MS = 0.0
+EVENT_LOCK_MAX_SLOW_LOG_INFO_MS = 60_000.0
+EVENT_LOCK_MAX_ALERT_THRESHOLD_MS = 600_000.0
+EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE = 1
+EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE = 10_000
+EVENT_LOCK_MIN_WRITER_CONTEXTS = 1
+EVENT_LOCK_MAX_WRITER_CONTEXTS = 100
+EVENT_LOCK_TOTAL_WRITER_SAMPLE_BUDGET = 10_000
+
+
+class EventLockSettings(BaseModel):
+    """Runtime observability thresholds for Event advisory-lock acquisition."""
+
+    slow_log_info_ms: float = Field(default=EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS, ge=0)
+    warning_p95_ms: float = Field(default=EVENT_LOCK_DEFAULT_WARNING_P95_MS, ge=0)
+    critical_p99_ms: float = Field(default=EVENT_LOCK_DEFAULT_CRITICAL_P99_MS, ge=0)
+    sample_window_size: int = Field(
+        default=EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+        ge=EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE,
+        le=EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE,
+    )
+    max_writer_contexts: int = Field(
+        default=EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+        ge=EVENT_LOCK_MIN_WRITER_CONTEXTS,
+        le=EVENT_LOCK_MAX_WRITER_CONTEXTS,
+    )
+
+    @classmethod
+    def from_env(cls) -> "EventLockSettings":
+        """Load Event lock observability settings from environment variables."""
+        sample_window_size = _env_int_bounded(
+            "EVENT_LOCK_SAMPLE_WINDOW_SIZE",
+            EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+            minimum=EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE,
+            maximum=EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE,
+        )
+        max_writer_contexts = _env_int_bounded(
+            "EVENT_LOCK_MAX_WRITER_CONTEXTS",
+            EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+            minimum=EVENT_LOCK_MIN_WRITER_CONTEXTS,
+            maximum=EVENT_LOCK_MAX_WRITER_CONTEXTS,
+        )
+        max_contexts_for_budget = max(
+            EVENT_LOCK_MIN_WRITER_CONTEXTS,
+            EVENT_LOCK_TOTAL_WRITER_SAMPLE_BUDGET // sample_window_size,
+        )
+        return cls(
+            slow_log_info_ms=_env_float_bounded(
+                "EVENT_LOCK_SLOW_LOG_INFO_MS",
+                EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_SLOW_LOG_INFO_MS,
+            ),
+            warning_p95_ms=_env_float_bounded(
+                "EVENT_LOCK_WARNING_P95_MS",
+                EVENT_LOCK_DEFAULT_WARNING_P95_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_ALERT_THRESHOLD_MS,
+            ),
+            critical_p99_ms=_env_float_bounded(
+                "EVENT_LOCK_CRITICAL_P99_MS",
+                EVENT_LOCK_DEFAULT_CRITICAL_P99_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_ALERT_THRESHOLD_MS,
+            ),
+            sample_window_size=sample_window_size,
+            max_writer_contexts=min(max_writer_contexts, max_contexts_for_budget),
+        )
+
+
+_event_lock_settings: Optional[EventLockSettings] = None
+
+
+def get_event_lock_settings() -> EventLockSettings:
+    """Return cached Event lock observability settings (singleton)."""
+    global _event_lock_settings
+    if _event_lock_settings is None:
+        _event_lock_settings = EventLockSettings.from_env()
+    return _event_lock_settings
+
+
 # ---------------------------------------------------------------------------
 # Event Batch Pruner Settings
 # ---------------------------------------------------------------------------
