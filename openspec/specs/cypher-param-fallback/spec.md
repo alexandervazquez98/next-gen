@@ -66,12 +66,33 @@ Fallback MUST NOT silently swallow the primary failure; it MAY allow the surroun
 - **THEN** the original failure MUST remain visible in ERROR logs
 - **AND** Event creation MUST take precedence over collector attribution
 
+### Requirement: Primary Event writer collector assignment correctness
+
+Primary Event writer Cypher that updates existing Event nodes MUST property-qualify `poll_collector_id` assignments against the Event node alias. The primary writer MUST NOT rely on `cypher-param-fallback` to recover from malformed bare assignment syntax such as `poll_collector_id = $poll_collector_id`.
+
+#### Scenario: Existing Event update uses property-qualified assignment
+- **GIVEN** a primary SNMP Event writer updates an existing Event node
+- **WHEN** the writer assigns a collector attribution value
+- **THEN** the assignment MUST target the Event node property, not a bare Cypher variable
+- **AND** the primary query MUST remain valid without invoking fallback for that assignment
+
+#### Scenario: Bare collector assignment is rejected by regression coverage
+- **GIVEN** primary SNMP worker query strings are inspected by regression tests
+- **WHEN** a query contains `poll_collector_id = $poll_collector_id` without an Event node alias
+- **THEN** the regression test MUST fail
+- **AND** the failure MUST identify the malformed primary query shape
+
 ## Source
 
-Promoted from the change folder:
+Initial capability promoted from the change folder:
 `openspec/changes/archive/2026-06-28-fix-collector-event-emission-cypher-rejection/specs/cypher-param-fallback/spec.md`
 
 Original issue: https://github.com/alexandervazquez98/next-gen/issues/340.
+
+Primary Event writer collector assignment correctness was added by:
+`openspec/changes/archive/2026-07-03-fix-poll-collector-cypher-param-root-cause/specs/cypher-param-fallback/spec.md`
+
+Follow-up issue: https://github.com/alexandervazquez98/next-gen/issues/343.
 
 The change folder is the audit trail; the change folder path above resolves to
 the same file at archive time (the change was moved to

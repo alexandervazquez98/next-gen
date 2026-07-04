@@ -90,16 +90,16 @@ Chain strategy: pending
 
 #### RED: manual coverage tests or manual evidence
 
-- [ ] Add a lightweight doc test or checklist-style validation, if existing project conventions support it, that `docs/ai.md` exists and mentions required paths and boundaries. If no doc tests exist, record manual review evidence during verify.
+- [x] Add a lightweight doc test or checklist-style validation, if existing project conventions support it, that `docs/ai.md` exists and mentions required paths and boundaries. If no doc tests exist, record manual review evidence during verify.
 
 #### GREEN: developer documentation
 
-- [ ] Create `docs/ai.md` covering LM Studio connection/env vars, OpenAI-compatible `/v1/chat/completions`, model/timeout/max-token/context-length tuning, and reasoning-model empty-content behavior.
-- [ ] Document identity files: `backend/ai/identity/Soul.md`, `backend/ai/identity/scope.md`, `backend/ai/identity/context-policy.md`, and `backend/ai/identity/session-bootstrap.md`, including that identity grants no execution/write authority.
-- [ ] Document backend-owned harness lifecycle: intent inference, permission gates, target resolution, harness execution, harness-result injection or deterministic rendering, persistence, and follow-up resolution.
-- [ ] Document provider-native toolcalling as a future adapter path, not the primary path for this change.
-- [ ] Document response policies/templates and where to edit them.
-- [ ] Document Raven/write boundaries: model must not directly write to Raven, SQLite, Neo4j, Postgres, CMDB, or operational systems.
+- [x] Create `docs/ai.md` covering LM Studio connection/env vars, OpenAI-compatible `/v1/chat/completions`, model/timeout/max-token/context-length tuning, and reasoning-model empty-content behavior.
+- [x] Document identity files: `backend/ai/identity/Soul.md`, `backend/ai/identity/scope.md`, `backend/ai/identity/context-policy.md`, and `backend/ai/identity/session-bootstrap.md`, including that identity grants no execution/write authority.
+- [x] Document backend-owned harness lifecycle: intent inference, permission gates, target resolution, harness execution, harness-result injection or deterministic rendering, persistence, and follow-up resolution.
+- [x] Document provider-native toolcalling as a future adapter path, not the primary path for this change.
+- [x] Document response policies/templates and where to edit them.
+- [x] Document Raven/write boundaries: model must not directly write to Raven, SQLite, Neo4j, Postgres, CMDB, or operational systems.
 - [ ] Optionally add a short link from `backend/ai/README.md` to policies, templates, and `docs/ai.md` if it does not push the slice over budget.
 
 ## Validation Commands
