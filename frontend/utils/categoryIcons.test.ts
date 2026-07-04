@@ -156,12 +156,7 @@ describe("categoryIcons — VPN/SD-WAN/satellite tunnel entries", () => {
 });
 
 describe("categoryIcons — radio/trunk/access/distribution entries", () => {
-  const NEW_KEYS = [
-    "radio_telecom",
-    "trunk_link",
-    "access_ci",
-    "distribution_ci",
-  ] as const;
+  const NEW_KEYS = ["radio_telecom", "trunk_link", "access_ci", "distribution_ci"] as const;
 
   const FIXED_SYMBOLS: Record<(typeof NEW_KEYS)[number], string> = {
     radio_telecom: "settings_input_antenna",
