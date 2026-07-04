@@ -1,14 +1,16 @@
 # backend/tests/test_snmp_worker_cypher_fallback.py
-"""Tests for the cypher-param-fallback wrapper around the three Event-write
-helpers in ``backend/engines/snmp_worker.py`` (issue #340).
+"""Tests for SNMP worker Event-write Cypher fallback and query shape.
 
-Each helper gets two tests: matching ``ClientError`` triggers fallback;
-non-matching ``ClientError`` re-raises unchanged. Strict TDD (tasks.md
-§Phase 2): lands BEFORE the writer wirings.
+Issue #340 introduced fallback coverage for the three Event-write helpers in
+``backend/engines/snmp_worker.py``: matching ``ClientError`` triggers fallback
+and non-matching ``ClientError`` re-raises unchanged. Issue #343 adds primary
+query-shape regression coverage so existing Event updates property-qualify
+``poll_collector_id`` instead of using a bare Cypher variable.
 """
 from __future__ import annotations
 
 import logging
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -63,6 +65,26 @@ def _make_session(match_text, exc):
     return fake
 
 
+_BARE_POLL_COLLECTOR_SET = re.compile(
+    r"(?<!\.)\bpoll_collector_id\s*=\s*\$poll_collector_id"
+)
+
+
+def _assert_primary_query_property_qualifies_poll_collector_id(query):
+    assert _BARE_POLL_COLLECTOR_SET.search(query) is None, (
+        "primary Event update query must not use bare "
+        "poll_collector_id = $poll_collector_id"
+    )
+    assert "existing.poll_collector_id = $poll_collector_id" in query
+
+
+def _capture_primary_query(refresh, rows):
+    session = MagicMock()
+    session.run.return_value = "primary-ok"
+    refresh(session, rows, lock_db=MagicMock())
+    return session.run.call_args_list[0].args[0]
+
+
 # Shared sample rows ------------------------------------------------------------
 
 _FAILURE_ROW = {
@@ -113,6 +135,18 @@ def test_collection_failures_falls_back_on_poll_collector_id_undefined(_install_
     assert "poll_collector_id" not in fallback_params
 
 
+def test_collection_failures_primary_query_property_qualifies_poll_collector_id():
+    from backend.engines import snmp_worker
+
+    primary_query = _capture_primary_query(
+        snmp_worker._refresh_snmp_collection_failures,
+        [_FAILURE_ROW.copy()],
+    )
+
+    assert "UNWIND $failures" in primary_query
+    _assert_primary_query_property_qualifies_poll_collector_id(primary_query)
+
+
 def test_collection_failures_non_matching_client_error_reraises(_install_fake_client_error):
     from backend.engines import snmp_worker
 
@@ -148,6 +182,18 @@ def test_icmp_availability_falls_back_on_poll_collector_id_undefined(_install_fa
     assert "poll_collector_id" not in fallback_params
 
 
+def test_icmp_availability_primary_query_property_qualifies_poll_collector_id():
+    from backend.engines import snmp_worker
+
+    primary_query = _capture_primary_query(
+        snmp_worker._refresh_icmp_availability_events,
+        [_AVAILABILITY_ROW.copy()],
+    )
+
+    assert "UNWIND $availability_events" in primary_query
+    _assert_primary_query_property_qualifies_poll_collector_id(primary_query)
+
+
 def test_icmp_availability_non_matching_client_error_reraises(_install_fake_client_error):
     from backend.engines import snmp_worker
 
@@ -181,6 +227,18 @@ def test_icmp_latency_falls_back_on_poll_collector_id_undefined(_install_fake_cl
     assert "poll_collector_id: $poll_collector_id" not in fallback_query
     assert "poll_collector_id = $poll_collector_id" not in fallback_query
     assert "poll_collector_id" not in fallback_params
+
+
+def test_icmp_latency_primary_query_property_qualifies_poll_collector_id():
+    from backend.engines import snmp_worker
+
+    primary_query = _capture_primary_query(
+        snmp_worker._refresh_icmp_latency_events,
+        [_LATENCY_BREACH_ROW.copy()],
+    )
+
+    assert "UNWIND $breaches" in primary_query
+    _assert_primary_query_property_qualifies_poll_collector_id(primary_query)
 
 
 def test_icmp_latency_non_matching_client_error_reraises(_install_fake_client_error):
