@@ -20,7 +20,10 @@ PROTECTED_EVENT_WRITERS = {
     "services/snmp_service.py": ProtectedWriterEvidence(
         path="services/snmp_service.py",
         rationale="legacy SNMP writer for polling Event deduplication",
-        evidence_tests=("tests/test_snmp_service_collection_failures.py", "tests/test_writer_advisory_lock.py"),
+        evidence_tests=(
+            "tests/test_snmp_service_collection_failures.py",
+            "tests/test_writer_advisory_lock.py",
+        ),
         lock_symbols_or_wrappers=("acquire_event_triplet_lock",),
     ),
     "engines/snmp_worker.py": ProtectedWriterEvidence(
@@ -92,9 +95,13 @@ def find_event_creation_spans(source: str) -> list[EventCreationSpan]:
         next_start = starts[index + 1].start() if index + 1 < len(starts) else len(source)
         boundary = _CLAUSE_BOUNDARY_RE.search(source, match.end(), next_start)
         end = boundary.start() if boundary else next_start
-        clause = source[match.start():end]
+        clause = source[match.start() : end]
         if ":Event" in clause:
-            spans.append(EventCreationSpan(clause.strip(), match.start(), _line_number(source, match.start())))
+            spans.append(
+                EventCreationSpan(
+                    clause.strip(), match.start(), _line_number(source, match.start())
+                )
+            )
 
     return spans
 
@@ -130,7 +137,9 @@ def classify_event_emitters(discovered: set[str]) -> ClassificationResult:
 def _registry_path_to_backend_file(path: str, backend_root: Path = BACKEND_ROOT) -> Path:
     candidate = Path(path)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise ValueError(f"Registry path must be backend-relative and contained in backend/: {path}")
+        raise ValueError(
+            f"Registry path must be backend-relative and contained in backend/: {path}"
+        )
     resolved_root = backend_root.resolve()
     resolved = (resolved_root / candidate).resolve()
     if not resolved.is_relative_to(resolved_root):
@@ -142,7 +151,9 @@ def _evidence_test_to_file(path: str, backend_root: Path = BACKEND_ROOT) -> Path
     candidate = Path(path)
     if candidate.is_absolute() or ".." in candidate.parts or candidate.parts[:1] != ("tests",):
         raise ValueError(f"Evidence test must be a backend/tests relative path: {path}")
-    resolved_tests_root = TESTS_ROOT.resolve() if backend_root == BACKEND_ROOT else (backend_root / "tests").resolve()
+    resolved_tests_root = (
+        TESTS_ROOT.resolve() if backend_root == BACKEND_ROOT else (backend_root / "tests").resolve()
+    )
     resolved = (backend_root / candidate).resolve()
     if not resolved.is_relative_to(resolved_tests_root):
         raise ValueError(f"Evidence test escapes backend/tests/: {path}")
@@ -164,7 +175,9 @@ def validate_protected_writer_evidence(
         if not evidence.rationale.strip():
             failures.append(f"{registry_path}: rationale is required")
         if not evidence.evidence_tests or any(not item.strip() for item in evidence.evidence_tests):
-            failures.append(f"{registry_path}: at least one non-empty evidence_tests reference is required")
+            failures.append(
+                f"{registry_path}: at least one non-empty evidence_tests reference is required"
+            )
         for evidence_test in evidence.evidence_tests:
             try:
                 evidence_file = _evidence_test_to_file(evidence_test, backend_root)
@@ -173,12 +186,21 @@ def validate_protected_writer_evidence(
                 continue
             if not evidence_file.exists():
                 failures.append(f"{registry_path}: evidence test does not exist: {evidence_test}")
-        if not evidence.lock_symbols_or_wrappers or any(not item.strip() for item in evidence.lock_symbols_or_wrappers):
+        if not evidence.lock_symbols_or_wrappers or any(
+            not item.strip() for item in evidence.lock_symbols_or_wrappers
+        ):
             failures.append(f"{registry_path}: lock_symbols_or_wrappers is required")
-        if registry_path == "polling/event_writer.py" and "_acquire_sorted_locks" not in evidence.lock_symbols_or_wrappers:
-            failures.append("polling/event_writer.py: _acquire_sorted_locks is the approved wrapper evidence")
+        if (
+            registry_path == "polling/event_writer.py"
+            and "_acquire_sorted_locks" not in evidence.lock_symbols_or_wrappers
+        ):
+            failures.append(
+                "polling/event_writer.py: _acquire_sorted_locks is the approved wrapper evidence"
+            )
         if evidence.lock_symbols_or_wrappers == ("_acquire_unsorted_locks",):
-            failures.append(f"{registry_path}: _acquire_unsorted_locks alone is not approved wrapper evidence")
+            failures.append(
+                f"{registry_path}: _acquire_unsorted_locks alone is not approved wrapper evidence"
+            )
     return failures
 
 
@@ -308,7 +330,12 @@ def test_evidence_tests_must_resolve_under_backend_tests(tmp_path: Path):
         "services/writer.py": ProtectedWriterEvidence(
             path="services/writer.py",
             rationale="polling writer",
-            evidence_tests=("tests/test_writer.py", "/tmp/test_escape.py", "tests/../escape.py", "support/test_writer.py"),
+            evidence_tests=(
+                "tests/test_writer.py",
+                "/tmp/test_escape.py",
+                "tests/../escape.py",
+                "support/test_writer.py",
+            ),
             lock_symbols_or_wrappers=("acquire_event_triplet_lock",),
         )
     }
@@ -336,8 +363,14 @@ def test_missing_evidence_metadata_fails_with_writer_name(tmp_path: Path):
     failures = validate_protected_writer_evidence(evidence, backend_root)
 
     assert any("services/writer.py: rationale is required" in failure for failure in failures)
-    assert any("services/writer.py: at least one non-empty evidence_tests" in failure for failure in failures)
-    assert any("services/writer.py: lock_symbols_or_wrappers is required" in failure for failure in failures)
+    assert any(
+        "services/writer.py: at least one non-empty evidence_tests" in failure
+        for failure in failures
+    )
+    assert any(
+        "services/writer.py: lock_symbols_or_wrappers is required" in failure
+        for failure in failures
+    )
 
 
 def test_polling_event_writer_accepts_sorted_wrapper_and_rejects_unsorted_alone(tmp_path: Path):
@@ -364,5 +397,7 @@ def test_polling_event_writer_accepts_sorted_wrapper_and_rejects_unsorted_alone(
     assert validate_protected_writer_evidence(sorted_evidence, backend_root) == []
     failures = validate_protected_writer_evidence(unsorted_evidence, backend_root)
 
-    assert any("_acquire_sorted_locks is the approved wrapper evidence" in failure for failure in failures)
+    assert any(
+        "_acquire_sorted_locks is the approved wrapper evidence" in failure for failure in failures
+    )
     assert any("_acquire_unsorted_locks alone is not approved" in failure for failure in failures)
