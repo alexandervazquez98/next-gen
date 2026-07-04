@@ -34,7 +34,7 @@ jobs:
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
-          mapfile -t files <<<"${{ steps.changed.outputs.all_changed_files }}"
+          read -r -a files <<<"${{ steps.changed.outputs.all_changed_files }}"
           shell_files=()
           for f in "${files[@]}"; do
             case "$f" in *.sh) shell_files+=("$f") ;; esac

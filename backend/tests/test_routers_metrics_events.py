@@ -15,14 +15,15 @@ Strategy:
 """
 
 import asyncio
-from datetime import datetime, timezone
-import pytest
 import sys
 import threading
 import types
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
+
+import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 # ---------------------------------------------------------------------------
@@ -30,29 +31,29 @@ from sqlalchemy.orm import Session
 # The driver is created at module import time and tries to connect immediately
 # ---------------------------------------------------------------------------
 _mock_neo4j_driver = MagicMock()
+_SNMP_SERVICE_SENTINEL = object()
+_previous_snmp_service = sys.modules.get("services.snmp_service", _SNMP_SERVICE_SENTINEL)
 _snmp_service_stub = types.ModuleType("services.snmp_service")
-setattr(_snmp_service_stub, "snmp_collector_loop", lambda: None)
-setattr(
-    _snmp_service_stub,
-    "get_collector_status",
-    lambda: {
-        "last_run": None,
-        "status": "STOPPED",
-        "stats": {},
-    },
-)
-setattr(
-    _snmp_service_stub, "validate_snmp_oid", lambda *args, **kwargs: {"success": False}
-)
-setattr(_snmp_service_stub, "run_diagnostic", lambda *args, **kwargs: "diagnostic-ok")
+_snmp_service_stub.snmp_collector_loop = lambda: None
+_snmp_service_stub.get_collector_status = lambda: {
+    "last_run": None,
+    "status": "STOPPED",
+    "stats": {},
+}
+_snmp_service_stub.validate_snmp_oid = lambda *args, **kwargs: {"success": False}
+_snmp_service_stub.run_diagnostic = lambda *args, **kwargs: "diagnostic-ok"
 sys.modules["services.snmp_service"] = _snmp_service_stub
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
-    from database import get_db
 
-from models.user import User, UserPermission
-from postgres_db import get_pg_db
-from services.auth_service import get_current_active_user
+if _previous_snmp_service is _SNMP_SERVICE_SENTINEL:
+    sys.modules.pop("services.snmp_service", None)
+else:
+    sys.modules["services.snmp_service"] = _previous_snmp_service
+
+from models.user import User, UserPermission  # noqa: E402
+from postgres_db import get_pg_db  # noqa: E402
+from services.auth_service import get_current_active_user  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -151,9 +152,7 @@ class TestMetricsList:
         """Should return empty list when no metrics exist."""
         mock_session = MagicMock()
         mock_session.run.return_value = []
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/metrics")
@@ -200,9 +199,7 @@ class TestMetricsList:
 
         mock_session = MagicMock()
         mock_session.run.return_value = FakeResult()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/metrics")
@@ -265,7 +262,7 @@ class TestMetricsList:
         """Metrics list should NOT require authentication (documented gap)."""
         # No auth headers, no overrides — should still succeed (200, not 401)
         # Since Neo4j isn't mocked here, it will fail with 500, but NOT 401
-        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):
+        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):  # noqa: SIM117
             with patch("database.driver", MagicMock()):
                 response = client.get("/api/metrics")
         # 200 or 500 are acceptable — the key is it's NOT 401/403
@@ -279,8 +276,8 @@ class TestMetricsCreate:
     @pytest.mark.asyncio
     async def test_create_metric_offloads_sync_service_work(self):
         """The async route should not block unrelated coroutine startup."""
-        from routers import metrics as metrics_router
         from models.core import MetricDef
+        from routers import metrics as metrics_router
 
         fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
         started = threading.Event()
@@ -296,7 +293,9 @@ class TestMetricsCreate:
 
         with (
             patch("routers.metrics.check_permission", return_value=True),
-            patch.object(metrics_router.metric_service, "create_metric", side_effect=blocking_create),
+            patch.object(
+                metrics_router.metric_service, "create_metric", side_effect=blocking_create
+            ),
         ):
             metric = MetricDef(id="slow-metric", protocol="SNMP")
             marker_task = None
@@ -325,13 +324,13 @@ class TestMetricsCreate:
 
     @pytest.mark.asyncio
     async def test_create_metric_duplicate_operation_maps_to_409(self):
-        from routers import metrics as metrics_router
         from models.core import MetricDef
+        from routers import metrics as metrics_router
         from services.metric_operation_guard import MetricOperationInProgress
 
         fake_user = _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
 
-        with (
+        with (  # noqa: SIM117
             patch("routers.metrics.check_permission", return_value=True),
             patch.object(
                 metrics_router.metric_service,
@@ -340,7 +339,9 @@ class TestMetricsCreate:
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await metrics_router.create_metric(MetricDef(id="slow-metric", protocol="SNMP"), fake_user)
+                await metrics_router.create_metric(
+                    MetricDef(id="slow-metric", protocol="SNMP"), fake_user
+                )
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == {
@@ -359,14 +360,10 @@ class TestMetricsCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with (
             patch("database.driver", mock_neo4j_driver),
@@ -402,7 +399,7 @@ class TestMetricsCreate:
 
     def test_create_metric_unauthenticated(self):
         """Create metric requires authentication."""
-        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):
+        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):  # noqa: SIM117
             with patch("database.driver", MagicMock()):
                 response = client.post(
                     "/api/metrics",
@@ -424,9 +421,7 @@ class TestMetricsCreate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post(
             "/api/metrics",
@@ -461,7 +456,9 @@ class TestMetricsDelete:
 
         with (
             patch("routers.metrics.check_permission", return_value=True),
-            patch.object(metrics_router.metric_service, "delete_metric", side_effect=blocking_delete),
+            patch.object(
+                metrics_router.metric_service, "delete_metric", side_effect=blocking_delete
+            ),
         ):
             marker_task = None
             route_task = asyncio.create_task(metrics_router.delete_metric("slow-metric", fake_user))
@@ -501,9 +498,9 @@ class TestMetricsDelete:
                 "delete_metric",
                 side_effect=MetricOperationInProgress("slow-metric"),
             ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await metrics_router.delete_metric("slow-metric", fake_user)
+            await metrics_router.delete_metric("slow-metric", fake_user)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == {
@@ -524,9 +521,7 @@ class TestMetricsDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with (
             patch("routers.metrics.check_permission", return_value=True),
@@ -554,7 +549,7 @@ class TestMetricsDelete:
 
     def test_delete_metric_unauthenticated(self):
         """Delete metric requires authentication."""
-        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):
+        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):  # noqa: SIM117
             with patch("database.driver", MagicMock()):
                 response = client.delete("/api/metrics/any-metric")
         assert response.status_code == 401
@@ -570,9 +565,7 @@ class TestMetricsDelete:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.delete("/api/metrics/forbidden-metric")
 
@@ -621,9 +614,7 @@ class TestMetricsUsage:
 
         mock_session = MagicMock()
         mock_session.run.side_effect = mock_run
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/metrics/cpu-load/usage")
@@ -705,14 +696,10 @@ class TestMetricsPromote:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with (
             patch("database.driver", mock_neo4j_driver),
@@ -745,9 +732,7 @@ class TestMetricsPromote:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post(
             "/api/metrics/promote",
@@ -771,9 +756,7 @@ class TestMetricsValidate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.metrics.validate_snmp_oid") as mock_validate:
             mock_validate.return_value = {
@@ -803,9 +786,7 @@ class TestMetricsValidate:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         # Patch at the router module level where the function is imported
         with patch("routers.metrics.validate_snmp_oid") as mock_validate:
@@ -1107,9 +1088,7 @@ class TestEventsList:
                 )
             )
         )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/events")
@@ -1122,12 +1101,8 @@ class TestEventsList:
     def test_list_events_with_status_filter(self, mock_neo4j_driver):
         """Should pass status filter to the query."""
         mock_session = MagicMock()
-        mock_session.run.return_value = MagicMock(
-            __iter__=MagicMock(return_value=iter([]))
-        )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_session.run.return_value = MagicMock(__iter__=MagicMock(return_value=iter([])))
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/events?status=OPEN")
@@ -1141,12 +1116,8 @@ class TestEventsList:
     def test_list_events_active_filter(self, mock_neo4j_driver):
         """ACTIVE status should request unresolved OPEN/ACK events from the service."""
         mock_session = MagicMock()
-        mock_session.run.return_value = MagicMock(
-            __iter__=MagicMock(return_value=iter([]))
-        )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_session.run.return_value = MagicMock(__iter__=MagicMock(return_value=iter([])))
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/events?status=ACTIVE")
@@ -1157,7 +1128,7 @@ class TestEventsList:
 
     def test_list_events_no_auth_required(self):
         """Events list should NOT require authentication (by design)."""
-        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):
+        with patch("neo4j.GraphDatabase.driver", return_value=MagicMock()):  # noqa: SIM117
             with patch("database.driver", MagicMock()):
                 response = client.get("/api/events")
         assert response.status_code != 401
@@ -1182,9 +1153,7 @@ class TestEventsList:
                 "ack": False,
                 "ack_by": "operator-1",
                 "closed_by": "operator-2",
-                "comments": [
-                    "[AUDIT][CLOSE] Evento cerrado por operator-2\nNota: detalle interno"
-                ],
+                "comments": ["[AUDIT][CLOSE] Evento cerrado por operator-2\nNota: detalle interno"],
             }
         ]
 
@@ -1229,8 +1198,8 @@ class TestEventsList:
         assert event["source_protocol"] == "ICMP"
 
     def test_availability_report_endpoint_is_additive_and_accepts_custom_window(self):
-        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        end = datetime(2026, 1, 31, tzinfo=UTC)
         payload = {
             "window_start": start.isoformat(),
             "window_end": end.isoformat(),
@@ -1315,11 +1284,9 @@ class TestEventsList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        generated_at = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 1, 31, tzinfo=UTC)
         payload = {
             "generated_at": generated_at.isoformat(),
             "limit": 25,
@@ -1382,9 +1349,7 @@ class TestEventsList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/events/availability-report/snmp-no-response")
 
@@ -1401,9 +1366,7 @@ class TestEventsList:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get(
             "/api/events/availability-report/snmp-no-response",
@@ -1413,7 +1376,7 @@ class TestEventsList:
         assert response.status_code == 422
 
     def test_availability_report_endpoint_keeps_old_rows_valid(self):
-        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
         payload = {
             "window_start": start.isoformat(),
             "window_end": start.isoformat(),
@@ -1438,9 +1401,7 @@ class TestEventsList:
             ],
         }
 
-        with patch(
-            "routers.events.event_service.get_availability_report", return_value=payload
-        ):
+        with patch("routers.events.event_service.get_availability_report", return_value=payload):
             response = client.get("/api/events/availability-report")
 
         assert response.status_code == 200
@@ -1462,9 +1423,7 @@ class TestEventsDetail:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         payload = {
             "event": {
@@ -1515,9 +1474,7 @@ class TestEventsDetail:
             },
         }
 
-        with patch(
-            "routers.events.event_service.get_event_detail", return_value=payload
-        ):
+        with patch("routers.events.event_service.get_event_detail", return_value=payload):
             response = client.get("/api/events/evt-001")
 
         assert response.status_code == 200
@@ -1542,18 +1499,14 @@ class TestEventsDetail:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/events/evt-001")
 
         assert response.status_code == 403
         assert response.json()["detail"] == "Not authorized to view events"
 
-    def test_get_event_detail_real_contract_handles_partial_snapshot(
-        self, mock_neo4j_driver
-    ):
+    def test_get_event_detail_real_contract_handles_partial_snapshot(self, mock_neo4j_driver):
         fake_user = _make_pydantic_user(
             username="viewer",
             role="VIEWER",
@@ -1563,9 +1516,7 @@ class TestEventsDetail:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         class FakeRecord(dict):
             def __getitem__(self, key):
@@ -1604,9 +1555,7 @@ class TestEventsDetail:
                 "sc": _FakeNeo4jNode({"id": "sla-legacy", "category": "NETWORK"}),
             }
         )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/events/evt-legacy")
@@ -1629,9 +1578,7 @@ class TestEventsDetail:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch(
             "routers.events.event_service.get_event_detail",
@@ -1657,9 +1604,7 @@ class TestEventsRelated:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         class FakeEventNode:
             def __init__(self, data):
@@ -1709,9 +1654,7 @@ class TestEventsRelated:
                 )
             )
         )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.get("/api/events/related/ci-001")
@@ -1737,9 +1680,7 @@ class TestEventsRelated:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.get("/api/events/related/ci-001")
 
@@ -1762,9 +1703,7 @@ class TestEventsAck:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.events.event_service.ack_event") as mock_ack_event:
             mock_ack_event.return_value = {"message": "Event Acknowledged"}
@@ -1773,9 +1712,7 @@ class TestEventsAck:
         assert response.status_code == 200
         data = response.json()
         assert "Acknowledged" in data["message"]
-        mock_ack_event.assert_called_once_with(
-            "evt-001", "operator", comment_message=None
-        )
+        mock_ack_event.assert_called_once_with("evt-001", "operator", comment_message=None)
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
@@ -1789,17 +1726,13 @@ class TestEventsAck:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.events.event_service.ack_event") as mock_ack_event:
             mock_ack_event.return_value = {"message": "Event Acknowledged"}
             response = client.post(
                 "/api/events/evt-001/ack",
-                json={
-                    "comment_message": "[OWNERSHIP] Caso tomado por operator - Tier T2"
-                },
+                json={"comment_message": "[OWNERSHIP] Caso tomado por operator - Tier T2"},
             )
 
         assert response.status_code == 200
@@ -1826,9 +1759,7 @@ class TestEventsAck:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post("/api/events/evt-001/ack")
 
@@ -1849,9 +1780,7 @@ class TestEventsClose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.events.event_service.close_event") as mock_close_event:
             mock_close_event.return_value = {"message": "Event Closed"}
@@ -1876,9 +1805,7 @@ class TestEventsClose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("routers.events.event_service.close_event") as mock_close_event:
             mock_close_event.return_value = {"message": "Event Closed"}
@@ -1915,17 +1842,13 @@ class TestEventsClose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post("/api/events/evt-001/close")
 
         assert response.status_code == 403
 
-    def test_close_event_requires_structured_root_cause_and_note(
-        self, mock_neo4j_driver
-    ):
+    def test_close_event_requires_structured_root_cause_and_note(self, mock_neo4j_driver):
         fake_user = _make_pydantic_user(
             username="operator",
             role="OPERATOR",
@@ -1935,9 +1858,7 @@ class TestEventsClose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(
@@ -1959,9 +1880,7 @@ class TestEventsClose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(
@@ -1995,13 +1914,9 @@ class TestEventsComment:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
-        with patch(
-            "routers.events.event_service.add_event_comment"
-        ) as mock_add_comment:
+        with patch("routers.events.event_service.add_event_comment") as mock_add_comment:
             mock_add_comment.return_value = {"message": "Comment added"}
 
             response = client.post(
@@ -2011,9 +1926,7 @@ class TestEventsComment:
 
         assert response.status_code == 200
         assert response.json()["message"] == "Comment added"
-        mock_add_comment.assert_called_once_with(
-            "evt-001", "operator", "Investigating the issue"
-        )
+        mock_add_comment.assert_called_once_with("evt-001", "operator", "Investigating the issue")
 
     def test_add_comment_forbidden_without_event_permission(self):
         fake_user = _make_pydantic_user(
@@ -2025,9 +1938,7 @@ class TestEventsComment:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post(
             "/api/events/evt-001/comment",
@@ -2053,9 +1964,7 @@ class TestEventsPrune:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         class FakeRecord:
             def __init__(self, data):
@@ -2071,9 +1980,7 @@ class TestEventsPrune:
         mock_session.run.return_value = MagicMock(
             single=MagicMock(return_value=FakeRecord({"closed_count": 5}))
         )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post("/api/events/prune")
@@ -2100,9 +2007,7 @@ class TestEventsPrune:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post("/api/events/prune")
 
@@ -2123,15 +2028,11 @@ class TestEventsDiagnose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         mock_session = MagicMock()
         mock_session.run.return_value = MagicMock(single=MagicMock(return_value=None))
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post("/api/events/nonexistent/diagnose")
@@ -2155,9 +2056,7 @@ class TestEventsDiagnose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         response = client.post("/api/events/evt-001/diagnose")
 
@@ -2174,9 +2073,7 @@ class TestEventsDiagnose:
         async def override_get_current_active_user():
             return fake_user
 
-        app.dependency_overrides[get_current_active_user] = (
-            override_get_current_active_user
-        )
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
 
         class FakeNode:
             def __init__(self, data):
@@ -2228,9 +2125,7 @@ class TestEventsDiagnose:
                 )
             )
         )
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with (
             patch("database.driver", mock_neo4j_driver),
@@ -2271,9 +2166,7 @@ class TestEventsForcedCloseAuthorization:
         app.dependency_overrides[get_current_active_user] = override
 
         mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(
@@ -2327,9 +2220,7 @@ class TestEventsForcedCloseAuthorization:
         app.dependency_overrides[get_current_active_user] = override
 
         mock_session = MagicMock()
-        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(
-            return_value=mock_session
-        )
+        mock_neo4j_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
 
         with patch("database.driver", mock_neo4j_driver):
             response = client.post(

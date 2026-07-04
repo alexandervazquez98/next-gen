@@ -159,3 +159,163 @@ def test_get_filtered_graph_data_builds_valid_where_without_coordinate_filter(mo
     assert "WHERE n.location_name IN $locations" in node_query
     assert "MATCH (n:CI)\n            AND" not in node_query
     assert session.run.call_args_list[0].kwargs["locations"] == ["HQ-Madrid"]
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 (feat-324) — public_ip field on CI nodes
+# ---------------------------------------------------------------------------
+
+
+def test_node_model_accepts_valid_public_ip():
+    """Slice 1 / VPN-Rel R1 / Sc 1: a Node with a valid public_ip round-trips
+    through the Pydantic model unchanged."""
+    from models.core import Node
+
+    node = Node(
+        id="ci-001",
+        label="Hub-01",
+        type="vpn_hub",
+        public_ip="203.0.113.10",
+    )
+
+    assert node.public_ip == "203.0.113.10"
+
+
+def test_node_model_accepts_ipv6_public_ip():
+    """Slice 1 / VPN-Rel R1 / Sc 1: IPv6 addresses are also accepted by
+    Python's ipaddress.ip_address validator."""
+    from models.core import Node
+
+    node = Node(
+        id="ci-002",
+        label="Hub-02",
+        type="vpn_hub",
+        public_ip="2001:db8::1",
+    )
+
+    assert node.public_ip == "2001:db8::1"
+
+
+def test_node_model_rejects_invalid_public_ip():
+    """Slice 1 / VPN-Rel R1 / Sc 2: invalid IP strings raise ValidationError."""
+    from models.core import Node
+    from pydantic import ValidationError
+
+    try:
+        Node(
+            id="ci-003",
+            label="Hub-03",
+            type="vpn_hub",
+            public_ip="not-an-ip",
+        )
+    except ValidationError:
+        return
+
+    raise AssertionError("Node accepted an invalid public_ip")
+
+
+def test_node_model_allows_missing_public_ip():
+    """Slice 1 / VPN-Rel R1 / Sc 3: public_ip is optional and defaults to None
+    so existing CIs are not backfilled."""
+    from models.core import Node
+
+    node = Node(id="ci-004", label="Hub-04", type="vpn_hub")
+
+    assert node.public_ip is None
+
+
+def test_upsert_node_persists_public_ip(monkeypatch):
+    """Slice 1 / VPN-Rel R1 / Sc 1: topology_repo.upsert_node persists the
+    public_ip value through the Cypher SET clause."""
+    from models.core import Node
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.upsert_node(
+        Node(
+            id="ci-100",
+            label="Hub-100",
+            type="vpn_hub",
+            public_ip="198.51.100.7",
+        )
+    )
+
+    query = session.run.call_args.args[0]
+    params = session.run.call_args.kwargs
+    assert "n.public_ip = $public_ip" in query
+    assert params["public_ip"] == "198.51.100.7"
+
+
+def test_upsert_node_passes_none_when_public_ip_missing(monkeypatch):
+    """Slice 1 / VPN-Rel R1 / Sc 3: when public_ip is absent, the parameter is
+    passed as None (no backfill)."""
+    from models.core import Node
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.upsert_node(Node(id="ci-101", label="Hub-101", type="vpn_hub"))
+
+    query = session.run.call_args.args[0]
+    params = session.run.call_args.kwargs
+    assert "n.public_ip = $public_ip" in query
+    assert params["public_ip"] is None
+
+
+def test_vpn_hub_layer_distinct_from_router():
+    """Slice 1 / VPN-Rel R1 / Sc 1: 'vpn_hub' is accepted as a distinct layer
+    value alongside 'router' (no migration required)."""
+    from models.core import Node
+
+    hub = Node(id="ci-hub", label="Hub", type="vpn_hub")
+    router = Node(id="ci-rtr", label="Router", type="router")
+
+    assert hub.type == "vpn_hub"
+    assert router.type == "router"
+    assert hub.type != router.type
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 (feat-324) — public_ip validation at service layer
+# ---------------------------------------------------------------------------
+
+
+def test_create_update_node_rejects_invalid_public_ip(monkeypatch):
+    """Slice 1 / VPN-Rel R1 / Sc 2: invalid public_ip surfaces as 400 with no
+    partial persistence when the CI is saved through node_service."""
+    from fastapi import HTTPException
+    from models.core import Node
+    from models.user import User
+    from repositories import topology_repo
+    from services import node_service
+
+    user = User(
+        username="admin",
+        role="ADMIN",
+        permissions=["CI_EDIT"],
+        allowed_locations=[],
+    )
+    # Use model_construct to skip Pydantic's __init__ validation so we can
+    # exercise the service-level guard that converts ValidationError -> 400.
+    bad_node = Node.model_construct(
+        id="ci-bad-ip",
+        label="Hub-bad",
+        type="vpn_hub",
+        public_ip="not-an-ip",
+    )
+
+    # Ensure we never reach the repository on the failure path.
+    def _fail(*args, **kwargs):
+        raise AssertionError("repository called despite invalid public_ip")
+
+    monkeypatch.setattr(topology_repo, "upsert_node", _fail)
+
+    raised = False
+    try:
+        node_service.create_update_node(bad_node, user)
+    except HTTPException as exc:
+        raised = exc.status_code == 400
+    assert raised, "expected HTTP 400 on invalid public_ip"

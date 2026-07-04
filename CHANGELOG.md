@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.5] — 2026-06-28
+
+### Fixed
+
+- **Event topology RCA wired into the production SNMP collector** (PR #318, closes #310):
+  - Production `backend/engines/snmp_worker.py::poll_snmp` now performs topology RCA inline via the new `build_open_parent_index` cache and `_resolve_correlation` helper.
+  - Dependent CI failures are tagged `correlation_type = 'PROPAGATED'` with `propagated_from` and `root_cause_ci_id` set to the upstream open event.
+  - ICMP recovery paths (availability, latency) preserved; full-cascade recovery via `root_cause_ci_id` already correct and now fires on real PROPAGATED events.
+  - Adds `ENABLE_TOPOLOGY_RCA` operator kill-switch (default true) for safe rollback without redeploy.
+  - 22 new tests in `backend/tests/test_snmp_worker_correlation.py` + 9 in `backend/tests/test_topology_repo_open_parent.py`; judgment-day approved after 2 rounds.
+  - Follow-up work tracked in #311 (PR2/PR3 of the #310 stack: consumer filtering, frontend grouping, recovery cascade test).
+- **Concurrent poll collectors no longer create duplicate events** (PRs #328 + #330 + #332, closes #322):
+  - Three event-write paths (`backend/engines/snmp_worker.py`, `backend/services/snmp_service.py`, `backend/polling/event_writer.py`) now serialize per `(ci_id, metric_id, event_type)` triplet via PostgreSQL `pg_advisory_xact_lock` acquired on the same open PG session as the Timescale write.
+  - The lock is acquired BEFORE the existing `OPTIONAL MATCH + FOREACH(CREATE)` block; the existing Cypher pattern is preserved (no Neo4j schema change, no constraint, no `:ActiveEvent` label).
+  - Batched `event_writer.py` path uses lexicographic lock ordering to prevent cross-writer deadlocks; verified by an integration test that proves unsorted acquisition would deadlock and sorted acquisition is safe.
+  - Each Event CREATE/SET now records `poll_collector_id` (container hostname via `get_poll_collector_id()` helper) for forensic post-mortem analysis.
+  - `backend/services/snmp_service.py::store_metric_result` session lifetime restructured to keep the PG session open across the Neo4j write so the lock is held until commit.
+  - Real-Postgres testcontainers integration tests prove the lock actually blocks concurrent writers (PRIMARY concurrency proof); MagicMock assertions are smoke tests only.
+  - 3 PRs delivered chained-to-main: PR1 (#328) test infra + lock helper; PR2 (#330) wire 3 writers + `poll_collector_id`; PR3 (#332) deadlock prevention + full poll cycle integration + final suite verification.
+  - No Neo4j schema changes; no migration required; OSS-compatible (works in Neo4j 5.15 Community, no Enterprise features).
+  - Follow-up work tracked in #326 (observability metrics, deployment-invariant documentation, new-writer enforcement, future architectural improvements).
+
 ## [1.13.4] — 2026-06-27
 
 ### Added
