@@ -10,6 +10,16 @@ from config import get_icmp_settings
 from database import get_db
 from models.core import Node
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
+from services.tunnel_health import (
+    TUNNEL_MEDIA,
+    IcmpReason,
+    LinkIdentity,
+    TunnelAuthoritySample,
+    TunnelHealthResponse,
+    TunnelIcmpSample,
+    encode_link_id,
+    normalize_tunnel_health,
+)
 
 _relationship_types = importlib.import_module("services.relationship_types")
 LISTABLE_RELATIONSHIP_TYPES = _relationship_types.LISTABLE_RELATIONSHIP_TYPES
@@ -182,6 +192,148 @@ def _validate_node_label(label: str) -> str:
     if label not in _VALID_NODE_LABELS:
         raise ValueError(f"Invalid node label: {label}")
     return label
+
+
+def _row_value(row, key: str, default=None):
+    if row is None:
+        return default
+    if hasattr(row, "get"):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def _authority_from_tunnel_row(row) -> TunnelAuthoritySample | None:
+    state = _row_value(row, "tunnel_authority_state")
+    if state not in {"UP", "DOWN"}:
+        return None
+    return TunnelAuthoritySample(
+        state=state,
+        source=_row_value(row, "tunnel_authority_source"),
+        observed_at=_row_value(row, "tunnel_authority_observed_at"),
+    )
+
+
+def _icmp_from_tunnel_row(row) -> TunnelIcmpSample | None:
+    available = _row_value(row, "tunnel_icmp_available")
+    latency_ms = _row_value(row, "tunnel_icmp_latency_ms")
+    error = _row_value(row, "tunnel_icmp_error")
+    reason = _row_value(row, "tunnel_icmp_reason")
+    if available is None and latency_ms is None and error is None and reason is None:
+        return None
+    return TunnelIcmpSample(
+        available=bool(available),
+        latency_ms=latency_ms,
+        error=error,
+        reason=reason if reason in IcmpReason.__args__ else None,
+    )
+
+
+def get_tunnel_health_link(
+    identity: LinkIdentity,
+    allowed_locations: list[str] | None = None,
+    is_admin: bool = False,
+) -> TunnelHealthResponse | None:
+    """Read latest tunnel health for one eligible, scoped CI-to-CI tunnel link."""
+    rel = _validate_relationship(identity.relationship)
+    if identity.medium not in TUNNEL_MEDIA:
+        raise ValueError(f"Invalid tunnel medium: {identity.medium}")
+    if not is_admin and not allowed_locations:
+        return None
+
+    driver = get_db()
+    query = f"""
+        MATCH (a:CI {{id: $source}})-[r:{rel}]->(b:CI {{id: $target}})
+        WHERE r.medium = $medium
+          AND r.medium IN $eligible_media
+    """
+    params: dict[str, Any] = {
+        "source": identity.source,
+        "target": identity.target,
+        "medium": identity.medium,
+        "eligible_media": sorted(TUNNEL_MEDIA),
+    }
+    if not is_admin:
+        query += (
+            " AND (a.location_name IN $allowed_locations OR b.location_name IN $allowed_locations)"
+        )
+        params["allowed_locations"] = allowed_locations
+    query += """
+        RETURN a.id AS source_id,
+               a.public_ip AS source_public_ip,
+               b.id AS target_id,
+               b.public_ip AS target_public_ip,
+               type(r) AS relationship,
+               r.medium AS medium,
+               r.tunnel_health_status AS tunnel_health_status,
+               r.tunnel_authority_state AS tunnel_authority_state,
+               r.tunnel_authority_source AS tunnel_authority_source,
+               r.tunnel_authority_observed_at AS tunnel_authority_observed_at,
+               r.tunnel_icmp_available AS tunnel_icmp_available,
+               r.tunnel_icmp_latency_ms AS tunnel_icmp_latency_ms,
+               r.tunnel_icmp_error AS tunnel_icmp_error,
+               r.tunnel_icmp_reason AS tunnel_icmp_reason,
+               r.tunnel_observed_at AS tunnel_observed_at
+    """
+    with driver.session() as session:
+        row = session.run(query, **params).single()
+    if not row:
+        return None
+
+    link_id = encode_link_id(identity)
+    missing_public_ip = not _row_value(row, "source_public_ip") or not _row_value(
+        row, "target_public_ip"
+    )
+    return normalize_tunnel_health(
+        link_id=link_id,
+        source=_row_value(row, "source_id"),
+        target=_row_value(row, "target_id"),
+        relationship=_row_value(row, "relationship"),
+        medium=_row_value(row, "medium"),
+        authority=_authority_from_tunnel_row(row),
+        icmp=_icmp_from_tunnel_row(row),
+        missing_public_ip=missing_public_ip,
+        observed_at=_row_value(row, "tunnel_observed_at"),
+    )
+
+
+def save_latest_tunnel_health(identity: LinkIdentity, health: TunnelHealthResponse) -> None:
+    """Persist latest-only tunnel health as scalar properties on the relationship."""
+    rel = _validate_relationship(identity.relationship)
+    if identity.medium not in TUNNEL_MEDIA:
+        raise ValueError(f"Invalid tunnel medium: {identity.medium}")
+    driver = get_db()
+    query = f"""
+        MATCH (a:CI {{id: $source}})-[r:{rel}]->(b:CI {{id: $target}})
+        WHERE r.medium = $medium
+        SET r.tunnel_health_status = $status,
+            r.tunnel_authority_state = $authority_state,
+            r.tunnel_authority_source = $authority_source,
+            r.tunnel_authority_observed_at = $authority_observed_at,
+            r.tunnel_icmp_available = $icmp_available,
+            r.tunnel_icmp_latency_ms = $icmp_latency_ms,
+            r.tunnel_icmp_error = $icmp_error,
+            r.tunnel_icmp_reason = $icmp_reason,
+            r.tunnel_observed_at = $observed_at
+    """
+    with driver.session() as session:
+        session.run(
+            query,
+            source=identity.source,
+            target=identity.target,
+            medium=identity.medium,
+            status=health.status,
+            authority_state=health.authority.state,
+            authority_source=health.authority.source,
+            authority_observed_at=health.authority.observed_at,
+            icmp_available=health.icmp.available,
+            icmp_latency_ms=health.icmp.latency_ms,
+            icmp_error=health.icmp.error,
+            icmp_reason=health.icmp.reason,
+            observed_at=health.observed_at,
+        )
 
 
 def get_template_data():
