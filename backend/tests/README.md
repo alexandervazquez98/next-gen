@@ -2,7 +2,7 @@
 
 ## Event writer lock guard
 
-`test_event_writer_lock_guard.py` is a CI guard for production backend modules that create Neo4j `Event` nodes. It statically scans production `backend/**/*.py` files, excludes test/support paths, and fails when an Event emitter is not explicitly classified.
+`test_event_writer_lock_guard.py` is a CI guard for production backend modules that create Neo4j `Event` nodes. It statically scans production `backend/**/*.py` files, excludes test/support plus local/generated trees (for example `.venv`, `venv`, `env`, caches, and vendor-style directories), and fails when an Event emitter is not explicitly classified.
 
 The guard protects the cross-writer Event de-duplication policy by requiring every polling Event writer to carry explicit, reviewable lock evidence metadata. It does not attempt to prove every control-flow path statically.
 
@@ -13,7 +13,7 @@ When adding a production polling writer that creates `Event` nodes:
 1. Add a `ProtectedWriterEvidence` entry to `PROTECTED_EVENT_WRITERS` using the backend-relative module path as the registry key.
 2. Include a short non-empty `rationale` that explains the writer role.
 3. Add one or more `evidence_tests` references. Each reference must be non-empty, relative to `backend/tests/`, and point to an existing test file. Absolute paths and `..` traversal are rejected.
-4. Add one or more `lock_symbols_or_wrappers` values that identify the lock primitive or approved production wrapper used by the writer.
+4. Add one or more `lock_symbols_or_wrappers` values that identify the lock primitive or approved production wrapper used by the writer. Every claimed symbol/wrapper must also appear in the protected source file so registry metadata cannot claim lock evidence that the module does not contain.
 
 Registry paths must remain normalized backend-relative paths. Absolute paths, `..` traversal, and paths that resolve outside `backend/` are rejected before the guard reads protected files.
 

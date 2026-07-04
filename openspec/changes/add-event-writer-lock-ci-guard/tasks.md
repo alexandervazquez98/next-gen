@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | 250-450 pivot delta; under 800-line session budget |
+| Estimated changed lines | Initial forecast 250-450 pivot delta; actual PR exceeded 800 lines and used a maintainer-approved size exception |
 | 400-line budget risk | Medium |
 | Chained PRs recommended | No |
 | Suggested split | Single PR with maintainer-approved size exception |

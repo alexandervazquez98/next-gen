@@ -6,6 +6,27 @@ from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 TESTS_ROOT = BACKEND_ROOT / "tests"
+EXCLUDED_DISCOVERY_DIRS = {
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "env",
+    "htmlcov",
+    "node_modules",
+    "site-packages",
+    "support",
+    "tests",
+    "vendor",
+    "venv",
+}
 
 
 @dataclass(frozen=True)
@@ -110,15 +131,20 @@ def _is_production_python_path(path: Path, backend_root: Path) -> bool:
     if path.suffix != ".py":
         return False
     relative_parts = path.relative_to(backend_root).parts
-    excluded_dirs = {"tests", "support", "__pycache__"}
-    return not any(part in excluded_dirs for part in relative_parts)
+    return not any(part in EXCLUDED_DISCOVERY_DIRS for part in relative_parts)
+
+
+def _iter_production_python_paths(backend_root: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in backend_root.rglob("*.py")
+        if _is_production_python_path(path, backend_root)
+    )
 
 
 def discover_event_emitter_paths(backend_root: Path = BACKEND_ROOT) -> set[str]:
     discovered: set[str] = set()
-    for path in backend_root.rglob("*.py"):
-        if not _is_production_python_path(path, backend_root):
-            continue
+    for path in _iter_production_python_paths(backend_root):
         source = path.read_text(encoding="utf-8")
         if find_event_creation_spans(source):
             discovered.add(path.relative_to(backend_root).as_posix())
@@ -169,9 +195,20 @@ def validate_protected_writer_evidence(
         if registry_path != evidence.path:
             failures.append(f"{registry_path}: evidence.path must match the registry key")
         try:
-            _registry_path_to_backend_file(registry_path, backend_root)
+            writer_file = _registry_path_to_backend_file(registry_path, backend_root)
         except ValueError as exc:
             failures.append(str(exc))
+            writer_file = None
+        protected_source_available = False
+        if writer_file is not None:
+            if not writer_file.exists():
+                failures.append(f"{registry_path}: protected writer source does not exist")
+                protected_source = ""
+            else:
+                protected_source = writer_file.read_text(encoding="utf-8")
+                protected_source_available = True
+        else:
+            protected_source = ""
         if not evidence.rationale.strip():
             failures.append(f"{registry_path}: rationale is required")
         if not evidence.evidence_tests or any(not item.strip() for item in evidence.evidence_tests):
@@ -190,6 +227,11 @@ def validate_protected_writer_evidence(
             not item.strip() for item in evidence.lock_symbols_or_wrappers
         ):
             failures.append(f"{registry_path}: lock_symbols_or_wrappers is required")
+        for symbol in evidence.lock_symbols_or_wrappers:
+            if symbol.strip() and protected_source_available and symbol not in protected_source:
+                failures.append(
+                    f"{registry_path}: protected source is missing claimed lock evidence: {symbol}"
+                )
         if (
             registry_path == "polling/event_writer.py"
             and "_acquire_sorted_locks" not in evidence.lock_symbols_or_wrappers
@@ -266,6 +308,34 @@ def test_production_python_discovery_excludes_tests_and_support_paths(tmp_path: 
     assert discovered == {"services/writer.py"}
 
 
+def test_production_python_discovery_ignores_local_virtualenv_and_cache_trees(tmp_path: Path):
+    backend_root = tmp_path / "backend"
+    (backend_root / "services").mkdir(parents=True)
+    (backend_root / ".venv" / "lib").mkdir(parents=True)
+    (backend_root / "venv" / "lib").mkdir(parents=True)
+    (backend_root / ".pytest_cache").mkdir(parents=True)
+    (backend_root / "services" / "writer.py").write_text(
+        "session.run('CREATE (e:Event {id: randomUUID()})')\n",
+        encoding="utf-8",
+    )
+    (backend_root / ".venv" / "lib" / "shadow_writer.py").write_text(
+        "session.run('CREATE (e:Event {id: randomUUID()})')\n",
+        encoding="utf-8",
+    )
+    (backend_root / "venv" / "lib" / "shadow_writer.py").write_text(
+        "session.run('CREATE (e:Event {id: randomUUID()})')\n",
+        encoding="utf-8",
+    )
+    (backend_root / ".pytest_cache" / "shadow_writer.py").write_text(
+        "session.run('CREATE (e:Event {id: randomUUID()})')\n",
+        encoding="utf-8",
+    )
+
+    discovered = discover_event_emitter_paths(backend_root)
+
+    assert discovered == {"services/writer.py"}
+
+
 def test_discovered_event_emitters_are_classified_exactly_once():
     result = classify_event_emitters(discover_event_emitter_paths(BACKEND_ROOT))
 
@@ -280,6 +350,18 @@ def test_classification_fails_for_unclassified_emitters_with_actionable_message(
     assert "services/new_writer.py" in result.failure_message
     assert "PROTECTED_EVENT_WRITERS" in result.failure_message
     assert "EXEMPT_EVENT_EMITTERS" in result.failure_message
+
+
+def test_classification_fails_for_protected_exempt_overlap_with_actionable_message(
+    monkeypatch,
+):
+    monkeypatch.setitem(EXEMPT_EVENT_EMITTERS, "services/snmp_service.py", "bad overlap")
+
+    result = classify_event_emitters({"services/snmp_service.py"})
+
+    assert result.overlap == {"services/snmp_service.py"}
+    assert "services/snmp_service.py" in result.failure_message
+    assert "both protected and exempt" in result.failure_message
 
 
 def test_exempt_emitters_have_backend_relative_paths_and_non_empty_rationales():
@@ -373,9 +455,42 @@ def test_missing_evidence_metadata_fails_with_writer_name(tmp_path: Path):
     )
 
 
+def test_protected_writer_claimed_lock_evidence_must_exist_in_source(tmp_path: Path):
+    backend_root = tmp_path / "backend"
+    (backend_root / "services").mkdir(parents=True)
+    (backend_root / "tests").mkdir(parents=True)
+    (backend_root / "services" / "writer.py").write_text(
+        "def write_event():\n    return True\n",
+        encoding="utf-8",
+    )
+    (backend_root / "tests" / "test_writer.py").write_text("", encoding="utf-8")
+    evidence = {
+        "services/writer.py": ProtectedWriterEvidence(
+            path="services/writer.py",
+            rationale="polling writer",
+            evidence_tests=("tests/test_writer.py",),
+            lock_symbols_or_wrappers=("acquire_event_triplet_lock",),
+        )
+    }
+
+    failures = validate_protected_writer_evidence(evidence, backend_root)
+
+    assert any(
+        "services/writer.py: protected source is missing claimed lock evidence: acquire_event_triplet_lock"
+        in failure
+        for failure in failures
+    )
+
+
 def test_polling_event_writer_accepts_sorted_wrapper_and_rejects_unsorted_alone(tmp_path: Path):
     backend_root = tmp_path / "backend"
+    (backend_root / "polling").mkdir(parents=True)
     (backend_root / "tests").mkdir(parents=True)
+    (backend_root / "polling" / "event_writer.py").write_text(
+        "def _acquire_sorted_locks():\n    return True\n\n"
+        "def _acquire_unsorted_locks():\n    return True\n",
+        encoding="utf-8",
+    )
     (backend_root / "tests" / "test_polling_event_writer.py").write_text("", encoding="utf-8")
     sorted_evidence = {
         "polling/event_writer.py": ProtectedWriterEvidence(
