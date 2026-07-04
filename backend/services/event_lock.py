@@ -23,19 +23,17 @@ no session management, no Neo4j concerns, just one well-named primitive.
 
 from __future__ import annotations
 
-import os
-import socket
 import logging
 import math
+import os
+import socket
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from sqlalchemy import text
-
 from config import EventLockSettings, get_event_lock_settings
-
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 

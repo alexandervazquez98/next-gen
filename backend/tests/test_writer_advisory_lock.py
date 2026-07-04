@@ -45,7 +45,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 EVENT_LOCK_ENV_VARS = (
     "EVENT_LOCK_SLOW_LOG_INFO_MS",
     "EVENT_LOCK_WARNING_P95_MS",
@@ -674,7 +673,6 @@ def test_concurrent_writers_block_on_lock():
                 "postgresql+psycopg2://", "postgresql://"
             )
             triplet_key = "ci-001|icmp_latency_ms|THRESHOLD_BREACH"
-            hold_seconds = 3.0  # >> check timeout; proves waiter is provably blocked during the check
             check_window = 0.5  # how long main waits before declaring "waiter is blocked"
 
             got_lock = threading.Event()
@@ -724,8 +722,8 @@ def test_concurrent_writers_block_on_lock():
             waiter_thread.start()
 
             # If the lock is honored, the waiter must still be blocked here.
-            # Check window (0.5s) is much smaller than hold_seconds (3.0s) so a
-            # passing assertion here is genuine proof of blocking.
+            # Passing this check proves the waiter remained blocked while the
+            # holder still owned the transaction-scoped lock.
             assert not waiter_finished.wait(timeout=0.5), (
                 "waiter acquired the lock while holder still held it — "
                 "pg_advisory_xact_lock is NOT serializing writers!"
@@ -799,19 +797,18 @@ def test_unsorted_lock_acquisition_deadlocks():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from sqlalchemy.exc import OperationalError
-        from testcontainers.postgres import PostgresContainer
-
         from polling.event_writer import _acquire_unsorted_locks
+        from sqlalchemy import create_engine
+        from sqlalchemy.exc import OperationalError
+        from sqlalchemy.orm import sessionmaker
+        from testcontainers.postgres import PostgresContainer
 
         with PostgresContainer("postgres:15-alpine") as pg:
             # SQLAlchemy with psycopg2 — psycopg2 is now genuinely real
             # because of _swap_in_real_psycopg2().
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             # Triplet sets in REVERSE order — perfect deadlock setup.
             triplets_forward = [
@@ -824,7 +821,7 @@ def test_unsorted_lock_acquisition_deadlocks():
             results: dict[str, object] = {"a": None, "b": None}
 
             def worker(triplets: list[tuple[str, str, str]], key: str) -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     _acquire_unsorted_locks(session, triplets)
                     results[key] = "ok"
@@ -896,16 +893,15 @@ def test_sorted_lock_acquisition_prevents_deadlock():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
+        from polling.event_writer import _acquire_sorted_locks
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from testcontainers.postgres import PostgresContainer
 
-        from polling.event_writer import _acquire_sorted_locks
-
         with PostgresContainer("postgres:15-alpine") as pg:
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             # Two batches of ROW DICTS (not pre-extracted triplets) with
             # the SAME triplets in REVERSE orders. _acquire_sorted_locks
@@ -920,7 +916,7 @@ def test_sorted_lock_acquisition_prevents_deadlock():
             results: dict[str, object] = {"a": None, "b": None}
 
             def worker(rows: list[dict], key: str) -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     _acquire_sorted_locks(session, rows)
                     results[key] = "ok"
@@ -1000,17 +996,16 @@ def test_full_poll_cycle_no_duplicates():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
+        from polling.event_writer import _acquire_sorted_locks
+        from services.event_lock import acquire_event_triplet_lock
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from testcontainers.postgres import PostgresContainer
 
-        from polling.event_writer import _acquire_sorted_locks
-        from services.event_lock import acquire_event_triplet_lock
-
         with PostgresContainer("postgres:15-alpine") as pg:
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             triplet = ("ci-001", "cpu", "COLLECTION_FAILURE")
             ci_id, metric_id, event_type = triplet
@@ -1028,7 +1023,7 @@ def test_full_poll_cycle_no_duplicates():
             results: dict[str, str] = {}
 
             def snmp_worker_writer() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
                     with sink_lock:
@@ -1043,7 +1038,7 @@ def test_full_poll_cycle_no_duplicates():
                     session.close()
 
             def snmp_service_writer() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
                     with sink_lock:
@@ -1057,7 +1052,7 @@ def test_full_poll_cycle_no_duplicates():
                     session.close()
 
             def event_writer_batch() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     # event_writer batch path: a single-row batch
                     # containing the same triplet.
