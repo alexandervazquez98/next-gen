@@ -102,21 +102,19 @@ def test_acquire_event_triplet_lock_helper():
     # SQL is the first positional arg.
     sql_obj = args[0] if args else kwargs.get("text")
     sql_text = _normalize_sql_for_lookup(sql_obj)
-    assert "pg_advisory_xact_lock" in sql_text, (
-        f"expected pg_advisory_xact_lock in SQL, got: {sql_text!r}"
-    )
-    assert "hashtext" in sql_text, (
-        f"expected hashtext in SQL, got: {sql_text!r}"
-    )
+    assert (
+        "pg_advisory_xact_lock" in sql_text
+    ), f"expected pg_advisory_xact_lock in SQL, got: {sql_text!r}"
+    assert "hashtext" in sql_text, f"expected hashtext in SQL, got: {sql_text!r}"
 
     # The key parameter must match the "ci|metric|type" format exactly.
     params = args[1] if len(args) > 1 else kwargs.get("params") or kwargs
     # ``text("… :key")`` plus a dict binding ``{"key": …}`` is the canonical
     # pattern; we accept both binding styles for forward-compat.
     flat_values = params.values() if isinstance(params, dict) else (params,)
-    assert expected_key in flat_values, (
-        f"expected key {expected_key!r} in bind params, got {params!r}"
-    )
+    assert (
+        expected_key in flat_values
+    ), f"expected key {expected_key!r} in bind params, got {params!r}"
 
 
 def test_services_event_lock_imports_from_backend_import_root():
@@ -191,7 +189,6 @@ def test_event_lock_metrics_initialize_once_under_concurrent_cold_start(monkeypa
 
     created_instances = []
     original_metrics_cls = event_lock_module._EventLockMetrics
-
 
     class SlowConstructingMetrics(original_metrics_cls):
         def __post_init__(self) -> None:
@@ -459,11 +456,15 @@ def test_event_lock_slow_log_threshold_zero_disables_info_logs_and_info_alerts(m
             writer_context="snmp_worker",
         )
 
-    assert [record for record in caplog.records if record.message == "event_lock_slow_acquisition"] == []
+    assert [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ] == []
     assert event_lock_module.get_event_lock_observability_snapshot()["alert_state"] == "OK"
 
 
-def test_acquire_event_triplet_lock_emits_structured_slow_log_at_info_threshold(caplog, monkeypatch):
+def test_acquire_event_triplet_lock_emits_structured_slow_log_at_info_threshold(
+    caplog, monkeypatch
+):
     """Acquisitions at or above 250ms emit one structured INFO slow-lock log."""
     from services import event_lock as event_lock_module
 
@@ -481,7 +482,9 @@ def test_acquire_event_triplet_lock_emits_structured_slow_log_at_info_threshold(
             writer_context="snmp_worker",
         )
 
-    slow_records = [record for record in caplog.records if record.message == "event_lock_slow_acquisition"]
+    slow_records = [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ]
     assert len(slow_records) == 1
     assert slow_records[0].event_lock_writer_context == "snmp_worker"
     assert slow_records[0].event_lock_wait_ms == 250
@@ -506,7 +509,9 @@ def test_acquire_event_triplet_lock_avoids_info_log_below_threshold(caplog, monk
             writer_context="snmp_worker",
         )
 
-    assert [record for record in caplog.records if record.message == "event_lock_slow_acquisition"] == []
+    assert [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ] == []
     snapshot = event_lock_module.get_event_lock_observability_snapshot()
     assert snapshot["acquisitions_total"] == 1
     assert snapshot["wait_ms"]["max"] == 249
@@ -622,6 +627,7 @@ def _swap_in_real_psycopg2():
     saved = sys.modules.pop("psycopg2", None)
     saved_ext = sys.modules.pop("psycopg2.extensions", None)
     import psycopg2 as real_psycopg2  # fresh import — now genuinely real
+
     sys.modules["psycopg2"] = real_psycopg2
     sys.modules["psycopg2.extensions"] = real_psycopg2.extensions
 
@@ -669,9 +675,7 @@ def test_concurrent_writers_block_on_lock():
         from testcontainers.postgres import PostgresContainer
 
         with PostgresContainer("postgres:15-alpine") as pg:
-            conn_url = pg.get_connection_url().replace(
-                "postgresql+psycopg2://", "postgresql://"
-            )
+            conn_url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
             triplet_key = "ci-001|icmp_latency_ms|THRESHOLD_BREACH"
             check_window = 0.5  # how long main waits before declaring "waiter is blocked"
 
@@ -733,9 +737,7 @@ def test_concurrent_writers_block_on_lock():
             release.set()
             holder_thread.join(timeout=15)
 
-            assert waiter_finished.wait(timeout=10), (
-                "waiter never acquired the lock after release"
-            )
+            assert waiter_finished.wait(timeout=10), "waiter never acquired the lock after release"
             waiter_thread.join(timeout=10)
 
             # The waiter MUST have been blocked for at least the check window.
@@ -933,9 +935,7 @@ def test_sorted_lock_acquisition_prevents_deadlock():
                 fut_a.result(timeout=30)
                 fut_b.result(timeout=30)
 
-            assert results["a"] == "ok", (
-                f"thread A failed: {results['a']!r}"
-            )
+            assert results["a"] == "ok", f"thread A failed: {results['a']!r}"
             assert results["b"] == "ok", (
                 f"thread B failed: {results['b']!r} — sorted acquisition "
                 f"did NOT prevent the deadlock; the deterministic-ordering "
@@ -1056,11 +1056,16 @@ def test_full_poll_cycle_no_duplicates():
                 try:
                     # event_writer batch path: a single-row batch
                     # containing the same triplet.
-                    _acquire_sorted_locks(session, [{
-                        "ci_id": ci_id,
-                        "metric_id": metric_id,
-                        "event_type": event_type,
-                    }])
+                    _acquire_sorted_locks(
+                        session,
+                        [
+                            {
+                                "ci_id": ci_id,
+                                "metric_id": metric_id,
+                                "event_type": event_type,
+                            }
+                        ],
+                    )
                     with sink_lock:
                         if triplet not in neo4j_sink:
                             neo4j_sink[triplet] = "created"
@@ -1085,20 +1090,16 @@ def test_full_poll_cycle_no_duplicates():
                 f"{neo4j_sink!r} — lock did NOT serialize writers; duplicate "
                 f"Events would have been created in real Neo4j"
             )
-            assert triplet in neo4j_sink, (
-                f"triplet {triplet!r} missing from sink: {neo4j_sink!r}"
-            )
+            assert triplet in neo4j_sink, f"triplet {triplet!r} missing from sink: {neo4j_sink!r}"
 
             # Exactly 1 writer "created"; the other 2 "found_existing".
             created = [k for k, v in results.items() if v == "created"]
             found = [k for k, v in results.items() if v == "found_existing"]
             assert len(created) == 1, (
-                f"expected exactly 1 writer to CREATE, got {len(created)}: "
-                f"{results!r}"
+                f"expected exactly 1 writer to CREATE, got {len(created)}: " f"{results!r}"
             )
             assert len(found) == 2, (
-                f"expected 2 writers to FIND_EXISTING, got {len(found)}: "
-                f"{results!r}"
+                f"expected 2 writers to FIND_EXISTING, got {len(found)}: " f"{results!r}"
             )
     finally:
         restore_psycopg2()

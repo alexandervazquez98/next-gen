@@ -305,9 +305,15 @@ class PollingPipelineSettings(BaseModel):
             db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),
             task_batch_size=int(os.getenv("POLLING_TASK_BATCH_SIZE", "100")),
             result_batch_size=int(os.getenv("POLLING_RESULT_BATCH_SIZE", "500")),
-            backpressure_max_task_queue_depth=int(os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")),
-            backpressure_max_writer_lag_seconds=int(os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")),
-            backpressure_retry_max_attempts=int(os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")),
+            backpressure_max_task_queue_depth=int(
+                os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")
+            ),
+            backpressure_max_writer_lag_seconds=int(
+                os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")
+            ),
+            backpressure_retry_max_attempts=int(
+                os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")
+            ),
             metadata_cache_ttl_seconds=int(os.getenv("POLLING_METADATA_CACHE_TTL_SECONDS", "300")),
             benchmark_ci_count=int(os.getenv("POLLING_BENCHMARK_CI_COUNT", "8000")),
             benchmark_metrics_per_ci=int(os.getenv("POLLING_BENCHMARK_METRICS_PER_CI", "35")),

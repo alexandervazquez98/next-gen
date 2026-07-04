@@ -94,8 +94,7 @@ class _EventLockMetrics:
         with self._lock:
             waits = list(self.waits_ms)
             by_writer = {
-                writer: metrics.snapshot()
-                for writer, metrics in sorted(self.by_writer.items())
+                writer: metrics.snapshot() for writer, metrics in sorted(self.by_writer.items())
             }
             distribution = _wait_distribution(waits)
             return {
