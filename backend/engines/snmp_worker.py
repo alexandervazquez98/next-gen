@@ -346,7 +346,7 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
                 existing.event_type = row.event_type,
                 existing.failure_family = row.failure_family,
                 existing.source_protocol = row.source_protocol,
-                poll_collector_id = $poll_collector_id
+                existing.poll_collector_id = $poll_collector_id
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
@@ -474,7 +474,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
                 existing.event_type = row.event_type,
                 existing.source_protocol = row.source_protocol,
                 existing.availability_source = row.availability_source,
-                poll_collector_id = $poll_collector_id
+                existing.poll_collector_id = $poll_collector_id
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
@@ -632,7 +632,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
                 existing.recovered_at = NULL,
                 existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
                 existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id),
-                poll_collector_id = $poll_collector_id
+                existing.poll_collector_id = $poll_collector_id
             MERGE (n)-[:HAS_EVENT]->(existing)
             MERGE (existing)-[:TRIGGERED_BY]->(m)
         )
