@@ -57,6 +57,7 @@ _CATEGORY_DEFAULT_ICON_BY_NAME = {
     "distributionci": "distribution_ci",
     "distribucion": "distribution_ci",
     "capadistribucion": "distribution_ci",
+    "vpn_hub": "vpn_hub",
     "vpnhub": "vpn_hub",
     "hubvpn": "vpn_hub",
     "concentradorvpn": "vpn_hub",
