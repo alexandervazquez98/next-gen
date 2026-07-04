@@ -466,6 +466,68 @@ class TestGetNodes:
 
                 assert result[0]["category_icon_key"] == icon_key
 
+    def test_category_icon_key_accepts_explicit_pr_329_icon_keys(self):
+        """Stored PR #329 icon keys should pass through node payloads."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        for icon_key in (
+            "radio_telecom",
+            "trunk_link",
+            "access_ci",
+            "distribution_ci",
+        ):
+            node_record = _make_full_record(
+                node_props=_make_node_record(layer="custom"),
+                category="Custom",
+                metrics=[],
+            )
+
+            with patch("services.node_service.topology_repo") as mock_repo:
+                mock_repo.get_nodes.return_value = [
+                    {
+                        **node_record,
+                        "category_icon_key": icon_key,
+                    }
+                ]
+
+                from services.node_service import get_nodes
+
+                result = get_nodes(admin)
+
+                assert result[0]["category_icon_key"] == icon_key
+
+    def test_category_icon_key_defaults_pr_329_category_names(self):
+        """Known PR #329 categories should not degrade to generic when icon metadata is missing."""
+        admin = _make_user(username="admin", role="ADMIN")
+
+        cases = {
+            "Radio": "radio_telecom",
+            "Troncal de Red": "trunk_link",
+            "Acceso": "access_ci",
+            "Distribución": "distribution_ci",
+        }
+
+        for category_name, expected_icon in cases.items():
+            node_record = _make_full_record(
+                node_props=_make_node_record(layer="custom"),
+                category=category_name,
+                metrics=[],
+            )
+
+            with patch("services.node_service.topology_repo") as mock_repo:
+                mock_repo.get_nodes.return_value = [
+                    {
+                        **node_record,
+                        "category_icon_key": None,
+                    }
+                ]
+
+                from services.node_service import get_nodes
+
+                result = get_nodes(admin)
+
+                assert result[0]["category_icon_key"] == expected_icon
+
     def test_empty_nodes_list_returns_empty(self):
         """When repo returns no nodes, result should be empty list."""
         admin = _make_user(username="admin", role="ADMIN")

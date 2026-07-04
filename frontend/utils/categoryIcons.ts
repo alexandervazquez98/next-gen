@@ -17,6 +17,10 @@ const CATEGORY_ICON_KEY_SET = new Set<string>([
   "storage",
   "camera",
   "video_analytics",
+  "radio_telecom",
+  "trunk_link",
+  "access_ci",
+  "distribution_ci",
   "vpn_tunnel",
   "sd_wan_tunnel",
   "satellite_link",
@@ -79,6 +83,37 @@ export const CATEGORY_ICON_CATALOG: CategoryIconEntry[] = [
     aliases: ["analytics", "video analysis", "ai video"],
   },
   {
+    key: "radio_telecom",
+    label: "Radio (Telecom)",
+    materialSymbol: "settings_input_antenna",
+    aliases: ["radio", "antenna", "wireless", "telecom radio", "radioenlace"],
+  },
+  {
+    key: "trunk_link",
+    label: "Trunk Link",
+    materialSymbol: "linear_scale",
+    aliases: ["trunk", "backbone", "uplink", "troncal", "troncal de red"],
+  },
+  {
+    key: "access_ci",
+    label: "Access CI",
+    materialSymbol: "input",
+    aliases: ["access", "access ci", "access node", "acceso", "nodo de acceso"],
+  },
+  {
+    key: "distribution_ci",
+    label: "Distribution CI",
+    materialSymbol: "layers",
+    aliases: [
+      "distribution",
+      "distribution ci",
+      "distribution layer",
+      "distribucion",
+      "distribución",
+      "capa distribucion",
+    ],
+  },
+  {
     // Slice 1 (feat-324) — tunnel technology icons. These icons identify
     // the transport only; health/state styling is rendered separately by
     // the visual layer so an UP tunnel keeps showing the technology icon.
@@ -124,6 +159,18 @@ const CATEGORY_NAME_TO_ICON: Record<string, CategoryIconKey> = {
   cameras: "camera",
   "video analytics": "video_analytics",
   video_analytics: "video_analytics",
+  radio: "radio_telecom",
+  "radio telecom": "radio_telecom",
+  radioenlace: "radio_telecom",
+  trunk: "trunk_link",
+  "trunk link": "trunk_link",
+  troncal: "trunk_link",
+  access: "access_ci",
+  "access ci": "access_ci",
+  acceso: "access_ci",
+  distribution: "distribution_ci",
+  "distribution ci": "distribution_ci",
+  distribucion: "distribution_ci",
   // Slice 1 (feat-324) — default icon inference for tunnel categories.
   // Both English and Spanish spellings are accepted; the normalize pass
   // (with diacritic stripping) collapses accented Spanish input to its
@@ -155,9 +202,8 @@ export const normalizeCategoryName = (categoryName: string): string => {
       .trim()
       .toLowerCase()
       // Strip combining diacritics first so accented Spanish input
-      // (e.g. "Concentrador VPN" — note the tilde on the o) collapses
-      // to its ASCII dictionary form ("concentrador vpn") instead of
-      // being treated as separate tokens by the [^a-z0-9]+ rule below.
+      // (e.g. "Concentrador VPN" or "Distribución") collapses to its
+      // ASCII dictionary form before the [^a-z0-9]+ normalization below.
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, " ")
