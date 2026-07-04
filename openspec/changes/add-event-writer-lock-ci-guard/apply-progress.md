@@ -21,7 +21,7 @@ Pivoted issue #334 away from fragile AST/control-flow lock-before-write proof. T
 
 ## Remaining Tasks
 
-- [ ] 4.3 Focused pytest verification remains blocked in this worktree because the local Python environment is prepared and pytest runs, but Docker/testcontainers cannot reach a Docker daemon for the real-Postgres advisory-lock tests.
+- [x] 4.3 Focused verification completed in CI: GitHub Actions `backend-tests` passed after local Docker/testcontainers was unavailable.
 
 ## Environment Prepared
 
@@ -45,12 +45,12 @@ Pivoted issue #334 away from fragile AST/control-flow lock-before-write proof. T
 | 3.3 | `backend/tests/test_event_writer_lock_guard.py` | Unit/static | ⚠️ pytest unavailable | ✅ Overlap classification behavior preserved | ⚠️ Manual zero-arg invocation passed; pytest blocked | ✅ Overlap and unclassified checks via `ClassificationResult` | ➖ None needed |
 | 4.1 | `backend/tests/README.md` | Docs | N/A | ✅ Documentation acceptance driven by spec/task review before README edit | ✅ README updated | ✅ Protected, evidence-test, wrapper, exemption, and failure workflow sections covered | ✅ Removed stale control-flow proof wording |
 | 4.2 | `openspec/changes/add-event-writer-lock-ci-guard/apply-progress.md` | Docs/artifact | N/A | ✅ Progress update requirement identified before rewriting stale artifact | ✅ Artifact updated | ✅ Summary, completed tasks, TDD table, issues, and deviations all reflect pivot | ✅ Merged previous completed state with new pivot progress |
-| 4.3 | `backend/tests/test_event_writer_lock_guard.py`, `backend/tests/test_writer_advisory_lock.py`, `backend/tests/test_polling_event_writer.py` | Verification | N/A | ✅ Local venv and pytest prepared from existing dependency files | ⚠️ Pytest executed: 43 passed, 4 failed due Docker daemon unavailable for testcontainers | ⚠️ Real-Postgres integration paths blocked by Docker socket failure | ➖ No production code modified |
+| 4.3 | `backend/tests/test_event_writer_lock_guard.py`, `backend/tests/test_writer_advisory_lock.py`, `backend/tests/test_polling_event_writer.py` | Verification | CI backend lane | ✅ Local venv and pytest prepared from existing dependency files | ✅ GitHub Actions `backend-tests` passed after local Docker/testcontainers was unavailable | ✅ CI provided Docker/testcontainers-capable runner coverage | ➖ No production code modified |
 
 ## Test Summary
 
 - **Total tests written/kept**: 11 pytest tests in `backend/tests/test_event_writer_lock_guard.py` focused on discovery, classification, registry safety, and evidence metadata.
-- **Total tests passing**: Focused pytest executed in `backend/.venv`: 43 passed, 4 failed. The failures are all `testcontainers.postgres.PostgresContainer` startup failures caused by Docker daemon access (`FileNotFoundError` on the Docker Unix socket), not assertion failures in issue #334 logic.
+- **Total tests passing**: Local guard pytest passed 11/11. Focused local pytest reached 43 passed / 4 Docker-environment failures, then GitHub Actions `backend-tests` passed on the PR branch.
 - **Layers used**: Unit/static (11), Integration (0), E2E (0).
 - **Approval tests**: None — no production refactoring tasks.
 - **Pure functions created**: Discovery, classification, backend path containment, evidence test path containment, and evidence metadata validation helpers.
@@ -68,6 +68,7 @@ Pivoted issue #334 away from fragile AST/control-flow lock-before-write proof. T
 - `cd backend && /Users/macbook/.local/bin/python3.11 -m venv .venv && ./.venv/bin/python -m ensurepip --upgrade && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt` → passed; installed project runtime and dev/test dependencies locally.
 - `cd backend && ./.venv/bin/python -m pytest tests/test_event_writer_lock_guard.py tests/test_writer_advisory_lock.py tests/test_polling_event_writer.py` → executed real pytest; 47 collected, 43 passed, 4 failed. Failing tests: `test_concurrent_writers_block_on_lock`, `test_unsorted_lock_acquisition_deadlocks`, `test_sorted_lock_acquisition_prevents_deadlock`, and `test_full_poll_cycle_no_duplicates`; each failed while `testcontainers` tried to create `PostgresContainer("postgres:15-alpine")` because Docker daemon access failed with `docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))`.
 - `cd backend && docker info` → blocked: `zsh:1: command not found: docker`, confirming this environment cannot currently satisfy the testcontainers/Postgres integration dependency.
+- GitHub Actions PR #353 `backend-tests` → passed after updating the branch with `main`.
 
 ## Deviations from Design
 
@@ -75,8 +76,7 @@ None — implementation matches the pivoted design: discovery remains static inv
 
 ## Issues Found
 
-- Focused pytest verification is no longer blocked by missing Python tooling; the local venv and dependencies are installed.
-- Task 4.3 remains incomplete because real pytest did not pass: four real-Postgres advisory-lock integration tests require Docker/testcontainers access, and the Docker daemon/socket is unavailable in this execution environment.
+- Focused local pytest was blocked only by missing Docker/testcontainers support on this machine; CI provided the required runner capability and passed `backend-tests`.
 
 ## Workload / PR Boundary
 

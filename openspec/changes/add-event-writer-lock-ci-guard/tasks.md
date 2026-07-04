@@ -45,4 +45,4 @@ Chain strategy: size-exception
 
 - [x] 4.1 Update `backend/tests/README.md` to document protected registration, evidence test references, approved wrapper evidence, exempt rationale workflow, and unclassified-emitter failures.
 - [x] 4.2 Remove or reword `apply-progress.md` claims that AST/control-flow proof is the desired final scope; note the pivot to evidence metadata if this artifact remains part of the review packet.
-- [ ] 4.3 Verify with `cd backend && python -m pytest tests/test_event_writer_lock_guard.py tests/test_writer_advisory_lock.py tests/test_polling_event_writer.py`; keep unchecked until real pytest runs.
+- [x] 4.3 Verify with CI backend pytest after local Docker/testcontainers was unavailable; GitHub Actions `backend-tests` passed.
