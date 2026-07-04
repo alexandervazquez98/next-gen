@@ -1,21 +1,23 @@
 # LM Studio AI Chat Integration
 
-NEX-GEN AI chat now uses a backend proxy to talk to LM Studio's OpenAI-compatible local API. The browser only calls `/api/ai/chat`; it never receives or controls the LM Studio base URL or model.
+NEX-GEN AI chat uses a backend proxy to talk to LM Studio's OpenAI-compatible local API. The browser only calls `/api/ai/chat`; it never receives or controls the LM Studio base URL, model, or harness targets.
 
 ## Quick path
 
 1. Start LM Studio and enable the local server.
 2. Configure the backend environment variables below.
-3. Send chat from the NEX-GEN AI console; the backend posts to `/v1/chat/completions`.
+3. Verify LM Studio responds on `/v1/chat/completions`.
+4. Send chat from the NEX-GEN AI console; the backend posts to LM Studio.
 
 ## Environment
 
-| Variable | Required | Example | Notes |
-|---|---:|---|---|
-| `LM_STUDIO_ENABLED` | Yes | `true` | Keeps the proxy opt-in. |
-| `LM_STUDIO_BASE_URL` | Yes | `http://localhost:1234/v1` | Use `host.docker.internal` or a LAN IP from Docker. |
-| `LM_STUDIO_MODEL` | Yes | `qwen2.5-coder-7b-instruct` | Must match a model loaded in LM Studio. |
-| `LM_STUDIO_TIMEOUT_SECONDS` | No | `15` | Bounded backend request timeout. |
+| Variable | Default | Bounds | Notes |
+|---|---:|---:|---|
+| `LM_STUDIO_ENABLED` | `false` | `true`/`false` | Keeps the proxy opt-in. Harness side effects stay blocked when disabled. |
+| `LM_STUDIO_BASE_URL` | Backend fallback: `http://localhost:1234/v1`; Compose `.env.example`: `http://host.docker.internal:1234/v1` | OpenAI-compatible base URL | Standalone backend defaults to local host access when no environment value is set. Docker/Compose uses `host.docker.internal` so the container can reach LM Studio on the Docker host. |
+| `LM_STUDIO_MODEL` | `local-model` | Loaded LM Studio model id | Must match the model selected/served by LM Studio. |
+| `LM_STUDIO_TIMEOUT_SECONDS` | `15` | Max `120` seconds | Backend request timeout. Raise carefully for slow large models. |
+| `LM_STUDIO_MAX_TOKENS` | `800` | `1..4096` | Completion token cap sent to LM Studio. Raise for longer operational answers; larger values increase latency. |
 
 ## Docker networking
 
@@ -27,7 +29,36 @@ LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1
 LM_STUDIO_BASE_URL=http://192.168.1.50:1234/v1
 ```
 
-The Compose backend service maps `host.docker.internal` to the Linux Docker host gateway so the default URL works on Linux as well as Docker Desktop environments.
+The Compose backend service maps `host.docker.internal` to the Linux Docker host gateway so the Compose `.env.example` URL works on Linux as well as Docker Desktop environments. This is different from the backend code fallback: when the backend runs directly on the host with no `LM_STUDIO_BASE_URL` set, it falls back to `http://localhost:1234/v1`.
+
+For a separate LM Studio workstation or server, bind the LM Studio local server to the LAN interface and use that machine's LAN/VPN IP:
+
+```env
+LM_STUDIO_BASE_URL=http://10.53.1.121:1234/v1
+```
+
+Do not use `localhost` from Docker unless LM Studio is running inside the same backend container.
+
+## Quick LM Studio verification
+
+Run this with the same base URL your backend will use. Set `LM_STUDIO_URL` first so the command is copy-safe for both standalone and Docker deployments:
+
+```bash
+LM_STUDIO_URL=http://localhost:1234/v1
+# For Docker/Compose, use the value from .env instead, for example:
+# LM_STUDIO_URL=http://host.docker.internal:1234/v1
+
+curl -sS "$LM_STUDIO_URL/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "local-model",
+    "messages": [{"role": "user", "content": "Reply with: ok"}],
+    "max_tokens": 32,
+    "temperature": 0
+  }'
+```
+
+Expected result: HTTP 200 with a `choices[0].message.content` response. If the model name is wrong, LM Studio returns an error before NEX-GEN can answer.
 
 ## Endpoint flow
 
@@ -70,6 +101,17 @@ At runtime, backend code loads `Soul.md`, `scope.md`, and `context-policy.md` fo
 - LM Studio errors are mapped to safe frontend messages; backend logs should be used for operator diagnostics.
 - The ping harness is Linux-focused and isolated in `services/ai_chat_service.py` for tests and future portability work.
 - LM Studio tool calls are not enabled yet; explicit backend intents are pre-resolved before the final chat completion request.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Operator check |
+|---|---|---|
+| Backend returns AI unavailable / 502 | LM Studio is stopped, unreachable, or returned an upstream error. | Check backend logs, then run the curl command above from the same network namespace. |
+| Model not found or immediate LM Studio error | `LM_STUDIO_MODEL` does not match the model served by LM Studio. | Copy the exact model id from LM Studio and restart the backend after `.env` changes. |
+| Works on host, fails in Docker | `LM_STUDIO_BASE_URL=http://localhost:1234/v1` points at the backend container, not the host. | Use `host.docker.internal` or the LM Studio host LAN/VPN IP. |
+| Timeouts on large answers | Model latency, context length, and `LM_STUDIO_MAX_TOKENS` exceed the timeout budget. | Increase `LM_STUDIO_TIMEOUT_SECONDS` up to `120`, reduce context/model size, or lower max tokens. |
+| Answers are truncated | Completion budget is too small. | Raise `LM_STUDIO_MAX_TOKENS` within `1..4096`; Docker/backend default is `800`. |
+| Reasoning model returns blank answer | Some models spend the budget in `reasoning_content` while assistant `content` is empty. | For deterministic harnesses, NEX-GEN renders a safe backend-owned fallback. For free chat, raise max tokens or use a model that emits final content reliably. |
 
 ## Future improvements
 

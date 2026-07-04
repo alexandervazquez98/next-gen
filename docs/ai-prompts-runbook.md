@@ -4,6 +4,8 @@
 > auditing how NEX-GEN decides what the AI assistant is allowed to say.
 >
 > **Related docs:**
+> - [`docs/ai.md`](ai.md) — consolidated AI operator entry point and runtime
+>   boundary summary.
 > - [`docs/lm-studio-ai-chat.md`](lm-studio-ai-chat.md) — LM Studio integration
 >   and how the backend composes the system prompt.
 > - [`docs/AI_AGENT_GUIDE.md`](AI_AGENT_GUIDE.md) — external AI agents via REST
