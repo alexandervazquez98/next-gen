@@ -2,7 +2,11 @@ import json
 import re
 
 from services.legacy_event_discriminator_audit import (
+    RECOMMENDATION_SCHEMA_VERSION,
+    build_legacy_event_backfill_recommendation,
     classify_legacy_event_records,
+    recommendation_to_json_dict,
+    recommendation_to_markdown,
     result_to_json_dict,
     result_to_markdown,
     run_legacy_event_discriminator_audit,
@@ -231,3 +235,111 @@ def test_read_only_runner_uses_match_query_and_classifies_rows():
     assert result.summary.total_records == 1
     assert "missing_event_type" in finding_codes(result)
     assert driver.session_obj.closed is True
+
+
+def test_builds_backfill_recommendation_with_deterministic_bucket_counts():
+    audit = classify_legacy_event_records(
+        [
+            legacy_record(event_id="event-safe", ci_id="ci-1", metric_id="metric-1"),
+            legacy_record(
+                event_id="event-ambiguous",
+                ci_id="ci-1",
+                metric_id="metric-2",
+                event_type=None,
+                message="Metric Collection Failed: Timeout",
+            ),
+            legacy_record(
+                event_id="event-no-touch",
+                ci_id="ci-2",
+                metric_id="metric-1",
+                event_type="THRESHOLD",
+                failure_family=None,
+                message="Power supply alert",
+            ),
+        ]
+    )
+
+    recommendation = build_legacy_event_backfill_recommendation(audit, inspected_limit=500)
+
+    assert recommendation.schema_version == RECOMMENDATION_SCHEMA_VERSION
+    assert recommendation.counts.total_records == 3
+    assert recommendation.counts.safe_candidates == 1
+    assert recommendation.counts.ambiguous_records == 1
+    assert recommendation.counts.no_touch_records == 1
+    assert recommendation.inspected_limit == 500
+    assert recommendation.buckets[0].label == "safe_candidates"
+    assert recommendation.buckets[0].confidence == "candidate"
+    assert recommendation.buckets[1].label == "ambiguous_records"
+    assert recommendation.buckets[1].record_count == 1
+    assert recommendation.buckets[1].finding_codes == [
+        "ambiguous_collection_failure_boundary",
+        "missing_event_type",
+    ]
+    assert recommendation.buckets[2].label == "no_touch_records"
+    assert recommendation.buckets[2].finding_codes == ["missing_failure_family"]
+
+
+def test_recommendation_json_and_markdown_share_one_model_with_advisory_wording():
+    audit = classify_legacy_event_records(
+        [
+            legacy_record(event_id="event-safe", ci_id="ci-1", metric_id="metric-1"),
+            legacy_record(
+                event_id="event-ambiguous",
+                ci_id="ci-1",
+                metric_id="metric-2",
+                event_type=None,
+                message="Service/Host Down",
+                source_protocol="ICMP",
+            ),
+        ]
+    )
+    recommendation = build_legacy_event_backfill_recommendation(audit)
+
+    payload = recommendation_to_json_dict(recommendation)
+    markdown = recommendation_to_markdown(recommendation)
+
+    assert payload["schema_version"] == RECOMMENDATION_SCHEMA_VERSION
+    assert payload["counts"] == {
+        "total_records": 2,
+        "safe_candidates": 1,
+        "ambiguous_records": 1,
+        "no_touch_records": 0,
+    }
+    for bucket in payload["buckets"]:
+        assert f"`{bucket['label']}`" in markdown
+        assert str(bucket["record_count"]) in markdown
+        for code in bucket["finding_codes"]:
+            assert code in markdown
+    for guidance_key in (
+        "batching",
+        "rate_limits",
+        "idempotency",
+        "rollback",
+        "operational_risk",
+        "slice3_review_gate",
+    ):
+        assert payload["guidance"][guidance_key] in markdown
+    assert "advisory only" in payload["guidance"]["slice3_review_gate"].lower()
+    assert "must not authorize mutation" in markdown.lower()
+    for mutation_clause in ("--apply", "MERGE", "DELETE", "SET", "CREATE"):
+        assert mutation_clause not in markdown
+
+
+def test_recommendation_output_is_stable_for_same_audit_model():
+    audit = classify_legacy_event_records(
+        [
+            legacy_record(event_id="event-z", ci_id="ci-2", metric_id="metric-1"),
+            legacy_record(
+                event_id="event-a",
+                ci_id="ci-1",
+                metric_id="metric-1",
+                source_protocol=None,
+            ),
+        ]
+    )
+
+    first = build_legacy_event_backfill_recommendation(audit)
+    second = build_legacy_event_backfill_recommendation(audit)
+
+    assert recommendation_to_json_dict(first) == recommendation_to_json_dict(second)
+    assert recommendation_to_markdown(first) == recommendation_to_markdown(second)
