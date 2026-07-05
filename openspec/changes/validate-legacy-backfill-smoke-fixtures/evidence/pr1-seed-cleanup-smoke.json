@@ -1,0 +1,68 @@
+{
+  "cleanup": {
+    "cleanup_verified": true,
+    "deleted_count": 3,
+    "query": "MATCH (e:Event {issue155_smoke:true, issue155_smoke_run_id:$run_id})\nRETURN count(e)=0 AS cleanup_verified, count(e) AS remaining_count",
+    "remaining_count": 0
+  },
+  "fixture_plan": [
+    {
+      "availability_source": "snmp",
+      "ci_id": "issue155-smoke-20260705T180156Z-dd32e897-ci-safe",
+      "created_at": "2026-07-05T18:01:56.607801+00:00",
+      "event_type": "AVAILABILITY",
+      "expected_bucket": "safe_candidates",
+      "failure_family": "COLLECTION",
+      "id": "issue155-smoke-20260705T180156Z-dd32e897-safe",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T180156Z-dd32e897",
+      "last_seen": "2026-07-05T18:01:56.607801+00:00",
+      "message": "SNMP availability event with complete discriminator fields.",
+      "metric_id": "availability.safe",
+      "metric_name": "Availability Safe Fixture",
+      "severity": "warning",
+      "source_protocol": "SNMP",
+      "status": "ACTIVE"
+    },
+    {
+      "availability_source": null,
+      "ci_id": "issue155-smoke-20260705T180156Z-dd32e897-ci-ambiguous",
+      "created_at": "2026-07-05T18:01:56.607801+00:00",
+      "event_type": null,
+      "expected_bucket": "ambiguous_records",
+      "failure_family": null,
+      "id": "issue155-smoke-20260705T180156Z-dd32e897-ambiguous",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T180156Z-dd32e897",
+      "last_seen": "2026-07-05T18:01:56.607801+00:00",
+      "message": "PING availability timeout; host down boundary needs reviewer decision.",
+      "metric_id": "availability.ping.timeout",
+      "metric_name": "PING Timeout Fixture",
+      "severity": "warning",
+      "source_protocol": null,
+      "status": "ACTIVE"
+    },
+    {
+      "availability_source": "snmp",
+      "ci_id": "issue155-smoke-20260705T180156Z-dd32e897-ci-no-touch",
+      "created_at": "2026-07-05T18:01:56.607801+00:00",
+      "event_type": "THRESHOLD",
+      "expected_bucket": "no_touch_records",
+      "failure_family": null,
+      "id": "issue155-smoke-20260705T180156Z-dd32e897-no-touch",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T180156Z-dd32e897",
+      "last_seen": "2026-07-05T18:01:56.607801+00:00",
+      "message": "Threshold signal with one missing discriminator and no ambiguity hint.",
+      "metric_id": "threshold.partial",
+      "metric_name": "Threshold Partial Fixture",
+      "severity": "warning",
+      "source_protocol": "SNMP",
+      "status": "ACTIVE"
+    }
+  ],
+  "run_id": "issue155-smoke-20260705T180156Z-dd32e897",
+  "scope": "local shared Neo4j only; no production mutation",
+  "seeded_count": 3,
+  "status": "cleanup_verified"
+}
