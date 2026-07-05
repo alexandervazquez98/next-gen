@@ -495,9 +495,7 @@ class TestGraphFull:
                 "layer": "vpn_hub",
             },
         ]
-        scoped_nodes = [
-            node for node in raw_nodes if node["location_name"] == "HQ-Madrid"
-        ]
+        scoped_nodes = [node for node in raw_nodes if node["location_name"] == "HQ-Madrid"]
 
         with patch("services.link_service.topology_repo") as mock_repo:
             mock_repo.get_filtered_graph_data.return_value = (scoped_nodes, [])

@@ -198,9 +198,7 @@ class TestGetNodes:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
-    def test_list_nodes_admin_projects_public_ip_after_scoped_repo_result(
-        self, mock_neo4j_driver
-    ):
+    def test_list_nodes_admin_projects_public_ip_after_scoped_repo_result(self, mock_neo4j_driver):
         """Admin /nodes response exposes nullable public_ip without removing metadata."""
         fake_user = _make_pydantic_user(username="admin", role="ADMIN")
 
