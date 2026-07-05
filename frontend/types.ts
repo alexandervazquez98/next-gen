@@ -118,7 +118,13 @@ export type TunnelMedium = NonNullable<GraphLink["medium"]>;
 export type TunnelAuthorityStatus = "UP" | "DOWN" | "UNKNOWN";
 export type TunnelVisualState = "up" | "down" | "unknown";
 export type TunnelWarning = "icmp_failed" | "icmp_poor_rtt" | "missing_public_ip" | null;
-export type TunnelHealthErrorKind = "bad_request" | "not_found" | "server" | "timeout" | "auth" | "network";
+export type TunnelHealthErrorKind =
+  | "bad_request"
+  | "not_found"
+  | "server"
+  | "timeout"
+  | "auth"
+  | "network";
 
 export interface TunnelAuthorityContext {
   state?: TunnelAuthorityStatus | null;
