@@ -56,6 +56,7 @@ export interface GraphNode {
   thresholds?: MonitoringThresholds;
   metrics?: MetricValue[]; // Live metrics
   ip?: string;
+  public_ip?: string | null;
   location_name?: string;
   owner?: string; // Top-level owner group (matches backend Node.owner)
   category?: string; // Optional helper
@@ -111,6 +112,73 @@ export interface GraphLink {
    * Optional — legacy non-tunnel links stay shape-compatible.
    */
   medium?: "vpn" | "sd_wan" | "satellite";
+}
+
+export type TunnelMedium = NonNullable<GraphLink["medium"]>;
+export type TunnelAuthorityStatus = "UP" | "DOWN" | "UNKNOWN";
+export type TunnelVisualState = "up" | "down" | "unknown";
+export type TunnelWarning = "icmp_failed" | "icmp_poor_rtt" | "missing_public_ip" | null;
+export type TunnelHealthErrorKind =
+  | "bad_request"
+  | "not_found"
+  | "server"
+  | "timeout"
+  | "auth"
+  | "network";
+
+export interface TunnelAuthorityContext {
+  state?: TunnelAuthorityStatus | null;
+  source?: string | null;
+  observed_at?: string | null;
+  reason?: string | null;
+}
+
+export interface TunnelIcmpContext {
+  available?: boolean | null;
+  latency_ms?: number | null;
+  error?: string | null;
+  reason?: string | null;
+}
+
+export interface TunnelHealthResponse {
+  link_id: string;
+  source: string;
+  target: string;
+  relationship: GraphLink["relationship"] | string;
+  medium: TunnelMedium;
+  status: TunnelAuthorityStatus;
+  authority: TunnelAuthorityContext;
+  icmp: TunnelIcmpContext;
+  observed_at?: string | null;
+}
+
+export interface TunnelTooltipRow {
+  label: string;
+  value: string;
+}
+
+export interface TunnelVisualModel {
+  medium: TunnelMedium | null;
+  mediumLabel: string;
+  iconKey: CategoryIconKey;
+  authorityText: TunnelAuthorityStatus;
+  state: TunnelVisualState;
+  warning: TunnelWarning;
+  tooltipRows: TunnelTooltipRow[];
+  healthAffectsIcon: false;
+  stale: boolean;
+  errorKind?: TunnelHealthErrorKind;
+}
+
+export interface TunnelHealthTelemetryPayload {
+  window_seconds: 60;
+  scheduled: number;
+  skipped_over_cap: number;
+  suppressed_cooldown: number;
+  success: number;
+  failure_by_kind: Partial<Record<TunnelHealthErrorKind, number>>;
+  latency_bucket: Record<"lt_250" | "lt_1000" | "lt_5000" | "gte_5000", number>;
+  kill_switch_enabled: boolean;
 }
 
 export interface AvailabilityReportCI {
