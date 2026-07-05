@@ -22,7 +22,9 @@ def _make_context_mock():
     return fake
 
 
-def test_snmp_collection_failure_on_critical_metric_is_warning_with_discriminators(mock_neo4j_driver):
+def test_snmp_collection_failure_on_critical_metric_is_warning_with_discriminators(
+    mock_neo4j_driver,
+):
     snmp_service = _load_snmp_service_module()
     session = mock_neo4j_driver.mock_session
     session.set_response("MATCH (existing:Event)", [])
@@ -107,7 +109,14 @@ def test_snmp_threshold_breach_uses_threshold_event_type_not_collection_failure(
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cpu", "name": "cpu", "protocol": "SNMP", "criticality": 3, "critical": 90, "operator": ">="},
+            {
+                "id": "cpu",
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
             "97",
             "OK",
             None,
@@ -133,7 +142,14 @@ def test_snmp_threshold_breach_still_recovers_existing_collection_failure(mock_n
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cpu", "name": "cpu", "protocol": "snmp", "criticality": 3, "critical": 90, "operator": ">="},
+            {
+                "id": "cpu",
+                "name": "cpu",
+                "protocol": "snmp",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
             "97",
             "OK",
             None,
@@ -141,10 +157,13 @@ def test_snmp_threshold_breach_still_recovers_existing_collection_failure(mock_n
         )
 
     recovery_queries = [
-        q for q in session.queries
+        q
+        for q in session.queries
         if "SET e.status = 'RECOVERED'" in q["query"] and "COLLECTION_FAILURE" in q["query"]
     ]
-    assert recovery_queries, "valid SNMP values must recover collection failures before threshold handling"
+    assert (
+        recovery_queries
+    ), "valid SNMP values must recover collection failures before threshold handling"
     assert "coalesce(m.can_propagate, true) = true" in recovery_queries[0]["query"]
     create_event = next(q for q in session.queries if "CREATE (e:Event" in q["query"])
     assert create_event["params"]["event_type"] == "THRESHOLD_BREACH"
@@ -153,7 +172,10 @@ def test_snmp_threshold_breach_still_recovers_existing_collection_failure(mock_n
 def test_repeated_collection_failure_updates_exact_matched_event(mock_neo4j_driver):
     snmp_service = _load_snmp_service_module()
     session = mock_neo4j_driver.mock_session
-    session.set_response("MATCH (existing:Event)", [{"existing_status": "OPEN", "existing_element_id": "element-collection"}])
+    session.set_response(
+        "MATCH (existing:Event)",
+        [{"existing_status": "OPEN", "existing_element_id": "element-collection"}],
+    )
 
     fake_pg = _make_context_mock()
 
@@ -168,10 +190,15 @@ def test_repeated_collection_failure_updates_exact_matched_event(mock_neo4j_driv
         )
 
     lookup_event = next(q for q in session.queries if "MATCH (existing:Event)" in q["query"])
-    assert "$failure_family IS NULL OR existing.failure_family = $failure_family" not in lookup_event["query"]
+    assert (
+        "$failure_family IS NULL OR existing.failure_family = $failure_family"
+        not in lookup_event["query"]
+    )
     assert "$failure_family IS NULL AND existing.failure_family IS NULL" in lookup_event["query"]
     assert "$failure_family IS NOT NULL" in lookup_event["query"]
-    update_event = next(q for q in session.queries if "elementId(existing) = $existing_element_id" in q["query"])
+    update_event = next(
+        q for q in session.queries if "elementId(existing) = $existing_element_id" in q["query"]
+    )
     assert update_event["params"]["existing_element_id"] == "element-collection"
     assert "existing.status = $old_status" not in update_event["query"]
 
@@ -195,7 +222,10 @@ def test_non_breach_value_recovers_non_collection_events(mock_neo4j_driver):
 
     queries = "\n".join(q["query"] for q in mock_neo4j_driver.mock_session.queries)
     assert "e.event_type <> 'COLLECTION_FAILURE'" in queries
-    assert "NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')" in queries
+    assert (
+        "NOT (e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:')"
+        in queries
+    )
 
 
 def test_valid_non_snmp_threshold_breach_recovers_collection_failures(mock_neo4j_driver):
@@ -211,7 +241,13 @@ def test_valid_non_snmp_threshold_breach_recovers_collection_failures(mock_neo4j
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cli-health", "name": "cli-health", "protocol": "CLI", "criticality": 3, "critical": 90},
+            {
+                "id": "cli-health",
+                "name": "cli-health",
+                "protocol": "CLI",
+                "criticality": 3,
+                "critical": 90,
+            },
             "97",
             "OK",
             None,
@@ -219,18 +255,27 @@ def test_valid_non_snmp_threshold_breach_recovers_collection_failures(mock_neo4j
         )
 
     recovery_queries = [
-        q for q in session.queries
+        q
+        for q in session.queries
         if "SET e.status = 'RECOVERED'" in q["query"] and "Metric Collection Failed:" in q["query"]
     ]
-    assert recovery_queries, "valid non-SNMP samples must recover collection failures even when breaching"
+    assert (
+        recovery_queries
+    ), "valid non-SNMP samples must recover collection failures even when breaching"
     assert "toUpper(e.source_protocol) = $source_protocol" in recovery_queries[0]["query"]
-    assert "e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:'" in recovery_queries[0]["query"]
+    assert (
+        "e.event_type IS NULL AND e.message STARTS WITH 'Metric Collection Failed:'"
+        in recovery_queries[0]["query"]
+    )
 
 
 def test_poll_metric_non_timeout_error_indication_returns_error_not_timeout():
     snmp_service = _load_snmp_service_module()
 
-    with patch("services.snmp_service.getCmd", return_value=iter([("authorization failure", None, None, [])])):
+    with patch(
+        "services.snmp_service.getCmd",
+        return_value=iter([("authorization failure", None, None, [])]),
+    ):
         value, status, error = snmp_service.poll_metric(
             {"id": "ci-1", "ip": "10.0.0.1"},
             {"id": "ifInOctets", "protocol": "SNMP", "oid": "1.2.3"},
@@ -245,7 +290,10 @@ def test_poll_metric_non_timeout_error_indication_returns_error_not_timeout():
 def test_poll_metric_timeout_error_indication_returns_timeout():
     snmp_service = _load_snmp_service_module()
 
-    with patch("services.snmp_service.getCmd", return_value=iter([("No SNMP response received before timeout", None, None, [])])):
+    with patch(
+        "services.snmp_service.getCmd",
+        return_value=iter([("No SNMP response received before timeout", None, None, [])]),
+    ):
         value, status, error = snmp_service.poll_metric(
             {"id": "ci-1", "ip": "10.0.0.1"},
             {"id": "ifInOctets", "protocol": "SNMP", "oid": "1.2.3"},
@@ -310,7 +358,14 @@ def test_store_metric_result_keeps_pg_session_open_during_neo4j_write(mock_neo4j
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cpu", "name": "cpu", "protocol": "SNMP", "criticality": 3, "critical": 90, "operator": ">="},
+            {
+                "id": "cpu",
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
             "97",
             "OK",
             None,
@@ -320,16 +375,15 @@ def test_store_metric_result_keeps_pg_session_open_during_neo4j_write(mock_neo4j
     # The PG context MUST be entered BEFORE the Neo4j write.
     assert "pg_enter" in call_order, "pg context was never entered"
     assert "neo4j_run" in call_order, "neo4j session.run never executed"
-    assert call_order.index("pg_enter") < call_order.index("neo4j_run"), (
-        f"pg context enter must precede neo4j run; order={call_order}"
-    )
+    assert call_order.index("pg_enter") < call_order.index(
+        "neo4j_run"
+    ), f"pg context enter must precede neo4j run; order={call_order}"
 
     # The PG context MUST NOT exit BEFORE the Neo4j write completes —
     # otherwise the advisory lock would be released mid-transaction.
     assert "pg_exit" in call_order, "pg context was never exited"
     assert call_order.index("pg_exit") > call_order.index("neo4j_run"), (
-        f"pg context exited BEFORE neo4j run (lock released too early); "
-        f"order={call_order}"
+        f"pg context exited BEFORE neo4j run (lock released too early); " f"order={call_order}"
     )
 
 
@@ -356,7 +410,14 @@ def test_store_metric_result_acquires_pg_advisory_lock_before_neo4j_read(mock_ne
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cpu", "name": "cpu", "protocol": "SNMP", "criticality": 3, "critical": 90, "operator": ">="},
+            {
+                "id": "cpu",
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
             "97",
             "OK",
             None,
@@ -367,7 +428,8 @@ def test_store_metric_result_acquires_pg_advisory_lock_before_neo4j_read(mock_ne
 
     # Locate the call that matches the breach triplet (ci-1, cpu, THRESHOLD_BREACH).
     matching = [
-        call for call in mock_lock.call_args_list
+        call
+        for call in mock_lock.call_args_list
         if len(call.args) >= 4
         and call.args[1] == "ci-1"
         and call.args[2] == "cpu"
@@ -378,9 +440,10 @@ def test_store_metric_result_acquires_pg_advisory_lock_before_neo4j_read(mock_ne
         f"got calls={mock_lock.call_args_list!r}"
     )
     # The first matching call MUST use the open PG session as the lock target.
-    assert matching[0].args[0] is fake_pg, (
-        f"lock helper must receive the writer's open PG session; got {matching[0].args[0]!r}"
-    )
+    assert (
+        matching[0].args[0] is fake_pg
+    ), f"lock helper must receive the writer's open PG session; got {matching[0].args[0]!r}"
+    assert matching[0].kwargs["writer_context"] == "snmp_service"
 
 
 def test_store_metric_result_persists_poll_collector_id_on_event_create(mock_neo4j_driver):
@@ -402,7 +465,14 @@ def test_store_metric_result_persists_poll_collector_id_on_event_create(mock_neo
     ):
         snmp_service.store_metric_result(
             {"id": "ci-1", "ip": "10.0.0.1", "name": "Router"},
-            {"id": "cpu", "name": "cpu", "protocol": "SNMP", "criticality": 3, "critical": 90, "operator": ">="},
+            {
+                "id": "cpu",
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
             "97",
             "OK",
             None,
@@ -410,14 +480,15 @@ def test_store_metric_result_persists_poll_collector_id_on_event_create(mock_neo
         )
 
     create_event = next(q for q in session.queries if "CREATE (e:Event" in q["query"])
-    assert "poll_collector_id" in create_event["query"], (
-        f"poll_collector_id MUST be set in CREATE clause; query={create_event['query']!r}"
-    )
+    assert (
+        "poll_collector_id" in create_event["query"]
+    ), f"poll_collector_id MUST be set in CREATE clause; query={create_event['query']!r}"
     assert create_event["params"].get("poll_collector_id"), (
         f"poll_collector_id MUST be passed as a non-empty parameter; "
         f"params={create_event['params']!r}"
     )
     from services.snmp_service import POLL_COLLECTOR_ID
+
     assert create_event["params"]["poll_collector_id"] == POLL_COLLECTOR_ID, (
         f"poll_collector_id MUST match the cached POLL_COLLECTOR_ID; "
         f"got={create_event['params']['poll_collector_id']!r}, expected={POLL_COLLECTOR_ID!r}"

@@ -3,9 +3,11 @@
 
 Strict TDD (tasks.md §Phase 1): this file lands BEFORE the helper.
 """
+
 from __future__ import annotations
 
 import logging
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -42,6 +44,7 @@ def _install_fake_client_error(monkeypatch):
     monkeypatch.setattr(guard_module, "_CLIENT_ERROR_CLASS", _FakeClientError)
     try:
         from services import neo4j_write_guard as services_guard_module
+
         monkeypatch.setattr(services_guard_module, "_CLIENT_ERROR_CLASS", _FakeClientError)
     except ImportError:
         pass
@@ -55,17 +58,26 @@ def test_predicate_unit_cases(_install_fake_client_error):
     """True / false positives / wrong exception type — design §8 contract."""
     guard_module = _install_fake_client_error
     # True: matching ClientError
-    assert guard_module.is_poll_collector_id_undefined_error(
-        _FakeClientError("Variable poll_collector_id not defined")
-    ) is True
+    assert (
+        guard_module.is_poll_collector_id_undefined_error(
+            _FakeClientError("Variable poll_collector_id not defined")
+        )
+        is True
+    )
     # False: ClientError with unrelated message
-    assert guard_module.is_poll_collector_id_undefined_error(
-        _FakeClientError("Syntax error: unexpected token")
-    ) is False
+    assert (
+        guard_module.is_poll_collector_id_undefined_error(
+            _FakeClientError("Syntax error: unexpected token")
+        )
+        is False
+    )
     # False: wrong exception type even with matching message
-    assert guard_module.is_poll_collector_id_undefined_error(
-        RuntimeError("Variable poll_collector_id not defined")
-    ) is False
+    assert (
+        guard_module.is_poll_collector_id_undefined_error(
+            RuntimeError("Variable poll_collector_id not defined")
+        )
+        is False
+    )
 
 
 # Tests for ``run_with_cypher_param_fallback`` (cases a–d) -------------------
@@ -86,9 +98,13 @@ def test_primary_success_skips_fallback(_install_fake_client_error):
 
     fake_session = _FakeSession()
     result = guard_module.run_with_cypher_param_fallback(
-        fake_session, "primary query", {"poll_collector_id": "host-1"},
-        "fallback query", {},
-        guard_module.is_poll_collector_id_undefined_error, logger,
+        fake_session,
+        "primary query",
+        {"poll_collector_id": "host-1"},
+        "fallback query",
+        {},
+        guard_module.is_poll_collector_id_undefined_error,
+        logger,
     )
     assert result == "primary-result"
     assert fake_session.calls == [("primary query", {"poll_collector_id": "host-1"})]
@@ -112,9 +128,13 @@ def test_matching_client_error_triggers_fallback_and_logs(_install_fake_client_e
     fake_session = _FakeSession()
     with caplog.at_level(logging.ERROR, logger=logger.name):
         result = guard_module.run_with_cypher_param_fallback(
-            fake_session, "primary query", {"poll_collector_id": "host-1"},
-            "fallback query", {},
-            guard_module.is_poll_collector_id_undefined_error, logger,
+            fake_session,
+            "primary query",
+            {"poll_collector_id": "host-1"},
+            "fallback query",
+            {},
+            guard_module.is_poll_collector_id_undefined_error,
+            logger,
         )
     assert result == "fallback-result"
     assert fake_session.calls[0][0] == "primary query"
@@ -145,9 +165,13 @@ def test_non_matching_client_error_reraises_without_fallback(_install_fake_clien
     fake_session = _FakeSession()
     with pytest.raises(_FakeClientError, match="unrelated"):
         guard_module.run_with_cypher_param_fallback(
-            fake_session, "primary query", {},
-            "fallback query", {},
-            guard_module.is_poll_collector_id_undefined_error, logger,
+            fake_session,
+            "primary query",
+            {},
+            "fallback query",
+            {},
+            guard_module.is_poll_collector_id_undefined_error,
+            logger,
         )
     assert len(fake_session.calls) == 1
 
@@ -168,9 +192,13 @@ def test_non_client_error_reraises_unchanged(_install_fake_client_error):
     fake_session = _FakeSession()
     with pytest.raises(RuntimeError, match="boom"):
         guard_module.run_with_cypher_param_fallback(
-            fake_session, "primary query", {},
-            "fallback query", {},
-            guard_module.is_poll_collector_id_undefined_error, logger,
+            fake_session,
+            "primary query",
+            {},
+            "fallback query",
+            {},
+            guard_module.is_poll_collector_id_undefined_error,
+            logger,
         )
     assert len(fake_session.calls) == 1
 
@@ -178,7 +206,7 @@ def test_non_client_error_reraises_unchanged(_install_fake_client_error):
 # CRITICAL #2 — Predicate must read ``error.message``, not ``str(error) -------
 
 
-class _FakeClientErrorWithMessage(_FakeClientError):
+class _FakeClientErrorWithMessageError(_FakeClientError):
     """Real-exception-class stand-in for ``neo4j.exceptions.ClientError``
     with a ``message`` attribute that DIFFERS from ``str(error)``.
 
@@ -211,7 +239,7 @@ def test_predicate_uses_error_message_attribute(_install_fake_client_error):
     guard_module = _install_fake_client_error
 
     # Case 1 — production-shaped message, str() deliberately unrelated.
-    err_match = _FakeClientErrorWithMessage(
+    err_match = _FakeClientErrorWithMessageError(
         message="Variable poll_collector_id not defined",
     )
     assert guard_module.is_poll_collector_id_undefined_error(err_match) is True, (
@@ -220,7 +248,7 @@ def test_predicate_uses_error_message_attribute(_install_fake_client_error):
     )
 
     # Case 2 — message missing 'not defined'.
-    err_no_not_defined = _FakeClientErrorWithMessage(
+    err_no_not_defined = _FakeClientErrorWithMessageError(
         message="Variable poll_collector_id something_else_completely",
     )
     assert (
@@ -228,7 +256,7 @@ def test_predicate_uses_error_message_attribute(_install_fake_client_error):
     ), "predicate MUST reject ClientError whose .message lacks 'not defined'"
 
     # Case 3 — message missing 'poll_collector_id'.
-    err_no_param = _FakeClientErrorWithMessage(
+    err_no_param = _FakeClientErrorWithMessageError(
         message="Variable other_param not defined",
     )
     assert (
@@ -252,34 +280,52 @@ def test_fallback_query_has_no_dangling_commas(_install_fake_client_error):
     """
     from unittest.mock import MagicMock
 
-    guard_module = _install_fake_client_error
-
     # Sample rows — minimal inputs the writers accept.
     failure_row = {
-        "node_id": "CI-1", "metric_id": "m", "event_type": "COLLECTION_FAILURE",
-        "severity": "CRITICAL", "message": "x", "failure_family": "SNMP_NO_RESPONSE",
-        "source_protocol": "SNMP", "correlation_type": "ROOT",
-        "propagated_from": None, "root_cause_ci_id": "CI-1",
+        "node_id": "CI-1",
+        "metric_id": "m",
+        "event_type": "COLLECTION_FAILURE",
+        "severity": "CRITICAL",
+        "message": "x",
+        "failure_family": "SNMP_NO_RESPONSE",
+        "source_protocol": "SNMP",
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": "CI-1",
     }
     availability_row = {
-        "node_id": "CI-1", "metric_id": "icmp_avail", "event_type": "AVAILABILITY",
-        "protocol": "ICMP", "availability_source": "PING", "value": 0.0,
-        "severity": "CRITICAL", "message": "down",
-        "source_protocol": "ICMP", "correlation_type": "ROOT",
-        "propagated_from": None, "root_cause_ci_id": "CI-1",
+        "node_id": "CI-1",
+        "metric_id": "icmp_avail",
+        "event_type": "AVAILABILITY",
+        "protocol": "ICMP",
+        "availability_source": "PING",
+        "value": 0.0,
+        "severity": "CRITICAL",
+        "message": "down",
+        "source_protocol": "ICMP",
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": "CI-1",
     }
     latency_row = {
-        "node_id": "CI-1", "metric_id": "icmp_latency_ms", "event_type": "THRESHOLD_BREACH",
-        "protocol": "ICMP", "status": "CRITICAL", "message": "breach",
-        "source_protocol": "ICMP", "correlation_type": "ROOT",
-        "propagated_from": None, "root_cause_ci_id": "CI-1",
+        "node_id": "CI-1",
+        "metric_id": "icmp_latency_ms",
+        "event_type": "THRESHOLD_BREACH",
+        "protocol": "ICMP",
+        "status": "CRITICAL",
+        "message": "breach",
+        "source_protocol": "ICMP",
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": "CI-1",
     }
 
     import re
+
     bad_patterns = [
-        (re.compile(r",\s*}"),  "trailing comma before }"),
+        (re.compile(r",\s*}"), "trailing comma before }"),
         (re.compile(r",\s*MERGE\b"), "trailing comma before MERGE"),
-        (re.compile(r",\s*WITH\b"),  "trailing comma before WITH"),
+        (re.compile(r",\s*WITH\b"), "trailing comma before WITH"),
         # Trailing comma right before the closing """ of the query string.
         # The query is indented, so the literal "\n                    \"\"\"" appears.
         (re.compile(r",\s*\n\s*\"\"\""), "trailing comma before query end"),
@@ -287,26 +333,31 @@ def test_fallback_query_has_no_dangling_commas(_install_fake_client_error):
 
     def _make_session():
         raised = {"done": False}
+
         def run(query, **params):
             if not raised["done"]:
                 raised["done"] = True
                 raise _FakeClientError("Variable poll_collector_id not defined")
             return "fallback-ok"
+
         fake = MagicMock()
         fake.run.side_effect = run
         return fake
 
     def _check(query):
         for pattern, desc in bad_patterns:
-            assert not pattern.search(query), (
-                f"Fallback Cypher has {desc}: matched {pattern.pattern!r}\n--- query ---\n{query}"
-            )
+            assert not pattern.search(
+                query
+            ), f"Fallback Cypher has {desc}: matched {pattern.pattern!r}\n--- query ---\n{query}"
 
     # 1) _refresh_snmp_collection_failures -----------------------------------
     from backend.engines import snmp_worker
+
     session = _make_session()
     snmp_worker._refresh_snmp_collection_failures(
-        session, [failure_row], lock_db=MagicMock(),
+        session,
+        [failure_row],
+        lock_db=MagicMock(),
     )
     fallback_query = session.run.call_args_list[1].args[0]
     _check(fallback_query)
@@ -314,7 +365,9 @@ def test_fallback_query_has_no_dangling_commas(_install_fake_client_error):
     # 2) _refresh_icmp_availability_events ------------------------------------
     session = _make_session()
     snmp_worker._refresh_icmp_availability_events(
-        session, [availability_row], lock_db=MagicMock(),
+        session,
+        [availability_row],
+        lock_db=MagicMock(),
     )
     fallback_query = session.run.call_args_list[1].args[0]
     _check(fallback_query)
@@ -322,7 +375,9 @@ def test_fallback_query_has_no_dangling_commas(_install_fake_client_error):
     # 3) _refresh_icmp_latency_events -----------------------------------------
     session = _make_session()
     snmp_worker._refresh_icmp_latency_events(
-        session, [latency_row], lock_db=MagicMock(),
+        session,
+        [latency_row],
+        lock_db=MagicMock(),
     )
     fallback_query = session.run.call_args_list[1].args[0]
     _check(fallback_query)
@@ -344,18 +399,22 @@ def test_lock_acquired_before_session_run_in_fallback_path(_install_fake_client_
     """
     from unittest.mock import MagicMock, patch
 
-    guard_module = _install_fake_client_error
-
     failure_row = {
-        "node_id": "CI-1", "metric_id": "m", "event_type": "COLLECTION_FAILURE",
-        "severity": "CRITICAL", "message": "x", "failure_family": "SNMP_NO_RESPONSE",
-        "source_protocol": "SNMP", "correlation_type": "ROOT",
-        "propagated_from": None, "root_cause_ci_id": "CI-1",
+        "node_id": "CI-1",
+        "metric_id": "m",
+        "event_type": "COLLECTION_FAILURE",
+        "severity": "CRITICAL",
+        "message": "x",
+        "failure_family": "SNMP_NO_RESPONSE",
+        "source_protocol": "SNMP",
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": "CI-1",
     }
 
     events = []  # ordered log: ("lock", triplet) or ("run", query_marker)
 
-    def spy_acquire(pg_db, ci_id, metric_id, event_type):
+    def spy_acquire(pg_db, ci_id, metric_id, event_type, **_kwargs):
         events.append(("lock", (ci_id, metric_id, event_type)))
 
     raised = {"done": False}
@@ -375,36 +434,26 @@ def test_lock_acquired_before_session_run_in_fallback_path(_install_fake_client_
         side_effect=spy_acquire,
     ):
         from backend.engines import snmp_worker
+
         snmp_worker._refresh_snmp_collection_failures(
-            session, [failure_row], lock_db=MagicMock(),
+            session,
+            [failure_row],
+            lock_db=MagicMock(),
         )
 
-    # Filter to lock + run events for the (CI-1, m, COLLECTION_FAILURE) triplet.
-    relevant = [
-        e for e in events
-        if e[0] == "lock"
-        and e[1] == ("CI-1", "m", "COLLECTION_FAILURE")
-        or e[0] == "run"
-    ]
     lock_count = sum(1 for e in events if e[0] == "lock")
     run_count = sum(1 for e in events if e[0] == "run")
 
     # Exactly ONE lock acquisition for this triplet (not 2 — the fallback
     # must NOT re-acquire).
-    assert lock_count == 1, (
-        f"expected exactly 1 lock acquisition, got {lock_count}: {events}"
-    )
+    assert lock_count == 1, f"expected exactly 1 lock acquisition, got {lock_count}: {events}"
     # Two session.run calls (primary + fallback).
-    assert run_count == 2, (
-        f"expected 2 session.run calls (primary + fallback), got {run_count}"
-    )
+    assert run_count == 2, f"expected 2 session.run calls (primary + fallback), got {run_count}"
 
     # The lock event MUST appear before the first run event.
     first_lock = next(i for i, e in enumerate(events) if e[0] == "lock")
     first_run = next(i for i, e in enumerate(events) if e[0] == "run")
-    assert first_lock < first_run, (
-        f"lock must precede first session.run: {events}"
-    )
+    assert first_lock < first_run, f"lock must precede first session.run: {events}"
 
 
 def _make_context_mock():

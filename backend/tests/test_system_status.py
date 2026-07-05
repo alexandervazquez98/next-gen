@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -157,8 +158,18 @@ def test_should_record_system_status_snapshot_honors_fifteen_minute_throttle():
 def test_system_status_history_staleness_calculation():
     now = datetime(2026, 1, 1, 12, 0, 0)
 
-    assert _is_system_status_history_stale(now - timedelta(minutes=29), now, stale_threshold_seconds=1800) is False
-    assert _is_system_status_history_stale(now - timedelta(minutes=31), now, stale_threshold_seconds=1800) is True
+    assert (
+        _is_system_status_history_stale(
+            now - timedelta(minutes=29), now, stale_threshold_seconds=1800
+        )
+        is False
+    )
+    assert (
+        _is_system_status_history_stale(
+            now - timedelta(minutes=31), now, stale_threshold_seconds=1800
+        )
+        is True
+    )
     assert _is_system_status_history_stale(None, now, stale_threshold_seconds=1800) is True
 
 
@@ -176,7 +187,11 @@ def test_get_system_status_does_not_record_snapshot_on_request(monkeypatch):
     record_calls = []
 
     monkeypatch.setattr(main, "_build_system_status_payload", lambda: payload)
-    monkeypatch.setattr(main, "_record_system_status_snapshot", lambda *args, **kwargs: record_calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        main,
+        "_record_system_status_snapshot",
+        lambda *args, **kwargs: record_calls.append((args, kwargs)),
+    )
 
     status = main.get_system_status()
 
@@ -184,33 +199,164 @@ def test_get_system_status_does_not_record_snapshot_on_request(monkeypatch):
     assert len(record_calls) == 0
 
 
+def test_build_system_status_payload_includes_event_lock_snapshot_without_changing_service_status(
+    monkeypatch,
+):
+    expected_event_lock = {
+        "acquisitions_total": 2,
+        "wait_ms": {"count": 2, "p95": 1200.0, "p99": 1200.0, "max": 1200.0},
+        "alert_state": "WARNING",
+        "thresholds_ms": {"info": 250, "warning_p95": 1000, "critical_p99": 5000},
+        "by_writer": {"snmp_worker_icmp_latency": {"acquisitions_total": 2}},
+    }
+
+    monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
+    monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
+    monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(
+        "services.event_lock.get_event_lock_observability_snapshot",
+        lambda: expected_event_lock,
+    )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr("postgres_db.engine", FakeEngine())
+
+    status = main._build_system_status_payload()
+
+    assert status["event_lock"] == expected_event_lock
+    assert status["neo4j"] == "CONNECTED"
+    assert status["postgres"] == "CONNECTED"
+    assert status["collector"]["status"] == "RUNNING"
+
+
+def test_build_system_status_payload_falls_back_when_event_lock_snapshot_fails(monkeypatch, caplog):
+    monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
+    monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
+    monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+
+    def raise_snapshot_error():
+        raise RuntimeError("snapshot unavailable")
+
+    monkeypatch.setattr(
+        "services.event_lock.get_event_lock_observability_snapshot",
+        raise_snapshot_error,
+    )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr("postgres_db.engine", FakeEngine())
+
+    with caplog.at_level(logging.WARNING, logger="main"):
+        status = main._build_system_status_payload()
+
+    assert status["event_lock"] == {"alert_state": "UNKNOWN", "snapshot_error": True}
+    assert status["neo4j"] == "CONNECTED"
+    assert status["postgres"] == "CONNECTED"
+    assert status["collector"]["status"] == "RUNNING"
+    assert "Failed to build event lock observability snapshot" in caplog.text
+    assert "snapshot unavailable" in caplog.text
+
+
+def test_get_system_status_returns_event_lock_snapshot_without_recording_history(monkeypatch):
+    payload = {
+        "cpu": 1.1,
+        "ram": 2.2,
+        "disk": 3.3,
+        "disk_io": {"supported": False},
+        "neo4j": "CONNECTED",
+        "postgres": "CONNECTED",
+        "collector": {"status": "RUNNING", "stats": {}},
+        "event_lock": {"alert_state": "CRITICAL"},
+        "startup_time": "startup",
+    }
+    record_calls = []
+
+    monkeypatch.setattr(main, "_build_system_status_payload", lambda: payload)
+    monkeypatch.setattr(
+        main,
+        "_record_system_status_snapshot",
+        lambda *args, **kwargs: record_calls.append((args, kwargs)),
+    )
+
+    status = main.get_system_status()
+
+    assert status["event_lock"] == {"alert_state": "CRITICAL"}
+    assert status["neo4j"] == "CONNECTED"
+    assert len(record_calls) == 0
+
+
 def _patch_status_history_rows(monkeypatch, rows):
     class FakeQuery:
-        def filter(self, *_args, **_kwargs): return self
-        def order_by(self, *_args, **_kwargs): return self
-        def limit(self, *_args, **_kwargs): return self
-        def all(self): return rows
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def order_by(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def all(self):
+            return rows
 
     class FakeDb:
-        def query(self, *_args, **_kwargs): return FakeQuery()
-        def close(self): pass
+        def query(self, *_args, **_kwargs):
+            return FakeQuery()
+
+        def close(self):
+            pass
 
     monkeypatch.setattr("postgres_db.SessionLocal", lambda: FakeDb())
 
 
 def test_fetch_system_status_history_includes_freshness_metadata(monkeypatch):
-    snapshot = type("Snapshot", (), {
-        "recorded_at": datetime(2026, 1, 1, 11, 31, 0),
-        "cpu": 24.5, "ram": 61.2, "disk": 40.0,
-        "disk_io_supported": True,
-        "disk_read_bytes_per_sec": 1024.0,
-        "disk_write_bytes_per_sec": 2048.0,
-        "disk_busy_percentage": 12.5,
-        "neo4j_status": "CONNECTED", "postgres_status": "CONNECTED",
-        "collector_status": "RUNNING", "collector_cis_monitored": 8,
-        "collector_metrics_collected": 120, "collector_metrics_failed": 1,
-        "collector_jobs_per_min": 44.0, "collector_cycle_duration": 3.0,
-    })()
+    snapshot = type(
+        "Snapshot",
+        (),
+        {
+            "recorded_at": datetime(2026, 1, 1, 11, 31, 0),
+            "cpu": 24.5,
+            "ram": 61.2,
+            "disk": 40.0,
+            "disk_io_supported": True,
+            "disk_read_bytes_per_sec": 1024.0,
+            "disk_write_bytes_per_sec": 2048.0,
+            "disk_busy_percentage": 12.5,
+            "neo4j_status": "CONNECTED",
+            "postgres_status": "CONNECTED",
+            "collector_status": "RUNNING",
+            "collector_cis_monitored": 8,
+            "collector_metrics_collected": 120,
+            "collector_metrics_failed": 1,
+            "collector_jobs_per_min": 44.0,
+            "collector_cycle_duration": 3.0,
+        },
+    )()
     _patch_status_history_rows(monkeypatch, [snapshot])
     monkeypatch.setattr(main, "_SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS", 900)
     monkeypatch.setattr(main, "_SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS", 1800)
