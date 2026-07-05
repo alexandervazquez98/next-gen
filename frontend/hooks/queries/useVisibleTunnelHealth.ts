@@ -186,10 +186,13 @@ export function useVisibleTunnelHealth(links: VisibleLink[]) {
     setCooldownUntilByLinkId((current) => pruneExpiredCooldowns(current, nowMs));
     if (nextWakeMs === undefined) return;
 
-    const timer = window.setTimeout(() => {
-      setCooldownUntilByLinkId((current) => pruneExpiredCooldowns(current, Date.now()));
-      setCycle((current) => current + 1);
-    }, Math.max(0, nextWakeMs - nowMs) + 1);
+    const timer = window.setTimeout(
+      () => {
+        setCooldownUntilByLinkId((current) => pruneExpiredCooldowns(current, Date.now()));
+        setCycle((current) => current + 1);
+      },
+      Math.max(0, nextWakeMs - nowMs) + 1,
+    );
     return () => window.clearTimeout(timer);
   }, [cooldownUntilByLinkId, plan.pollingDisabled]);
 

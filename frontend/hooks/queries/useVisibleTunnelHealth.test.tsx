@@ -89,26 +89,23 @@ describe("tunnel health query resources", () => {
 });
 
 describe("buildVisibleTunnelHealthPlan", () => {
-  it(
-    "keeps only visible tunnel links, dedupes identities, caps at 50, and records skipped counts",
-    () => {
-      const duplicates = [
-        link("1"),
-        link("1"),
-        link("hidden", "vpn", false),
-        link("plain", undefined),
-      ];
-      const overflow = Array.from({ length: 55 }, (_, index) => link(`vpn-${index}`));
+  it("keeps only visible tunnel links, dedupes identities, caps at 50, and records skipped counts", () => {
+    const duplicates = [
+      link("1"),
+      link("1"),
+      link("hidden", "vpn", false),
+      link("plain", undefined),
+    ];
+    const overflow = Array.from({ length: 55 }, (_, index) => link(`vpn-${index}`));
 
-      const plan = buildVisibleTunnelHealthPlan([...duplicates, ...overflow], { nowMs: 0 });
+    const plan = buildVisibleTunnelHealthPlan([...duplicates, ...overflow], { nowMs: 0 });
 
-      expect(plan.linkIds).toHaveLength(50);
-      expect(new Set(plan.linkIds).size).toBe(50);
-      expect(plan.skippedOverCap).toBeGreaterThan(0);
-      expect(plan.suppressedCooldown).toBe(0);
-      expect(plan.requestBudgetPerMinute).toBeLessThanOrEqual(120);
-    },
-  );
+    expect(plan.linkIds).toHaveLength(50);
+    expect(new Set(plan.linkIds).size).toBe(50);
+    expect(plan.skippedOverCap).toBeGreaterThan(0);
+    expect(plan.suppressedCooldown).toBe(0);
+    expect(plan.requestBudgetPerMinute).toBeLessThanOrEqual(120);
+  });
 
   it("suppresses failing links during the 2-minute cooldown and honors kill switches", () => {
     const tunnel = link("cooldown");

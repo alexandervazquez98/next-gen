@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildTunnelTooltipRows,
-  encodeTunnelLinkId,
-  resolveTunnelVisual,
-} from "./tunnelVisuals";
+import { buildTunnelTooltipRows, encodeTunnelLinkId, resolveTunnelVisual } from "./tunnelVisuals";
 import type { GraphLink, TunnelHealthResponse } from "../types";
 
 const asciiLink: GraphLink = {

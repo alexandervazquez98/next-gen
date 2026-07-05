@@ -118,10 +118,8 @@ export const fetchNodes = ({ signal }: { signal?: AbortSignal } = {}) =>
 export const fetchLinks = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<GraphLink[]>("/links", { signal });
 
-export const fetchTunnelHealth = (
-  linkId: string,
-  { signal }: { signal?: AbortSignal } = {},
-) => api.get<TunnelHealthResponse>(`/tunnels/${encodeURIComponent(linkId)}/health`, { signal });
+export const fetchTunnelHealth = (linkId: string, { signal }: { signal?: AbortSignal } = {}) =>
+  api.get<TunnelHealthResponse>(`/tunnels/${encodeURIComponent(linkId)}/health`, { signal });
 
 export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<CategoryRecord[]>("/categories", { signal });
@@ -170,15 +168,11 @@ export const fetchAvailabilitySnmpNoResponse = ({
   );
 };
 
-export const fetchEventDetail = (
-  eventId: string,
-  { signal }: { signal?: AbortSignal } = {},
-) => api.get<EventDetail>(`/events/${eventId}`, { signal });
+export const fetchEventDetail = (eventId: string, { signal }: { signal?: AbortSignal } = {}) =>
+  api.get<EventDetail>(`/events/${eventId}`, { signal });
 
-export const fetchRelatedEvents = (
-  ciId: string,
-  { signal }: { signal?: AbortSignal } = {},
-) => api.get<EventSummary[]>(`/events/related/${ciId}`, { signal });
+export const fetchRelatedEvents = (ciId: string, { signal }: { signal?: AbortSignal } = {}) =>
+  api.get<EventSummary[]>(`/events/related/${ciId}`, { signal });
 
 type GraphFilterValue = string | string[];
 
@@ -208,24 +202,15 @@ export const fetchGraphTopology = ({
   setFilterParam("location", location);
   setFilterParam("owner", owner);
   const query = params.toString();
-  return api.get<GraphTopologyResponse>(
-    `/graph/full${query ? `?${query}` : ""}`,
-    {
-      signal,
-    },
-  );
+  return api.get<GraphTopologyResponse>(`/graph/full${query ? `?${query}` : ""}`, {
+    signal,
+  });
 };
 
 export const fetchOwners = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<OwnerRecord[]>("/owners", { signal });
 
-export const fetchNodesSearch = ({
-  q,
-  signal,
-}: {
-  q: string;
-  signal?: AbortSignal;
-}) =>
+export const fetchNodesSearch = ({ q, signal }: { q: string; signal?: AbortSignal }) =>
   api.get<GraphNode[]>(`/nodes/search?q=${encodeURIComponent(q)}`, { signal });
 
 export interface FetchNodeMetricHistoryOptions {
@@ -241,15 +226,7 @@ export interface FetchNodeMetricHistoryOptions {
 export const fetchNodeMetricHistory = async (
   options: FetchNodeMetricHistoryOptions,
 ): Promise<Array<{ time: string; value: number | string }>> => {
-  const {
-    nodeId,
-    metricId,
-    hours,
-    startTime,
-    endTime,
-    limit = 1000,
-    signal,
-  } = options;
+  const { nodeId, metricId, hours, startTime, endTime, limit = 1000, signal } = options;
   const params = new URLSearchParams();
   params.set("limit", String(limit));
   if (hours !== undefined) params.set("hours", String(hours));
@@ -303,15 +280,7 @@ export interface FetchMetricsHistoryOptions {
 export const fetchMetricsHistory = async (
   options: FetchMetricsHistoryOptions,
 ): Promise<MultiMetricHistoryResponse> => {
-  const {
-    nodeIds,
-    metricId,
-    hours,
-    startTime,
-    endTime,
-    limit = 1000,
-    signal,
-  } = options;
+  const { nodeIds, metricId, hours, startTime, endTime, limit = 1000, signal } = options;
   const params = new URLSearchParams();
   // Only set hours if provided (backend defaults to 24)
   if (hours !== undefined) params.set("hours", String(hours));

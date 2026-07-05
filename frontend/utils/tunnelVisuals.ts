@@ -92,9 +92,7 @@ function base64UrlEncodeUtf8(value: string): string {
     encoded += BASE64_URL_ALPHABET[(chunk >> BASE64_SEXTET_SHIFTS[1]) & BASE64_SEXTET_MASK];
     // Omit padding instead of writing "=" so the ID remains URL/path safe.
     if (second !== undefined) {
-      encoded += BASE64_URL_ALPHABET[
-        (chunk >> BASE64_SEXTET_SHIFTS[2]) & BASE64_SEXTET_MASK
-      ];
+      encoded += BASE64_URL_ALPHABET[(chunk >> BASE64_SEXTET_SHIFTS[2]) & BASE64_SEXTET_MASK];
     }
     if (third !== undefined) encoded += BASE64_URL_ALPHABET[chunk & BASE64_SEXTET_MASK];
   }
