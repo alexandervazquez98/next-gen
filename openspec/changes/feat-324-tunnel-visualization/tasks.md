@@ -41,10 +41,10 @@ Rollback: PR1 disables hook/telemetry imports; PR2 reverts projection/editor onl
 
 ## PR2: Scoped Projection and Editor Medium
 
-- [ ] 2.1 RED: Add backend tests in `backend/tests/test_routers_nodes.py` and `backend/tests/test_routers_links.py` for admin, non-admin limited scope, and non-admin empty scope on `/nodes`, `/graph/full`, and CIDetailModal topology consumers.
-- [ ] 2.2 GREEN: Update `backend/services/node_service.py` and `backend/services/link_service.py` to project top-level nullable `public_ip` only after scoped repository results, preserving `metadata.public_ip`.
-- [ ] 2.3 RED: Add `frontend/components/VisualRelationshipEditor.tsx` tests for creating, editing, and displaying `vpn`, `sd_wan`, and `satellite` medium plus non-authoritative health context.
-- [ ] 2.4 GREEN: Wire VisualRelationshipEditor medium create/edit/display through the shared tunnel visual model.
+- [x] 2.1 RED: Add backend tests in `backend/tests/test_routers_nodes.py` and `backend/tests/test_routers_links.py` for admin, non-admin limited scope, and non-admin empty scope on `/nodes`, `/graph/full`, and CIDetailModal topology consumers.
+- [x] 2.2 GREEN: Update `backend/services/node_service.py` and `backend/services/link_service.py` to project top-level nullable `public_ip` only after scoped repository results, preserving `metadata.public_ip`.
+- [x] 2.3 RED: Add `frontend/components/VisualRelationshipEditor.tsx` tests for creating, editing, and displaying `vpn`, `sd_wan`, and `satellite` medium plus non-authoritative health context.
+- [x] 2.4 GREEN: Wire VisualRelationshipEditor medium create/edit/display through the shared tunnel visual model.
 
 ## PR3: Topology Surface Integrations
 

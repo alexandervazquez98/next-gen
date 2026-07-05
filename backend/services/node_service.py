@@ -120,6 +120,7 @@ def get_nodes(current_user: User) -> list[dict[str, Any]]:
             "category_icon_key": resolve_category_icon(category, record.get("category_icon_key")),
             "status": node.get("status", "OK"),
             "ip": node.get("ip"),
+            "public_ip": node.get("public_ip"),
             "owner": node.get("owner"),
             "brand": node.get("brand"),
             "model": node.get("model"),

@@ -42,6 +42,13 @@ export default [
       globals: {
         window: "readonly",
         document: "readonly",
+        alert: "readonly",
+        confirm: "readonly",
+        SVGSVGElement: "readonly",
+        SVGGElement: "readonly",
+        SVGLineElement: "readonly",
+        SVGTextElement: "readonly",
+        SVGCircleElement: "readonly",
         console: "readonly",
         navigator: "readonly",
         fetch: "readonly",

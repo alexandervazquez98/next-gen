@@ -198,6 +198,32 @@ class TestGetNodes:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_list_nodes_admin_projects_public_ip_after_scoped_repo_result(self, mock_neo4j_driver):
+        """Admin /nodes response exposes nullable public_ip without removing metadata."""
+        fake_user = _make_pydantic_user(username="admin", role="ADMIN")
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+        node_record = _make_neo4j_node_record(node_id="hub-001", name="VPN Hub")
+        node_record["public_ip"] = "203.0.113.10"
+        full_record = _make_full_record(node_props=node_record, category="vpn_hub")
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [full_record]
+
+            response = client.get("/api/nodes")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data[0]["public_ip"] == "203.0.113.10"
+            assert data[0]["metadata"]["public_ip"] == "203.0.113.10"
+            mock_repo.get_nodes.assert_called_once_with([], True)
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_list_nodes_operator_scoped_by_location(self, mock_neo4j_driver):
         """Non-admin should have results scoped to allowed_locations."""
         fake_user = _make_pydantic_user(
@@ -236,6 +262,45 @@ class TestGetNodes:
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
+    def test_list_nodes_operator_limited_scope_projects_only_returned_public_ips(
+        self, mock_neo4j_driver
+    ):
+        """Limited non-admin /nodes public_ip projection happens only on scoped results."""
+        fake_user = _make_pydantic_user(
+            username="operator",
+            role="OPERATOR",
+            allowed_locations=["HQ-Madrid"],
+        )
+
+        async def override_get_current_active_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+        scoped_node = _make_neo4j_node_record(
+            node_id="hub-madrid",
+            name="Madrid Hub",
+            location_name="HQ-Madrid",
+        )
+        scoped_node["public_ip"] = "203.0.113.20"
+
+        with patch("services.node_service.topology_repo") as mock_repo:
+            mock_repo.get_nodes.return_value = [
+                _make_full_record(node_props=scoped_node, category="vpn_hub")
+            ]
+
+            response = client.get("/api/nodes")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert [node["id"] for node in data] == ["hub-madrid"]
+            assert data[0]["public_ip"] == "203.0.113.20"
+            assert data[0]["metadata"]["public_ip"] == "203.0.113.20"
+            assert "203.0.113.99" not in response.text
+            mock_repo.get_nodes.assert_called_once_with(["HQ-Madrid"], False)
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
     def test_list_nodes_operator_no_locations_returns_empty(self):
         """Operator with no allowed_locations should get empty list."""
         fake_user = _make_pydantic_user(
@@ -258,6 +323,7 @@ class TestGetNodes:
             assert response.status_code == 200
             data = response.json()
             assert data == []
+            assert "public_ip" not in response.text
 
         app.dependency_overrides.pop(get_current_active_user, None)
 
