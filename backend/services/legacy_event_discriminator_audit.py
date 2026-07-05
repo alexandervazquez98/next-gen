@@ -17,6 +17,7 @@ MISSING_FIELD_CODES = {
     "failure_family": "missing_failure_family",
     "source_protocol": "missing_source_protocol",
 }
+RECOMMENDATION_SCHEMA_VERSION = "legacy-event-backfill-recommendation.v1"
 
 READ_ONLY_AUDIT_QUERY = """
 MATCH (e:Event)
@@ -138,6 +139,78 @@ class LegacyEventAuditResult:
     findings: list[LegacyEventAuditFinding]
 
 
+@dataclass(frozen=True)
+class LegacyEventBackfillRecommendationCounts:
+    total_records: int
+    safe_candidates: int
+    ambiguous_records: int
+    no_touch_records: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "total_records": self.total_records,
+            "safe_candidates": self.safe_candidates,
+            "ambiguous_records": self.ambiguous_records,
+            "no_touch_records": self.no_touch_records,
+        }
+
+
+@dataclass(frozen=True)
+class LegacyEventBackfillRecommendationBucket:
+    label: str
+    record_count: int
+    confidence: str
+    finding_codes: list[str]
+    description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "record_count": self.record_count,
+            "confidence": self.confidence,
+            "finding_codes": list(self.finding_codes),
+            "description": self.description,
+        }
+
+
+@dataclass(frozen=True)
+class LegacyEventBackfillGuidance:
+    batching: str
+    rate_limits: str
+    idempotency: str
+    rollback: str
+    operational_risk: str
+    slice3_review_gate: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "batching": self.batching,
+            "rate_limits": self.rate_limits,
+            "idempotency": self.idempotency,
+            "rollback": self.rollback,
+            "operational_risk": self.operational_risk,
+            "slice3_review_gate": self.slice3_review_gate,
+        }
+
+
+@dataclass(frozen=True)
+class LegacyEventBackfillRecommendation:
+    schema_version: str
+    counts: LegacyEventBackfillRecommendationCounts
+    buckets: list[LegacyEventBackfillRecommendationBucket]
+    guidance: LegacyEventBackfillGuidance
+    inspected_limit: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "inspected_limit": self.inspected_limit,
+            "counts": self.counts.to_dict(),
+            "buckets": [bucket.to_dict() for bucket in self.buckets],
+            "guidance": self.guidance.to_dict(),
+        }
+
+
 def classify_legacy_event_records(records: Iterable[Mapping[str, Any]]) -> LegacyEventAuditResult:
     """Classify legacy Event rows without mutating or inferring discriminator values."""
     audit_records = [LegacyEventAuditRecord.from_mapping(_as_mapping(record)) for record in records]
@@ -161,6 +234,102 @@ def result_to_json_dict(result: LegacyEventAuditResult) -> dict[str, Any]:
         "summary": result.summary.to_dict(),
         "findings": [finding.to_dict() for finding in result.findings],
     }
+
+
+def build_legacy_event_backfill_recommendation(
+    audit: LegacyEventAuditResult, *, inspected_limit: int | None = None
+) -> LegacyEventBackfillRecommendation:
+    """Build read-only backfill readiness guidance from audit evidence."""
+    ambiguous_event_ids = _event_ids_with_severity(audit.findings, "ambiguous")
+    finding_event_ids = {finding.record.event_id for finding in audit.findings}
+    no_touch_event_ids = finding_event_ids - ambiguous_event_ids
+    safe_candidates = max(
+        audit.summary.total_records - len(ambiguous_event_ids) - len(no_touch_event_ids),
+        0,
+    )
+
+    counts = LegacyEventBackfillRecommendationCounts(
+        total_records=audit.summary.total_records,
+        safe_candidates=safe_candidates,
+        ambiguous_records=len(ambiguous_event_ids),
+        no_touch_records=len(no_touch_event_ids),
+    )
+    buckets = [
+        LegacyEventBackfillRecommendationBucket(
+            label="safe_candidates",
+            record_count=counts.safe_candidates,
+            confidence="candidate",
+            finding_codes=[],
+            description="Records with no audit findings may be considered for a future guarded backfill plan.",
+        ),
+        LegacyEventBackfillRecommendationBucket(
+            label="ambiguous_records",
+            record_count=counts.ambiguous_records,
+            confidence="manual_review_required",
+            finding_codes=_finding_codes_for_event_ids(audit.findings, ambiguous_event_ids),
+            description="Records with ambiguity findings remain excluded from safe candidates.",
+        ),
+        LegacyEventBackfillRecommendationBucket(
+            label="no_touch_records",
+            record_count=counts.no_touch_records,
+            confidence="exclude",
+            finding_codes=_finding_codes_for_event_ids(audit.findings, no_touch_event_ids),
+            description="Records with non-ambiguous audit findings are not recommended for automatic backfill.",
+        ),
+    ]
+    return LegacyEventBackfillRecommendation(
+        schema_version=RECOMMENDATION_SCHEMA_VERSION,
+        counts=counts,
+        buckets=buckets,
+        guidance=_default_recommendation_guidance(counts),
+        inspected_limit=inspected_limit,
+    )
+
+
+def recommendation_to_json_dict(model: LegacyEventBackfillRecommendation) -> dict[str, Any]:
+    """Render the recommendation model as deterministic JSON-compatible data."""
+    return model.to_dict()
+
+
+def recommendation_to_markdown(model: LegacyEventBackfillRecommendation) -> str:
+    """Render the recommendation model as deterministic reviewer-facing Markdown."""
+    lines = [
+        "# Legacy Event Backfill Recommendation",
+        "",
+        f"- Schema version: `{model.schema_version}`",
+        f"- Inspected limit: {model.inspected_limit if model.inspected_limit is not None else 'not set'}",
+        "",
+        "## Counts",
+        f"- Total records: {model.counts.total_records}",
+        f"- Safe candidates: {model.counts.safe_candidates}",
+        f"- Ambiguous records: {model.counts.ambiguous_records}",
+        f"- No-touch records: {model.counts.no_touch_records}",
+        "",
+        "## Confidence Buckets",
+        "| Bucket | Count | Confidence | Finding codes | Description |",
+        "|---|---:|---|---|---|",
+    ]
+    for bucket in model.buckets:
+        codes = ", ".join(f"`{code}`" for code in bucket.finding_codes) or "None"
+        lines.append(
+            f"| `{_md(bucket.label)}` | {bucket.record_count} | {_md(bucket.confidence)} | {codes} | {_md(bucket.description)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Scale-Readiness Guidance",
+            f"- Batching: {model.guidance.batching}",
+            f"- Rate limits: {model.guidance.rate_limits}",
+            f"- Idempotency: {model.guidance.idempotency}",
+            f"- Rollback: {model.guidance.rollback}",
+            f"- Operational risk: {model.guidance.operational_risk}",
+            f"- Slice 3 review gate: {model.guidance.slice3_review_gate}",
+            "",
+            "This report is read-only, advisory only, and must not authorize mutation.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def result_to_markdown(result: LegacyEventAuditResult) -> str:
@@ -334,6 +503,53 @@ def _finding_sort_key(finding: LegacyEventAuditFinding) -> tuple[str, str, str, 
 
 def _finding_id(record: LegacyEventAuditRecord, code: str) -> str:
     return f"{record.event_id}:{code}"
+
+
+def _event_ids_with_severity(
+    findings: Iterable[LegacyEventAuditFinding], severity: str
+) -> set[str]:
+    return {
+        finding.record.event_id
+        for finding in findings
+        if finding.severity.lower() == severity.lower()
+    }
+
+
+def _finding_codes_for_event_ids(
+    findings: Iterable[LegacyEventAuditFinding], event_ids: set[str]
+) -> list[str]:
+    return sorted({finding.code for finding in findings if finding.record.event_id in event_ids})
+
+
+def _default_recommendation_guidance(
+    counts: LegacyEventBackfillRecommendationCounts,
+) -> LegacyEventBackfillGuidance:
+    return LegacyEventBackfillGuidance(
+        batching=(
+            "Plan bounded batches over safe candidates only; keep ambiguous and no-touch records out "
+            "of any future Slice 3 batch."
+        ),
+        rate_limits=(
+            "Use operator-reviewed limits and pause controls before production execution; tune limits "
+            "from dry-run evidence."
+        ),
+        idempotency=(
+            "Require retry-safe idempotency keys derived from stable event identifiers before planning "
+            "any write path."
+        ),
+        rollback=(
+            "Rollback after mutation is constrained because prior discriminator values may be unknown "
+            "at scale."
+        ),
+        operational_risk=(
+            f"{counts.ambiguous_records} ambiguous and {counts.no_touch_records} no-touch records require "
+            "review before any production-scale plan."
+        ),
+        slice3_review_gate=(
+            "This recommendation is advisory only; reviewers may plan Slice 3, but the report must not "
+            "authorize mutation."
+        ),
+    )
 
 
 def _normalized(value: Any) -> str | None:
