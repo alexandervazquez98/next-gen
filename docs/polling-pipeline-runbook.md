@@ -104,6 +104,103 @@ Dashboard panels/alerts should include:
 | dead-letter count | Data needs operator triage instead of automatic retry. |
 | Neo4j pending | Timescale succeeded but event/latest update still needs retry. |
 
+## Event writer coordination observability
+
+Event deduplication across SNMP, legacy service, and polling result writers uses
+the shared PostgreSQL advisory-lock helper in `backend/services/event_lock.py`.
+Observability is intentionally lightweight: the current `/api/system/status`
+payload exposes `event_lock` from the backend process that served the request.
+In the default compose topology this is backend-process-local state; cross-process
+aggregation, Prometheus/OpenTelemetry export, and scrape endpoints are future
+work.
+
+Stable snapshot contract:
+
+```json
+{
+  "acquisitions_total": 0,
+  "wait_ms": {"count": 0, "p95": null, "p99": null, "max": null},
+  "alert_state": "OK",
+  "thresholds_ms": {"info": 250.0, "warning_p95": 1000.0, "critical_p99": 5000.0},
+  "by_writer": {}
+}
+```
+
+- `acquisitions_total` is the successful lock-acquisition count in the current
+  backend process.
+- `wait_ms` contains bounded wait-duration samples for all writers in the
+  process. Percentiles are `null` when no samples exist.
+- `alert_state` is one of `OK`, `INFO`, `WARNING`, or `CRITICAL`.
+- `thresholds_ms` reports the effective runtime thresholds.
+- `by_writer` contains bounded writer-context labels such as `snmp_service`,
+  `snmp_worker_icmp_availability`, and `polling_event_writer`. Raw CI, metric,
+  and event-type triplet identifiers are not default labels.
+- An empty `by_writer: {}` is valid before the process records any lock
+  acquisition. Once the process records acquisitions, each writer key maps to
+  the same bounded counter/distribution shape:
+
+  ```json
+  {
+    "snmp_service": {
+      "acquisitions_total": 12,
+      "wait_ms": {"count": 12, "p95": 4.2, "p99": 5.1, "max": 5.1}
+    },
+    "polling_event_writer": {
+      "acquisitions_total": 3,
+      "wait_ms": {"count": 3, "p95": 1.7, "p99": 1.7, "max": 1.7}
+    }
+  }
+  ```
+
+  For every writer key, `acquisitions_total` is a number and `wait_ms` has
+  `count` as a number plus `p95`, `p99`, and `max` as numbers or `null` when no
+  samples exist.
+
+If snapshot generation fails, `/api/system/status.event_lock` falls back to:
+
+```json
+{"alert_state": "UNKNOWN", "snapshot_error": true}
+```
+
+This fallback preserves the rest of the system-status payload and does not change
+healthcheck, readiness, liveness, or HTTP status behavior.
+
+### Coordination invariants
+
+- All Event writers that must deduplicate each other MUST use the same
+  PostgreSQL database identity. PostgreSQL advisory locks are scoped to a
+  database; writers connected to different PostgreSQL databases cannot coordinate
+  through this lock.
+- Lock acquisition is transaction/session-scoped. The SQLAlchemy session passed
+  to `acquire_event_triplet_lock(...)` MUST remain open until the following Neo4j
+  Event create/update path completes. Commit, rollback, or session close releases
+  the lock.
+- Batched writers MUST continue deterministic sorted acquisition of distinct
+  Event triplets before writes. This preserves stable lock order and avoids
+  introducing deadlock-prone acquisition patterns.
+- Observability MUST NOT introduce lock timeouts, fail-open behavior, or
+  fail-closed behavior. Current behavior remains blocking via
+  `pg_advisory_xact_lock(hashtext(:key))`.
+- Issue #334 is the complementary CI guard for writer coverage. It protects
+  future code changes from bypassing the shared lock helper; it does not replace
+  runtime contention observability.
+
+### Threshold tuning
+
+Defaults are conservative and configurable by environment:
+
+| Environment variable | Default | Purpose |
+| --- | ---: | --- |
+| `EVENT_LOCK_SLOW_LOG_INFO_MS` | `250` | Emit structured INFO slow-lock logs and derive INFO alert state. Set `0` to disable INFO slow-lock logging. |
+| `EVENT_LOCK_WARNING_P95_MS` | `1000` | Derive WARNING when p95 wait meets or exceeds this value. |
+| `EVENT_LOCK_CRITICAL_P99_MS` | `5000` | Derive CRITICAL when p99 wait meets or exceeds this value. |
+| `EVENT_LOCK_SAMPLE_WINDOW_SIZE` | `500` | Bound retained wait samples per process and writer context. |
+| `EVENT_LOCK_MAX_WRITER_CONTEXTS` | `20` | Bound writer-context label cardinality; overflow rolls into `other`. |
+
+Tune thresholds only after comparing live wait percentiles against normal cycle
+duration and database latency. No threshold changes should be treated as an
+approval to increase polling concurrency by themselves.
+
 ## Out of scope
 
 This runbook does not approve retention/compression changes, production MQTT semantics, or DB-backed load tests in production.
