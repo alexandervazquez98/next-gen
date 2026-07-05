@@ -679,6 +679,13 @@ def _build_system_status_payload() -> dict:
         postgres_status = "DISCONNECTED"
 
     collector = get_collector_status()
+    from services.event_lock import get_event_lock_observability_snapshot
+
+    try:
+        event_lock_snapshot = get_event_lock_observability_snapshot()
+    except Exception as exc:
+        logger.warning("Failed to build event lock observability snapshot: %s", exc)
+        event_lock_snapshot = {"alert_state": "UNKNOWN", "snapshot_error": True}
 
     return {
         "cpu": round(cpu_percent, 1),
@@ -688,6 +695,7 @@ def _build_system_status_payload() -> dict:
         "neo4j": neo4j_status,
         "postgres": postgres_status,
         "collector": collector,
+        "event_lock": event_lock_snapshot,
         "startup_time": STARTUP_TIME,
     }
 

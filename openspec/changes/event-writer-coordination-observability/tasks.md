@@ -40,10 +40,10 @@ PR1 boundary: this slice is complete when metrics/settings/logging core and focu
 
 ## Phase 3: RED/GREEN Writer and Status Wiring
 
-- [ ] 3.1 Add failing assertions in `backend/tests/test_snmp_worker.py`, `backend/tests/test_snmp_service_collection_failures.py`, and `backend/tests/test_polling_event_writer.py` for expected writer contexts and unchanged lock counts/order.
-- [ ] 3.2 Thread writer contexts through `backend/engines/snmp_worker.py`, `backend/services/snmp_service.py`, and `backend/polling/event_writer.py` without changing sorted acquisition or session lifetime.
-- [ ] 3.3 Add failing status tests in `backend/tests/test_system_status.py` for `event_lock` snapshot presence and unchanged health/status behavior.
-- [ ] 3.4 Expose `get_event_lock_observability_snapshot()` from `backend/services/event_lock.py` through `/api/system/status` in `backend/main.py` only.
+- [x] 3.1 Add failing assertions in `backend/tests/test_snmp_worker.py`, `backend/tests/test_snmp_service_collection_failures.py`, and `backend/tests/test_polling_event_writer.py` for expected writer contexts and unchanged lock counts/order.
+- [x] 3.2 Thread writer contexts through `backend/engines/snmp_worker.py`, `backend/services/snmp_service.py`, and `backend/polling/event_writer.py` without changing sorted acquisition or session lifetime.
+- [x] 3.3 Add failing status tests in `backend/tests/test_system_status.py` for `event_lock` snapshot presence and unchanged health/status behavior.
+- [x] 3.4 Expose `get_event_lock_observability_snapshot()` from `backend/services/event_lock.py` through `/api/system/status` in `backend/main.py` only.
 
 ## Phase 4: Documentation, Verification
 
