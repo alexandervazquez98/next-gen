@@ -4,6 +4,7 @@ export const queryKeys = {
 		["system-status", "history", { hours: params.hours ?? 168, limit: params.limit ?? 24 }] as const,
 	nodes: () => ["nodes"] as const,
 	links: () => ["links"] as const,
+	tunnelHealth: (linkId: string) => ["tunnels", "health", linkId] as const,
 	categories: () => ["categories"] as const,
 	owners: () => ["owners"] as const,
 	activeEvents: () => ["events", "CONSOLE"] as const,

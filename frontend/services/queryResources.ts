@@ -8,6 +8,7 @@ import type {
 	GraphLink,
 	GraphNode,
 	MultiMetricHistoryResponse,
+	TunnelHealthResponse,
 } from "../types";
 
 export interface DiskIoStatus {
@@ -111,6 +112,11 @@ export const fetchNodes = ({ signal }: { signal?: AbortSignal } = {}) =>
 
 export const fetchLinks = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<GraphLink[]>("/links", { signal });
+
+export const fetchTunnelHealth = (
+	linkId: string,
+	{ signal }: { signal?: AbortSignal } = {},
+) => api.get<TunnelHealthResponse>(`/tunnels/${encodeURIComponent(linkId)}/health`, { signal });
 
 export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
 	api.get<CategoryRecord[]>("/categories", { signal });
