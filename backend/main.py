@@ -157,6 +157,7 @@ from routers import (  # noqa: E402
     permissions,
     roles,
     rtus,
+    tunnels,
     users,
 )
 
@@ -274,6 +275,7 @@ app.include_router(nodes.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
+app.include_router(tunnels.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(dictionaries.router, prefix="/api")
