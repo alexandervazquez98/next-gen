@@ -4,15 +4,20 @@
 
 - Delivery strategy: ask-on-risk
 - Chain strategy: stacked-to-main
-- Current slice: PR 1 / Work Unit 1 only
-- Boundary: local-only seed/cleanup harness from updated `origin/main` / `v1.13.9+`
-- Explicitly not implemented: validation/reporting tasks 2.x, 3.x, and 4.x
+- Current slice: PR 2 / Work Unit 2 only
+- Base: `origin/main` after PR #365 (`fe99822`)
+- Branch: `feat/issue-155-smoke-fixtures-pr2`
+- Boundary: extend the PR1 local-only seed/cleanup harness with read-only audit JSON execution bound to the same validated local Neo4j target, sanitized smoke-scoped audit evidence, direct classifier validation for smoke-only fixtures, and explicit aggregate recommendation gap evidence.
+- Explicitly not implemented: Phase 3 evidence/wiring tasks and Phase 4 verification/cleanup tasks remain pending.
 
 ## Completed Tasks
 
 - [x] 1.1 Created `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/validate_smoke_fixtures.py` as a local-only runner with run-id generation, seeded fixture plan, and `finally` cleanup.
 - [x] 1.2 Seeded marker-scoped `Event` fixtures only in shared local Neo4j using `issue155_smoke=true` and `issue155_smoke_run_id`.
 - [x] 1.3 Added post-cleanup verification query proving `MATCH (e:Event {issue155_smoke:true, issue155_smoke_run_id:$run_id}) RETURN count(e)=0`.
+- [x] 2.1 Ran `backend/scripts/audit_legacy_event_discriminators.py --report audit --format json` through the harness with explicit local Neo4j environment overrides, kept broad CLI output temporary, and persisted only sanitized smoke-scoped audit JSON evidence.
+- [x] 2.2 Validated expected vs actual buckets for safe, ambiguous, and no-touch fixtures by parsing persisted smoke-scoped audit evidence for ambiguous/no-touch findings and directly reusing the read-only classifier for the safe fixture.
+- [x] 2.3 Recorded the aggregate recommendation JSON per-fixture isolation gap explicitly in validation evidence.
 
 ## TDD Cycle Evidence
 
@@ -21,29 +26,35 @@
 | 1.1 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit | N/A (new files) | ✅ Test referenced missing runner first; failed with `FileNotFoundError` | ✅ `python3 .../test_validate_smoke_fixtures.py` passed 4/4 after runner creation | ✅ Added URI and fixture-plan cases | ✅ Reworked Python 3.9-compatible UTC handling |
 | 1.2 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit + local runtime evidence | N/A (new files) | ✅ Fixture plan test required marker/run-id fields before implementation | ✅ Unit tests passed 5/5 and live helper seeded 3 local fixtures | ✅ Fake driver verified seed query receives marked fixtures and live run seeded all three buckets | ✅ Kept seed scope in one query and local URI guard |
 | 1.3 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit + local runtime evidence | N/A (new files) | ✅ Cleanup query test required exact marker/run-id zero-count proof | ✅ Unit tests passed 5/5 and live helper cleanup returned `cleanup_verified=true` | ✅ Fake driver verified cleanup and post-cleanup query order | ✅ Cleanup proof is returned and persisted in JSON evidence |
+| 2.1 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit + local runtime evidence | ✅ 16/16 baseline | ✅ Added tests requiring smoke-scoped audit persistence and no absolute output paths in metadata; failed before implementation | ✅ 24/24 unit tests passed and live helper persisted `pr2-smoke-audit.json` | ✅ Test covers broad temporary CLI output, smoke-only persisted findings, omitted non-smoke count, and sanitized command metadata | ✅ Broad audit output is temporary/non-committed; persisted evidence is smoke-scoped only |
+| 2.2 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit + local runtime evidence | ✅ 16/16 baseline | ✅ Added validation tests requiring persisted audit evidence for ambiguous/no-touch fixtures; failed before implementation | ✅ 24/24 unit tests passed and live validation matched safe/ambiguous/no-touch counts 1/1/1 | ✅ Covered all three buckets plus missing audit-finding invalidation | ✅ Validation summary now separates audit evidence inspection from safe fixture direct-classifier validation |
+| 2.3 | `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` | Unit + local runtime evidence | ✅ 16/16 baseline | ✅ Added cleanup-on-audit-failure and cleanup-on-classifier-failure tests; failed before implementation | ✅ 24/24 unit tests passed and live manifest records `recommendation_gap.status=gap_recorded` | ✅ Failure-path tests prove cleanup still runs after audit generation or classifier validation errors | ✅ Gap wording is centralized in validation summary evidence |
 
 ## Test Summary
 
-- Total tests written: 5
-- Total tests passing: 5
-- Layers used: Unit (5), local shared Neo4j runtime evidence (1 run)
+- Total tests written: 24 cumulative (`+12` in PR2)
+- Total tests passing: 24
+- Layers used: Unit (24), local shared Neo4j runtime evidence (1 regenerated PR2 run)
 - Approval tests: None — no refactoring tasks
-- Pure functions created: `generate_run_id`, `validate_local_neo4j_uri`, `build_fixture_plan`
+- Pure functions created in PR2: `classify_fixture_buckets`, `build_smoke_scoped_audit_evidence`, `build_validation_summary`
+- Side-effectful helper added in PR2: `run_audit_json_report` runs the read-only CLI subprocess with the same validated local Neo4j target used by seed/cleanup, parses temporary broad output, and writes sanitized smoke-scoped audit evidence without persisting Neo4j credentials or broad raw-audit counts.
 
 ## Runtime Evidence
 
-- Command: `python3 openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/validate_smoke_fixtures.py --output openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/pr1-seed-cleanup-smoke.json`
-- Environment source: approved `config/test-env/worktree-host.sample` export path from the existing root checkout; no denied `.env` file was read.
-- Evidence file: `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/pr1-seed-cleanup-smoke.json`
+- Command: `python3 openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/validate_smoke_fixtures.py --output pr2-validation-smoke-<fresh-run-id>.json --audit-json-output pr2-smoke-audit-<fresh-run-id>.json` (use fresh output filenames for every runtime run; existing evidence files are rejected to prevent accidental overwrite).
+- Environment source: approved `config/test-env/worktree-host.sample` export path from the root checkout; no denied `.env` file was read.
+- Sanitized smoke-scoped audit JSON evidence: `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/pr2-smoke-audit.json`
+- Validation manifest: `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/pr2-validation-smoke.json`
 - Seeded count: 3 marker-scoped `Event` nodes
+- Expected counts: safe candidates = 1, ambiguous records = 1, no-touch records = 1
+- Actual direct-classifier counts: safe candidates = 1, ambiguous records = 1, no-touch records = 1
+- Validation status: `valid_for_planning=true`, `mismatches=[]`
+- Gap recorded: existing aggregate recommendation JSON does not expose per-record smoke fixture IDs; smoke-only validation parses persisted sanitized audit evidence for ambiguous/no-touch fixtures and uses direct classifier reuse for the safe fixture, which has no finding by design.
 - Cleanup proof: `cleanup_verified=true`, `remaining_count=0`
-- Scope statement: local shared Neo4j only; no production mutation or production conclusion.
+- Scope statement: local shared Neo4j only; no production mutation, no production conclusion, no `--apply`, no migration path, and no new Docker/test environment.
 
 ## Remaining Tasks
 
-- [ ] 2.1 Run `backend/scripts/audit_legacy_event_discriminators.py --report audit --format json` and persist raw JSON evidence.
-- [ ] 2.2 Validate expected vs actual buckets for safe, ambiguous, and no-touch fixtures using audit JSON/direct classifier reuse when CLI lacks per-fixture marker filtering.
-- [ ] 2.3 Record the validation gap explicitly if smoke IDs cannot be isolated from aggregate recommendation JSON.
 - [ ] 3.1 Persist Markdown and JSON evidence under `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/` for seeded plan, report output, and classification comparison.
 - [ ] 3.2 Capture cleanup evidence showing deleted marker-scoped records and zero remaining marked nodes.
 - [ ] 3.3 Ensure the run summary states local-only validation, no production mutation, and no `--apply`/migration path.
@@ -53,12 +64,21 @@
 
 ## Deviations
 
-None — PR1 stayed within the design boundary for seed/cleanup harness safety.
+- The sanitized audit JSON contains smoke fixture findings for ambiguous and no-touch fixtures only; safe fixtures naturally have no finding rows. Per-fixture safe validation therefore comes from direct classifier reuse, matching the design's fallback.
+- PR2 did not generate Markdown recommendation evidence because Phase 3 evidence/wiring tasks are intentionally out of scope for this work unit.
 
 ## Issues
 
-- `python` is unavailable in this shell; commands used `python3`.
-- `python3 -m pytest` is unavailable because pytest is not installed for the system Python. The committed helper tests use stdlib `unittest` and run directly with `python3`.
+- `config/test-env/worktree-host.sample` was available from the root checkout path, not inside this PR2 worktree.
+- The existing audit CLI emits a masked Neo4j debug connection line to stdout; the harness records only `stdout_captured=true`, keeps broad audit output in a temporary file, passes explicit local Neo4j env overrides to the subprocess, and persists sanitized smoke-scoped findings in `pr2-smoke-audit.json`.
+
+## Final PR2 Review Fixes
+
+- Bound the read-only audit subprocess to the same validated local `NEO4J_URI` used by seed/cleanup by passing explicit subprocess environment overrides for `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD`.
+- Kept credentials out of persisted evidence metadata; evidence records only sanitized command/output metadata.
+- Removed `raw_total_findings` and broad non-smoke aggregate counts from persisted sanitized audit evidence.
+- Updated task/help/progress wording to consistently describe sanitized smoke-scoped audit JSON evidence.
+- Surfaced cleanup verification failure (`cleanup_verified=false` / remaining fixtures) ahead of prior audit/classifier errors so leftover local smoke fixtures cannot be hidden by an earlier exception.
 
 ## PR1 Review Warning Cleanup
 

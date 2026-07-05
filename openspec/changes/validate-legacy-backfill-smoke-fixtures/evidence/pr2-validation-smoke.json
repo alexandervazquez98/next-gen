@@ -1,0 +1,138 @@
+{
+  "audit_json_report": {
+    "command": [
+      "python3",
+      "backend/scripts/audit_legacy_event_discriminators.py",
+      "--report",
+      "audit",
+      "--format",
+      "json",
+      "--output",
+      "<temporary-broad-audit-json>"
+    ],
+    "format": "json",
+    "output": "pr2-smoke-audit.json",
+    "output_path_kind": "evidence-relative",
+    "persisted_schema": "issue155_smoke_scoped_audit_v1",
+    "persisted_scope": "smoke fixture findings only",
+    "report": "audit",
+    "smoke_findings_count": 6,
+    "stderr_captured": false,
+    "stdout_captured": true
+  },
+  "cleanup": {
+    "cleanup_verified": true,
+    "deleted_count": 3,
+    "query": "MATCH (e:Event {issue155_smoke:true, issue155_smoke_run_id:$run_id})\nRETURN count(e)=0 AS cleanup_verified, count(e) AS remaining_count",
+    "remaining_count": 0
+  },
+  "fixture_plan": [
+    {
+      "availability_source": "snmp",
+      "ci_id": "issue155-smoke-20260705T194559Z-d0063d11-ci-safe",
+      "created_at": "2026-07-05T19:45:59.975382+00:00",
+      "event_type": "AVAILABILITY",
+      "expected_bucket": "safe_candidates",
+      "failure_family": "COLLECTION",
+      "id": "issue155-smoke-20260705T194559Z-d0063d11-safe",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T194559Z-d0063d11",
+      "last_seen": "2026-07-05T19:45:59.975382+00:00",
+      "message": "SNMP availability event with complete discriminator fields.",
+      "metric_id": "availability.safe",
+      "metric_name": "Availability Safe Fixture",
+      "severity": "warning",
+      "source_protocol": "SNMP",
+      "status": "ACTIVE"
+    },
+    {
+      "availability_source": null,
+      "ci_id": "issue155-smoke-20260705T194559Z-d0063d11-ci-ambiguous",
+      "created_at": "2026-07-05T19:45:59.975382+00:00",
+      "event_type": null,
+      "expected_bucket": "ambiguous_records",
+      "failure_family": null,
+      "id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T194559Z-d0063d11",
+      "last_seen": "2026-07-05T19:45:59.975382+00:00",
+      "message": "PING availability timeout; host down boundary needs reviewer decision.",
+      "metric_id": "availability.ping.timeout",
+      "metric_name": "PING Timeout Fixture",
+      "severity": "warning",
+      "source_protocol": null,
+      "status": "ACTIVE"
+    },
+    {
+      "availability_source": "snmp",
+      "ci_id": "issue155-smoke-20260705T194559Z-d0063d11-ci-no-touch",
+      "created_at": "2026-07-05T19:45:59.975382+00:00",
+      "event_type": "THRESHOLD",
+      "expected_bucket": "no_touch_records",
+      "failure_family": null,
+      "id": "issue155-smoke-20260705T194559Z-d0063d11-no-touch",
+      "issue155_smoke": true,
+      "issue155_smoke_run_id": "issue155-smoke-20260705T194559Z-d0063d11",
+      "last_seen": "2026-07-05T19:45:59.975382+00:00",
+      "message": "Threshold signal with one missing discriminator and no ambiguity hint.",
+      "metric_id": "threshold.partial",
+      "metric_name": "Threshold Partial Fixture",
+      "severity": "warning",
+      "source_protocol": "SNMP",
+      "status": "ACTIVE"
+    }
+  ],
+  "run_id": "issue155-smoke-20260705T194559Z-d0063d11",
+  "scope": "local shared Neo4j only; no production mutation",
+  "seeded_count": 3,
+  "status": "validation_complete_cleanup_verified",
+  "validation_summary": {
+    "actual_buckets": {
+      "issue155-smoke-20260705T194559Z-d0063d11-ambiguous": "ambiguous_records",
+      "issue155-smoke-20260705T194559Z-d0063d11-no-touch": "no_touch_records",
+      "issue155-smoke-20260705T194559Z-d0063d11-safe": "safe_candidates"
+    },
+    "actual_counts": {
+      "ambiguous_records": 1,
+      "no_touch_records": 1,
+      "safe_candidates": 1
+    },
+    "audit_evidence": {
+      "event_ids_with_findings": [
+        "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+        "issue155-smoke-20260705T194559Z-d0063d11-no-touch"
+      ],
+      "expected_finding_event_ids": [
+        "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+        "issue155-smoke-20260705T194559Z-d0063d11-no-touch"
+      ],
+      "missing_expected_finding_event_ids": [],
+      "schema": "issue155_smoke_scoped_audit_v1",
+      "status": "inspected"
+    },
+    "classification_source": "direct classifier reuse for smoke-only fixture rows",
+    "expected_buckets": {
+      "issue155-smoke-20260705T194559Z-d0063d11-ambiguous": "ambiguous_records",
+      "issue155-smoke-20260705T194559Z-d0063d11-no-touch": "no_touch_records",
+      "issue155-smoke-20260705T194559Z-d0063d11-safe": "safe_candidates"
+    },
+    "expected_counts": {
+      "ambiguous_records": 1,
+      "no_touch_records": 1,
+      "safe_candidates": 1
+    },
+    "mismatches": [],
+    "recommendation_gap": {
+      "description": "The existing aggregate recommendation JSON does not expose per-record smoke fixture IDs; smoke-only expected-vs-actual validation therefore parses sanitized audit JSON for ambiguous/no-touch findings and reuses the read-only classifier directly for safe fixtures, which have no finding by design.",
+      "status": "gap_recorded"
+    },
+    "safe_fixture_validation": {
+      "event_ids": [
+        "issue155-smoke-20260705T194559Z-d0063d11-safe"
+      ],
+      "source": "direct classifier reuse; safe fixtures have no audit finding by design"
+    },
+    "scope": "local shared Neo4j only; no production mutation or production-scale conclusion",
+    "valid_for_planning": true
+  }
+}

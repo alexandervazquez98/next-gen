@@ -9,11 +9,11 @@
 | Chained PRs recommended | Yes |
 | Suggested split | PR 1 evidence helper + seed/cleanup, PR 2 validation reports + evidence, PR 3 docs/cleanup |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Chain strategy | stacked-to-main |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: stacked-to-main
 400-line budget risk: High
 
 ### Suggested Work Units
@@ -32,9 +32,9 @@ Chain strategy: pending
 
 ## Phase 2: Validation Logic
 
-- [ ] 2.1 Run `backend/scripts/audit_legacy_event_discriminators.py --report audit --format json` and persist raw JSON evidence.
-- [ ] 2.2 Validate expected vs actual buckets for safe, ambiguous, and no-touch fixtures using audit JSON/direct classifier reuse when CLI lacks per-fixture marker filtering.
-- [ ] 2.3 Record the validation gap explicitly if smoke IDs cannot be isolated from aggregate recommendation JSON.
+- [x] 2.1 Run `backend/scripts/audit_legacy_event_discriminators.py --report audit --format json` and persist sanitized smoke-scoped audit JSON evidence.
+- [x] 2.2 Validate expected vs actual buckets for safe, ambiguous, and no-touch fixtures using audit JSON/direct classifier reuse when CLI lacks per-fixture marker filtering.
+- [x] 2.3 Record the validation gap explicitly if smoke IDs cannot be isolated from aggregate recommendation JSON.
 
 ## Phase 3: Evidence / Wiring
 
