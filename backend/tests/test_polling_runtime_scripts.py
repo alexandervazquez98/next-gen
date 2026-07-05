@@ -294,3 +294,107 @@ def test_legacy_event_discriminator_audit_script_writes_markdown(monkeypatch, tm
     report = output.read_text(encoding="utf-8")
     assert "# Legacy Event Discriminator Audit" in report
     assert "missing_source_protocol" in report
+
+
+def test_legacy_event_discriminator_audit_script_prints_recommendation_json(monkeypatch, capsys):
+    from scripts import audit_legacy_event_discriminators
+    from services.legacy_event_discriminator_audit import classify_legacy_event_records
+
+    result = classify_legacy_event_records(
+        [
+            {
+                "event_id": "event-safe",
+                "ci_id": "ci-1",
+                "metric_id": "metric-1",
+                "event_type": "COLLECTION_FAILURE",
+                "failure_family": "SNMP_NO_RESPONSE",
+                "source_protocol": "SNMP",
+            },
+            {
+                "event_id": "event-review",
+                "ci_id": "ci-2",
+                "metric_id": "metric-1",
+                "event_type": None,
+                "message": "Metric Collection Failed: Timeout",
+            },
+        ]
+    )
+    monkeypatch.setattr(audit_legacy_event_discriminators, "_load_driver", lambda: object())
+    monkeypatch.setattr(
+        audit_legacy_event_discriminators,
+        "run_legacy_event_discriminator_audit",
+        lambda driver, limit=None: result,
+    )
+
+    assert (
+        audit_legacy_event_discriminators.main(
+            ["--report", "recommendation", "--format", "json", "--limit", "10"]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == "legacy-event-backfill-recommendation.v1"
+    assert payload["inspected_limit"] == 10
+    assert payload["counts"] == {
+        "total_records": 2,
+        "safe_candidates": 1,
+        "ambiguous_records": 1,
+        "no_touch_records": 0,
+    }
+    assert [bucket["label"] for bucket in payload["buckets"]] == [
+        "safe_candidates",
+        "ambiguous_records",
+        "no_touch_records",
+    ]
+    assert "advisory only" in payload["guidance"]["slice3_review_gate"].lower()
+
+
+def test_legacy_event_discriminator_audit_script_writes_recommendation_markdown(
+    monkeypatch, tmp_path, capsys
+):
+    from scripts import audit_legacy_event_discriminators
+    from services.legacy_event_discriminator_audit import classify_legacy_event_records
+
+    output = tmp_path / "recommendation.md"
+    result = classify_legacy_event_records(
+        [
+            {
+                "event_id": "event-safe",
+                "ci_id": "ci-1",
+                "metric_id": "metric-1",
+                "event_type": "COLLECTION_FAILURE",
+                "failure_family": "SNMP_NO_RESPONSE",
+                "source_protocol": "SNMP",
+            }
+        ]
+    )
+    monkeypatch.setattr(audit_legacy_event_discriminators, "_load_driver", lambda: object())
+    monkeypatch.setattr(
+        audit_legacy_event_discriminators,
+        "run_legacy_event_discriminator_audit",
+        lambda driver, limit=None: result,
+    )
+
+    assert (
+        audit_legacy_event_discriminators.main(
+            ["--report", "recommendation", "--format", "markdown", "--output", str(output)]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == ""
+    report = output.read_text(encoding="utf-8")
+    assert "# Legacy Event Backfill Recommendation" in report
+    assert "`safe_candidates`" in report
+    assert "This report is read-only, advisory only, and must not authorize mutation." in report
+    assert "--apply" not in report
+
+
+def test_legacy_event_discriminator_audit_script_rejects_apply_option(capsys):
+    from scripts import audit_legacy_event_discriminators
+
+    assert audit_legacy_event_discriminators.main(["--apply"]) == 2
+
+    captured = capsys.readouterr()
+    assert "unrecognized arguments: --apply" in captured.err
