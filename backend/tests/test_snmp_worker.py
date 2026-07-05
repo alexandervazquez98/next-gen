@@ -4,6 +4,8 @@ Unit tests for backend/engines/snmp_worker.py
 Tests ICMP polling: fetch_icmp_ping retry logic and debounce counter behavior.
 """
 
+import io
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -15,6 +17,50 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the conftest MockNeo4jSession for proper mocking
 from tests.conftest import MockNeo4jDriver, MockNeo4jSession
+
+
+class TestSNMPWorkerRuntimeLogging:
+    """Tests for executable-path logging configuration."""
+
+    def test_import_does_not_change_root_logging_level(self):
+        """Importing the worker must not configure process logging as a side effect."""
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
+
+        from engines import snmp_worker  # noqa: F401
+
+        assert root_logger.level == original_level
+
+    def test_configure_worker_runtime_logging_emits_event_lock_info_output(self):
+        """Worker runtime startup configures handler-backed INFO log output."""
+        from engines.snmp_worker import configure_worker_runtime_logging
+
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
+        original_handlers = root_logger.handlers[:]
+        log_output = io.StringIO()
+        try:
+            for handler in original_handlers:
+                root_logger.removeHandler(handler)
+            root_logger.setLevel(logging.WARNING)
+
+            with patch.object(sys, "stderr", log_output):
+                configure_worker_runtime_logging()
+                logging.getLogger("services.event_lock").info("worker_event_lock_probe")
+
+            for handler in root_logger.handlers:
+                handler.flush()
+
+            assert root_logger.level == logging.INFO
+            assert root_logger.handlers
+            assert "worker_event_lock_probe" in log_output.getvalue()
+        finally:
+            for handler in root_logger.handlers[:]:
+                root_logger.removeHandler(handler)
+                handler.close()
+            for handler in original_handlers:
+                root_logger.addHandler(handler)
+            root_logger.setLevel(original_level)
 
 
 class TestICMPSettings:

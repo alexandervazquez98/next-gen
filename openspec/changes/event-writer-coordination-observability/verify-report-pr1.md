@@ -2,10 +2,10 @@
 
 ## Status
 
-**Final verdict**: PASS WITH WARNINGS  
-**Mode**: Strict TDD verification  
-**Scope**: Partial verification for PR slice 1 only — tasks 1.1, 1.2, 1.3, 2.1, 2.2, 2.3.  
-**Change root**: `openspec/changes/event-writer-coordination-observability`  
+**Final verdict**: PASS WITH WARNINGS
+**Mode**: Strict TDD verification
+**Scope**: Partial verification for PR slice 1 only — tasks 1.1, 1.2, 1.3, 2.1, 2.2, 2.3.
+**Change root**: `openspec/changes/event-writer-coordination-observability`
 **Branch verified**: `fix/issue-326-lock-observability-core`
 
 ## Executive Summary

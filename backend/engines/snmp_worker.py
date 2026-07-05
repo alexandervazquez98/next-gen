@@ -49,6 +49,13 @@ from sqlalchemy import text  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+
+def configure_worker_runtime_logging() -> None:
+    """Configure executable-path logging for the SNMP worker process."""
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
+
+
 # poll_collector_id is sourced from services.event_lock.get_poll_collector_id
 # (cached at module load from HOSTNAME env var with socket.gethostname()
 # fallback) — see services/event_lock.py for the canonical implementation.
@@ -1242,6 +1249,7 @@ def job():
 schedule.every(10).seconds.do(job)
 
 if __name__ == "__main__":
+    configure_worker_runtime_logging()
     print("NEX-GEN Real-World SNMP Engine Starting...")
     if not SNMP_AVAILABLE:
         print("WARNING: PySNMP not found. SNMP polling will be unavailable.")
