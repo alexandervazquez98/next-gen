@@ -47,6 +47,6 @@ PR1 boundary: this slice is complete when metrics/settings/logging core and focu
 
 ## Phase 4: Documentation, Verification
 
-- [ ] 4.1 Review and document the stable snapshot contract after PR2 status wiring; PR1 already implements exporter-ready keys: `acquisitions_total`, `wait_ms`, `alert_state`, `thresholds_ms`, and `by_writer`.
-- [ ] 4.2 Update `docs/polling-pipeline-runbook.md` with PostgreSQL identity, session lifetime, sorted locks, thresholds, and #334 CI-guard relationship.
-- [ ] 4.3 Run `cd backend && python -m pytest` or document targeted/manual evidence if a relevant automated test cannot reasonably run.
+- [x] 4.1 Review and document the stable snapshot contract after PR2 status wiring; PR1 already implements exporter-ready keys: `acquisitions_total`, `wait_ms`, `alert_state`, `thresholds_ms`, and `by_writer`.
+- [x] 4.2 Update `docs/polling-pipeline-runbook.md` with PostgreSQL identity, session lifetime, sorted locks, thresholds, and #334 CI-guard relationship.
+- [x] 4.3 Run `cd backend && python -m pytest` or document targeted/manual evidence if a relevant automated test cannot reasonably run.
