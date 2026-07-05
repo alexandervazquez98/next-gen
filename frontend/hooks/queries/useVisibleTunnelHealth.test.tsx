@@ -302,7 +302,7 @@ describe("tunnel health scheduling", () => {
   it("does not re-enter cooldown from a production-cached error after cooldown expires", async () => {
     vi.useFakeTimers();
     try {
-      let resolveRetry: (_value: { status: "UP" }) => void = () => undefined;
+      let resolveRetry: (value: { status: "UP" }) => void = () => undefined;
       const retryPromise = new Promise<{ status: "UP" }>((resolve) => {
         resolveRetry = resolve;
       });
