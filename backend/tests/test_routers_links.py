@@ -437,6 +437,130 @@ class TestGraphFull:
         data = response.json()
         assert data["links"][0]["medium"] == "satellite"
 
+    def test_full_graph_admin_projects_public_ip_for_cidetailmodal_topology_consumer(self):
+        """Admin /graph/full topology data exposes public_ip after scoped repository access."""
+        raw_nodes = [
+            {
+                "id": "hub-a",
+                "name": "Hub-A",
+                "status": "OK",
+                "public_ip": "203.0.113.30",
+                "_labels": ["CI"],
+                "layer": "vpn_hub",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_filtered_graph_data.return_value = (raw_nodes, [])
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        node = response.json()["nodes"][0]
+        assert node["public_ip"] == "203.0.113.30"
+        assert node["metadata"]["public_ip"] == "203.0.113.30"
+        mock_repo.get_filtered_graph_data.assert_called_once_with(
+            layer=None,
+            location=None,
+            owner=None,
+            allowed_locations=[],
+            is_admin=True,
+        )
+
+    def test_full_graph_operator_limited_scope_projects_only_scoped_public_ips(self):
+        """Limited non-admin /graph/full data never includes out-of-scope public IPs."""
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            username="operator",
+            role="OPERATOR",
+            permissions=[],
+            allowed_locations=["HQ-Madrid"],
+        )
+        raw_nodes = [
+            {
+                "id": "hub-madrid",
+                "name": "Madrid Hub",
+                "status": "OK",
+                "public_ip": "203.0.113.40",
+                "location_name": "HQ-Madrid",
+                "_labels": ["CI"],
+                "layer": "vpn_hub",
+            },
+            {
+                "id": "hub-private",
+                "name": "Private Hub",
+                "status": "OK",
+                "public_ip": "203.0.113.99",
+                "location_name": "Private-Site",
+                "_labels": ["CI"],
+                "layer": "vpn_hub",
+            },
+        ]
+        scoped_nodes = [
+            node for node in raw_nodes if node["location_name"] == "HQ-Madrid"
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_filtered_graph_data.return_value = (scoped_nodes, [])
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert [node["id"] for node in data["nodes"]] == ["hub-madrid"]
+        assert data["nodes"][0]["public_ip"] == "203.0.113.40"
+        assert "203.0.113.99" not in response.text
+        mock_repo.get_filtered_graph_data.assert_called_once_with(
+            layer=None,
+            location=None,
+            owner=None,
+            allowed_locations=["HQ-Madrid"],
+            is_admin=False,
+        )
+
+    def test_full_graph_operator_empty_scope_has_no_topology_or_public_ip_leak(self):
+        """Empty non-admin scope returns no CIDetailModal topology public_ip data."""
+        app.dependency_overrides[get_current_active_user] = lambda: User(
+            username="operator",
+            role="OPERATOR",
+            permissions=[],
+            allowed_locations=[],
+        )
+        out_of_scope_nodes = [
+            {
+                "id": "hub-private",
+                "name": "Private Hub",
+                "status": "OK",
+                "public_ip": "203.0.113.99",
+                "location_name": "Private-Site",
+                "_labels": ["CI"],
+                "layer": "vpn_hub",
+            },
+        ]
+        out_of_scope_links = [
+            {
+                "source_node": {"id": "hub-private", "name": "Private Hub"},
+                "target_node": {"id": "router-private", "name": "Private Router"},
+                "type": "CONNECTS_TO",
+                "medium": "vpn",
+            },
+        ]
+
+        with patch("services.link_service.topology_repo") as mock_repo:
+            mock_repo.get_filtered_graph_data.return_value = (
+                out_of_scope_nodes,
+                out_of_scope_links,
+            )
+
+            response = client.get("/api/graph/full")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {"nodes": [], "links": []}
+        assert "public_ip" not in response.text
+        assert "203.0.113.99" not in response.text
+        assert "hub-private" not in response.text
+        mock_repo.get_filtered_graph_data.assert_not_called()
+
     def test_full_graph_does_not_change_node_status_or_event_fields(self):
         """Slice 1 / VPN-Rel R4 / Sc 8: existing node status/event fields stay
         untouched after Slice 1 changes."""

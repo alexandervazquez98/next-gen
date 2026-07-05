@@ -110,3 +110,126 @@ PR1 only: shared helpers, query/bounds, and aggregate telemetry for the feature-
 - [ ] Re-run focused frontend Vitest once Corepack/pnpm is available and check off GREEN tasks if passing.
 - [ ] Re-run backend pytest once pytest dependencies are available and check off task 1.6 if passing.
 - [ ] Continue PR2/PR3 only after PR1 verification.
+
+---
+
+## PR2 Progress Update — 2026-07-05
+
+## Scope
+
+PR2 only: scoped `public_ip` projection after server-side scoped repository reads, plus VisualRelationshipEditor tunnel medium create/edit/display support through the shared tunnel visual model. PR3 topology surface integrations remain out of scope.
+
+## Completed Task Checkboxes
+
+- [x] 2.1 RED backend route tests for `/nodes` and `/graph/full` scoped `public_ip` projection, including CIDetailModal topology consumer contract coverage through `/graph/full`.
+- [ ] 2.2 GREEN backend projection implementation — implemented, but not marked complete because local Python execution is blocked by `xcode-select` before pytest or py_compile can run.
+- [x] 2.3 RED VisualRelationshipEditor tests for creating, editing, and displaying tunnel media and non-authoritative health context.
+- [ ] 2.4 GREEN VisualRelationshipEditor implementation — implemented, but not marked complete because local Corepack/pnpm execution is blocked in this environment.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.1 | `backend/tests/test_routers_nodes.py`; `backend/tests/test_routers_links.py` | API | ⚠️ Blocked before edits: `python3 -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` failed at `xcode-select`; no test runner reached | ✅ Written first for admin, limited non-admin, and empty non-admin scope on `/nodes` and `/graph/full`; CIDetailModal topology consumer represented by `/graph/full` contract tests | ❌ Not executed: Python command resolution is blocked by missing Xcode command line tools | ✅ Non-empty scoped public IP, empty scoped result, and out-of-scope non-leak assertions | ➖ Awaiting runner |
+| 2.2 | `backend/tests/test_routers_nodes.py`; `backend/tests/test_routers_links.py` | API/service | ⚠️ Blocked: Python runner unavailable due `xcode-select` | ✅ Covered by 2.1 tests before implementation | ❌ Not claimed: pytest and py_compile both blocked by `xcode-select` | ✅ `/nodes` and `/graph/full` projections preserve `metadata.public_ip` and expose nullable top-level `public_ip` only on already-returned scoped rows | ➖ Awaiting runner |
+| 2.3 | `frontend/components/VisualRelationshipEditor.test.tsx` | Component | ⚠️ Blocked before edits: `corepack pnpm --dir frontend test:run components/VisualRelationshipEditor.test.tsx` failed with `operation not permitted: corepack` | ✅ Written first for create medium, edit medium, display medium, and non-authoritative `UP` + ICMP failed health context | ❌ Not executed: Corepack/pnpm unavailable | ✅ Covers `sd_wan` creation, `satellite` edit, `vpn` display, and no `DEGRADED` authority drift | ➖ Awaiting runner |
+| 2.4 | `frontend/components/VisualRelationshipEditor.test.tsx` | Component | ⚠️ Blocked: frontend runner unavailable | ✅ Covered by 2.3 tests before implementation | ❌ Not claimed: Corepack/pnpm unavailable | ✅ Create payload includes selected medium; existing links display shared visual medium/authority/ICMP rows; editable tunnel links can save a new medium through the link contract | ➖ Awaiting runner |
+
+## Test Commands and Results
+
+- `python3 -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` before PR2 edits → blocked: `xcode-select: error: No developer tools were found...`.
+- `corepack pnpm --dir frontend test:run components/VisualRelationshipEditor.test.tsx` before PR2 edits → blocked: `zsh:1: operation not permitted: corepack`.
+- `python3 -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` after PR2 edits → blocked: `xcode-select: error: No developer tools were found...`.
+- `corepack pnpm --dir frontend test:run components/VisualRelationshipEditor.test.tsx` after PR2 edits → blocked: `zsh:1: operation not permitted: corepack`.
+- `python3 -m py_compile backend/services/node_service.py backend/services/link_service.py backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` after PR2 edits → blocked: `xcode-select: error: No developer tools were found...`.
+- `git diff --check` after PR2 edits → blocked: `xcode-select: error: No developer tools were found...`.
+
+## Files Touched
+
+- `backend/tests/test_routers_nodes.py` — RED scoped `/nodes` public_ip projection tests for admin, limited non-admin, and empty non-admin scope.
+- `backend/tests/test_routers_links.py` — RED scoped `/graph/full` public_ip projection tests, including CIDetailModal topology consumer contract coverage through the same topology payload.
+- `backend/services/node_service.py` — projects top-level nullable `public_ip` after `topology_repo.get_nodes(...)` has already applied scope, while preserving `metadata.public_ip`.
+- `backend/services/link_service.py` — projects top-level nullable `public_ip` after `topology_repo.get_filtered_graph_data(...)` has already applied scope, while preserving `metadata.public_ip`.
+- `frontend/components/RelationshipManager.tsx` — extends `LinkData` with optional tunnel `medium` and `tunnel_health` so editor consumers can share the tunnel visual contract.
+- `frontend/components/VisualRelationshipEditor.test.tsx` — RED tests for create/edit/display tunnel medium and non-authoritative health context.
+- `frontend/components/VisualRelationshipEditor.tsx` — adds tunnel medium selection for creation, existing-link medium display/editing, and shared `resolveTunnelVisual` usage for medium/authority/ICMP display.
+- `openspec/changes/feat-324-tunnel-visualization/tasks.md` — marks completed RED tasks 2.1 and 2.3 only.
+- `openspec/changes/feat-324-tunnel-visualization/apply-progress.md` — appends this PR2 TDD evidence.
+
+## Deviations
+
+- GREEN tasks 2.2 and 2.4 are implemented but intentionally not checked off because local automated GREEN execution is blocked by environment/tooling, not by failing assertions.
+- No PR3 surface integrations were modified.
+- No backend tunnel-health normalization, ICMP authority, pollers, vendor telemetry, bulk health endpoints, or icon assets were changed.
+
+## Remaining Tasks
+
+- [ ] Run focused backend pytest once Python execution is not blocked by `xcode-select`; if passing, mark 2.2 complete.
+- [ ] Run focused frontend Vitest once Corepack/pnpm is available; if passing, mark 2.4 complete.
+- [ ] Run formatter/lint or `git diff --check` once Git/developer tools are available.
+
+---
+
+## PR2 Backend Scope-Safety Fix — 2026-07-05
+
+## Scope
+
+PR2 backend-only fix for the `/graph/full` empty non-admin scope leak found during fresh review. Frontend and PR3 surfaces remain out of scope.
+
+## Completed Task Checkboxes
+
+- [x] 2.1 RED strengthened: `/graph/full` limited-scope and empty-scope tests now include out-of-scope `public_ip` fixture data and assert no top-level public IP leak.
+- [ ] 2.2 GREEN backend projection/scope implementation — empty non-admin scope guard implemented in `backend/services/link_service.py`, but not marked complete because local Python execution is still blocked by missing Xcode command line tools.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.1/2.2 scope fix | `backend/tests/test_routers_links.py` | API/service | ⚠️ Blocked before edits: `python3 -m pytest backend/tests/test_routers_links.py -k "full_graph_operator_empty_scope or full_graph_operator_limited_scope"` failed at `xcode-select` before pytest could start | ✅ Test strengthened first: empty non-admin scope now seeds out-of-scope `public_ip` data and asserts the repository is not called; limited scope seeds in-scope and out-of-scope public IP fixtures and asserts only scoped public IP is projected | ❌ Not claimed: focused pytest and py_compile both blocked by `xcode-select` | ✅ Covers empty scope, limited scope, repository non-invocation for empty scope, and no out-of-scope top-level `public_ip` in response text | ➖ Awaiting runner |
+
+## Test Commands and Results
+
+- `python3 -m pytest backend/tests/test_routers_links.py -k "full_graph_operator_empty_scope or full_graph_operator_limited_scope"` before implementation → blocked: `xcode-select: error: No developer tools were found...`.
+- `python3 -m pytest backend/tests/test_routers_links.py -k "full_graph_operator_empty_scope or full_graph_operator_limited_scope"` after implementation → blocked: `xcode-select: error: No developer tools were found...`.
+- `python3 -m py_compile backend/services/link_service.py backend/tests/test_routers_links.py` after implementation → blocked: `xcode-select: error: No developer tools were found...`.
+
+## Files Touched
+
+- `backend/tests/test_routers_links.py` — strengthened `/graph/full` empty-scope and limited-scope public IP leak coverage with out-of-scope fixtures.
+- `backend/services/link_service.py` — added an explicit empty non-admin `allowed_locations == []` guard before repository access.
+- `openspec/changes/feat-324-tunnel-visualization/apply-progress.md` — recorded TDD evidence and runner blockers for this backend scope-safety fix.
+
+## Deviations
+
+- Task 2.2 remains unchecked because no local GREEN execution was possible.
+- No frontend, PR3 surface, repository, or router implementation files were changed.
+
+## Remaining Tasks
+
+- [ ] Run focused backend pytest once Python execution is not blocked by `xcode-select`; if passing, task 2.2 can be considered for completion.
+- [ ] Run formatter/lint or `git diff --check` once Git/developer tools are available.
+
+---
+
+## PR2 Backend GREEN Validation — 2026-07-05
+
+## Completed Task Checkboxes
+
+- [x] 2.2 GREEN completed: backend scoped `public_ip` projection now has focused pytest coverage passing for `/nodes` and `/graph/full`.
+
+## TDD Cycle Evidence Update
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.2 | `backend/tests/test_routers_nodes.py`; `backend/tests/test_routers_links.py` | API/service | ✅ Temporary Python 3.11 venv created at `/private/tmp/next-gen-pr2-py311` because system `python3` is blocked by missing Xcode command line tools | ✅ Covered by prior 2.1 RED tests plus strengthened `/graph/full` empty/limited scope leak tests | ✅ `/private/tmp/next-gen-pr2-py311/bin/python -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` passed: 64 passed, 18 warnings | ✅ Admin, limited non-admin, and empty non-admin scope behavior covered for `/nodes` and `/graph/full`; empty non-admin `/graph/full` avoids repository access | ✅ Critical empty-scope leak fix re-reviewed with no blockers; only CI/full-suite confirmation remains |
+
+## Test Commands and Results
+
+- `/Users/macbook/.local/bin/python3.11 -m venv /private/tmp/next-gen-pr2-py311 && /private/tmp/next-gen-pr2-py311/bin/python -m pip install -q --upgrade pip && /private/tmp/next-gen-pr2-py311/bin/python -m pip install -q -r backend/requirements.txt -r backend/requirements-dev.txt` → passed.
+- `/private/tmp/next-gen-pr2-py311/bin/python -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` → passed: 64 passed, 18 warnings.
+- `OPENSSL_CONF=/dev/null /Applications/Codex.app/Contents/Resources/cua_node/bin/node node_modules/vitest/vitest.mjs run components/VisualRelationshipEditor.test.tsx` → blocked by macOS native Rollup/Node Team ID signing mismatch, so 2.4 remains unchecked pending CI-capable frontend test execution.
+
+## Remaining Tasks
+
+- [ ] Run focused frontend Vitest in CI-capable environment; if passing, mark 2.4 complete.
+- [ ] Run final changed-file lint/format and prepare PR2 commit/PR after frontend GREEN evidence.
