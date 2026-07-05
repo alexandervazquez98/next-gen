@@ -38,12 +38,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Evidence / Wiring
 
-- [ ] 3.1 Persist Markdown and JSON evidence under `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/` for seeded plan, report output, and classification comparison.
-- [ ] 3.2 Capture cleanup evidence showing deleted marker-scoped records and zero remaining marked nodes.
-- [ ] 3.3 Ensure the run summary states local-only validation, no production mutation, and no `--apply`/migration path.
+- [x] 3.1 Persist Markdown and JSON evidence under `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/` for seeded plan, report output, and classification comparison.
+- [x] 3.2 Capture cleanup evidence showing deleted marker-scoped records and zero remaining marked nodes.
+- [x] 3.3 Ensure the run summary states local-only validation, no production mutation, and no `--apply`/migration path.
 
 ## Phase 4: Verification / Cleanup
 
-- [ ] 4.1 Re-run the helper in failure-safe mode to verify `finally`/trap cleanup still executes after a report or validation error.
-- [ ] 4.2 Confirm evidence artifacts are complete, readable, and tied to one unique run id.
-- [ ] 4.3 Keep the tasks scoped to local/shared Neo4j only; do not add Docker, new test env, or production-write paths.
+- [x] 4.1 Re-run the helper in failure-safe mode to verify `finally`/trap cleanup still executes after a report or validation error.
+- [x] 4.2 Confirm evidence artifacts are complete, readable, and tied to one unique run id.
+- [x] 4.3 Keep the tasks scoped to local/shared Neo4j only; do not add Docker, new test env, or production-write paths.

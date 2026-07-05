@@ -4,11 +4,11 @@
 
 - Delivery strategy: ask-on-risk
 - Chain strategy: stacked-to-main
-- Current slice: PR 2 / Work Unit 2 only
-- Base: `origin/main` after PR #365 (`fe99822`)
-- Branch: `feat/issue-155-smoke-fixtures-pr2`
-- Boundary: extend the PR1 local-only seed/cleanup harness with read-only audit JSON execution bound to the same validated local Neo4j target, sanitized smoke-scoped audit evidence, direct classifier validation for smoke-only fixtures, and explicit aggregate recommendation gap evidence.
-- Explicitly not implemented: Phase 3 evidence/wiring tasks and Phase 4 verification/cleanup tasks remain pending.
+- Current slice: PR 3 / Work Unit 3 final evidence and verification
+- Base: `origin/main` after PR #366 (`dbd4aad`)
+- Branch: `feat/issue-155-smoke-fixtures-pr3`
+- Boundary: final OpenSpec evidence docs and verification only; no production code changes, no Docker/new environment, no migration/backfill run, and no `--apply`.
+- Explicitly not implemented: none for this slice; PR3 completes remaining Phase 3 and Phase 4 evidence tasks.
 
 ## Completed Tasks
 
@@ -53,14 +53,35 @@
 - Cleanup proof: `cleanup_verified=true`, `remaining_count=0`
 - Scope statement: local shared Neo4j only; no production mutation, no production conclusion, no `--apply`, no migration path, and no new Docker/test environment.
 
+## PR3 Final Evidence / Verification
+
+- Completed 3.1 with final Markdown evidence `evidence/pr3-final-evidence-issue155-smoke-pr3-20260705T211426Z.md`, validation manifest `evidence/pr3-validation-smoke-issue155-smoke-pr3-20260705T211426Z.json`, sanitized audit evidence `evidence/pr3-smoke-audit-issue155-smoke-pr3-20260705T211426Z.json`, and failure-safe JSON `evidence/pr3-failure-safe-verification-issue155-smoke-pr3-20260705T211426Z.json`.
+- Completed 3.2 with cleanup proof in `evidence/pr3-validation-smoke-issue155-smoke-pr3-20260705T211426Z.json`: `cleanup_verified=true`, `deleted_count=3`, `remaining_count=0`.
+- Completed 3.3 with local-only/no-production/no-apply scope statements in the final Markdown and failure-safe JSON evidence.
+- Completed 4.1 with focused failure-path unit evidence: audit/report error and classifier/validation error tests prove cleanup and post-cleanup verification execute after failures.
+- Completed 4.2 by tying PR3 runtime evidence artifacts to run id `issue155-smoke-pr3-20260705T211426Z` and confirming they are readable JSON/Markdown files.
+- Completed 4.3 without production code changes, Docker changes, new test environment files, migration/backfill execution, or `--apply` usage.
+
+### PR3 Runtime Evidence
+
+- Command: `python3 openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/validate_smoke_fixtures.py --run-id issue155-smoke-pr3-20260705T211426Z --output pr3-validation-smoke-issue155-smoke-pr3-20260705T211426Z.json --audit-json-output pr3-smoke-audit-issue155-smoke-pr3-20260705T211426Z.json`
+- Environment source: approved root checkout `config/test-env/worktree-host.sample`; no denied `.env` file was read.
+- Status: `validation_complete_cleanup_verified`
+- Seeded count: 3 marker-scoped `Event` nodes
+- Classification result: safe=1, ambiguous=1, no-touch=1, mismatches=[]
+- Sanitized audit findings persisted: 6 smoke-scoped findings only
+- Cleanup proof: `cleanup_verified=true`, `deleted_count=3`, `remaining_count=0`
+
+### PR3 Verification Commands
+
+- `python3 openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` → 24 tests passed.
+- `python3 -m py_compile openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/validate_smoke_fixtures.py openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py` → passed.
+- `git diff --check` → passed.
+- Leak grep over PR3 JSON/Markdown evidence for configured absolute-path and credential-token patterns → passed, no matches.
+
 ## Remaining Tasks
 
-- [ ] 3.1 Persist Markdown and JSON evidence under `openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/` for seeded plan, report output, and classification comparison.
-- [ ] 3.2 Capture cleanup evidence showing deleted marker-scoped records and zero remaining marked nodes.
-- [ ] 3.3 Ensure the run summary states local-only validation, no production mutation, and no `--apply`/migration path.
-- [ ] 4.1 Re-run the helper in failure-safe mode to verify `finally`/trap cleanup still executes after a report or validation error.
-- [ ] 4.2 Confirm evidence artifacts are complete, readable, and tied to one unique run id.
-- [ ] 4.3 Keep the tasks scoped to local/shared Neo4j only; do not add Docker, new test env, or production-write paths.
+- None for PR3.
 
 ## Deviations
 
@@ -74,7 +95,7 @@
 
 ## Final PR2 Review Fixes
 
-- Bound the read-only audit subprocess to the same validated local `NEO4J_URI` used by seed/cleanup by passing explicit subprocess environment overrides for `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD`.
+- Bound the read-only audit subprocess to the same validated local `NEO4J_URI` used by seed/cleanup by passing explicit subprocess environment overrides for the local URI, user, and password values without persisting credentials.
 - Kept credentials out of persisted evidence metadata; evidence records only sanitized command/output metadata.
 - Removed `raw_total_findings` and broad non-smoke aggregate counts from persisted sanitized audit evidence.
 - Updated task/help/progress wording to consistently describe sanitized smoke-scoped audit JSON evidence.
