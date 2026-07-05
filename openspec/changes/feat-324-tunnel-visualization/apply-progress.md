@@ -233,3 +233,37 @@ PR2 backend-only fix for the `/graph/full` empty non-admin scope leak found duri
 
 - [ ] Run focused frontend Vitest in CI-capable environment; if passing, mark 2.4 complete.
 - [ ] Run final changed-file lint/format and prepare PR2 commit/PR after frontend GREEN evidence.
+
+---
+
+## PR2 CI GREEN Validation — 2026-07-05
+
+## Completed Task Checkboxes
+
+- [x] 2.4 GREEN completed: CI validated frontend tests for the VisualRelationshipEditor medium create/edit/display work.
+
+## CI Evidence
+
+PR #367 head `d559b587a7d474836fa4f1b9dc8d15926cd01da7` completed successfully:
+
+- `frontend-tests` → success
+- `backend-tests` → success
+- `smoke` → success
+- `lint-backend` → success
+- `lint-frontend` → success
+- `lint-verify (PR1 gate)` → success
+- `ci-verify (PR2 gate)` → success
+- `ci-verify (PR3 gate)` → success
+- `shellcheck` → success
+- `yamllint` → success
+- `actionlint` → success
+
+## TDD Cycle Evidence Update
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.4 | `frontend/components/VisualRelationshipEditor.test.tsx` | Component | ✅ CI `frontend-tests` validated the focused frontend work after local Vitest was blocked by macOS Rollup/Node signing | ✅ Covered by 2.3 RED tests for create, edit, display, and non-authoritative health context | ✅ PR #367 CI `frontend-tests` passed on head `d559b587a7d474836fa4f1b9dc8d15926cd01da7` | ✅ Medium create/edit/display behavior plus shared visual model context covered in PR2 scope | ✅ Changed-file `lint-frontend` and Prettier checks passed in CI |
+
+## Remaining Tasks
+
+- [ ] Merge PR2 after review, then continue PR3 topology surface integrations.
