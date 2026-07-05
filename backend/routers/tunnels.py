@@ -178,7 +178,10 @@ async def post_tunnel_health_telemetry(
 ):
     raw_body = await request.json()
     if _contains_sensitive_telemetry(raw_body):
-        raise HTTPException(status_code=422, detail="Telemetry payload must be aggregate-only and redacted")
+        raise HTTPException(
+            status_code=422,
+            detail="Telemetry payload must be aggregate-only and redacted",
+        )
 
     _enforce_telemetry_rate_limit(current_user.username)
     _record_tunnel_health_telemetry(payload)

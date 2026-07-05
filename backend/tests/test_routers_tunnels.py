@@ -296,6 +296,9 @@ def test_post_tunnel_health_telemetry_rate_limits_per_user_window():
     ],
 )
 def test_post_tunnel_health_telemetry_rejects_invalid_nested_counts(invalid_payload):
-    response = client.post("/api/tunnels/health/telemetry", json=_telemetry_payload(**invalid_payload))
+    response = client.post(
+        "/api/tunnels/health/telemetry",
+        json=_telemetry_payload(**invalid_payload),
+    )
 
     assert response.status_code == 422

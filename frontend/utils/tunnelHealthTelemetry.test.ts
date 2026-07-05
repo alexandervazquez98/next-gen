@@ -90,7 +90,7 @@ describe("tunnel health telemetry", () => {
 	});
 
 	it("keeps failed flushes fail-open and does not consume the rate-limit window", async () => {
-		let now = 0;
+		const now = 0;
 		mockApiPost.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ accepted: true });
 		const batcher = createTunnelHealthTelemetryBatcher({ now: () => now });
 

@@ -107,7 +107,7 @@ describe("tunnel health failure fallback", () => {
 		expect(classifyTunnelHealthError({ status: 404 })).toBe("not_found");
 		expect(classifyTunnelHealthError({ status: 500 })).toBe("server");
 		expect(classifyTunnelHealthError({ status: 401 })).toBe("auth");
-		expect(classifyTunnelHealthError(new DOMException("Aborted", "AbortError"))).toBe("timeout");
+		expect(classifyTunnelHealthError({ name: "AbortError" })).toBe("timeout");
 		expect(classifyTunnelHealthError(new TypeError("Failed to fetch"))).toBe("network");
 	});
 

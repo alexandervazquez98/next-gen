@@ -22,6 +22,14 @@ const utf8Link: GraphLink = {
 	medium: "sd_wan",
 };
 
+const emojiLink: GraphLink = {
+	id: "edge-emoji",
+	source: "Hub-🛰️",
+	relationship: "CONNECTS_TO",
+	target: "Edge-😀",
+	medium: "satellite",
+};
+
 describe("tunnelVisuals", () => {
 	it("encodes canonical link IDs using backend field order and unpadded base64url", () => {
 		expect(encodeTunnelLinkId(asciiLink)).toBe(
@@ -35,6 +43,13 @@ describe("tunnelVisuals", () => {
 			"eyJzb3VyY2UiOiJNYWRyaWQtw7EiLCJyZWxhdGlvbnNoaXAiOiJDT05ORUNUU19UTyIsInRhcmdldCI6Ik3DvG5jaGVuLeadsSIsIm1lZGl1bSI6InNkX3dhbiJ9",
 		);
 		expect(encodeTunnelLinkId(utf8Link)).toMatch(/^[A-Za-z0-9_-]+$/);
+	});
+
+	it("encodes supplementary-plane endpoint identifiers deterministically", () => {
+		expect(encodeTunnelLinkId(emojiLink)).toBe(
+			"eyJzb3VyY2UiOiJIdWIt8J-bsO-4jyIsInJlbGF0aW9uc2hpcCI6IkNPTk5FQ1RTX1RPIiwidGFyZ2V0IjoiRWRnZS3wn5iAIiwibWVkaXVtIjoic2F0ZWxsaXRlIn0",
+		);
+		expect(encodeTunnelLinkId(emojiLink)).toMatch(/^[A-Za-z0-9_-]+$/);
 	});
 
 	it("keeps authority labels separate from ICMP warning context", () => {

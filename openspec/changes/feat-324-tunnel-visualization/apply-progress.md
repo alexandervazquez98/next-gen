@@ -43,28 +43,42 @@ PR1 only: shared helpers, query/bounds, and aggregate telemetry for the feature-
 - `corepack pnpm --dir frontend test:run hooks/queries/useVisibleTunnelHealth.test.tsx utils/tunnelHealthTelemetry.test.ts` → blocked: `zsh:1: command not found: corepack`
 - `pnpm --dir frontend test:run hooks/queries/useVisibleTunnelHealth.test.tsx utils/tunnelHealthTelemetry.test.ts` → blocked: `zsh:1: command not found: pnpm`
 - `corepack pnpm --dir frontend test:run hooks/queries/useVisibleTunnelHealth.test.tsx utils/tunnelHealthTelemetry.test.ts` after cooldown-only blocker fix → blocked: `zsh:1: command not found: corepack`; GREEN is not claimed.
+- CI `lint-backend` reported Black formatting failures in `backend/routers/tunnels.py` and `backend/tests/test_routers_tunnels.py` → fixed by wrapping the long `HTTPException` and `client.post(...)` calls.
+- CI `lint-frontend` reported ESLint failures for undefined `DOMException`, unstable `failureByKind`, missing `failedQueries` effect dependency, mutable `now`, and undefined `TextEncoder`/`btoa` → fixed with lint-only-safe code changes; frontend GREEN is not claimed because local Node/Corepack/pnpm remain unavailable.
+- `python3 -m py_compile backend/routers/tunnels.py backend/tests/test_routers_tunnels.py` after CI lint fixes → passed syntax check.
+- PR #360 readability cleanup: named the local UTF-8/base64url bit masks, byte prefixes, chunk shifts, and padding behavior; documented why failed-query cooldowns depend on a stable signature while reading the latest ref; added a deterministic supplementary-plane emoji tunnel ID fixture.
+- `corepack pnpm --dir frontend test:run utils/tunnelVisuals.test.ts hooks/queries/useVisibleTunnelHealth.test.tsx` after readability cleanup → blocked: `zsh:1: command not found: corepack`; GREEN is not claimed locally.
 
 ## Files Touched
 
 - `frontend/utils/tunnelVisuals.test.ts` — RED fixtures for canonical encoding, visual authority semantics, fallback, tooltip, and icon-health separation.
+- `frontend/utils/tunnelVisuals.test.ts` — added supplementary-plane/emoji encoding fixture for deterministic local UTF-8 coverage.
 - `frontend/utils/tunnelVisuals.ts` — shared tunnel encoder and visual model helper.
+- `frontend/utils/tunnelVisuals.ts` — replaced browser-global `TextEncoder`/`btoa` use with deterministic local UTF-8/base64url encoding for ESLint-safe tunnel IDs.
+- `frontend/utils/tunnelVisuals.ts` — added named constants and an unpadded-base64url comment to make the manual encoder reviewable without changing behavior.
 - `frontend/types.ts` — tunnel health/model/telemetry types and `GraphNode.public_ip`.
 - `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — RED service/hook/planning tests for bounds and kill switch.
 - `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — added blocker regression tests for QueryClientProvider wrapping, rotating IDs beyond the first 4, failure classification, stale/no-cache fallback, cooldown, and hook telemetry emission.
 - `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — added RED cooldown recovery regression proving polling wakes after every visible link is suppressed and the cooldown expires; removed scheduler-only test coverage for the deleted helper.
 - `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — added RED telemetry regression proving failed health-query telemetry posts after an earlier scheduled-only telemetry flush.
 - `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — added RED telemetry regression asserting an external telemetry POST with `suppressed_cooldown: 1` after a failed health query enters cooldown.
+- `frontend/hooks/queries/useVisibleTunnelHealth.test.tsx` — replaced `DOMException` construction with a plain abort-shaped object so ESLint does not require a browser global.
 - `frontend/hooks/queries/useVisibleTunnelHealth.ts` — visible tunnel filtering, dedupe, cap/cooldown/jitter/retry plan, rotating max-4 active query window across up to 50 IDs, failure classification/fallback, cooldown updates with timeout wakeup recovery, telemetry emission, and hook shell; removed dead/test-only request scheduler helper.
+- `frontend/hooks/queries/useVisibleTunnelHealth.ts` — made abort classification avoid `DOMException`, memoized health/error derived state, and moved failed-query effect input through a ref keyed by `failedSignature` to satisfy hook dependency lint without creating cooldown render loops.
+- `frontend/hooks/queries/useVisibleTunnelHealth.ts` — clarified the failed-query signature/ref pattern so future reviewers know it prevents dependency churn from repeatedly extending cooldowns.
 - `frontend/services/queryResources.ts` — `fetchTunnelHealth`.
 - `frontend/services/queryKeys.ts` — per-link tunnel health query key.
 - `frontend/utils/tunnelHealthTelemetry.test.ts` — RED frontend aggregate telemetry tests.
 - `frontend/utils/tunnelHealthTelemetry.test.ts` — RED frontend aggregate telemetry tests plus fail-open failed-flush behavior.
 - `frontend/utils/tunnelHealthTelemetry.test.ts` — added RED batcher regression proving scheduled-only flushes do not hide later failure/cooldown diagnostics inside the one-minute window.
 - `frontend/utils/tunnelHealthTelemetry.test.ts` — added RED batcher regression proving a prior failure diagnostic does not hide later cooldown-only telemetry inside the one-minute window.
+- `frontend/utils/tunnelHealthTelemetry.test.ts` — changed non-mutated failed-flush clock fixture from `let` to `const` for ESLint.
 - `frontend/utils/tunnelHealthTelemetry.ts` — aggregate payload, named telemetry thresholds, once/minute batcher, backend post helper with failed-flush isolation, and per-diagnostic-kind escalation so cooldown telemetry can post after prior failure diagnostics.
 - `backend/tests/test_routers_tunnels.py` — RED backend telemetry API tests.
 - `backend/tests/test_routers_tunnels.py` — added backend aggregate observability and invalid nested count validation tests.
+- `backend/tests/test_routers_tunnels.py` — wrapped invalid nested-count telemetry POST call per Black formatting.
 - `backend/routers/tunnels.py` — authenticated redacted aggregate telemetry ingest with in-memory per-user rate limit, aggregate stats/log signal, and nested count validation using named telemetry bounds constants.
+- `backend/routers/tunnels.py` — wrapped aggregate-only redaction `HTTPException` per Black formatting.
 
 ## Deviations
 

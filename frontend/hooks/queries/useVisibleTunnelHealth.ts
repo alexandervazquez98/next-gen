@@ -101,7 +101,7 @@ export function classifyTunnelHealthError(error: unknown): TunnelHealthErrorKind
 	if (status === 404) return "not_found";
 	if (status === 401 || status === 403) return "auth";
 	if (typeof status === "number" && status >= 500) return "server";
-	if (error instanceof DOMException && error.name === "AbortError") return "timeout";
+	if ((error as { name?: unknown })?.name === "AbortError") return "timeout";
 	return "network";
 }
 
@@ -128,6 +128,7 @@ export function useVisibleTunnelHealth(links: VisibleLink[]) {
 	const [cycle, setCycle] = useState(0);
 	const [cooldownUntilByLinkId, setCooldownUntilByLinkId] = useState<CooldownMap>({});
 	const lastTelemetrySignature = useRef("");
+	const failedQueriesRef = useRef<Array<{ linkId: string; errorKind: TunnelHealthErrorKind }>>([]);
 	const linkById = useMemo(() => {
 		const entries = links.filter((link) => isTunnelMedium(link.medium)).map((link) => [encodeTunnelLinkId(link), link] as const);
 		return Object.fromEntries(entries) as Record<string, VisibleLink>;
@@ -169,37 +170,53 @@ export function useVisibleTunnelHealth(links: VisibleLink[]) {
 		})),
 	});
 
-	const healthByLinkId: Record<string, TunnelHealthResponse> = {};
-	const visualByLinkId: Record<string, ReturnType<typeof resolveTunnelVisual>> = {};
-	const failureByKind: Partial<Record<TunnelHealthErrorKind, number>> = {};
-	let success = 0;
-	const failedQueries: Array<{ linkId: string; errorKind: TunnelHealthErrorKind }> = [];
-	activeLinkIds.forEach((linkId, index) => {
-		const query = queries[index];
-		const data = query?.data;
-		if (data) {
-			success += 1;
-			healthByLinkId[linkId] = data;
-			visualByLinkId[linkId] = resolveTunnelVisual({ medium: data.medium }, data);
-			return;
-		}
-		if (query?.error) {
-			const errorKind = classifyTunnelHealthError(query.error);
-			failedQueries.push({ linkId, errorKind });
-			failureByKind[errorKind] = (failureByKind[errorKind] ?? 0) + 1;
-			const staleHealth = queryClient.getQueryData<TunnelHealthResponse>(queryKeys.tunnelHealth(linkId));
-			visualByLinkId[linkId] = resolveTunnelHealthFallbackVisual(linkById[linkId] ?? { medium: undefined }, staleHealth, errorKind);
-		}
-	});
-	const failedSignature = failedQueries.map(({ linkId, errorKind }) => `${linkId}:${errorKind}`).join("|");
+	const { healthByLinkId, visualByLinkId, failureByKind, success, failedQueries } = useMemo(() => {
+		const nextHealthByLinkId: Record<string, TunnelHealthResponse> = {};
+		const nextVisualByLinkId: Record<string, ReturnType<typeof resolveTunnelVisual>> = {};
+		const nextFailureByKind: Partial<Record<TunnelHealthErrorKind, number>> = {};
+		const nextFailedQueries: Array<{ linkId: string; errorKind: TunnelHealthErrorKind }> = [];
+		let nextSuccess = 0;
+
+		activeLinkIds.forEach((linkId, index) => {
+			const query = queries[index];
+			const data = query?.data;
+			if (data) {
+				nextSuccess += 1;
+				nextHealthByLinkId[linkId] = data;
+				nextVisualByLinkId[linkId] = resolveTunnelVisual({ medium: data.medium }, data);
+				return;
+			}
+			if (query?.error) {
+				const errorKind = classifyTunnelHealthError(query.error);
+				nextFailedQueries.push({ linkId, errorKind });
+				nextFailureByKind[errorKind] = (nextFailureByKind[errorKind] ?? 0) + 1;
+				const staleHealth = queryClient.getQueryData<TunnelHealthResponse>(queryKeys.tunnelHealth(linkId));
+				nextVisualByLinkId[linkId] = resolveTunnelHealthFallbackVisual(linkById[linkId] ?? { medium: undefined }, staleHealth, errorKind);
+			}
+		});
+
+		return {
+			healthByLinkId: nextHealthByLinkId,
+			visualByLinkId: nextVisualByLinkId,
+			failureByKind: nextFailureByKind,
+			success: nextSuccess,
+			failedQueries: nextFailedQueries,
+		};
+	}, [activeLinkIds, linkById, queries, queryClient]);
+	const failedQueriesSignature = failedQueries.map(({ linkId, errorKind }) => `${linkId}:${errorKind}`).join("|");
+	// The cooldown effect should run only when the set of failures changes. Reading the
+	// current array through a ref avoids depending on the memoized array identity, which
+	// can churn with React Query updates and repeatedly extend cooldowns.
+	failedQueriesRef.current = failedQueries;
 
 	useEffect(() => {
-		if (failedQueries.length === 0) return;
+		const currentFailedQueries = failedQueriesRef.current;
+		if (currentFailedQueries.length === 0) return;
 		setCooldownUntilByLinkId((current) => {
 			const nowMs = Date.now();
-			return failedQueries.reduce((next, item) => updateTunnelHealthCooldown(next, item.linkId, item.errorKind, nowMs), current);
+			return currentFailedQueries.reduce((next, item) => updateTunnelHealthCooldown(next, item.linkId, item.errorKind, nowMs), current);
 		});
-	}, [failedSignature]);
+	}, [failedQueriesSignature]);
 
 	useEffect(() => {
 		const signature = JSON.stringify({ scheduled: activeLinkIds.length, skipped: plan.skippedOverCap, suppressed: plan.suppressedCooldown, success, failureByKind, disabled: plan.pollingDisabled });
