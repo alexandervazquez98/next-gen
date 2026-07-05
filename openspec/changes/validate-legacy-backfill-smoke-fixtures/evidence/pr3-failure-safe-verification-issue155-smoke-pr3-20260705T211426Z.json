@@ -1,0 +1,42 @@
+{
+  "artifact_completeness": {
+    "all_pr3_runtime_artifacts_share_run_id": true,
+    "json_files": [
+      "pr3-validation-smoke-issue155-smoke-pr3-20260705T211426Z.json",
+      "pr3-smoke-audit-issue155-smoke-pr3-20260705T211426Z.json",
+      "pr3-failure-safe-verification-issue155-smoke-pr3-20260705T211426Z.json"
+    ],
+    "markdown_summary": "pr3-final-evidence-issue155-smoke-pr3-20260705T211426Z.md"
+  },
+  "failure_safe_unit_evidence": {
+    "assertion": "Focused failure-path tests prove cleanup query and post-cleanup verification still execute after audit/report and classifier/validation errors.",
+    "command": "python3 openspec/changes/validate-legacy-backfill-smoke-fixtures/evidence/test_validate_smoke_fixtures.py",
+    "exit_code": 0,
+    "failure_path_cases": [
+      "test_run_seed_cleanup_executes_cleanup_after_audit_generation_failure",
+      "test_run_seed_cleanup_executes_cleanup_after_classifier_failure",
+      "test_run_seed_cleanup_reports_cleanup_failure_after_prior_error",
+      "test_run_seed_cleanup_reports_cleanup_verification_failure_after_audit_error",
+      "test_run_seed_cleanup_reports_cleanup_verification_failure_after_classifier_error"
+    ],
+    "result": "Ran 24 tests in 0.169s; OK"
+  },
+  "run_id": "issue155-smoke-pr3-20260705T211426Z",
+  "runtime_evidence": {
+    "cleanup_deleted_count": 3,
+    "cleanup_verified": true,
+    "remaining_marked_count": 0,
+    "seeded_count": 3,
+    "smoke_audit_evidence": "pr3-smoke-audit-issue155-smoke-pr3-20260705T211426Z.json",
+    "status": "validation_complete_cleanup_verified",
+    "validation_manifest": "pr3-validation-smoke-issue155-smoke-pr3-20260705T211426Z.json"
+  },
+  "schema": "issue155_pr3_failure_safe_verification_v1",
+  "scope": {
+    "apply_or_migration_path": false,
+    "docker_or_new_test_environment_added": false,
+    "env_source": "approved root checkout test-env sample; no .env file read",
+    "neo4j_target": "shared local Neo4j only",
+    "production_mutation": false
+  }
+}
