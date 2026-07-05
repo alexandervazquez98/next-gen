@@ -65,6 +65,14 @@ function createProductionLikeQueryClient() {
   });
 }
 
+async function flushFakeTimerQueryWork() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 describe("tunnel health query resources", () => {
   it("fetches tunnel health by encoded link id with an abort signal", async () => {
     const signal = new AbortController().signal;
@@ -275,20 +283,17 @@ describe("tunnel health scheduling", () => {
 
       render(<HookProbe links={[link("recover")]} />, { wrapper: createQueryWrapper() });
 
-      await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(1));
-      await waitFor(() =>
-        expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":1'),
-      );
+      await flushFakeTimerQueryWork();
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":1');
 
       await act(async () => {
-        vi.advanceTimersByTime(TUNNEL_HEALTH_LIMITS.cooldownMs + 1);
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(TUNNEL_HEALTH_LIMITS.cooldownMs + 1);
       });
+      await flushFakeTimerQueryWork();
 
-      await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(2));
-      await waitFor(() =>
-        expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":0'),
-      );
+      expect(mockApiGet).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":0');
     } finally {
       vi.useRealTimers();
     }
@@ -297,7 +302,7 @@ describe("tunnel health scheduling", () => {
   it("does not re-enter cooldown from a production-cached error after cooldown expires", async () => {
     vi.useFakeTimers();
     try {
-      let resolveRetry: (value: { status: "UP" }) => void = () => undefined;
+      let resolveRetry: (_value: { status: "UP" }) => void = () => undefined;
       const retryPromise = new Promise<{ status: "UP" }>((resolve) => {
         resolveRetry = resolve;
       });
@@ -307,26 +312,24 @@ describe("tunnel health scheduling", () => {
         wrapper: createQueryWrapper(createProductionLikeQueryClient()),
       });
 
-      await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(1));
-      await waitFor(() =>
-        expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":1'),
-      );
+      await flushFakeTimerQueryWork();
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":1');
 
       await act(async () => {
-        vi.advanceTimersByTime(TUNNEL_HEALTH_LIMITS.cooldownMs + 1);
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(TUNNEL_HEALTH_LIMITS.cooldownMs + 1);
       });
+      await flushFakeTimerQueryWork();
 
-      await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(2));
+      expect(mockApiGet).toHaveBeenCalledTimes(2);
       expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":0');
 
       await act(async () => {
         resolveRetry({ status: "UP" });
         await retryPromise;
       });
-      await waitFor(() =>
-        expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":0'),
-      );
+      await flushFakeTimerQueryWork();
+      expect(screen.getByTestId("payload")).toHaveTextContent('"suppressedCooldown":0');
     } finally {
       vi.useRealTimers();
     }
