@@ -1,4 +1,12 @@
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type Dispatch,
+	type RefObject,
+	type SetStateAction,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import type { GraphLink, GraphNode } from "../types";
@@ -20,7 +28,7 @@ import {
 } from "./graphLayout";
 
 interface GraphCMDBProps {
-	onNodeClick: (node: GraphNode) => void;
+	onNodeClick(node: GraphNode): void;
 }
 
 const AnimatedLinksLayer = ({
@@ -161,13 +169,13 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 		filterLayers.length + filterLocations.length + filterOwners.length;
 	const setSelection = (
 		values: string[],
-		setter: React.Dispatch<React.SetStateAction<string[]>>,
+		setter: Dispatch<SetStateAction<string[]>>,
 	) => {
 		setter(values);
 	};
 	const toggleSelection = (
 		value: string,
-		setter: React.Dispatch<React.SetStateAction<string[]>>,
+		setter: Dispatch<SetStateAction<string[]>>,
 	) => {
 		setter((current) =>
 			current.includes(value)

@@ -21,7 +21,9 @@ TEMP_DIRS=()
 cleanup_all() {
   local D
   for D in "${TEMP_DIRS[@]:-}"; do
-    [[ -n "$D" ]] && rm -rf "$D" 2>/dev/null || true
+    if [[ -n "$D" ]]; then
+      rm -rf "$D" 2>/dev/null || true
+    fi
   done
 }
 trap cleanup_all EXIT
