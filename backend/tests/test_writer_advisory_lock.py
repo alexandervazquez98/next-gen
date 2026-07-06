@@ -34,12 +34,40 @@ Per-writer integration tests against ``snmp_worker.py`` /
 from __future__ import annotations
 
 import concurrent.futures
+import logging
+import os
+import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+EVENT_LOCK_ENV_VARS = (
+    "EVENT_LOCK_SLOW_LOG_INFO_MS",
+    "EVENT_LOCK_WARNING_P95_MS",
+    "EVENT_LOCK_CRITICAL_P99_MS",
+    "EVENT_LOCK_SAMPLE_WINDOW_SIZE",
+    "EVENT_LOCK_MAX_WRITER_CONTEXTS",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_event_lock_settings(monkeypatch):
+    """Keep Event lock settings/metrics deterministic across tests."""
+    for name in EVENT_LOCK_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    import config as config_module
+    from services import event_lock as event_lock_module
+
+    monkeypatch.setattr(config_module, "_event_lock_settings", None)
+    monkeypatch.setattr(event_lock_module, "_EVENT_LOCK_METRICS", None)
+    yield
+    monkeypatch.setattr(config_module, "_event_lock_settings", None)
+    monkeypatch.setattr(event_lock_module, "_EVENT_LOCK_METRICS", None)
 
 
 def _normalize_sql_for_lookup(sql_obj):
@@ -60,7 +88,7 @@ def test_acquire_event_triplet_lock_helper():
     NOT prove that two real Postgres transactions block each other; that
     concurrency proof lands in a later PR's dedicated testcontainers test.
     """
-    from backend.services.event_lock import acquire_event_triplet_lock
+    from services.event_lock import acquire_event_triplet_lock
 
     pg_db = MagicMock()
     acquire_event_triplet_lock(pg_db, "ci-001", "icmp_latency_ms", "THRESHOLD_BREACH")
@@ -74,21 +102,439 @@ def test_acquire_event_triplet_lock_helper():
     # SQL is the first positional arg.
     sql_obj = args[0] if args else kwargs.get("text")
     sql_text = _normalize_sql_for_lookup(sql_obj)
-    assert "pg_advisory_xact_lock" in sql_text, (
-        f"expected pg_advisory_xact_lock in SQL, got: {sql_text!r}"
-    )
-    assert "hashtext" in sql_text, (
-        f"expected hashtext in SQL, got: {sql_text!r}"
-    )
+    assert (
+        "pg_advisory_xact_lock" in sql_text
+    ), f"expected pg_advisory_xact_lock in SQL, got: {sql_text!r}"
+    assert "hashtext" in sql_text, f"expected hashtext in SQL, got: {sql_text!r}"
 
     # The key parameter must match the "ci|metric|type" format exactly.
     params = args[1] if len(args) > 1 else kwargs.get("params") or kwargs
     # ``text("… :key")`` plus a dict binding ``{"key": …}`` is the canonical
     # pattern; we accept both binding styles for forward-compat.
     flat_values = params.values() if isinstance(params, dict) else (params,)
-    assert expected_key in flat_values, (
-        f"expected key {expected_key!r} in bind params, got {params!r}"
+    assert (
+        expected_key in flat_values
+    ), f"expected key {expected_key!r} in bind params, got {params!r}"
+
+
+def test_services_event_lock_imports_from_backend_import_root():
+    """Production-style backend import root can import the shared lock helper."""
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(backend_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import services.event_lock as event_lock; print(event_lock.__name__)",
+        ],
+        cwd=backend_dir,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
     )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "services.event_lock"
+
+
+def test_event_lock_metrics_record_count_distribution_alerts_and_bounded_labels():
+    """Lock observability records waits by bounded writer labels only."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=10)
+
+    for wait_ms in [10, 20, 30, 40, 50, 60, 70, 80, 90, 1200]:
+        event_lock_module.record_event_lock_acquisition(wait_ms, writer_context="snmp_worker")
+    event_lock_module.record_event_lock_acquisition(6000, writer_context="polling_event_writer")
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+
+    assert snapshot["acquisitions_total"] == 11
+    assert snapshot["wait_ms"]["count"] == 10
+    assert snapshot["wait_ms"]["max"] == 6000
+    assert snapshot["wait_ms"]["p95"] == 6000
+    assert snapshot["wait_ms"]["p99"] == 6000
+    assert snapshot["alert_state"] == "CRITICAL"
+    assert set(snapshot["by_writer"]) == {"snmp_worker", "polling_event_writer"}
+
+    serialized = repr(snapshot)
+    assert "ci-001" not in serialized
+    assert "icmp_latency_ms" not in serialized
+    assert "THRESHOLD_BREACH" not in serialized
+
+
+def test_event_lock_alert_state_warns_when_p95_exceeds_threshold_without_critical():
+    """p95 wait above the warning threshold derives WARNING alert state."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=20)
+
+    for wait_ms in [25] * 18 + [1100, 1200]:
+        event_lock_module.record_event_lock_acquisition(wait_ms, writer_context="snmp_service")
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+
+    assert snapshot["wait_ms"]["p95"] == 1100
+    assert snapshot["wait_ms"]["p99"] == 1200
+    assert snapshot["alert_state"] == "WARNING"
+
+
+def test_event_lock_metrics_initialize_once_under_concurrent_cold_start(monkeypatch):
+    """Concurrent first records MUST all land in the same metrics instance."""
+    from services import event_lock as event_lock_module
+
+    created_instances = []
+    original_metrics_cls = event_lock_module._EventLockMetrics
+
+    class SlowConstructingMetrics(original_metrics_cls):
+        def __post_init__(self) -> None:
+            created_instances.append(self)
+            time.sleep(0.01)
+            super().__post_init__()
+
+    monkeypatch.setattr(event_lock_module, "_EventLockMetrics", SlowConstructingMetrics)
+    monkeypatch.setattr(event_lock_module, "_EVENT_LOCK_METRICS", None)
+
+    worker_count = 24
+    barrier = threading.Barrier(worker_count)
+
+    def record_once(index: int) -> None:
+        barrier.wait(timeout=5)
+        event_lock_module.record_event_lock_acquisition(index + 1, writer_context="cold_start")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = [pool.submit(record_once, index) for index in range(worker_count)]
+        for future in futures:
+            future.result(timeout=5)
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert snapshot["acquisitions_total"] == worker_count
+    assert snapshot["by_writer"]["cold_start"]["acquisitions_total"] == worker_count
+    assert len(created_instances) == 1
+
+
+def test_event_lock_settings_use_safe_defaults():
+    """Default Event lock env settings match the documented PR1 thresholds."""
+    from config import (
+        EVENT_LOCK_DEFAULT_CRITICAL_P99_MS,
+        EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+        EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+        EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS,
+        EVENT_LOCK_DEFAULT_WARNING_P95_MS,
+        EventLockSettings,
+    )
+
+    settings = EventLockSettings.from_env()
+
+    assert settings.slow_log_info_ms == EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS
+    assert settings.warning_p95_ms == EVENT_LOCK_DEFAULT_WARNING_P95_MS
+    assert settings.critical_p99_ms == EVENT_LOCK_DEFAULT_CRITICAL_P99_MS
+    assert settings.sample_window_size == EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE
+    assert settings.max_writer_contexts == EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS
+
+
+def test_event_lock_settings_apply_env_overrides(monkeypatch):
+    """EVENT_LOCK_* overrides are parsed when they stay inside safe bounds."""
+    from config import EventLockSettings
+
+    monkeypatch.setenv("EVENT_LOCK_SLOW_LOG_INFO_MS", "125.5")
+    monkeypatch.setenv("EVENT_LOCK_WARNING_P95_MS", "750")
+    monkeypatch.setenv("EVENT_LOCK_CRITICAL_P99_MS", "2500")
+    monkeypatch.setenv("EVENT_LOCK_SAMPLE_WINDOW_SIZE", "42")
+    monkeypatch.setenv("EVENT_LOCK_MAX_WRITER_CONTEXTS", "3")
+
+    settings = EventLockSettings.from_env()
+
+    assert settings.slow_log_info_ms == 125.5
+    assert settings.warning_p95_ms == 750.0
+    assert settings.critical_p99_ms == 2500.0
+    assert settings.sample_window_size == 42
+    assert settings.max_writer_contexts == 3
+
+
+def test_event_lock_settings_fall_back_for_invalid_or_out_of_range_env(monkeypatch):
+    """Invalid/out-of-range EVENT_LOCK_* values fall back to safe defaults."""
+    from config import (
+        EVENT_LOCK_DEFAULT_CRITICAL_P99_MS,
+        EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+        EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+        EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS,
+        EVENT_LOCK_DEFAULT_WARNING_P95_MS,
+        EventLockSettings,
+    )
+
+    monkeypatch.setenv("EVENT_LOCK_SLOW_LOG_INFO_MS", "-1")
+    monkeypatch.setenv("EVENT_LOCK_WARNING_P95_MS", "not-a-number")
+    monkeypatch.setenv("EVENT_LOCK_CRITICAL_P99_MS", "600000.5")
+    monkeypatch.setenv("EVENT_LOCK_SAMPLE_WINDOW_SIZE", "0")
+    monkeypatch.setenv("EVENT_LOCK_MAX_WRITER_CONTEXTS", "0")
+
+    settings = EventLockSettings.from_env()
+
+    assert settings.slow_log_info_ms == EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS
+    assert settings.warning_p95_ms == EVENT_LOCK_DEFAULT_WARNING_P95_MS
+    assert settings.critical_p99_ms == EVENT_LOCK_DEFAULT_CRITICAL_P99_MS
+    assert settings.sample_window_size == EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE
+    assert settings.max_writer_contexts == EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS
+
+
+def test_event_lock_settings_reject_unsafe_sample_and_writer_context_clamps(monkeypatch):
+    """Oversized window/context overrides fall back before they can create unbounded samples."""
+    from config import (
+        EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+        EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+        EventLockSettings,
+    )
+
+    monkeypatch.setenv("EVENT_LOCK_SAMPLE_WINDOW_SIZE", "100000")
+    monkeypatch.setenv("EVENT_LOCK_MAX_WRITER_CONTEXTS", "1000")
+
+    settings = EventLockSettings.from_env()
+
+    assert settings.sample_window_size == EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE
+    assert settings.max_writer_contexts == EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS
+
+
+def test_event_lock_settings_cap_total_writer_sample_budget(monkeypatch):
+    """Valid individual overrides are capped by the total per-writer sample budget."""
+    from config import EventLockSettings
+
+    monkeypatch.setenv("EVENT_LOCK_SAMPLE_WINDOW_SIZE", "1000")
+    monkeypatch.setenv("EVENT_LOCK_MAX_WRITER_CONTEXTS", "20")
+
+    settings = EventLockSettings.from_env()
+
+    assert settings.sample_window_size == 1000
+    assert settings.max_writer_contexts == 10
+
+
+def test_event_lock_empty_snapshot_is_ok():
+    """An initialized snapshot with no samples reports OK and empty distribution values."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=3)
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+
+    assert snapshot["acquisitions_total"] == 0
+    assert snapshot["wait_ms"] == {"count": 0, "p95": None, "p99": None, "max": None}
+    assert snapshot["alert_state"] == "OK"
+    assert snapshot["by_writer"] == {}
+
+
+def test_event_lock_info_only_alert_state_below_warning_threshold():
+    """Slow samples below p95/p99 thresholds produce INFO, not WARNING/CRITICAL."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=5)
+    for wait_ms in [10, 20, 250, 300, 400]:
+        event_lock_module.record_event_lock_acquisition(wait_ms, writer_context="snmp_worker")
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert snapshot["wait_ms"]["max"] == 400
+    assert snapshot["alert_state"] == "INFO"
+
+
+def test_event_lock_threshold_equality_escalates_alert_state(monkeypatch):
+    """Wait percentiles equal to configured thresholds are considered crossing them."""
+    import config as config_module
+    from config import EventLockSettings
+    from services import event_lock as event_lock_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_event_lock_settings",
+        EventLockSettings(
+            slow_log_info_ms=250.0,
+            warning_p95_ms=1000.0,
+            critical_p99_ms=5000.0,
+            sample_window_size=10,
+        ),
+    )
+    event_lock_module.reset_event_lock_observability_for_tests()
+
+    for wait_ms in [10, 20, 30, 40, 50, 60, 70, 80, 1000, 5000]:
+        event_lock_module.record_event_lock_acquisition(wait_ms, writer_context="snmp_worker")
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert snapshot["wait_ms"]["p95"] == 5000
+    assert snapshot["wait_ms"]["p99"] == 5000
+    assert snapshot["alert_state"] == "CRITICAL"
+
+
+def test_event_lock_sample_window_evicts_oldest_samples():
+    """The bounded sample window evicts oldest waits while preserving total count."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=3)
+
+    for wait_ms in [1, 2, 3, 4, 5]:
+        event_lock_module.record_event_lock_acquisition(wait_ms, writer_context="snmp_worker")
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert snapshot["acquisitions_total"] == 5
+    assert snapshot["wait_ms"] == {"count": 3, "p95": 5, "p99": 5, "max": 5}
+    assert snapshot["by_writer"]["snmp_worker"]["acquisitions_total"] == 5
+    assert snapshot["by_writer"]["snmp_worker"]["wait_ms"] == {
+        "count": 3,
+        "p95": 5,
+        "p99": 5,
+        "max": 5,
+    }
+
+
+def test_event_lock_routes_writer_context_overflow_to_other(monkeypatch):
+    """Distinct writer contexts are bounded; overflow is aggregated as other."""
+    import config as config_module
+    from config import EventLockSettings
+    from services import event_lock as event_lock_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_event_lock_settings",
+        EventLockSettings(sample_window_size=10, max_writer_contexts=2),
+    )
+    event_lock_module.reset_event_lock_observability_for_tests()
+
+    for writer in ["writer_a", "writer_b", "writer_c", "writer_d"]:
+        event_lock_module.record_event_lock_acquisition(10, writer_context=writer)
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert len(snapshot["by_writer"]) == 2
+    assert set(snapshot["by_writer"]) == {"writer_a", "other"}
+    assert snapshot["by_writer"]["writer_a"]["acquisitions_total"] == 1
+    assert snapshot["by_writer"]["other"]["acquisitions_total"] == 3
+
+
+def test_event_lock_writer_context_overflow_stays_within_exact_budget(monkeypatch):
+    """The overflow bucket is reserved inside max_writer_contexts, not added on top."""
+    import config as config_module
+    from config import EventLockSettings
+    from services import event_lock as event_lock_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_event_lock_settings",
+        EventLockSettings(sample_window_size=10, max_writer_contexts=3),
+    )
+    event_lock_module.reset_event_lock_observability_for_tests()
+
+    for writer in ["writer_a", "writer_b", "writer_c", "writer_d", "writer_e"]:
+        event_lock_module.record_event_lock_acquisition(10, writer_context=writer)
+
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert len(snapshot["by_writer"]) == 3
+    assert set(snapshot["by_writer"]) == {"writer_a", "writer_b", "other"}
+    assert snapshot["by_writer"]["other"]["acquisitions_total"] == 3
+
+
+def test_event_lock_slow_log_threshold_zero_disables_info_logs_and_info_alerts(monkeypatch, caplog):
+    """A zero INFO threshold is disabled so operators cannot create log storms."""
+    import config as config_module
+    from config import EventLockSettings
+    from services import event_lock as event_lock_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_event_lock_settings",
+        EventLockSettings(slow_log_info_ms=0.0, sample_window_size=5),
+    )
+    event_lock_module.reset_event_lock_observability_for_tests()
+    monotonic_values = iter([100.0, 100.001])
+    monkeypatch.setattr(event_lock_module.time, "monotonic", lambda: next(monotonic_values))
+
+    with caplog.at_level(logging.INFO, logger="services.event_lock"):
+        event_lock_module.acquire_event_triplet_lock(
+            MagicMock(),
+            "ci-001",
+            "icmp_latency_ms",
+            "THRESHOLD_BREACH",
+            writer_context="snmp_worker",
+        )
+
+    assert [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ] == []
+    assert event_lock_module.get_event_lock_observability_snapshot()["alert_state"] == "OK"
+
+
+def test_acquire_event_triplet_lock_emits_structured_slow_log_at_info_threshold(
+    caplog, monkeypatch
+):
+    """Acquisitions at or above 250ms emit one structured INFO slow-lock log."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=10)
+    monotonic_values = iter([100.0, 100.250])
+    monkeypatch.setattr(event_lock_module.time, "monotonic", lambda: next(monotonic_values))
+
+    pg_db = MagicMock()
+    with caplog.at_level(logging.INFO, logger="services.event_lock"):
+        event_lock_module.acquire_event_triplet_lock(
+            pg_db,
+            "ci-001",
+            "icmp_latency_ms",
+            "THRESHOLD_BREACH",
+            writer_context="snmp_worker",
+        )
+
+    slow_records = [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ]
+    assert len(slow_records) == 1
+    assert slow_records[0].event_lock_writer_context == "snmp_worker"
+    assert slow_records[0].event_lock_wait_ms == 250
+    assert slow_records[0].event_lock_threshold_ms == 250
+
+
+def test_acquire_event_triplet_lock_avoids_info_log_below_threshold(caplog, monkeypatch):
+    """Acquisitions below 250ms still record metrics but avoid noisy INFO logs."""
+    from services import event_lock as event_lock_module
+
+    event_lock_module.reset_event_lock_observability_for_tests(sample_window_size=10)
+    monotonic_values = iter([100.0, 100.249])
+    monkeypatch.setattr(event_lock_module.time, "monotonic", lambda: next(monotonic_values))
+
+    pg_db = MagicMock()
+    with caplog.at_level(logging.INFO, logger="services.event_lock"):
+        event_lock_module.acquire_event_triplet_lock(
+            pg_db,
+            "ci-001",
+            "icmp_latency_ms",
+            "THRESHOLD_BREACH",
+            writer_context="snmp_worker",
+        )
+
+    assert [
+        record for record in caplog.records if record.message == "event_lock_slow_acquisition"
+    ] == []
+    snapshot = event_lock_module.get_event_lock_observability_snapshot()
+    assert snapshot["acquisitions_total"] == 1
+    assert snapshot["wait_ms"]["max"] == 249
+
+
+def test_event_lock_sql_remains_blocking_only_without_timeout_policy():
+    """Observability MUST NOT add timeout, try-lock, or fail-open/fail-closed SQL/settings."""
+    from config import EventLockSettings
+    from services.event_lock import acquire_event_triplet_lock
+
+    pg_db = MagicMock()
+    acquire_event_triplet_lock(pg_db, "ci-001", "icmp_latency_ms", "THRESHOLD_BREACH")
+
+    sql_obj = pg_db.execute.call_args.args[0]
+    sql_text = _normalize_sql_for_lookup(sql_obj).lower()
+    settings_fields = set(EventLockSettings.model_fields)
+
+    assert "pg_advisory_xact_lock(hashtext(:key))" in sql_text
+    assert "pg_try_advisory" not in sql_text
+    assert "lock_timeout" not in sql_text
+    assert "statement_timeout" not in sql_text
+    assert not any("timeout" in field for field in settings_fields)
+    assert not any("fail_open" in field or "fail_closed" in field for field in settings_fields)
 
 
 def test_get_poll_collector_id_returns_non_empty_string():
@@ -100,7 +546,7 @@ def test_get_poll_collector_id_returns_non_empty_string():
     import os
     import socket
 
-    from backend.services.event_lock import get_poll_collector_id
+    from services.event_lock import get_poll_collector_id
 
     value = get_poll_collector_id()
     assert isinstance(value, str)
@@ -122,7 +568,7 @@ def test_get_poll_collector_id_is_cached_at_module_load(monkeypatch):
     """
     import socket
 
-    from backend.services import event_lock as event_lock_module
+    from services import event_lock as event_lock_module
 
     # Reset the cache to force re-evaluation against the patched hostname.
     monkeypatch.setattr(event_lock_module, "_CACHED_HOSTNAME", None)
@@ -148,7 +594,7 @@ def test_get_poll_collector_id_raises_when_hostname_unavailable(monkeypatch):
     """
     import socket
 
-    from backend.services import event_lock as event_lock_module
+    from services import event_lock as event_lock_module
 
     monkeypatch.setattr(event_lock_module, "_CACHED_HOSTNAME", None)
     monkeypatch.setenv("HOSTNAME", "")
@@ -181,6 +627,7 @@ def _swap_in_real_psycopg2():
     saved = sys.modules.pop("psycopg2", None)
     saved_ext = sys.modules.pop("psycopg2.extensions", None)
     import psycopg2 as real_psycopg2  # fresh import — now genuinely real
+
     sys.modules["psycopg2"] = real_psycopg2
     sys.modules["psycopg2.extensions"] = real_psycopg2.extensions
 
@@ -228,11 +675,8 @@ def test_concurrent_writers_block_on_lock():
         from testcontainers.postgres import PostgresContainer
 
         with PostgresContainer("postgres:15-alpine") as pg:
-            conn_url = pg.get_connection_url().replace(
-                "postgresql+psycopg2://", "postgresql://"
-            )
+            conn_url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
             triplet_key = "ci-001|icmp_latency_ms|THRESHOLD_BREACH"
-            hold_seconds = 3.0  # >> check timeout; proves waiter is provably blocked during the check
             check_window = 0.5  # how long main waits before declaring "waiter is blocked"
 
             got_lock = threading.Event()
@@ -282,8 +726,8 @@ def test_concurrent_writers_block_on_lock():
             waiter_thread.start()
 
             # If the lock is honored, the waiter must still be blocked here.
-            # Check window (0.5s) is much smaller than hold_seconds (3.0s) so a
-            # passing assertion here is genuine proof of blocking.
+            # Passing this check proves the waiter remained blocked while the
+            # holder still owned the transaction-scoped lock.
             assert not waiter_finished.wait(timeout=0.5), (
                 "waiter acquired the lock while holder still held it — "
                 "pg_advisory_xact_lock is NOT serializing writers!"
@@ -293,9 +737,7 @@ def test_concurrent_writers_block_on_lock():
             release.set()
             holder_thread.join(timeout=15)
 
-            assert waiter_finished.wait(timeout=10), (
-                "waiter never acquired the lock after release"
-            )
+            assert waiter_finished.wait(timeout=10), "waiter never acquired the lock after release"
             waiter_thread.join(timeout=10)
 
             # The waiter MUST have been blocked for at least the check window.
@@ -357,19 +799,18 @@ def test_unsorted_lock_acquisition_deadlocks():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
+        from polling.event_writer import _acquire_unsorted_locks
         from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
         from sqlalchemy.exc import OperationalError
+        from sqlalchemy.orm import sessionmaker
         from testcontainers.postgres import PostgresContainer
-
-        from backend.polling.event_writer import _acquire_unsorted_locks
 
         with PostgresContainer("postgres:15-alpine") as pg:
             # SQLAlchemy with psycopg2 — psycopg2 is now genuinely real
             # because of _swap_in_real_psycopg2().
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             # Triplet sets in REVERSE order — perfect deadlock setup.
             triplets_forward = [
@@ -382,7 +823,7 @@ def test_unsorted_lock_acquisition_deadlocks():
             results: dict[str, object] = {"a": None, "b": None}
 
             def worker(triplets: list[tuple[str, str, str]], key: str) -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     _acquire_unsorted_locks(session, triplets)
                     results[key] = "ok"
@@ -454,16 +895,15 @@ def test_sorted_lock_acquisition_prevents_deadlock():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
+        from polling.event_writer import _acquire_sorted_locks
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from testcontainers.postgres import PostgresContainer
 
-        from backend.polling.event_writer import _acquire_sorted_locks
-
         with PostgresContainer("postgres:15-alpine") as pg:
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             # Two batches of ROW DICTS (not pre-extracted triplets) with
             # the SAME triplets in REVERSE orders. _acquire_sorted_locks
@@ -478,7 +918,7 @@ def test_sorted_lock_acquisition_prevents_deadlock():
             results: dict[str, object] = {"a": None, "b": None}
 
             def worker(rows: list[dict], key: str) -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     _acquire_sorted_locks(session, rows)
                     results[key] = "ok"
@@ -495,9 +935,7 @@ def test_sorted_lock_acquisition_prevents_deadlock():
                 fut_a.result(timeout=30)
                 fut_b.result(timeout=30)
 
-            assert results["a"] == "ok", (
-                f"thread A failed: {results['a']!r}"
-            )
+            assert results["a"] == "ok", f"thread A failed: {results['a']!r}"
             assert results["b"] == "ok", (
                 f"thread B failed: {results['b']!r} — sorted acquisition "
                 f"did NOT prevent the deadlock; the deterministic-ordering "
@@ -558,17 +996,16 @@ def test_full_poll_cycle_no_duplicates():
     """
     psycopg2, restore_psycopg2 = _swap_in_real_psycopg2()
     try:
+        from polling.event_writer import _acquire_sorted_locks
+        from services.event_lock import acquire_event_triplet_lock
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from testcontainers.postgres import PostgresContainer
 
-        from backend.polling.event_writer import _acquire_sorted_locks
-        from backend.services.event_lock import acquire_event_triplet_lock
-
         with PostgresContainer("postgres:15-alpine") as pg:
             conn_url = pg.get_connection_url()
             engine = create_engine(conn_url)
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
             triplet = ("ci-001", "cpu", "COLLECTION_FAILURE")
             ci_id, metric_id, event_type = triplet
@@ -586,7 +1023,7 @@ def test_full_poll_cycle_no_duplicates():
             results: dict[str, str] = {}
 
             def snmp_worker_writer() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
                     with sink_lock:
@@ -601,7 +1038,7 @@ def test_full_poll_cycle_no_duplicates():
                     session.close()
 
             def snmp_service_writer() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     acquire_event_triplet_lock(session, ci_id, metric_id, event_type)
                     with sink_lock:
@@ -615,15 +1052,20 @@ def test_full_poll_cycle_no_duplicates():
                     session.close()
 
             def event_writer_batch() -> None:
-                session = SessionLocal()
+                session = session_factory()
                 try:
                     # event_writer batch path: a single-row batch
                     # containing the same triplet.
-                    _acquire_sorted_locks(session, [{
-                        "ci_id": ci_id,
-                        "metric_id": metric_id,
-                        "event_type": event_type,
-                    }])
+                    _acquire_sorted_locks(
+                        session,
+                        [
+                            {
+                                "ci_id": ci_id,
+                                "metric_id": metric_id,
+                                "event_type": event_type,
+                            }
+                        ],
+                    )
                     with sink_lock:
                         if triplet not in neo4j_sink:
                             neo4j_sink[triplet] = "created"
@@ -648,20 +1090,16 @@ def test_full_poll_cycle_no_duplicates():
                 f"{neo4j_sink!r} — lock did NOT serialize writers; duplicate "
                 f"Events would have been created in real Neo4j"
             )
-            assert triplet in neo4j_sink, (
-                f"triplet {triplet!r} missing from sink: {neo4j_sink!r}"
-            )
+            assert triplet in neo4j_sink, f"triplet {triplet!r} missing from sink: {neo4j_sink!r}"
 
             # Exactly 1 writer "created"; the other 2 "found_existing".
             created = [k for k, v in results.items() if v == "created"]
             found = [k for k, v in results.items() if v == "found_existing"]
             assert len(created) == 1, (
-                f"expected exactly 1 writer to CREATE, got {len(created)}: "
-                f"{results!r}"
+                f"expected exactly 1 writer to CREATE, got {len(created)}: " f"{results!r}"
             )
             assert len(found) == 2, (
-                f"expected 2 writers to FIND_EXISTING, got {len(found)}: "
-                f"{results!r}"
+                f"expected 2 writers to FIND_EXISTING, got {len(found)}: " f"{results!r}"
             )
     finally:
         restore_psycopg2()

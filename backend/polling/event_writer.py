@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import UUID
 
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.polling_event_lifecycle import (
-    COLLECTION_FAILURE_PREFIX,
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
     EVENT_TYPE_THRESHOLD_BREACH,
@@ -68,7 +68,12 @@ def _collection_failure_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[
     for row in rows:
         if not (row.get("is_breach") and row.get("event_type") == EVENT_TYPE_COLLECTION_FAILURE):
             continue
-        key = (row.get("ci_id"), row.get("metric_id"), row.get("event_type"), row.get("failure_family"))
+        key = (
+            row.get("ci_id"),
+            row.get("metric_id"),
+            row.get("event_type"),
+            row.get("failure_family"),
+        )
         deduped[key] = row
     return list(deduped.values())
 
@@ -84,7 +89,7 @@ def _observed_at_order(value: Any) -> float | None:
     else:
         return None
     if observed.tzinfo is None:
-        observed = observed.replace(tzinfo=timezone.utc)
+        observed = observed.replace(tzinfo=UTC)
     return observed.timestamp()
 
 
@@ -126,11 +131,18 @@ def _non_collection_event_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str,
     return [
         row
         for row in _dedupe_non_collection_latest_state(rows)
-        if row.get("is_breach") and row.get("event_type") and row.get("event_type") != EVENT_TYPE_COLLECTION_FAILURE
+        if row.get("is_breach")
+        and row.get("event_type")
+        and row.get("event_type") != EVENT_TYPE_COLLECTION_FAILURE
     ]
 
 
-def _acquire_unsorted_locks(lock_db, triplets: list[tuple[str, str, str]]) -> None:
+def _acquire_unsorted_locks(
+    lock_db,
+    triplets: list[tuple[str, str, str]],
+    *,
+    writer_context: str = "polling_event_writer",
+) -> None:
     """Acquire ``pg_advisory_xact_lock`` for each triplet in the order given.
 
     This is the inner acquisition loop extracted from
@@ -149,7 +161,13 @@ def _acquire_unsorted_locks(lock_db, triplets: list[tuple[str, str, str]]) -> No
         caller wants the locks acquired. No sorting is performed here.
     """
     for ci_id, metric_id, event_type in triplets:
-        acquire_event_triplet_lock(lock_db, ci_id, metric_id, event_type)
+        acquire_event_triplet_lock(
+            lock_db,
+            ci_id,
+            metric_id,
+            event_type,
+            writer_context=writer_context,
+        )
 
 
 def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
@@ -164,12 +182,18 @@ def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
     to :func:`_acquire_unsorted_locks` so the acquisition loop is shared
     with the deadlock-prevention tests.
     """
-    distinct_triplets = sorted({
-        (row.get("ci_id"), row.get("metric_id"), row.get("event_type"))
-        for row in rows
-        if row.get("ci_id") and row.get("metric_id") and row.get("event_type")
-    })
-    _acquire_unsorted_locks(lock_db, distinct_triplets)
+    distinct_triplets = sorted(
+        {
+            (row.get("ci_id"), row.get("metric_id"), row.get("event_type"))
+            for row in rows
+            if row.get("ci_id") and row.get("metric_id") and row.get("event_type")
+        }
+    )
+    _acquire_unsorted_locks(
+        lock_db,
+        distinct_triplets,
+        writer_context="polling_event_writer",
+    )
 
 
 def _latest_metric_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -225,54 +249,64 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
                 message = f"Service/Host Down: {metric_name}"
             elif not availability:
                 op = str(metadata.get("operator") or ">=")
-                if metadata.get("critical") is not None and _check(numeric, float(metadata["critical"]), op):
+                if metadata.get("critical") is not None and _check(
+                    numeric, float(metadata["critical"]), op
+                ):
                     severity = "CRITICAL"
                     is_breach = True
                     event_type = EVENT_TYPE_THRESHOLD_BREACH
-                    message = f"Critical Threshold Breached: {display_value} {op} {metadata['critical']}"
-                elif metadata.get("warning") is not None and _check(numeric, float(metadata["warning"]), op):
+                    message = (
+                        f"Critical Threshold Breached: {display_value} {op} {metadata['critical']}"
+                    )
+                elif metadata.get("warning") is not None and _check(
+                    numeric, float(metadata["warning"]), op
+                ):
                     severity = "WARNING"
                     is_breach = True
                     event_type = EVENT_TYPE_THRESHOLD_BREACH
-                    message = f"Warning Threshold Breached: {display_value} {op} {metadata['warning']}"
+                    message = (
+                        f"Warning Threshold Breached: {display_value} {op} {metadata['warning']}"
+                    )
 
         recover_non_collection_event = numeric is not None and not is_breach
 
-        rows.append({
-            "idempotency_key": envelope.get("idempotency_key"),
-            "ci_id": envelope.get("ci_id"),
-            "metric_id": metric_id,
-            "value": display_value,
-            "status": severity if is_breach else "OK",
-            "severity": severity,
-            "message": message,
-            "is_breach": is_breach,
-            "event_type": event_type,
-            "failure_family": failure_family,
-            "source_protocol": source_protocol,
-            "availability_source": _availability_source(metadata),
-            "recover_collection_failure": recover_collection_failure,
-            "recover_non_collection_event": recover_non_collection_event,
-            "collection_recovery_message": collection_recovery_message,
-            "observed_at": _value(envelope.get("observed_at")),
-            "correlation_type": metadata.get("correlation_type") or "ROOT",
-            "propagated_from": metadata.get("propagated_from"),
-            "root_cause_event_id": metadata.get("root_cause_event_id"),
-            "root_cause_ci_id": metadata.get("root_cause_ci_id") or envelope.get("ci_id"),
-            "business_service_id": metadata.get("business_service_id"),
-            "business_service_name": metadata.get("business_service_name"),
-            "business_service_tier": metadata.get("business_service_tier"),
-            "owner_t1": metadata.get("owner_t1"),
-            "owner_t2": metadata.get("owner_t2"),
-            "owner_t3": metadata.get("owner_t3"),
-            "impacted_users": metadata.get("impacted_users"),
-            "site": metadata.get("site") or metadata.get("site_id"),
-            "service_catalog_id": metadata.get("service_catalog_id"),
-            "service_category": metadata.get("service_category"),
-            "service_tier": metadata.get("service_tier"),
-            "sla_minutes": metadata.get("sla_minutes"),
-            "poll_collector_id": POLL_COLLECTOR_ID,
-        })
+        rows.append(
+            {
+                "idempotency_key": envelope.get("idempotency_key"),
+                "ci_id": envelope.get("ci_id"),
+                "metric_id": metric_id,
+                "value": display_value,
+                "status": severity if is_breach else "OK",
+                "severity": severity,
+                "message": message,
+                "is_breach": is_breach,
+                "event_type": event_type,
+                "failure_family": failure_family,
+                "source_protocol": source_protocol,
+                "availability_source": _availability_source(metadata),
+                "recover_collection_failure": recover_collection_failure,
+                "recover_non_collection_event": recover_non_collection_event,
+                "collection_recovery_message": collection_recovery_message,
+                "observed_at": _value(envelope.get("observed_at")),
+                "correlation_type": metadata.get("correlation_type") or "ROOT",
+                "propagated_from": metadata.get("propagated_from"),
+                "root_cause_event_id": metadata.get("root_cause_event_id"),
+                "root_cause_ci_id": metadata.get("root_cause_ci_id") or envelope.get("ci_id"),
+                "business_service_id": metadata.get("business_service_id"),
+                "business_service_name": metadata.get("business_service_name"),
+                "business_service_tier": metadata.get("business_service_tier"),
+                "owner_t1": metadata.get("owner_t1"),
+                "owner_t2": metadata.get("owner_t2"),
+                "owner_t3": metadata.get("owner_t3"),
+                "impacted_users": metadata.get("impacted_users"),
+                "site": metadata.get("site") or metadata.get("site_id"),
+                "service_catalog_id": metadata.get("service_catalog_id"),
+                "service_category": metadata.get("service_category"),
+                "service_tier": metadata.get("service_tier"),
+                "sla_minutes": metadata.get("sla_minutes"),
+                "poll_collector_id": POLL_COLLECTOR_ID,
+            }
+        )
     return rows
 
 

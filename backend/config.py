@@ -8,7 +8,7 @@ Currently covers MQTT configuration. Expand as needed for other subsystems.
 from __future__ import annotations
 
 import os
-from typing import Optional
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -34,6 +34,111 @@ def _env_float_bounded(name: str, default: float, *, minimum: float, maximum: fl
     return default
 
 
+def _env_int_bounded(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """Parse a bounded integer environment variable with a safe fallback."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if minimum <= value <= maximum:
+        return value
+    return default
+
+
+# ---------------------------------------------------------------------------
+# Event Lock Observability Settings
+# ---------------------------------------------------------------------------
+
+
+EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE = 500
+EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS = 20
+EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS = 250.0
+EVENT_LOCK_DEFAULT_WARNING_P95_MS = 1000.0
+EVENT_LOCK_DEFAULT_CRITICAL_P99_MS = 5000.0
+EVENT_LOCK_MIN_THRESHOLD_MS = 0.0
+EVENT_LOCK_MAX_SLOW_LOG_INFO_MS = 60_000.0
+EVENT_LOCK_MAX_ALERT_THRESHOLD_MS = 600_000.0
+EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE = 1
+EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE = 10_000
+EVENT_LOCK_MIN_WRITER_CONTEXTS = 1
+EVENT_LOCK_MAX_WRITER_CONTEXTS = 100
+EVENT_LOCK_TOTAL_WRITER_SAMPLE_BUDGET = 10_000
+
+
+class EventLockSettings(BaseModel):
+    """Runtime observability thresholds for Event advisory-lock acquisition."""
+
+    slow_log_info_ms: float = Field(default=EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS, ge=0)
+    warning_p95_ms: float = Field(default=EVENT_LOCK_DEFAULT_WARNING_P95_MS, ge=0)
+    critical_p99_ms: float = Field(default=EVENT_LOCK_DEFAULT_CRITICAL_P99_MS, ge=0)
+    sample_window_size: int = Field(
+        default=EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+        ge=EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE,
+        le=EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE,
+    )
+    max_writer_contexts: int = Field(
+        default=EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+        ge=EVENT_LOCK_MIN_WRITER_CONTEXTS,
+        le=EVENT_LOCK_MAX_WRITER_CONTEXTS,
+    )
+
+    @classmethod
+    def from_env(cls) -> EventLockSettings:
+        """Load Event lock observability settings from environment variables."""
+        sample_window_size = _env_int_bounded(
+            "EVENT_LOCK_SAMPLE_WINDOW_SIZE",
+            EVENT_LOCK_DEFAULT_SAMPLE_WINDOW_SIZE,
+            minimum=EVENT_LOCK_MIN_SAMPLE_WINDOW_SIZE,
+            maximum=EVENT_LOCK_MAX_SAMPLE_WINDOW_SIZE,
+        )
+        max_writer_contexts = _env_int_bounded(
+            "EVENT_LOCK_MAX_WRITER_CONTEXTS",
+            EVENT_LOCK_DEFAULT_MAX_WRITER_CONTEXTS,
+            minimum=EVENT_LOCK_MIN_WRITER_CONTEXTS,
+            maximum=EVENT_LOCK_MAX_WRITER_CONTEXTS,
+        )
+        max_contexts_for_budget = max(
+            EVENT_LOCK_MIN_WRITER_CONTEXTS,
+            EVENT_LOCK_TOTAL_WRITER_SAMPLE_BUDGET // sample_window_size,
+        )
+        return cls(
+            slow_log_info_ms=_env_float_bounded(
+                "EVENT_LOCK_SLOW_LOG_INFO_MS",
+                EVENT_LOCK_DEFAULT_SLOW_LOG_INFO_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_SLOW_LOG_INFO_MS,
+            ),
+            warning_p95_ms=_env_float_bounded(
+                "EVENT_LOCK_WARNING_P95_MS",
+                EVENT_LOCK_DEFAULT_WARNING_P95_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_ALERT_THRESHOLD_MS,
+            ),
+            critical_p99_ms=_env_float_bounded(
+                "EVENT_LOCK_CRITICAL_P99_MS",
+                EVENT_LOCK_DEFAULT_CRITICAL_P99_MS,
+                minimum=EVENT_LOCK_MIN_THRESHOLD_MS,
+                maximum=EVENT_LOCK_MAX_ALERT_THRESHOLD_MS,
+            ),
+            sample_window_size=sample_window_size,
+            max_writer_contexts=min(max_writer_contexts, max_contexts_for_budget),
+        )
+
+
+_event_lock_settings: EventLockSettings | None = None
+
+
+def get_event_lock_settings() -> EventLockSettings:
+    """Return cached Event lock observability settings (singleton)."""
+    global _event_lock_settings
+    if _event_lock_settings is None:
+        _event_lock_settings = EventLockSettings.from_env()
+    return _event_lock_settings
+
+
 # ---------------------------------------------------------------------------
 # Event Batch Pruner Settings
 # ---------------------------------------------------------------------------
@@ -47,7 +152,7 @@ class EventBatchSettings(BaseModel):
     batch_timeout_s: int = 30
 
     @classmethod
-    def from_env(cls) -> "EventBatchSettings":
+    def from_env(cls) -> EventBatchSettings:
         """Load event batch settings from environment variables."""
         return cls(
             batch_size=int(os.getenv("EVENT_BATCH_SIZE", "500")),
@@ -56,7 +161,7 @@ class EventBatchSettings(BaseModel):
         )
 
 
-_event_batch_settings: Optional[EventBatchSettings] = None
+_event_batch_settings: EventBatchSettings | None = None
 
 
 def get_event_batch_settings() -> EventBatchSettings:
@@ -76,14 +181,14 @@ class MQTTSettings(BaseModel):
     """MQTT broker connection settings."""
 
     broker_url: str = "mqtt://localhost:1883"
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
     client_id: str = "rtu-telemetry-subscriber"
     wildcard_topic: str = "rtu/+/+/telemetry"
     qos: int = 1
 
     @classmethod
-    def from_env(cls) -> "MQTTSettings":
+    def from_env(cls) -> MQTTSettings:
         """Load MQTT settings from environment variables."""
         return cls(
             broker_url=os.getenv("MQTT_BROKER_URL", "mqtt://localhost:1883"),
@@ -96,7 +201,7 @@ class MQTTSettings(BaseModel):
 
 
 # Singleton instance (lazy-loaded)
-_mqtt_settings: Optional[MQTTSettings] = None
+_mqtt_settings: MQTTSettings | None = None
 
 
 def get_mqtt_settings() -> MQTTSettings:
@@ -115,12 +220,12 @@ def get_mqtt_settings() -> MQTTSettings:
 class CLICredentialsSettings(BaseModel):
     """CLI credential settings for network device access."""
 
-    default_user: Optional[str] = None
-    default_pass: Optional[str] = None
-    enable_pass: Optional[str] = None
+    default_user: str | None = None
+    default_pass: str | None = None
+    enable_pass: str | None = None
 
     @classmethod
-    def from_env(cls) -> "CLICredentialsSettings":
+    def from_env(cls) -> CLICredentialsSettings:
         """Load CLI credentials from environment variables."""
         return cls(
             default_user=os.getenv("CLI_DEFAULT_USER"),
@@ -129,7 +234,7 @@ class CLICredentialsSettings(BaseModel):
         )
 
 
-_cli_credentials_settings: Optional[CLICredentialsSettings] = None
+_cli_credentials_settings: CLICredentialsSettings | None = None
 
 
 def get_cli_credentials_settings() -> CLICredentialsSettings:
@@ -185,7 +290,7 @@ class PollingPipelineSettings(BaseModel):
     benchmark_sink: str = "synthetic"
 
     @classmethod
-    def from_env(cls) -> "PollingPipelineSettings":
+    def from_env(cls) -> PollingPipelineSettings:
         """Load polling pipeline settings from environment variables."""
         return cls(
             pipeline_observe_only=_env_bool("POLLING_PIPELINE_OBSERVE_ONLY"),
@@ -200,9 +305,15 @@ class PollingPipelineSettings(BaseModel):
             db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),
             task_batch_size=int(os.getenv("POLLING_TASK_BATCH_SIZE", "100")),
             result_batch_size=int(os.getenv("POLLING_RESULT_BATCH_SIZE", "500")),
-            backpressure_max_task_queue_depth=int(os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")),
-            backpressure_max_writer_lag_seconds=int(os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")),
-            backpressure_retry_max_attempts=int(os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")),
+            backpressure_max_task_queue_depth=int(
+                os.getenv("POLLING_BACKPRESSURE_MAX_TASK_QUEUE_DEPTH", "100000")
+            ),
+            backpressure_max_writer_lag_seconds=int(
+                os.getenv("POLLING_BACKPRESSURE_MAX_WRITER_LAG_SECONDS", "120")
+            ),
+            backpressure_retry_max_attempts=int(
+                os.getenv("POLLING_BACKPRESSURE_RETRY_MAX_ATTEMPTS", "5")
+            ),
             metadata_cache_ttl_seconds=int(os.getenv("POLLING_METADATA_CACHE_TTL_SECONDS", "300")),
             benchmark_ci_count=int(os.getenv("POLLING_BENCHMARK_CI_COUNT", "8000")),
             benchmark_metrics_per_ci=int(os.getenv("POLLING_BENCHMARK_METRICS_PER_CI", "35")),
@@ -215,7 +326,7 @@ class PollingPipelineSettings(BaseModel):
         )
 
 
-_polling_pipeline_settings: Optional[PollingPipelineSettings] = None
+_polling_pipeline_settings: PollingPipelineSettings | None = None
 
 
 def get_polling_pipeline_settings() -> PollingPipelineSettings:
@@ -241,13 +352,13 @@ class ICMPSettings(BaseModel):
     latency_critical_ms: float = Field(default=500.0, gt=0)
 
     @model_validator(mode="after")
-    def validate_latency_thresholds(self) -> "ICMPSettings":
+    def validate_latency_thresholds(self) -> ICMPSettings:
         if self.latency_warning_ms >= self.latency_critical_ms:
             raise ValueError("ICMP_LATENCY_WARNING_MS must be less than ICMP_LATENCY_CRITICAL_MS")
         return self
 
     @classmethod
-    def from_env(cls) -> "ICMPSettings":
+    def from_env(cls) -> ICMPSettings:
         """Load ICMP settings from environment variables."""
         return cls(
             timeout_ms=int(os.getenv("ICMP_TIMEOUT_MS", "3000")),
@@ -258,7 +369,7 @@ class ICMPSettings(BaseModel):
         )
 
 
-_icmp_settings: Optional[ICMPSettings] = None
+_icmp_settings: ICMPSettings | None = None
 
 
 def get_icmp_settings() -> ICMPSettings:
@@ -284,7 +395,7 @@ class LMStudioSettings(BaseModel):
     max_tokens: int = Field(default=800, gt=0, le=4096)
 
     @classmethod
-    def from_env(cls) -> "LMStudioSettings":
+    def from_env(cls) -> LMStudioSettings:
         """Load LM Studio settings from environment variables."""
         return cls(
             enabled=_env_bool("LM_STUDIO_ENABLED", default=False),
@@ -329,7 +440,7 @@ class AIPromptsSettings(BaseModel):
     prompts_dir: str = ""
 
     @classmethod
-    def from_env(cls) -> "AIPromptsSettings":
+    def from_env(cls) -> AIPromptsSettings:
         """Load the AI prompts folder from the environment."""
         return cls(prompts_dir=os.getenv("AI_PROMPTS_DIR", "").strip())
 

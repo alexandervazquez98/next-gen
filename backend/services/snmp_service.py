@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import json
 import logging
 import subprocess
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
+from services.metric_service import metric_matches_ci
 from services.neo4j_write_guard import (
     is_poll_collector_id_undefined_error,
     run_with_cypher_param_fallback,
 )
-from services.metric_service import metric_matches_ci
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
     EVENT_TYPE_COLLECTION_FAILURE,
@@ -90,18 +90,23 @@ def get_collector_status():
             """).single()
             if record:
                 last_run_val = record.get("last_run")
-                last_run_str = last_run_val.isoformat() if hasattr(last_run_val, "isoformat") else str(last_run_val) if last_run_val else None
+                last_run_str = (
+                    last_run_val.isoformat()
+                    if hasattr(last_run_val, "isoformat")
+                    else str(last_run_val) if last_run_val else None
+                )
                 return {
                     "last_run": last_run_str,
                     "status": record.get("status") or "UNKNOWN",
                     "stats": {
                         "cis_monitored": record.get("cis_monitored") or 0,
-                        "last_cycle_metrics_processed": record.get("last_cycle_metrics_processed") or 0,
+                        "last_cycle_metrics_processed": record.get("last_cycle_metrics_processed")
+                        or 0,
                         "metrics_collected": record.get("metrics_collected") or 0,
                         "metrics_failed": record.get("metrics_failed") or 0,
                         "cycle_duration": record.get("cycle_duration") or 0.0,
                         "jobs_per_min": record.get("jobs_per_min") or 0.0,
-                    }
+                    },
                 }
     except Exception as e:
         logger.error("Failed to read collector status from Neo4j: %s", e)
@@ -113,7 +118,7 @@ def get_collector_status():
     }
 
 
-def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
+def _parse_snmp_config(snmp_raw: Any) -> dict[str, Any]:
     if not snmp_raw:
         return {}
     if isinstance(snmp_raw, dict):
@@ -127,7 +132,7 @@ def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
             return {}
 
 
-def resolve_event_snapshot(session, ci_id: str) -> Dict[str, Any]:
+def resolve_event_snapshot(session, ci_id: str) -> dict[str, Any]:
     record = session.run(
         """
         MATCH (ci:CI {id: $ci_id})
@@ -192,13 +197,9 @@ async def snmp_collector_loop():
             GLOBAL_STATS["metrics_collected"] = stats.get("total", 0)
             GLOBAL_STATS["metrics_failed"] = stats.get("errors", 0)
             if elapsed > 0:
-                GLOBAL_STATS["jobs_per_min"] = round(
-                    (stats.get("total", 0) / elapsed) * 60, 1
-                )
+                GLOBAL_STATS["jobs_per_min"] = round((stats.get("total", 0) / elapsed) * 60, 1)
 
-            logger.info(
-                "[Collector] Cycle finished in %.2fs. Stats: %s", elapsed, GLOBAL_STATS
-            )
+            logger.info("[Collector] Cycle finished in %.2fs. Stats: %s", elapsed, GLOBAL_STATS)
             await asyncio.sleep(60)
         except Exception as exc:
             logger.error("[Collector] Critical Loop Error: %s", exc, exc_info=True)
@@ -208,13 +209,11 @@ async def snmp_collector_loop():
 
 def run_snmp_cycle_sync(driver):
     with driver.session() as session:
-        cis_result = session.run(
-            """
+        cis_result = session.run("""
             MATCH (n:CI)
             WHERE n.ip IS NOT NULL AND n.status <> 'EXCEPTION'
             RETURN n
-        """
-        )
+        """)
         cis = [dict(record["n"]) for record in cis_result]
         logger.info("[Collector] Found %s candidate CIs for monitoring.", len(cis))
 
@@ -302,9 +301,7 @@ def poll_metric(ci, metric_def, snmp_conf):
         param = "-n" if platform.system().lower() == "windows" else "-c"
         command = ["ping", param, "1", ci.get("ip")]
         try:
-            result = subprocess.call(
-                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            result = subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return (1, "OK", None) if result == 0 else (0, "OK", None)
         except Exception as exc:
             logger.error("PING Exception for %s: %s", ci.get("ip"), exc)
@@ -331,7 +328,9 @@ def poll_metric(ci, metric_def, snmp_conf):
                 error_message = str(error_indication)
                 status = (
                     "TIMEOUT"
-                    if is_snmp_no_response_failure(SOURCE_PROTOCOL_SNMP, "ERROR", {"message": error_message})
+                    if is_snmp_no_response_failure(
+                        SOURCE_PROTOCOL_SNMP, "ERROR", {"message": error_message}
+                    )
                     else "ERROR"
                 )
                 return None, status, error_message
@@ -406,7 +405,9 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     severity = "CRITICAL"
                     is_breach = True
                     event_type = EVENT_TYPE_THRESHOLD_BREACH
-                    message = f"Critical Threshold Breached: {val} {operator} {metric_def['critical']}"
+                    message = (
+                        f"Critical Threshold Breached: {val} {operator} {metric_def['critical']}"
+                    )
                 elif metric_def.get("warning") is not None and check_op(
                     num_val, float(metric_def["warning"]), operator
                 ):
@@ -414,7 +415,9 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     severity = "WARNING"
                     is_breach = True
                     event_type = EVENT_TYPE_THRESHOLD_BREACH
-                    message = f"Warning Threshold Breached: {val} {operator} {metric_def['warning']}"
+                    message = (
+                        f"Warning Threshold Breached: {val} {operator} {metric_def['warning']}"
+                    )
 
             if is_availability_metric and float(val) == 0:
                 status = "CRITICAL"
@@ -505,6 +508,7 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         ci.get("id"),
                         metric_def["id"],
                         event_type,
+                        writer_context="snmp_service",
                     )
                 existing = session.run(
                     """
@@ -574,13 +578,16 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         "poll_collector_id": POLL_COLLECTOR_ID,
                     }
                     fallback_params = {
-                        k: v for k, v in primary_params.items()
-                        if k != "poll_collector_id"
+                        k: v for k, v in primary_params.items() if k != "poll_collector_id"
                     }
                     run_with_cypher_param_fallback(
-                        session, primary_query, primary_params,
-                        fallback_query, fallback_params,
-                        is_poll_collector_id_undefined_error, logger,
+                        session,
+                        primary_query,
+                        primary_params,
+                        fallback_query,
+                        fallback_params,
+                        is_poll_collector_id_undefined_error,
+                        logger,
                     )
                 else:
                     snapshot = resolve_event_snapshot(session, ci.get("id"))
@@ -593,14 +600,22 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     if metric_def.get("can_propagate", True):
                         try:
                             from repositories.topology_repo import find_open_parent_event
+
                             parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
                             if parent_info:
                                 correlation_type = "PROPAGATED"
                                 propagated_from = parent_info["parent_event_id"]
-                                root_cause_ci_id = parent_info.get("root_cause_ci_id") or parent_info["parent_event_id"]
+                                root_cause_ci_id = (
+                                    parent_info.get("root_cause_ci_id")
+                                    or parent_info["parent_event_id"]
+                                )
                         except Exception as exc:
-                            logger.warning("Topology correlation check failed for CI %s metric %s: %s",
-                                           ci.get("id"), metric_def.get("id"), exc)
+                            logger.warning(
+                                "Topology correlation check failed for CI %s metric %s: %s",
+                                ci.get("id"),
+                                metric_def.get("id"),
+                                exc,
+                            )
                     # --- End correlation check ---
 
                     primary_query = """
@@ -696,13 +711,16 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         **snapshot,
                     }
                     fallback_params = {
-                        k: v for k, v in primary_params.items()
-                        if k != "poll_collector_id"
+                        k: v for k, v in primary_params.items() if k != "poll_collector_id"
                     }
                     run_with_cypher_param_fallback(
-                        session, primary_query, primary_params,
-                        fallback_query, fallback_params,
-                        is_poll_collector_id_undefined_error, logger,
+                        session,
+                        primary_query,
+                        primary_params,
+                        fallback_query,
+                        fallback_params,
+                        is_poll_collector_id_undefined_error,
+                        logger,
                     )
             else:
                 # Recovery path for threshold/availability events; SNMP collection failures

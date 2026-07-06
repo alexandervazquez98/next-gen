@@ -1,0 +1,66 @@
+{
+  "findings": [
+    {
+      "code": "ambiguous_collection_failure_boundary",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "field": null,
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous:ambiguous_collection_failure_boundary",
+      "recommended_value": null,
+      "severity": "ambiguous"
+    },
+    {
+      "code": "ambiguous_threshold_or_availability",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "field": null,
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous:ambiguous_threshold_or_availability",
+      "recommended_value": null,
+      "severity": "ambiguous"
+    },
+    {
+      "code": "missing_event_type",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "field": "event_type",
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous:missing_event_type",
+      "recommended_value": null,
+      "severity": "missing"
+    },
+    {
+      "code": "missing_failure_family",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "field": "failure_family",
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous:missing_failure_family",
+      "recommended_value": null,
+      "severity": "missing"
+    },
+    {
+      "code": "missing_source_protocol",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "field": "source_protocol",
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-ambiguous:missing_source_protocol",
+      "recommended_value": null,
+      "severity": "missing"
+    },
+    {
+      "code": "missing_failure_family",
+      "event_id": "issue155-smoke-20260705T194559Z-d0063d11-no-touch",
+      "field": "failure_family",
+      "finding_id": "issue155-smoke-20260705T194559Z-d0063d11-no-touch:missing_failure_family",
+      "recommended_value": null,
+      "severity": "missing"
+    }
+  ],
+  "schema": "issue155_smoke_scoped_audit_v1",
+  "scope": "smoke fixture findings only; non-smoke finding details omitted",
+  "summary": {
+    "smoke_event_ids": [
+      "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "issue155-smoke-20260705T194559Z-d0063d11-no-touch",
+      "issue155-smoke-20260705T194559Z-d0063d11-safe"
+    ],
+    "smoke_event_ids_with_findings": [
+      "issue155-smoke-20260705T194559Z-d0063d11-ambiguous",
+      "issue155-smoke-20260705T194559Z-d0063d11-no-touch"
+    ],
+    "smoke_findings_count": 6
+  }
+}
