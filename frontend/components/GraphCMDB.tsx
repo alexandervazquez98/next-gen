@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import type { GraphLink, GraphNode } from "../types";
@@ -91,7 +91,14 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 	const [filterLocations, setFilterLocations] = useState<string[]>([]);
 	const [filterOwners, setFilterOwners] = useState<string[]>([]);
 	const [groupByLocation, setGroupByLocation] = useState<boolean>(true);
+	const [expandedFilters, setExpandedFilters] = useState({
+		technology: true,
+		location: true,
+		owner: true,
+	});
+	const [searchTechnology, setSearchTechnology] = useState<string>("");
 	const [searchLocation, setSearchLocation] = useState<string>("");
+	const [searchOwner, setSearchOwner] = useState<string>("");
 	const [graphSearch, setGraphSearch] = useState<string>("");
 	const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
 
@@ -118,14 +125,46 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 	const nodes = data?.nodes ?? [];
 	const links = data?.links ?? [];
 
-	const allLocations = Array.from(
-		new Set(
-			(fullData?.nodes ?? []).map((n) => n.location_name).filter(Boolean),
-		),
-	).sort();
-	const filteredLocations = allLocations.filter((loc) =>
-		loc.toLowerCase().includes(searchLocation.toLowerCase()),
+	const allLocations = useMemo(
+		() =>
+			Array.from(
+				new Set(
+					(fullData?.nodes ?? [])
+						.map((n) => n.location_name)
+						.filter((loc): loc is string => Boolean(loc)),
+				),
+			).sort(),
+		[fullData?.nodes],
 	);
+	const filteredTechnologies = useMemo(
+		() =>
+			(categories ?? []).filter((category) =>
+				category.name.toLowerCase().includes(searchTechnology.toLowerCase()),
+			),
+		[categories, searchTechnology],
+	);
+	const filteredLocations = useMemo(
+		() =>
+			allLocations.filter((loc) =>
+				loc.toLowerCase().includes(searchLocation.toLowerCase()),
+			),
+		[allLocations, searchLocation],
+	);
+	const filteredOwners = useMemo(
+		() =>
+			(owners ?? []).filter((owner) =>
+				owner.name.toLowerCase().includes(searchOwner.toLowerCase()),
+			),
+		[owners, searchOwner],
+	);
+	const selectedFilterCount =
+		filterLayers.length + filterLocations.length + filterOwners.length;
+	const setSelection = (
+		values: string[],
+		setter: React.Dispatch<React.SetStateAction<string[]>>,
+	) => {
+		setter(values);
+	};
 	const toggleSelection = (
 		value: string,
 		setter: React.Dispatch<React.SetStateAction<string[]>>,
@@ -135,6 +174,21 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 				? current.filter((item) => item !== value)
 				: [...current, value],
 		);
+	};
+	const toggleFilterSection = (section: keyof typeof expandedFilters) => {
+		setExpandedFilters((current) => ({
+			...current,
+			[section]: !current[section],
+		}));
+	};
+	const renderFilterSummary = (values: string[], emptyLabel: string) => {
+		if (values.length === 0) {
+			return emptyLabel;
+		}
+
+		return values.length <= 2
+			? values.join(", ")
+			: `${values.slice(0, 2).join(", ")} +${values.length - 2}`;
 	};
 
 	useEffect(() => {
@@ -1384,107 +1438,249 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 							</button>
 						</label>
 
-						<div className="block">
-							<span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">
-								Technology{" "}
-								{filterLayers.length > 0 ? `(${filterLayers.length})` : ""}
-							</span>
-							<div className="max-h-32 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
-								{categories?.map((c) => (
-									<label
-										key={c.name}
-										className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
-									>
-										<input
-											type="checkbox"
-											checked={filterLayers.includes(c.name)}
-											onChange={() => toggleSelection(c.name, setFilterLayers)}
-											className="accent-brand-500"
-										/>
-										<span>{c.name}</span>
-									</label>
-								))}
-								{(!categories || categories.length === 0) && (
-									<span className="text-[10px] text-neutral-600">
-										No layers
+						{selectedFilterCount > 0 && (
+							<div
+								className="flex flex-wrap gap-1"
+								aria-label="Selected graph filters"
+							>
+								{filterLayers.length > 0 && (
+									<span className="rounded-full border border-brand-500/20 bg-brand-500/10 px-2 py-1 text-[9px] font-black uppercase text-brand-300">
+										Tech: {renderFilterSummary(filterLayers, "All")}
+									</span>
+								)}
+								{filterLocations.length > 0 && (
+									<span className="rounded-full border border-brand-500/20 bg-brand-500/10 px-2 py-1 text-[9px] font-black uppercase text-brand-300">
+										Location: {renderFilterSummary(filterLocations, "All")}
+									</span>
+								)}
+								{filterOwners.length > 0 && (
+									<span className="rounded-full border border-brand-500/20 bg-brand-500/10 px-2 py-1 text-[9px] font-black uppercase text-brand-300">
+										Owner: {renderFilterSummary(filterOwners, "All")}
 									</span>
 								)}
 							</div>
-						</div>
+						)}
 
-						<label className="block">
-							<span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">
-								Location Search
-							</span>
-							<div className="relative mb-2">
-								<input
-									type="text"
-									className="w-full bg-neutral-950 border border-white/5 rounded-lg pl-8 pr-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
-									placeholder="Search locations..."
-									value={searchLocation}
-									onChange={(e) => setSearchLocation(e.target.value)}
-								/>
-								<span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-sm text-neutral-600">
-									search
+						<section aria-label="Technology filters" className="rounded-xl border border-white/5 bg-neutral-950/60">
+							<button
+								type="button"
+								onClick={() => toggleFilterSection("technology")}
+								className="flex w-full items-center justify-between px-3 py-2 text-left"
+								aria-expanded={expandedFilters.technology}
+								aria-controls="graph-filter-technology"
+							>
+								<span className="text-[10px] font-bold text-neutral-400 uppercase">
+									Technology
 								</span>
-							</div>
-							<div className="max-h-36 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
-								<div className="text-[10px] text-neutral-500 mb-1">
-									{filterLocations.length > 0
-										? `${filterLocations.length} selected`
-										: `All Locations (${filteredLocations.length})`}
+								<span className="text-[10px] text-neutral-500">
+									{renderFilterSummary(filterLayers, "All")}
+								</span>
+							</button>
+							{expandedFilters.technology && (
+								<div id="graph-filter-technology" className="space-y-2 px-3 pb-3">
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() =>
+												setSelection(
+													(categories ?? []).map((c) => c.name),
+													setFilterLayers,
+												)
+											}
+											className="text-[9px] font-black uppercase text-brand-400 hover:text-brand-300"
+										>
+											Select all
+										</button>
+										<button
+											type="button"
+											onClick={() => setFilterLayers([])}
+											className="text-[9px] font-black uppercase text-neutral-500 hover:text-white"
+										>
+											Clear
+										</button>
+									</div>
+									<label className="sr-only" htmlFor="graph-filter-technology-search">
+										Search technologies
+									</label>
+									<input
+										id="graph-filter-technology-search"
+										type="search"
+										className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+										placeholder="Search technologies..."
+										value={searchTechnology}
+										onChange={(e) => setSearchTechnology(e.target.value)}
+									/>
+									<div className="max-h-32 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
+										{filteredTechnologies.map((c) => (
+											<label
+												key={c.name}
+												className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
+											>
+												<input
+													type="checkbox"
+													checked={filterLayers.includes(c.name)}
+													onChange={() => toggleSelection(c.name, setFilterLayers)}
+													className="accent-brand-500"
+												/>
+												<span>{c.name}</span>
+											</label>
+										))}
+										{filteredTechnologies.length === 0 && (
+											<span className="text-[10px] text-neutral-600">No layers</span>
+										)}
+									</div>
 								</div>
-								{filteredLocations.map((loc) => (
-									<label
-										key={loc}
-										className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
-									>
-										<input
-											type="checkbox"
-											checked={filterLocations.includes(loc)}
-											onChange={() => toggleSelection(loc, setFilterLocations)}
-											className="accent-brand-500"
-										/>
-										<span>{loc}</span>
-									</label>
-								))}
-							</div>
-						</label>
+							)}
+						</section>
 
-						<div className="block">
-							<span className="text-[10px] font-bold text-neutral-400 uppercase mb-1 block">
-								Owner Group{" "}
-								{filterOwners.length > 0 ? `(${filterOwners.length})` : ""}
-							</span>
-							<div className="max-h-32 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
-								{owners?.map((o) => (
-									<label
-										key={o.name}
-										className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
-									>
-										<input
-											type="checkbox"
-											checked={filterOwners.includes(o.name)}
-											onChange={() => toggleSelection(o.name, setFilterOwners)}
-											className="accent-brand-500"
-										/>
-										<span>{o.name}</span>
+						<section aria-label="Location filters" className="rounded-xl border border-white/5 bg-neutral-950/60">
+							<button
+								type="button"
+								onClick={() => toggleFilterSection("location")}
+								className="flex w-full items-center justify-between px-3 py-2 text-left"
+								aria-expanded={expandedFilters.location}
+								aria-controls="graph-filter-location"
+							>
+								<span className="text-[10px] font-bold text-neutral-400 uppercase">
+									Location
+								</span>
+								<span className="text-[10px] text-neutral-500">
+									{renderFilterSummary(filterLocations, "All")}
+								</span>
+							</button>
+							{expandedFilters.location && (
+								<div id="graph-filter-location" className="space-y-2 px-3 pb-3">
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() => setSelection(allLocations, setFilterLocations)}
+											className="text-[9px] font-black uppercase text-brand-400 hover:text-brand-300"
+										>
+											Select all
+										</button>
+										<button
+											type="button"
+											onClick={() => setFilterLocations([])}
+											className="text-[9px] font-black uppercase text-neutral-500 hover:text-white"
+										>
+											Clear
+										</button>
+									</div>
+									<label className="sr-only" htmlFor="graph-filter-location-search">
+										Search locations
 									</label>
-								))}
-								{(!owners || owners.length === 0) && (
-									<span className="text-[10px] text-neutral-600">
-										No owners
-									</span>
-								)}
-							</div>
-						</div>
+									<input
+										id="graph-filter-location-search"
+										type="search"
+										className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+										placeholder="Search locations..."
+										value={searchLocation}
+										onChange={(e) => setSearchLocation(e.target.value)}
+									/>
+									<div className="max-h-36 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
+										{filteredLocations.map((loc) => (
+											<label
+												key={loc}
+												className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
+											>
+												<input
+													type="checkbox"
+													checked={filterLocations.includes(loc)}
+													onChange={() => toggleSelection(loc, setFilterLocations)}
+													className="accent-brand-500"
+												/>
+												<span>{loc}</span>
+											</label>
+										))}
+										{filteredLocations.length === 0 && (
+											<span className="text-[10px] text-neutral-600">No locations</span>
+										)}
+									</div>
+								</div>
+							)}
+						</section>
+
+						<section aria-label="Owner filters" className="rounded-xl border border-white/5 bg-neutral-950/60">
+							<button
+								type="button"
+								onClick={() => toggleFilterSection("owner")}
+								className="flex w-full items-center justify-between px-3 py-2 text-left"
+								aria-expanded={expandedFilters.owner}
+								aria-controls="graph-filter-owner"
+							>
+								<span className="text-[10px] font-bold text-neutral-400 uppercase">
+									Owner
+								</span>
+								<span className="text-[10px] text-neutral-500">
+									{renderFilterSummary(filterOwners, "All")}
+								</span>
+							</button>
+							{expandedFilters.owner && (
+								<div id="graph-filter-owner" className="space-y-2 px-3 pb-3">
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() =>
+												setSelection(
+													(owners ?? []).map((o) => o.name),
+													setFilterOwners,
+												)
+											}
+											className="text-[9px] font-black uppercase text-brand-400 hover:text-brand-300"
+										>
+											Select all
+										</button>
+										<button
+											type="button"
+											onClick={() => setFilterOwners([])}
+											className="text-[9px] font-black uppercase text-neutral-500 hover:text-white"
+										>
+											Clear
+										</button>
+									</div>
+									<label className="sr-only" htmlFor="graph-filter-owner-search">
+										Search owners
+									</label>
+									<input
+										id="graph-filter-owner-search"
+										type="search"
+										className="w-full bg-neutral-950 border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-brand-500 transition-colors"
+										placeholder="Search owners..."
+										value={searchOwner}
+										onChange={(e) => setSearchOwner(e.target.value)}
+									/>
+									<div className="max-h-32 overflow-y-auto rounded-lg border border-white/5 bg-neutral-950 p-2 space-y-1 custom-scrollbar">
+										{filteredOwners.map((o) => (
+											<label
+												key={o.name}
+												className="flex items-center gap-2 text-xs text-neutral-300 hover:text-white"
+											>
+												<input
+													type="checkbox"
+													checked={filterOwners.includes(o.name)}
+													onChange={() => toggleSelection(o.name, setFilterOwners)}
+													className="accent-brand-500"
+												/>
+												<span>{o.name}</span>
+											</label>
+										))}
+										{filteredOwners.length === 0 && (
+											<span className="text-[10px] text-neutral-600">No owners</span>
+										)}
+									</div>
+								</div>
+							)}
+						</section>
 
 						<button
+							type="button"
 							onClick={() => {
 								setFilterLayers([]);
 								setFilterLocations([]);
 								setFilterOwners([]);
+								setSearchTechnology("");
 								setSearchLocation("");
+								setSearchOwner("");
 								setGraphSearch("");
 							}}
 							className="w-full py-2 text-[10px] font-black text-neutral-500 hover:text-white transition-colors uppercase tracking-widest"
