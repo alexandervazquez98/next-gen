@@ -319,7 +319,8 @@ class _FakeNeo4jSession:
         return False
 
     def run(self, query):
-        assert str(query) == "RETURN datetime() AS neo4j_time"
+        query_text = getattr(query, "text", getattr(query, "query", str(query)))
+        assert str(query_text).strip() == "RETURN datetime() AS neo4j_time"
         self.last_query_timeout = getattr(query, "timeout", None)
         if self._error:
             raise self._error
@@ -430,12 +431,12 @@ def test_build_time_sync_status_detects_neo4j_transaction_timeout_code():
     backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     clock = _FixedClock(backend_time)
 
-    class Neo4jTransactionTimeoutLike(Exception):
+    class Neo4jTransactionTimeoutLikeError(Exception):
         code = "Neo.ClientError.Transaction.TransactionTimedOut"
 
     status = main._build_time_sync_status(
         driver=_FakeNeo4jDriver(
-            error=Neo4jTransactionTimeoutLike("transaction was terminated")
+            error=Neo4jTransactionTimeoutLikeError("transaction was terminated")
         ),
         settings=_time_sync_settings(query_timeout_s=0.25),
         now_func=clock.now,
