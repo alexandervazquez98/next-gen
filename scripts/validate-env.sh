@@ -188,9 +188,11 @@ resolve_backup_dir() {
             # path. ~/foo expands to /home/<user>/foo; ~user/foo would
             # require getent — not supported here, fall through to tilde-
             # literal path which the caller will see as missing.
+            # Intentionally matches literal tilde values read from .env.
+            # shellcheck disable=SC2088
             case "$value" in
                 "~") value=$HOME ;;
-                "~/"*) value=$HOME/${value#"~/"} ;;
+                "~/"*) value=$HOME/${value#\~/} ;;
             esac
             printf '%s\n' "$value"
             return
