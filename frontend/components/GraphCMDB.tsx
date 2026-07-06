@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- GraphCMDB still carries legacy D3 and metadata payloads that are outside this UX polish scope. */
 import {
 	type Dispatch,
 	type RefObject,
@@ -131,8 +132,8 @@ const GraphCMDB = ({ onNodeClick }: GraphCMDBProps) => {
 	const { data: categories } = useCategoriesQuery();
 	const { data: owners } = useOwnersQuery();
 
-	const nodes = data?.nodes ?? [];
-	const links = data?.links ?? [];
+	const nodes = useMemo(() => data?.nodes ?? [], [data?.nodes]);
+	const links = useMemo(() => data?.links ?? [], [data?.links]);
 
 	const allLocations = useMemo(
 		() =>
