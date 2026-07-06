@@ -8,6 +8,8 @@ import { api } from "../services/api";
 import RelationshipBadge from "./RelationshipBadge";
 import RelationshipTooltip from "./RelationshipTooltip";
 import { canDeleteRelationship, isReadOnlyRelationship } from "./relationshipCapabilities";
+import { isTunnelMedium, resolveTunnelVisual } from "../utils/tunnelVisuals";
+import TunnelVisualSummary from "./TunnelVisualSummary";
 
 // ============================================================================
 // Relationship Indicators — Types & Utilities
@@ -539,6 +541,9 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
               <tbody className="text-sm">
                 {filteredCiLinks.map((link, i) => {
                   const readOnly = isReadOnlyRelationship(link.relationship);
+                  const tunnelVisual = isTunnelMedium(link.medium)
+                    ? resolveTunnelVisual(link, link.tunnel_health ?? undefined)
+                    : null;
 
                   return (
                     <tr
@@ -556,6 +561,11 @@ const RelationshipManager: React.FC<RelationshipManagerProps> = ({ onRefresh }) 
                           <span className="ml-2 text-[10px] font-bold bg-amber-400/10 px-2 py-1 rounded text-amber-200 uppercase">
                             Read-only
                           </span>
+                        )}
+                        {tunnelVisual && (
+                          <div className="mt-2">
+                            <TunnelVisualSummary visual={tunnelVisual} />
+                          </div>
                         )}
                       </td>
                       <td className="p-3 font-mono text-accent-cyan" title={link.target}>
