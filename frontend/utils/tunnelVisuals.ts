@@ -156,7 +156,8 @@ export function resolveTunnelVisual(
       ? link.medium
       : null;
   const authorityText = health?.status ?? "UNKNOWN";
-  const state = authorityText === "UP" ? "up" : authorityText === "DOWN" ? "down" : "unknown";
+  const state: TunnelVisualModel["state"] =
+    authorityText === "UP" ? "up" : authorityText === "DOWN" ? "down" : "unknown";
   const warning = warningFromHealth(health);
   const base = {
     medium,

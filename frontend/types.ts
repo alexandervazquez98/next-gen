@@ -112,6 +112,8 @@ export interface GraphLink {
    * Optional — legacy non-tunnel links stay shape-compatible.
    */
   medium?: "vpn" | "sd_wan" | "satellite";
+  tunnel_link_id?: string;
+  tunnel_health?: TunnelHealthResponse | null;
 }
 
 export type TunnelMedium = NonNullable<GraphLink["medium"]>;

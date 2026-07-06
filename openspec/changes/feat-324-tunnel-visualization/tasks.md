@@ -48,11 +48,11 @@ Rollback: PR1 disables hook/telemetry imports; PR2 reverts projection/editor onl
 
 ## PR3: Topology Surface Integrations
 
-- [ ] 3.1 RED: Add component tests for `frontend/components/NetworkVisualizer.tsx` and `MonitoringConsole.tsx` covering neutral `UNKNOWN`, `UP` warning badge, tooltip errors, visible filtering, and kill-switch no-live-health context.
-- [ ] 3.2 GREEN: Integrate `useVisibleTunnelHealth` and `tunnelVisuals` into NetworkVisualizer and MonitoringConsole without changing authority text.
-- [ ] 3.3 RED: Add tests for `frontend/components/TopologyViewer.tsx`, `RelationshipManager.tsx`, and `CIDetailModal.tsx` requiring shared medium/icon/status/tooltip rows and scoped public-IP fallback.
-- [ ] 3.4 GREEN: Wire TopologyViewer, RelationshipManager, and CIDetailModal to the shared visual contract and scoped topology data.
-- [ ] 3.5 VERIFY: Run targeted frontend Vitest and backend pytest suites, then update checklist evidence only; do not add new health normalization, bulk health endpoints, pollers, assets, or authority semantics.
+- [x] 3.1 RED: Add component tests for `frontend/components/NetworkVisualizer.tsx` and `MonitoringConsole.tsx` covering neutral `UNKNOWN`, `UP` warning badge, tooltip errors, visible filtering, and kill-switch no-live-health context.
+- [x] 3.2 GREEN: Integrate `useVisibleTunnelHealth` and `tunnelVisuals` into NetworkVisualizer and MonitoringConsole without changing authority text.
+- [x] 3.3 RED: Add tests for `frontend/components/TopologyViewer.tsx`, `RelationshipManager.tsx`, and `CIDetailModal.tsx` requiring shared medium/icon/status/tooltip rows and scoped public-IP fallback.
+- [x] 3.4 GREEN: Wire TopologyViewer, RelationshipManager, and CIDetailModal to the shared visual contract and scoped topology data.
+- [x] 3.5 VERIFY: Run targeted frontend Vitest and backend pytest suites, then update checklist evidence only; do not add new health normalization, bulk health endpoints, pollers, assets, or authority semantics.
 
 ## Out-of-Scope Guardrails
 

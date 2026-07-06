@@ -267,3 +267,108 @@ PR #367 head `d559b587a7d474836fa4f1b9dc8d15926cd01da7` completed successfully:
 ## Remaining Tasks
 
 - [ ] Merge PR2 after review, then continue PR3 topology surface integrations.
+
+---
+
+## PR3 Topology Surface Integration — 2026-07-05
+
+## Scope
+
+PR3 only: frontend topology surfaces consume the existing shared tunnel visual contract and scoped data already established by PR1/PR2. No backend public-IP projection, tunnel-health normalization, ICMP authority, pollers, telemetry, bulk health endpoints, or icon assets were changed.
+
+## Completed Task Checkboxes
+
+- [x] 3.1 RED completed: component tests were added for `NetworkVisualizer.tsx` and `MonitoringConsole.tsx` covering neutral `UNKNOWN`, `UP` warning context, health error tooltip rows, visible filtering, and kill-switch no-live-health context.
+- [ ] 3.2 GREEN implemented but not checked off: `NetworkVisualizer.tsx` and `MonitoringConsole.tsx` now consume `useVisibleTunnelHealth` and shared `tunnelVisuals`, but local Vitest execution is blocked by the Rollup native module code-signing mismatch.
+- [x] 3.3 RED completed: component tests were added for `TopologyViewer.tsx`, `RelationshipManager.tsx`, and `CIDetailModal.tsx` requiring shared medium/icon/status/tooltip rows and scoped public-IP fallback.
+- [ ] 3.4 GREEN implemented but not checked off: `TopologyViewer.tsx`, `RelationshipManager.tsx`, and `CIDetailModal.tsx` now render shared tunnel visual summaries and scoped public-IP fallback, but local Vitest execution is blocked.
+- [ ] 3.5 VERIFY not complete: backend scoped public-IP suites pass locally; frontend Vitest remains blocked locally and requires CI-capable execution.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `frontend/components/NetworkVisualizer.test.tsx`; `frontend/components/MonitoringConsole.test.tsx` | Component | ⚠️ Blocked before edits: focused Vitest cannot start because Rollup native module `@rollup/rollup-darwin-x64` fails macOS Team ID code-signing validation | ✅ Written first for neutral `UNKNOWN` + missing public IP, `UP` + ICMP warning, unavailable-health tooltip rows, visible-link filtering, and kill-switch disabled polling context | ❌ Not claimed: focused Vitest remains blocked by Rollup native module signing mismatch | ✅ Covers different surfaces, authority states, warning/error rows, visible filtering, and disabled polling | ✅ Shared rendering extracted through `TunnelVisualSummary`; TypeScript spot-check found no errors in changed files |
+| 3.2 | `frontend/components/NetworkVisualizer.test.tsx`; `frontend/components/MonitoringConsole.test.tsx` | Component | ⚠️ Runner blocked locally | ✅ Covered by 3.1 RED tests before implementation | ❌ Not claimed: implementation is present but focused Vitest cannot execute locally | ✅ `NetworkVisualizer` passes filtered graph links to `useVisibleTunnelHealth`; `MonitoringConsole` passes category-visible map links only; both preserve authority text and show warning/error rows | ✅ Targeted ESLint command reports zero errors for changed files, with existing warnings only |
+| 3.3 | `frontend/components/TopologyViewer.test.tsx`; `frontend/components/RelationshipManager.visualEditor.test.tsx`; `frontend/components/CIDetailModal.test.tsx` | Component | ⚠️ Runner blocked locally | ✅ Written first for shared medium/icon/authority/tooltip rows in topology/relationship/detail surfaces and scoped public-IP fallback in `CIDetailModal` | ❌ Not claimed: focused Vitest remains blocked by Rollup native module signing mismatch | ✅ Covers SD-WAN, VPN, and satellite visual paths plus `UP` warning and neutral no-`DEGRADED` authority assertions | ✅ Shared visual summary component avoids per-surface authority/icon duplication |
+| 3.4 | `frontend/components/TopologyViewer.test.tsx`; `frontend/components/RelationshipManager.visualEditor.test.tsx`; `frontend/components/CIDetailModal.test.tsx` | Component | ⚠️ Runner blocked locally | ✅ Covered by 3.3 RED tests before implementation | ❌ Not claimed: implementation is present but focused Vitest cannot execute locally | ✅ `TopologyViewer`, `RelationshipManager`, and `CIDetailModal` use `resolveTunnelVisual`; `CIDetailModal` uses scoped `node.public_ip` with metadata fallback only from already-provided node data | ✅ TypeScript spot-check found no changed-file errors; targeted ESLint reports zero errors |
+| 3.5 | Frontend focused Vitest; `backend/tests/test_routers_nodes.py`; `backend/tests/test_routers_links.py` | Verification | N/A | N/A | ⚠️ Partial: backend pytest passed; frontend Vitest blocked before test collection by Rollup native module signing mismatch | N/A | N/A |
+
+## Test Commands and Results
+
+- `OPENSSL_CONF=/dev/null /Applications/Codex.app/Contents/Resources/cua_node/bin/node node_modules/vitest/vitest.mjs run components/NetworkVisualizer.test.tsx components/MonitoringConsole.test.tsx components/TopologyViewer.test.tsx components/RelationshipManager.visualEditor.test.tsx components/CIDetailModal.test.tsx` from `frontend/` → blocked before collection: `@rollup/rollup-darwin-x64/rollup.darwin-x64.node` code signature not valid for use in process; mapping process and mapped file have different Team IDs.
+- `OPENSSL_CONF=/dev/null /Applications/Codex.app/Contents/Resources/cua_node/bin/node node_modules/typescript/bin/tsc --noEmit --pretty false` from `frontend/`, filtered to changed files → no changed-file TypeScript errors; full project still has unrelated pre-existing TypeScript errors.
+- `OPENSSL_CONF=/dev/null /Applications/Codex.app/Contents/Resources/cua_node/bin/node node_modules/eslint/bin/eslint.js ...changed files...` from `frontend/` → exit 0, zero errors; existing warnings remain in legacy component files.
+- `/private/tmp/next-gen-pr2-py311/bin/python -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` → passed: 64 passed, 18 warnings.
+- Prettier direct command over changed frontend files → passed and formatted files.
+
+## Files Touched
+
+- `frontend/components/NetworkVisualizer.test.tsx` — RED component tests for visible tunnel health filtering, neutral `UNKNOWN`, `UP` warning/error tooltip rows, and kill-switch context.
+- `frontend/components/MonitoringConsole.test.tsx` — RED component tests for category-visible tunnel filtering, shared status rows, and kill-switch context.
+- `frontend/components/TopologyViewer.test.tsx` — RED component test for shared SD-WAN visual rows.
+- `frontend/components/RelationshipManager.visualEditor.test.tsx` — RED relationship table test for shared VPN visual rows.
+- `frontend/components/CIDetailModal.test.tsx` — RED detail modal test for scoped public-IP fallback and satellite tunnel rows.
+- `frontend/components/TunnelVisualSummary.tsx` — shared presentational summary for medium icon, authority text, warning badge, and tooltip rows.
+- `frontend/components/NetworkVisualizer.tsx` — integrates visible tunnel health and shared visual summaries for filtered graph links.
+- `frontend/components/MonitoringConsole.tsx` — integrates visible tunnel health and shared visual summaries for map-visible links.
+- `frontend/components/TopologyViewer.tsx` — renders shared tunnel visual rows for relevant topology links.
+- `frontend/components/RelationshipManager.tsx` — renders shared tunnel visual rows in CI relationship rows.
+- `frontend/components/CIDetailModal.tsx` — renders scoped public-IP fallback and shared topology tunnel context from provided node metadata.
+- `frontend/types.ts` — extends `GraphLink` with optional existing tunnel link id and health payload fields for frontend surface consumers.
+- `frontend/utils/tunnelVisuals.ts` — narrows visual state typing without changing authority semantics.
+- `openspec/changes/feat-324-tunnel-visualization/tasks.md` — marks RED tasks 3.1 and 3.3 complete only.
+- `openspec/changes/feat-324-tunnel-visualization/apply-progress.md` — appends this PR3 TDD and verification evidence.
+
+## Deviations
+
+- GREEN implementation tasks 3.2 and 3.4 are intentionally not checked off because focused frontend Vitest cannot execute in this local environment.
+- Verification task 3.5 is intentionally not checked off because frontend Vitest is blocked locally; backend scoped public-IP tests pass.
+- Added a small shared presentational component, `TunnelVisualSummary`, to avoid duplicating the shared visual contract across PR3 surfaces.
+
+## Remaining Tasks
+
+- [ ] Run focused frontend Vitest in a CI-capable environment; if passing, mark 3.2 and 3.4 complete.
+- [ ] Complete PR3 verification by recording passing frontend evidence, then mark 3.5 complete.
+- [ ] Run final PR review/CI before creating or updating PR3.
+
+---
+
+## PR3 CI GREEN Validation — 2026-07-06
+
+## Completed Task Checkboxes
+
+- [x] 3.2 GREEN completed: CI validated NetworkVisualizer and MonitoringConsole surface integrations.
+- [x] 3.4 GREEN completed: CI validated TopologyViewer, RelationshipManager, and CIDetailModal shared visual contract integrations.
+- [x] 3.5 VERIFY completed: PR3 CI and local lint/format evidence passed without adding backend health normalization, bulk health endpoints, pollers, assets, or authority semantic changes.
+
+## CI Evidence
+
+PR #370 head `3b50923df00abf84a55d51c676c82c1c1d07e067` completed successfully for the checks triggered by the PR3 frontend/OpenSpec change set:
+
+- `frontend-tests` → success
+- `smoke` → success
+- `lint-frontend` → success
+- `lint-backend` → success
+- `lint-verify (PR1 gate)` → success
+- `ci-verify (PR3 gate)` → success
+- `shellcheck` → success
+- `yamllint` → success
+- `actionlint` → success
+
+Backend focused regression evidence remains from PR3 local verification:
+
+- `/private/tmp/next-gen-pr2-py311/bin/python -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` → 64 passed, 18 warnings.
+
+## TDD Cycle Evidence Update
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.2 | `frontend/components/NetworkVisualizer.test.tsx`; `frontend/components/MonitoringConsole.test.tsx` | Component | ✅ CI `frontend-tests` validated after local Vitest was blocked by macOS Rollup/Node signing | ✅ RED tests covered neutral UNKNOWN, UP warning badge, tooltip errors, visible filtering, kill switch, and canonical encoded visual-key lookup | ✅ PR #370 CI `frontend-tests` passed on head `3b50923df00abf84a55d51c676c82c1c1d07e067` | ✅ Canonical `encodeTunnelLinkId(link)` lookup regression was added after fresh review found arbitrary `tunnel_link_id` mismatch risk | ✅ Changed-file `lint-frontend` and Prettier checks passed locally and in CI |
+| 3.4 | `frontend/components/TopologyViewer.test.tsx`; `frontend/components/RelationshipManager.visualEditor.test.tsx`; `frontend/components/CIDetailModal.test.tsx` | Component | ✅ CI `frontend-tests` validated after local Vitest was blocked by macOS Rollup/Node signing | ✅ RED tests covered shared medium/icon/status/tooltip rows and scoped public-IP fallback | ✅ PR #370 CI `frontend-tests` passed on head `3b50923df00abf84a55d51c676c82c1c1d07e067` | ✅ Duplicate visible text expectations were corrected to assert intentional duplicate rendering rather than weakening coverage | ✅ Changed-file `lint-frontend` and Prettier checks passed locally and in CI |
+| 3.5 | PR3 CI + local focused backend pytest | Verify | ✅ CI checks and local backend regression tests are available | ✅ Verification criteria were defined in tasks before PR3 implementation | ✅ CI passed for PR3 frontend/OpenSpec changes; backend focused regression remained green locally | ✅ No backend scope, health normalization, bulk health endpoint, poller, asset, or authority-semantic changes were introduced in PR3 | ✅ Fresh reviews cleared authority/public-IP/polling/key blockers before PR3 CI GREEN |
+
+## Remaining Tasks
+
+- [ ] Merge PR3 after review.
+- [ ] After PR3 merge, update tracker PR #359 and decide whether final tracker PR is ready to undraft/merge to `main`.
