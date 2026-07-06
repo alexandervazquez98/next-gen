@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import main
@@ -213,6 +214,7 @@ def test_build_system_status_payload_includes_event_lock_snapshot_without_changi
     monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
     monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
     monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(main, "_build_time_sync_status", lambda: {"status": "OK"})
     monkeypatch.setattr(
         "services.event_lock.get_event_lock_observability_snapshot",
         lambda: expected_event_lock,
@@ -246,6 +248,7 @@ def test_build_system_status_payload_falls_back_when_event_lock_snapshot_fails(m
     monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
     monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
     monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(main, "_build_time_sync_status", lambda: {"status": "OK"})
 
     def raise_snapshot_error():
         raise RuntimeError("snapshot unavailable")
@@ -280,6 +283,158 @@ def test_build_system_status_payload_falls_back_when_event_lock_snapshot_fails(m
     assert status["collector"]["status"] == "RUNNING"
     assert "Failed to build event lock observability snapshot" in caplog.text
     assert "snapshot unavailable" in caplog.text
+
+
+class _FixedClock:
+    def __init__(self, *values):
+        self._values = list(values)
+
+    def now(self, tz=UTC):
+        value = self._values.pop(0)
+        if tz is not None:
+            return value.astimezone(tz) if value.tzinfo else value.replace(tzinfo=tz)
+        return value
+
+
+class _FakeNeo4jResult:
+    def __init__(self, value):
+        self._value = value
+
+    def single(self):
+        return {"neo4j_time": self._value}
+
+
+class _FakeNeo4jSession:
+    def __init__(self, value=None, error=None):
+        self._value = value
+        self._error = error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def run(self, query):
+        assert query == "RETURN datetime() AS neo4j_time"
+        if self._error:
+            raise self._error
+        return _FakeNeo4jResult(self._value)
+
+
+class _FakeNeo4jDriver:
+    def __init__(self, value=None, error=None):
+        self._value = value
+        self._error = error
+
+    def session(self):
+        return _FakeNeo4jSession(value=self._value, error=self._error)
+
+
+def _time_sync_settings(warning_ms=1000.0, critical_ms=5000.0):
+    return SimpleNamespace(warning_ms=warning_ms, critical_ms=critical_ms)
+
+
+def _time_sync_status_for(neo4j_time, warning_ms=1000.0, critical_ms=5000.0):
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time, backend_time)
+    return main._build_time_sync_status(
+        driver=_FakeNeo4jDriver(neo4j_time),
+        settings=_time_sync_settings(warning_ms, critical_ms),
+        now_func=clock.now,
+    )
+
+
+def test_build_time_sync_status_reports_ok_warning_and_critical_skew():
+    base_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    ok = _time_sync_status_for(base_time + timedelta(milliseconds=500))
+    warning = _time_sync_status_for(base_time + timedelta(milliseconds=1000))
+    critical = _time_sync_status_for(base_time + timedelta(milliseconds=5000))
+
+    assert ok["status"] == "OK"
+    assert ok["skew_ms"] == 500.0
+    assert ok["thresholds_ms"] == {"warning": 1000.0, "critical": 5000.0}
+    assert ok["sources"] == {"reference": "backend", "compared": "neo4j"}
+    assert ok["backend_time"] == "2026-01-01T12:00:00Z"
+    assert ok["neo4j_time"] == "2026-01-01T12:00:00.500000Z"
+    assert ok["error"] is None
+
+    assert warning["status"] == "WARNING"
+    assert warning["skew_ms"] == 1000.0
+    assert critical["status"] == "CRITICAL"
+    assert critical["skew_ms"] == 5000.0
+
+
+def test_build_time_sync_status_returns_unknown_when_neo4j_time_query_fails():
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time)
+
+    status = main._build_time_sync_status(
+        driver=_FakeNeo4jDriver(error=RuntimeError("database unavailable")),
+        settings=_time_sync_settings(),
+        now_func=clock.now,
+    )
+
+    assert status["status"] == "UNKNOWN"
+    assert status["skew_ms"] is None
+    assert status["neo4j_time"] is None
+    assert status["query_latency_ms"] is None
+    assert status["thresholds_ms"] == {"warning": 1000.0, "critical": 5000.0}
+    assert status["error"] == "neo4j_time_query_failed"
+
+
+def test_build_time_sync_status_returns_unknown_for_invalid_temporal_value():
+    status = _time_sync_status_for("not-a-date")
+
+    assert status["status"] == "UNKNOWN"
+    assert status["skew_ms"] is None
+    assert status["neo4j_time"] is None
+    assert status["error"] == "invalid_neo4j_time"
+
+
+def test_build_system_status_payload_includes_time_sync_without_changing_service_fields(
+    monkeypatch,
+):
+    neo4j_time = datetime(2026, 1, 1, 12, 0, 0, 500000, tzinfo=UTC)
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time, backend_time)
+
+    monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
+    monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
+    monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(main, "get_db", lambda: _FakeNeo4jDriver(neo4j_time))
+    monkeypatch.setattr(main, "get_time_sync_settings", lambda: _time_sync_settings())
+    monkeypatch.setattr(main, "_utc_now", clock.now)
+    monkeypatch.setattr(
+        "services.event_lock.get_event_lock_observability_snapshot",
+        lambda: {"alert_state": "OK"},
+    )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr("postgres_db.engine", FakeEngine())
+
+    status = main._build_system_status_payload()
+
+    assert status["time_sync"]["status"] == "OK"
+    assert status["time_sync"]["skew_ms"] == 500.0
+    assert status["neo4j"] == "CONNECTED"
+    assert status["postgres"] == "CONNECTED"
+    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["event_lock"] == {"alert_state": "OK"}
 
 
 def test_get_system_status_returns_event_lock_snapshot_without_recording_history(monkeypatch):
