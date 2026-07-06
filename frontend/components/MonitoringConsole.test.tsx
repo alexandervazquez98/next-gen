@@ -195,8 +195,8 @@ describe("MonitoringConsole tunnel health visuals", () => {
       const visibleLinks = mockUseVisibleTunnelHealth.mock.calls.at(-1)?.[0] ?? [];
       expect(visibleLinks.map((link: any) => link.id)).toEqual(["visible-tunnel"]);
     });
-    expect(screen.getByText("VPN tunnel")).toBeInTheDocument();
-    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getAllByText("VPN tunnel")).toHaveLength(2);
+    expect(screen.getAllByText("UNKNOWN")).toHaveLength(2);
     expect(screen.getByText("Missing public IP")).toBeInTheDocument();
   });
 
@@ -228,7 +228,7 @@ describe("MonitoringConsole tunnel health visuals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Geo View" }));
 
     expect(screen.getByText("Live tunnel health disabled")).toBeInTheDocument();
-    expect(screen.getByText("UP")).toBeInTheDocument();
+    expect(screen.getAllByText("UP")).toHaveLength(2);
     expect(screen.getByText("ICMP failed")).toBeInTheDocument();
     expect(screen.getByText("Unavailable: network")).toBeInTheDocument();
     expect(screen.queryByText("DEGRADED")).not.toBeInTheDocument();

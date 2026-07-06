@@ -90,10 +90,10 @@ describe("CIDetailModal tunnel topology context", () => {
     );
 
     expect(screen.getByText("Public IP")).toBeInTheDocument();
-    expect(screen.getByText("203.0.113.20")).toBeInTheDocument();
-    expect(screen.getByText("Satellite link")).toBeInTheDocument();
+    expect(screen.getAllByText("203.0.113.20")).toHaveLength(2);
+    expect(screen.getAllByText("Satellite link")).toHaveLength(2);
     expect(screen.getByRole("img", { name: "Satellite Link technology icon" })).toBeInTheDocument();
-    expect(screen.getByText("UP")).toBeInTheDocument();
+    expect(screen.getAllByText("UP")).toHaveLength(2);
     expect(screen.getByText("ICMP failed")).toBeInTheDocument();
     expect(screen.queryByText("DEGRADED")).not.toBeInTheDocument();
   });

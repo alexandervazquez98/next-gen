@@ -46,9 +46,9 @@ describe("TopologyViewer tunnel visual contract", () => {
       />,
     );
 
-    expect(screen.getByText("SD-WAN tunnel")).toBeInTheDocument();
+    expect(screen.getAllByText("SD-WAN tunnel")).toHaveLength(2);
     expect(screen.getByRole("img", { name: "SD-WAN Tunnel technology icon" })).toBeInTheDocument();
-    expect(screen.getByText("UP")).toBeInTheDocument();
+    expect(screen.getAllByText("UP")).toHaveLength(2);
     expect(screen.getByText("ICMP failed")).toBeInTheDocument();
     expect(screen.queryByText("DEGRADED")).not.toBeInTheDocument();
   });

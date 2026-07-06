@@ -167,12 +167,12 @@ describe("NetworkVisualizer tunnel health visuals", () => {
 
     render(<NetworkVisualizer />);
 
-    await screen.findByText("VPN tunnel");
+    expect(await screen.findAllByText("VPN tunnel")).toHaveLength(2);
 
     expect(screen.getByTestId("link-count")).toHaveTextContent("2");
     const visibleLinks = mockUseVisibleTunnelHealth.mock.calls.at(-1)?.[0] ?? [];
     expect(visibleLinks.map((link: any) => link.id)).toEqual(["tunnel-visible", "non-tunnel"]);
-    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getAllByText("UNKNOWN")).toHaveLength(2);
     expect(screen.getByText("Missing public IP")).toBeInTheDocument();
     expect(screen.queryByText("DEGRADED")).not.toBeInTheDocument();
   });
@@ -223,8 +223,8 @@ describe("NetworkVisualizer tunnel health visuals", () => {
 
     render(<NetworkVisualizer />);
 
-    expect(await screen.findByText("SD-WAN tunnel")).toBeInTheDocument();
-    expect(screen.getByText("UP")).toBeInTheDocument();
+    expect(await screen.findAllByText("SD-WAN tunnel")).toHaveLength(2);
+    expect(screen.getAllByText("UP")).toHaveLength(2);
     expect(screen.getByText("ICMP failed")).toBeInTheDocument();
     expect(screen.getByText("Unavailable: server")).toBeInTheDocument();
     expect(screen.queryByText("DOWN")).not.toBeInTheDocument();
@@ -256,7 +256,7 @@ describe("NetworkVisualizer tunnel health visuals", () => {
     render(<NetworkVisualizer />);
 
     expect(await screen.findByText("Live tunnel health disabled")).toBeInTheDocument();
-    expect(screen.getByText("Satellite link")).toBeInTheDocument();
-    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getAllByText("Satellite link")).toHaveLength(2);
+    expect(screen.getAllByText("UNKNOWN")).toHaveLength(2);
   });
 });

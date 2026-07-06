@@ -76,9 +76,9 @@ describe("RelationshipManager visual editor entry point", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("VPN tunnel")).toBeInTheDocument();
+    expect(await screen.findAllByText("VPN tunnel")).toHaveLength(2);
     expect(screen.getByRole("img", { name: "VPN Tunnel technology icon" })).toBeInTheDocument();
-    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getAllByText("UNKNOWN")).toHaveLength(2);
     expect(screen.getByText("Missing public IP")).toBeInTheDocument();
   });
 });
