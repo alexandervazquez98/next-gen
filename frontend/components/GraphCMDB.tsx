@@ -28,6 +28,7 @@ import {
 } from "./graphLayout";
 
 interface GraphCMDBProps {
+	// eslint-disable-next-line no-unused-vars -- callback prop names the clicked graph node for API clarity.
 	onNodeClick(node: GraphNode): void;
 }
 
