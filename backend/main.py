@@ -15,6 +15,7 @@ from database import get_db, verify_connection
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from neo4j import Query as Neo4jQuery
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -645,6 +646,26 @@ def _classify_time_sync_skew(skew_ms: float, settings) -> str:
     return "OK"
 
 
+def _time_sync_query_error(exc: Exception) -> str:
+    timeout_sources = [type(exc).__name__, str(exc)]
+    for attr in ("code", "status_code", "status", "gql_status", "gql_status_code"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            timeout_sources.append(str(value))
+
+    normalized_sources = [
+        re.sub(r"[^a-z0-9]", "", source.lower()) for source in timeout_sources
+    ]
+    if any(
+        "timeout" in source
+        or "timedout" in source
+        or "deadline" in source
+        for source in normalized_sources
+    ):
+        return "neo4j_time_query_timeout"
+    return "neo4j_time_query_failed"
+
+
 def _build_time_sync_status(driver=None, settings=None, now_func=None) -> dict:
     """Build backend-vs-Neo4j clock-skew telemetry without affecting health status."""
     settings = settings or get_time_sync_settings()
@@ -654,12 +675,16 @@ def _build_time_sync_status(driver=None, settings=None, now_func=None) -> dict:
     try:
         driver = driver or get_db()
         before = measured_at
+        query = Neo4jQuery(
+            "RETURN datetime() AS neo4j_time",
+            timeout=getattr(settings, "query_timeout_s", 1.0),
+        )
         with driver.session() as session:
-            record = session.run("RETURN datetime() AS neo4j_time").single()
+            record = session.run(query).single()
         after = now_func(UTC)
     except Exception as exc:
         logger.warning("Failed to query Neo4j time for time-sync status: %s", exc)
-        return _empty_time_sync_status(settings, "neo4j_time_query_failed", measured_at)
+        return _empty_time_sync_status(settings, _time_sync_query_error(exc), measured_at)
 
     try:
         raw_neo4j_time = record["neo4j_time"] if record else None
@@ -779,7 +804,14 @@ def _build_system_status_payload() -> dict:
         logger.warning("Failed to build event lock observability snapshot: %s", exc)
         event_lock_snapshot = {"alert_state": "UNKNOWN", "snapshot_error": True}
 
-    time_sync = _build_time_sync_status()
+    if neo4j_status == "CONNECTED":
+        time_sync = _build_time_sync_status()
+    else:
+        time_sync = _empty_time_sync_status(
+            get_time_sync_settings(),
+            "neo4j_disconnected",
+            _utc_now(UTC),
+        )
 
     return {
         "cpu": round(cpu_percent, 1),

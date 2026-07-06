@@ -77,3 +77,4 @@ Containers inherit the host clock. `TZ=UTC` controls timezone/display consistenc
 | `TIME_SYNC_MODE` | `host` | Documents that host-level clock sync is expected. |
 | `TIME_SYNC_WARNING_MS` | `1000` | Warning skew threshold for `/api/system/status.time_sync`. |
 | `TIME_SYNC_CRITICAL_MS` | `5000` | Critical skew threshold for `/api/system/status.time_sync`. |
+| `TIME_SYNC_QUERY_TIMEOUT_S` | `1` | Short Neo4j time-query transaction timeout; timeouts report `UNKNOWN` without changing service health fields. |

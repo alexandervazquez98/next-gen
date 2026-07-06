@@ -47,6 +47,12 @@ Chain strategy: pending
 
 ## Phase 4: Verification
 
-- [ ] 4.1 Run `cd backend && python -m pytest backend/tests/test_system_status.py` or the repo-correct equivalent from `backend/pytest.ini`.
-- [ ] 4.2 If frontend type checks exist in `frontend/package.json`, run the relevant type/test command for `frontend/services/queryResources.ts`.
+- [ ] 4.1 Run `cd backend && python -m pytest backend/tests/test_system_status.py` or the repo-correct equivalent from `backend/pytest.ini`. Latest local attempts remain blocked unless a Python/pytest environment is available; syntax-only `py_compile` is not completion evidence.
+- [ ] 4.2 If frontend type checks exist in `frontend/package.json`, run the relevant type/test command for `frontend/services/queryResources.ts`. Keep unchecked unless Corepack/pnpm validation actually runs; missing tooling should be documented as a blocker.
 - [x] 4.3 Review `openspec/changes/track-time-sync-skew-health/specs/time-sync-skew-health/spec.md` scenarios against implemented tests and mark tasks complete.
+
+## Phase 5: Resilience Review Remediation
+
+- [x] 5.1 Bound the secondary Neo4j time-sync query with a short configured transaction timeout and return `time_sync.status="UNKNOWN"` with `error="neo4j_time_query_timeout"` on timeout/deadline failures.
+- [x] 5.2 Add backend tests proving the time-sync query carries the timeout and that a timeout after successful Neo4j connectivity preserves the rest of the system-status payload.
+- [x] 5.3 Classify Neo4j transaction timeout code/status shapes and `timed out` text variants as `neo4j_time_query_timeout`, with deterministic backend tests.

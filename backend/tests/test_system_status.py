@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import config
 import main
+from fastapi.testclient import TestClient
 from main import (
     _build_disk_io_status,
     _build_system_status_snapshot,
@@ -308,6 +310,7 @@ class _FakeNeo4jSession:
     def __init__(self, value=None, error=None):
         self._value = value
         self._error = error
+        self.last_query_timeout = None
 
     def __enter__(self):
         return self
@@ -316,7 +319,8 @@ class _FakeNeo4jSession:
         return False
 
     def run(self, query):
-        assert query == "RETURN datetime() AS neo4j_time"
+        assert str(query) == "RETURN datetime() AS neo4j_time"
+        self.last_query_timeout = getattr(query, "timeout", None)
         if self._error:
             raise self._error
         return _FakeNeo4jResult(self._value)
@@ -326,13 +330,19 @@ class _FakeNeo4jDriver:
     def __init__(self, value=None, error=None):
         self._value = value
         self._error = error
+        self.last_session = None
 
     def session(self):
-        return _FakeNeo4jSession(value=self._value, error=self._error)
+        self.last_session = _FakeNeo4jSession(value=self._value, error=self._error)
+        return self.last_session
 
 
-def _time_sync_settings(warning_ms=1000.0, critical_ms=5000.0):
-    return SimpleNamespace(warning_ms=warning_ms, critical_ms=critical_ms)
+def _time_sync_settings(warning_ms=1000.0, critical_ms=5000.0, query_timeout_s=1.0):
+    return SimpleNamespace(
+        warning_ms=warning_ms,
+        critical_ms=critical_ms,
+        query_timeout_s=query_timeout_s,
+    )
 
 
 def _time_sync_status_for(neo4j_time, warning_ms=1000.0, critical_ms=5000.0):
@@ -384,6 +394,74 @@ def test_build_time_sync_status_returns_unknown_when_neo4j_time_query_fails():
     assert status["error"] == "neo4j_time_query_failed"
 
 
+def test_build_time_sync_status_bounds_neo4j_time_query_with_configured_timeout():
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    driver = _FakeNeo4jDriver(backend_time)
+    clock = _FixedClock(backend_time, backend_time)
+
+    status = main._build_time_sync_status(
+        driver=driver,
+        settings=_time_sync_settings(query_timeout_s=0.25),
+        now_func=clock.now,
+    )
+
+    assert status["status"] == "OK"
+    assert driver.last_session.last_query_timeout == 0.25
+
+
+def test_build_time_sync_status_returns_unknown_when_neo4j_time_query_times_out():
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time)
+
+    status = main._build_time_sync_status(
+        driver=_FakeNeo4jDriver(error=TimeoutError("query exceeded timeout")),
+        settings=_time_sync_settings(query_timeout_s=0.25),
+        now_func=clock.now,
+    )
+
+    assert status["status"] == "UNKNOWN"
+    assert status["skew_ms"] is None
+    assert status["neo4j_time"] is None
+    assert status["query_latency_ms"] is None
+    assert status["error"] == "neo4j_time_query_timeout"
+
+
+def test_build_time_sync_status_detects_neo4j_transaction_timeout_code():
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time)
+
+    class Neo4jTransactionTimeoutLike(Exception):
+        code = "Neo.ClientError.Transaction.TransactionTimedOut"
+
+    status = main._build_time_sync_status(
+        driver=_FakeNeo4jDriver(
+            error=Neo4jTransactionTimeoutLike("transaction was terminated")
+        ),
+        settings=_time_sync_settings(query_timeout_s=0.25),
+        now_func=clock.now,
+    )
+
+    assert status["status"] == "UNKNOWN"
+    assert status["skew_ms"] is None
+    assert status["neo4j_time"] is None
+    assert status["query_latency_ms"] is None
+    assert status["error"] == "neo4j_time_query_timeout"
+
+
+def test_build_time_sync_status_detects_timed_out_timeout_text_variants():
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time)
+
+    status = main._build_time_sync_status(
+        driver=_FakeNeo4jDriver(error=RuntimeError("transaction timed out")),
+        settings=_time_sync_settings(query_timeout_s=0.25),
+        now_func=clock.now,
+    )
+
+    assert status["status"] == "UNKNOWN"
+    assert status["error"] == "neo4j_time_query_timeout"
+
+
 def test_build_time_sync_status_returns_unknown_for_invalid_temporal_value():
     status = _time_sync_status_for("not-a-date")
 
@@ -391,6 +469,66 @@ def test_build_time_sync_status_returns_unknown_for_invalid_temporal_value():
     assert status["skew_ms"] is None
     assert status["neo4j_time"] is None
     assert status["error"] == "invalid_neo4j_time"
+
+
+def test_build_time_sync_status_normalizes_neo4j_temporal_to_native_value():
+    base_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    class Neo4jTemporalLike:
+        def to_native(self):
+            return base_time + timedelta(milliseconds=250)
+
+    status = _time_sync_status_for(Neo4jTemporalLike())
+
+    assert status["status"] == "OK"
+    assert status["skew_ms"] == 250.0
+    assert status["neo4j_time"] == "2026-01-01T12:00:00.250000Z"
+
+
+def test_build_system_status_payload_skips_time_sync_probe_when_neo4j_is_disconnected(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main,
+        "verify_connection",
+        lambda max_retries=1, retry_delay=0: (_ for _ in ()).throw(RuntimeError("down")),
+    )
+    monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
+    monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(main, "get_time_sync_settings", lambda: _time_sync_settings())
+    monkeypatch.setattr(
+        main,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("time-sync probe should be skipped")),
+    )
+    monkeypatch.setattr(
+        "services.event_lock.get_event_lock_observability_snapshot",
+        lambda: {"alert_state": "OK"},
+    )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr("postgres_db.engine", FakeEngine())
+
+    status = main._build_system_status_payload()
+
+    assert status["neo4j"] == "DISCONNECTED"
+    assert status["postgres"] == "CONNECTED"
+    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["time_sync"]["status"] == "UNKNOWN"
+    assert status["time_sync"]["error"] == "neo4j_disconnected"
 
 
 def test_build_system_status_payload_includes_time_sync_without_changing_service_fields(
@@ -435,6 +573,134 @@ def test_build_system_status_payload_includes_time_sync_without_changing_service
     assert status["postgres"] == "CONNECTED"
     assert status["collector"] == {"status": "RUNNING", "stats": {}}
     assert status["event_lock"] == {"alert_state": "OK"}
+
+
+def test_build_system_status_payload_isolates_connected_neo4j_time_query_timeout(
+    monkeypatch,
+):
+    backend_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = _FixedClock(backend_time)
+
+    monkeypatch.setattr(main, "verify_connection", lambda max_retries=1, retry_delay=0: None)
+    monkeypatch.setattr(main, "_get_disk_io_status", lambda: {"supported": False})
+    monkeypatch.setattr(main, "get_collector_status", lambda: {"status": "RUNNING", "stats": {}})
+    monkeypatch.setattr(
+        main,
+        "get_db",
+        lambda: _FakeNeo4jDriver(error=TimeoutError("query exceeded timeout")),
+    )
+    monkeypatch.setattr(main, "get_time_sync_settings", lambda: _time_sync_settings(query_timeout_s=0.25))
+    monkeypatch.setattr(main, "_utc_now", clock.now)
+    monkeypatch.setattr(
+        "services.event_lock.get_event_lock_observability_snapshot",
+        lambda: {"alert_state": "OK"},
+    )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr("postgres_db.engine", FakeEngine())
+
+    status = main._build_system_status_payload()
+
+    assert status["neo4j"] == "CONNECTED"
+    assert status["postgres"] == "CONNECTED"
+    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["event_lock"] == {"alert_state": "OK"}
+    assert status["time_sync"]["status"] == "UNKNOWN"
+    assert status["time_sync"]["error"] == "neo4j_time_query_timeout"
+
+
+def test_get_system_status_route_includes_time_sync_and_preserves_contract(monkeypatch):
+    payload = {
+        "cpu": 1.1,
+        "ram": 2.2,
+        "disk": 3.3,
+        "disk_io": {"supported": False},
+        "neo4j": "CONNECTED",
+        "postgres": "CONNECTED",
+        "collector": {"status": "RUNNING", "stats": {"metrics_collected": 12}},
+        "event_lock": {"alert_state": "OK"},
+        "time_sync": {
+            "status": "OK",
+            "sources": {"reference": "backend", "compared": "neo4j"},
+            "skew_ms": 42.0,
+            "thresholds_ms": {"warning": 1000.0, "critical": 5000.0},
+            "backend_time": "2026-01-01T12:00:00Z",
+            "neo4j_time": "2026-01-01T12:00:00.042000Z",
+            "measured_at": "2026-01-01T12:00:00Z",
+            "query_latency_ms": 1.0,
+            "error": None,
+        },
+        "startup_time": "startup",
+    }
+    record_calls = []
+
+    monkeypatch.setattr(main, "_build_system_status_payload", lambda: payload)
+    monkeypatch.setattr(
+        main,
+        "_record_system_status_snapshot",
+        lambda *args, **kwargs: record_calls.append((args, kwargs)),
+    )
+
+    response = TestClient(main.app).get("/api/system/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["time_sync"] == payload["time_sync"]
+    assert body["neo4j"] == "CONNECTED"
+    assert body["postgres"] == "CONNECTED"
+    assert body["collector"] == payload["collector"]
+    assert body["startup_time"] == "startup"
+    assert len(record_calls) == 0
+
+
+def test_time_sync_settings_from_env_uses_valid_thresholds(monkeypatch):
+    monkeypatch.setenv("TIME_SYNC_WARNING_MS", "250")
+    monkeypatch.setenv("TIME_SYNC_CRITICAL_MS", "750")
+    monkeypatch.setenv("TIME_SYNC_QUERY_TIMEOUT_S", "0.5")
+
+    settings = config.TimeSyncSettings.from_env()
+
+    assert settings.warning_ms == 250.0
+    assert settings.critical_ms == 750.0
+    assert settings.query_timeout_s == 0.5
+
+
+def test_time_sync_settings_from_env_falls_back_for_invalid_thresholds(monkeypatch):
+    monkeypatch.setenv("TIME_SYNC_WARNING_MS", "6000")
+    monkeypatch.setenv("TIME_SYNC_CRITICAL_MS", "5000")
+
+    settings = config.TimeSyncSettings.from_env()
+
+    assert settings.warning_ms == config.TIME_SYNC_DEFAULT_WARNING_MS
+    assert settings.critical_ms == config.TIME_SYNC_DEFAULT_CRITICAL_MS
+    assert settings.query_timeout_s == config.TIME_SYNC_DEFAULT_QUERY_TIMEOUT_S
+
+
+def test_time_sync_settings_from_env_falls_back_for_unparseable_or_out_of_bounds_values(
+    monkeypatch,
+):
+    monkeypatch.setenv("TIME_SYNC_WARNING_MS", "not-a-number")
+    monkeypatch.setenv("TIME_SYNC_CRITICAL_MS", "600001")
+    monkeypatch.setenv("TIME_SYNC_QUERY_TIMEOUT_S", "0")
+
+    settings = config.TimeSyncSettings.from_env()
+
+    assert settings.warning_ms == config.TIME_SYNC_DEFAULT_WARNING_MS
+    assert settings.critical_ms == config.TIME_SYNC_DEFAULT_CRITICAL_MS
+    assert settings.query_timeout_s == config.TIME_SYNC_DEFAULT_QUERY_TIMEOUT_S
 
 
 def test_get_system_status_returns_event_lock_snapshot_without_recording_history(monkeypatch):
