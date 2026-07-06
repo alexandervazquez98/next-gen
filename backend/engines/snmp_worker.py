@@ -313,9 +313,12 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
     for row in failures:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     # Serialize concurrent writers for the same (ci_id, metric_id, event_type)
-    # triplet before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block
-    # (issue #322). Locks are sorted lexicographically so two batches do not
-    # trigger Postgres deadlock detection when they overlap on different keys.
+    # triplet before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write
+    # (issue #322). The pg_advisory_xact_lock is transaction-scoped: poll_snmp
+    # owns the SQLAlchemy session passed as lock_db and keeps it open through
+    # this Neo4j write, then db.close() releases the lock after the cycle.
+    # Locks are sorted lexicographically so two batches do not trigger Postgres
+    # deadlock detection when they overlap on different keys.
     if lock_db is not None:
         distinct_triplets = sorted(
             {
@@ -448,9 +451,12 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
     for row in availability_events:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
-    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block (issue #322).
-    # Sorted lexicographic acquisition prevents Postgres deadlock detection
-    # from aborting one of two overlapping batches.
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write (issue #322).
+    # The pg_advisory_xact_lock is transaction-scoped: poll_snmp owns the
+    # SQLAlchemy session passed as lock_db and keeps it open through this Neo4j
+    # write, then db.close() releases the lock after the cycle. Sorted
+    # lexicographic acquisition prevents Postgres deadlock detection from
+    # aborting one of two overlapping batches.
     if lock_db is not None:
         distinct_triplets = sorted(
             {
@@ -622,9 +628,12 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
     for row in breaches:
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
     # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
-    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) block (issue #322).
-    # Sorted lexicographic acquisition prevents Postgres deadlock detection
-    # from aborting one of two overlapping batches.
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write (issue #322).
+    # The pg_advisory_xact_lock is transaction-scoped: poll_snmp owns the
+    # SQLAlchemy session passed as lock_db and keeps it open through this Neo4j
+    # write, then db.close() releases the lock after the cycle. Sorted
+    # lexicographic acquisition prevents Postgres deadlock detection from
+    # aborting one of two overlapping batches.
     if lock_db is not None:
         distinct_triplets = sorted(
             {
@@ -816,6 +825,10 @@ def poll_snmp():
     start_time = time.time()
     polling_settings = get_polling_pipeline_settings()
     print(f"[{datetime.now().isoformat()}] Starting Real-World Polling Cycle...")
+    # Cycle-owned SQLAlchemy session. Event triplet locks acquired with
+    # pg_advisory_xact_lock by the refresh helpers are transaction-scoped and
+    # rely on this session staying open through the following Neo4j Event writes;
+    # the finally block closes db only after those writes complete.
     db = SessionLocal()
     metrics_to_save = []
     latest_updates = []

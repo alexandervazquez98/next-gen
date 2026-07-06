@@ -150,12 +150,15 @@ def _acquire_unsorted_locks(
     caller-controlled order. Production writers MUST NOT call this directly;
     call :func:`_acquire_sorted_locks` instead so two concurrent batches
     always converge on lexicographic order and never trip Postgres
-    deadlock detection.
+    deadlock detection. The ``pg_advisory_xact_lock`` is transaction-scoped:
+    the caller-owned ``lock_db`` session must remain open through the following
+    Neo4j Event write, and closing/committing that session releases the lock.
 
     Parameters
     ----------
     lock_db:
-        Open SQLAlchemy ``Session`` whose transaction will hold the locks.
+        Open SQLAlchemy ``Session`` whose transaction will hold the locks
+        until after the protected Event write completes.
     triplets:
         ``(ci_id, metric_id, event_type)`` tuples in EXACTLY the order the
         caller wants the locks acquired. No sorting is performed here.
@@ -180,7 +183,9 @@ def _acquire_sorted_locks(lock_db, rows: Iterable[Mapping[str, Any]]) -> None:
 
     Implementation: extract distinct triplets, sort them, then delegate
     to :func:`_acquire_unsorted_locks` so the acquisition loop is shared
-    with the deadlock-prevention tests.
+    with the deadlock-prevention tests. Production callers keep the
+    caller-owned ``lock_db`` session open through the subsequent Neo4j Event
+    write so transaction-scoped ``pg_advisory_xact_lock`` locks remain held.
     """
     distinct_triplets = sorted(
         {
@@ -323,7 +328,9 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
         Optional open SQLAlchemy ``Session``. When provided, advisory locks
         (``pg_advisory_xact_lock``) are acquired for every distinct
         ``(ci_id, metric_id, event_type)`` triplet in lexicographic order
-        BEFORE each UNWIND query that touches the Event collection. This
+        BEFORE each UNWIND query that touches the Event collection. Because
+        ``pg_advisory_xact_lock`` is transaction-scoped, the caller-owned
+        session must stay open through the protected Neo4j Event write. This
         serializes concurrent writers across poll collectors (issue #322).
         Lock acquisition is sorted lexicographically so two overlapping
         batches contend in the same order and never trigger Postgres
