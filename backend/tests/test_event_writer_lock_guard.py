@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,68 @@ class ProtectedWriterEvidence:
     rationale: str
     evidence_tests: tuple[str, ...]
     lock_symbols_or_wrappers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ApprovedLockPath:
+    module: str
+    acquisition_functions: tuple[str, ...]
+    approved_callers: tuple[str, ...]
+    session_lifetime: str
+
+
+@dataclass(frozen=True)
+class LockCallSite:
+    function: str
+    line: int
+
+
+APPROVED_LOCK_PATHS = {
+    "services/snmp_service.py": ApprovedLockPath(
+        module="services/snmp_service.py",
+        acquisition_functions=("store_metric_result._neo4j_write",),
+        approved_callers=("store_metric_result",),
+        session_lifetime="SessionLocal pg_db remains open through the following Neo4j Event write",
+    ),
+    "engines/snmp_worker.py": ApprovedLockPath(
+        module="engines/snmp_worker.py",
+        acquisition_functions=(
+            "_refresh_snmp_collection_failures",
+            "_refresh_icmp_availability_events",
+            "_refresh_icmp_latency_events",
+        ),
+        approved_callers=("poll_snmp",),
+        session_lifetime="poll_snmp owns SessionLocal db until finally: db.close() after Event writes",
+    ),
+    "polling/event_writer.py": ApprovedLockPath(
+        module="polling/event_writer.py",
+        acquisition_functions=("_acquire_unsorted_locks",),
+        approved_callers=("_acquire_sorted_locks", "batch_update_events"),
+        session_lifetime="caller-owned lock_db remains open through the Event UNWIND writes",
+    ),
+}
+
+INVARIANT_TERMS = ("pg_advisory_xact_lock", "transaction", "session", "Event", "write")
+SESSION_LIFETIME_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "after",
+    "before",
+    "by",
+    "for",
+    "following",
+    "is",
+    "open",
+    "owns",
+    "remains",
+    "stays",
+    "the",
+    "through",
+    "until",
+    "with",
+}
 
 
 PROTECTED_EVENT_WRITERS = {
@@ -242,6 +305,129 @@ def validate_protected_writer_evidence(
         if evidence.lock_symbols_or_wrappers == ("_acquire_unsorted_locks",):
             failures.append(
                 f"{registry_path}: _acquire_unsorted_locks alone is not approved wrapper evidence"
+            )
+    return failures
+
+
+class _LockCallVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self._function_stack: list[str] = []
+        self.call_sites: list[LockCallSite] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._function_stack.append(node.name)
+        self.generic_visit(node)
+        self._function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
+
+    def visit_Call(self, node: ast.Call) -> None:
+        function_name = ""
+        if isinstance(node.func, ast.Name):
+            function_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            function_name = node.func.attr
+        if function_name == "acquire_event_triplet_lock":
+            self.call_sites.append(
+                LockCallSite(".".join(self._function_stack) or "<module>", node.lineno)
+            )
+        self.generic_visit(node)
+
+
+def find_event_triplet_lock_calls(source: str) -> list[LockCallSite]:
+    visitor = _LockCallVisitor()
+    visitor.visit(ast.parse(source))
+    return visitor.call_sites
+
+
+def _source_for_functions(source: str, names: tuple[str, ...]) -> str:
+    tree = ast.parse(source)
+    chunks: list[str] = []
+
+    class FunctionSourceVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self._function_stack: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._function_stack.append(node.name)
+            qualified_name = ".".join(self._function_stack)
+            if qualified_name in names or node.name in names:
+                segment = ast.get_source_segment(source, node)
+                if segment:
+                    chunks.append(segment)
+            self.generic_visit(node)
+            self._function_stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.visit_FunctionDef(node)  # type: ignore[arg-type]
+
+    FunctionSourceVisitor().visit(tree)
+    return "\n".join(chunks)
+
+
+def _significant_session_lifetime_terms(session_lifetime: str) -> set[str]:
+    return {
+        term.lower()
+        for term in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", session_lifetime)
+        if len(term) >= 3 and term.lower() not in SESSION_LIFETIME_STOP_WORDS
+    }
+
+
+def _missing_session_lifetime_terms(session_lifetime: str, scoped_source: str) -> set[str]:
+    scoped_source_lower = scoped_source.lower()
+    return {
+        term
+        for term in _significant_session_lifetime_terms(session_lifetime)
+        if term not in scoped_source_lower and term.rstrip("s") not in scoped_source_lower
+    }
+
+
+def validate_approved_lock_paths(
+    approved_paths: dict[str, ApprovedLockPath] = APPROVED_LOCK_PATHS,
+    backend_root: Path = BACKEND_ROOT,
+) -> list[str]:
+    failures: list[str] = []
+    for registry_path, approval in approved_paths.items():
+        if registry_path != approval.module:
+            failures.append(f"{registry_path}: approval.module must match the registry key")
+        writer_file = _registry_path_to_backend_file(registry_path, backend_root)
+        source = writer_file.read_text(encoding="utf-8")
+        call_sites = find_event_triplet_lock_calls(source)
+        actual_functions = {site.function for site in call_sites}
+        approved_functions = set(approval.acquisition_functions)
+        unapproved = actual_functions - approved_functions
+        if unapproved:
+            details = ", ".join(
+                f"{site.function}:{site.line}" for site in call_sites if site.function in unapproved
+            )
+            failures.append(
+                f"{registry_path}: unapproved acquire_event_triplet_lock call(s): {details}"
+            )
+        missing = approved_functions - actual_functions
+        if missing:
+            failures.append(
+                f"{registry_path}: approved acquisition function(s) missing lock calls: "
+                f"{', '.join(sorted(missing))}"
+            )
+        scoped_source = _source_for_functions(
+            source, approval.acquisition_functions + approval.approved_callers
+        )
+        missing_terms = [term for term in INVARIANT_TERMS if term not in scoped_source]
+        if missing_terms:
+            failures.append(
+                f"{registry_path}: approved lock path documentation missing invariant term(s): "
+                f"{', '.join(missing_terms)}"
+            )
+        missing_lifetime_terms = _missing_session_lifetime_terms(
+            approval.session_lifetime, scoped_source
+        )
+        if not approval.session_lifetime.strip():
+            failures.append(f"{registry_path}: session_lifetime metadata is required")
+        elif missing_lifetime_terms:
+            failures.append(
+                f"{registry_path}: approved lock path missing session lifetime evidence from metadata: "
+                f"{', '.join(sorted(missing_lifetime_terms))}"
             )
     return failures
 
@@ -516,3 +702,120 @@ def test_polling_event_writer_accepts_sorted_wrapper_and_rejects_unsorted_alone(
         "_acquire_sorted_locks is the approved wrapper evidence" in failure for failure in failures
     )
     assert any("_acquire_unsorted_locks alone is not approved" in failure for failure in failures)
+
+
+def test_lock_call_discovery_reports_module_level_and_enclosing_functions():
+    source = """
+acquire_event_triplet_lock(db, "ci", "metric", "EVENT")
+
+def approved():
+    acquire_event_triplet_lock(db, "ci", "metric", "EVENT")
+
+def outer():
+    def inner():
+        acquire_event_triplet_lock(db, "ci", "metric", "EVENT")
+"""
+
+    call_sites = find_event_triplet_lock_calls(source)
+
+    assert call_sites == [
+        LockCallSite("<module>", 2),
+        LockCallSite("approved", 5),
+        LockCallSite("outer.inner", 9),
+    ]
+
+
+def test_approved_lock_path_guard_rejects_module_level_wrong_function_and_missing_wrapper(
+    tmp_path: Path,
+):
+    backend_root = tmp_path / "backend"
+    writer = backend_root / "services" / "writer.py"
+    writer.parent.mkdir(parents=True)
+    writer.write_text(
+        '"""pg_advisory_xact_lock transaction session Event write invariant."""\n'
+        'acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n\n'
+        "def wrong_writer():\n"
+        '    acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n',
+        encoding="utf-8",
+    )
+    approval = {
+        "services/writer.py": ApprovedLockPath(
+            module="services/writer.py",
+            acquisition_functions=("approved_writer",),
+            approved_callers=("approved_caller",),
+            session_lifetime="caller session remains open through Event write",
+        )
+    }
+
+    failures = validate_approved_lock_paths(approval, backend_root)
+
+    assert any("<module>:2" in failure for failure in failures)
+    assert any("wrong_writer:5" in failure for failure in failures)
+    assert any(
+        "approved_writer" in failure and "missing lock calls" in failure for failure in failures
+    )
+
+
+def test_approved_lock_path_guard_accepts_wrapper_with_invariant_documentation(
+    tmp_path: Path,
+):
+    backend_root = tmp_path / "backend"
+    writer = backend_root / "polling" / "event_writer.py"
+    writer.parent.mkdir(parents=True)
+    writer.write_text(
+        "def _acquire_unsorted_locks(lock_db, triplets):\n"
+        '    """Acquire pg_advisory_xact_lock while the transaction and session stay open for the Event write."""\n'
+        '    acquire_event_triplet_lock(lock_db, "ci", "metric", "EVENT")\n\n'
+        "def _acquire_sorted_locks(lock_db, rows):\n"
+        '    """Production wrapper preserves session lifetime through the Event write."""\n'
+        "    _acquire_unsorted_locks(lock_db, sorted(rows))\n\n"
+        "def batch_update_events(driver, envelopes, lock_db=None):\n"
+        '    """Caller-owned lock_db session remains open through Event UNWIND write."""\n'
+        "    _acquire_sorted_locks(lock_db, envelopes)\n",
+        encoding="utf-8",
+    )
+    approval = {
+        "polling/event_writer.py": ApprovedLockPath(
+            module="polling/event_writer.py",
+            acquisition_functions=("_acquire_unsorted_locks",),
+            approved_callers=("_acquire_sorted_locks", "batch_update_events"),
+            session_lifetime="caller-owned lock_db remains open through Event UNWIND writes",
+        )
+    }
+
+    assert validate_approved_lock_paths(approval, backend_root) == []
+
+
+def test_approved_lock_path_guard_rejects_approved_function_without_session_lifetime(
+    tmp_path: Path,
+):
+    backend_root = tmp_path / "backend"
+    writer = backend_root / "services" / "writer.py"
+    writer.parent.mkdir(parents=True)
+    writer.write_text(
+        "def approved_writer():\n"
+        '    """Acquire pg_advisory_xact_lock in a transaction/session for the Event write."""\n'
+        '    acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n\n'
+        "def approved_caller():\n"
+        '    """Mentions session lifetime and Event write, but owns no database context."""\n'
+        "    approved_writer()\n",
+        encoding="utf-8",
+    )
+    approval = {
+        "services/writer.py": ApprovedLockPath(
+            module="services/writer.py",
+            acquisition_functions=("approved_writer",),
+            approved_callers=("approved_caller",),
+            session_lifetime="SessionLocal db remains open through the following Neo4j Event write",
+        )
+    }
+
+    failures = validate_approved_lock_paths(approval, backend_root)
+
+    assert any("session lifetime evidence" in failure for failure in failures)
+
+
+def test_current_production_lock_paths_match_approved_metadata_and_invariant_docs():
+    failures = validate_approved_lock_paths()
+
+    assert failures == []
