@@ -399,11 +399,11 @@ def validate_approved_lock_paths(
         unapproved = actual_functions - approved_functions
         if unapproved:
             details = ", ".join(
-                f"{site.function}:{site.line}"
-                for site in call_sites
-                if site.function in unapproved
+                f"{site.function}:{site.line}" for site in call_sites if site.function in unapproved
             )
-            failures.append(f"{registry_path}: unapproved acquire_event_triplet_lock call(s): {details}")
+            failures.append(
+                f"{registry_path}: unapproved acquire_event_triplet_lock call(s): {details}"
+            )
         missing = approved_functions - actual_functions
         if missing:
             failures.append(
@@ -734,7 +734,7 @@ def test_approved_lock_path_guard_rejects_module_level_wrong_function_and_missin
     writer.write_text(
         '"""pg_advisory_xact_lock transaction session Event write invariant."""\n'
         'acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n\n'
-        'def wrong_writer():\n'
+        "def wrong_writer():\n"
         '    acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n',
         encoding="utf-8",
     )
@@ -751,7 +751,9 @@ def test_approved_lock_path_guard_rejects_module_level_wrong_function_and_missin
 
     assert any("<module>:2" in failure for failure in failures)
     assert any("wrong_writer:5" in failure for failure in failures)
-    assert any("approved_writer" in failure and "missing lock calls" in failure for failure in failures)
+    assert any(
+        "approved_writer" in failure and "missing lock calls" in failure for failure in failures
+    )
 
 
 def test_approved_lock_path_guard_accepts_wrapper_with_invariant_documentation(
@@ -761,15 +763,15 @@ def test_approved_lock_path_guard_accepts_wrapper_with_invariant_documentation(
     writer = backend_root / "polling" / "event_writer.py"
     writer.parent.mkdir(parents=True)
     writer.write_text(
-        'def _acquire_unsorted_locks(lock_db, triplets):\n'
+        "def _acquire_unsorted_locks(lock_db, triplets):\n"
         '    """Acquire pg_advisory_xact_lock while the transaction and session stay open for the Event write."""\n'
         '    acquire_event_triplet_lock(lock_db, "ci", "metric", "EVENT")\n\n'
-        'def _acquire_sorted_locks(lock_db, rows):\n'
+        "def _acquire_sorted_locks(lock_db, rows):\n"
         '    """Production wrapper preserves session lifetime through the Event write."""\n'
-        '    _acquire_unsorted_locks(lock_db, sorted(rows))\n\n'
-        'def batch_update_events(driver, envelopes, lock_db=None):\n'
+        "    _acquire_unsorted_locks(lock_db, sorted(rows))\n\n"
+        "def batch_update_events(driver, envelopes, lock_db=None):\n"
         '    """Caller-owned lock_db session remains open through Event UNWIND write."""\n'
-        '    _acquire_sorted_locks(lock_db, envelopes)\n',
+        "    _acquire_sorted_locks(lock_db, envelopes)\n",
         encoding="utf-8",
     )
     approval = {
@@ -791,12 +793,12 @@ def test_approved_lock_path_guard_rejects_approved_function_without_session_life
     writer = backend_root / "services" / "writer.py"
     writer.parent.mkdir(parents=True)
     writer.write_text(
-        'def approved_writer():\n'
+        "def approved_writer():\n"
         '    """Acquire pg_advisory_xact_lock in a transaction/session for the Event write."""\n'
         '    acquire_event_triplet_lock(db, "ci", "metric", "EVENT")\n\n'
-        'def approved_caller():\n'
+        "def approved_caller():\n"
         '    """Mentions session lifetime and Event write, but owns no database context."""\n'
-        '    approved_writer()\n',
+        "    approved_writer()\n",
         encoding="utf-8",
     )
     approval = {
