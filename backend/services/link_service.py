@@ -136,6 +136,9 @@ def get_full_graph(
     """
     is_admin = current_user.role == "ADMIN" if current_user else False
     allowed_locations = current_user.allowed_locations if current_user else None
+    if not is_admin and allowed_locations == []:
+        return {"nodes": [], "links": []}
+
     raw_nodes, raw_links = topology_repo.get_filtered_graph_data(
         layer=layer,
         location=location,
@@ -184,6 +187,7 @@ def get_full_graph(
                 "location": node_props.get("location"),
                 "location_name": node_props.get("location_name"),
                 "ip": node_props.get("ip"),
+                "public_ip": node_props.get("public_ip"),
                 "metrics": node_props.get("metrics", []),
                 "metadata": {k: v for k, v in node_props.items() if not k.startswith("_")},
             }
