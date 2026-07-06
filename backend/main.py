@@ -653,13 +653,9 @@ def _time_sync_query_error(exc: Exception) -> str:
         if value is not None:
             timeout_sources.append(str(value))
 
-    normalized_sources = [
-        re.sub(r"[^a-z0-9]", "", source.lower()) for source in timeout_sources
-    ]
+    normalized_sources = [re.sub(r"[^a-z0-9]", "", source.lower()) for source in timeout_sources]
     if any(
-        "timeout" in source
-        or "timedout" in source
-        or "deadline" in source
+        "timeout" in source or "timedout" in source or "deadline" in source
         for source in normalized_sources
     ):
         return "neo4j_time_query_timeout"

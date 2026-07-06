@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import config
 import main
+import pytest
 from fastapi.testclient import TestClient
 from main import (
     _build_disk_io_status,
@@ -306,6 +307,20 @@ class _FakeNeo4jResult:
         return {"neo4j_time": self._value}
 
 
+class _FakeNeo4jQuery:
+    def __init__(self, text, timeout=None):
+        self.text = text
+        self.timeout = timeout
+
+    def __str__(self):
+        return self.text
+
+
+@pytest.fixture(autouse=True)
+def _patch_neo4j_query(monkeypatch):
+    monkeypatch.setattr(main, "Neo4jQuery", _FakeNeo4jQuery)
+
+
 class _FakeNeo4jSession:
     def __init__(self, value=None, error=None):
         self._value = value
@@ -590,7 +605,9 @@ def test_build_system_status_payload_isolates_connected_neo4j_time_query_timeout
         "get_db",
         lambda: _FakeNeo4jDriver(error=TimeoutError("query exceeded timeout")),
     )
-    monkeypatch.setattr(main, "get_time_sync_settings", lambda: _time_sync_settings(query_timeout_s=0.25))
+    monkeypatch.setattr(
+        main, "get_time_sync_settings", lambda: _time_sync_settings(query_timeout_s=0.25)
+    )
     monkeypatch.setattr(main, "_utc_now", clock.now)
     monkeypatch.setattr(
         "services.event_lock.get_event_lock_observability_snapshot",
