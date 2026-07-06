@@ -190,7 +190,7 @@ resolve_backup_dir() {
             # literal path which the caller will see as missing.
             case "$value" in
                 "~") value=$HOME ;;
-                "~/"*) value=$HOME/${value#"~/"} ;;
+                "~/"*) value=$HOME/${value#\~/} ;;
             esac
             printf '%s\n' "$value"
             return

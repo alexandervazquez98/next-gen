@@ -16,6 +16,8 @@ SCRIPT_UNDER_TEST="$REPO_ROOT/scripts/check-frontend-deps.sh"
 # ---- harness ---------------------------------------------------------------
 
 TEMP_DIRS=()
+# ShellCheck misses trap-registered functions and reports cleanup commands as unreachable.
+# shellcheck disable=SC2317
 cleanup_all() {
   local D
   for D in "${TEMP_DIRS[@]:-}"; do
@@ -149,7 +151,7 @@ test_recovery_path() {
   local NAME="recovery: missing sonner -> install + sentinel + exit 0"
   TOTAL=$((TOTAL + 1))
 
-  local FIXTURE SHIM_DIR SCRIPT SENTINEL HASH OUT ERR EXIT_CODE TARGET SENTINEL_VALUE
+  local FIXTURE SHIM_DIR SCRIPT SENTINEL HASH OUT ERR EXIT_CODE SENTINEL_VALUE
   FIXTURE=$(mktemp -d); TEMP_DIRS+=("$FIXTURE")
   SHIM_DIR=$(setup_shim success)
   setup_fixture "$FIXTURE"
