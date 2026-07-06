@@ -331,3 +331,44 @@ PR3 only: frontend topology surfaces consume the existing shared tunnel visual c
 - [ ] Run focused frontend Vitest in a CI-capable environment; if passing, mark 3.2 and 3.4 complete.
 - [ ] Complete PR3 verification by recording passing frontend evidence, then mark 3.5 complete.
 - [ ] Run final PR review/CI before creating or updating PR3.
+
+---
+
+## PR3 CI GREEN Validation — 2026-07-06
+
+## Completed Task Checkboxes
+
+- [x] 3.2 GREEN completed: CI validated NetworkVisualizer and MonitoringConsole surface integrations.
+- [x] 3.4 GREEN completed: CI validated TopologyViewer, RelationshipManager, and CIDetailModal shared visual contract integrations.
+- [x] 3.5 VERIFY completed: PR3 CI and local lint/format evidence passed without adding backend health normalization, bulk health endpoints, pollers, assets, or authority semantic changes.
+
+## CI Evidence
+
+PR #370 head `3b50923df00abf84a55d51c676c82c1c1d07e067` completed successfully for the checks triggered by the PR3 frontend/OpenSpec change set:
+
+- `frontend-tests` → success
+- `smoke` → success
+- `lint-frontend` → success
+- `lint-backend` → success
+- `lint-verify (PR1 gate)` → success
+- `ci-verify (PR3 gate)` → success
+- `shellcheck` → success
+- `yamllint` → success
+- `actionlint` → success
+
+Backend focused regression evidence remains from PR3 local verification:
+
+- `/private/tmp/next-gen-pr2-py311/bin/python -m pytest backend/tests/test_routers_nodes.py backend/tests/test_routers_links.py` → 64 passed, 18 warnings.
+
+## TDD Cycle Evidence Update
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.2 | `frontend/components/NetworkVisualizer.test.tsx`; `frontend/components/MonitoringConsole.test.tsx` | Component | ✅ CI `frontend-tests` validated after local Vitest was blocked by macOS Rollup/Node signing | ✅ RED tests covered neutral UNKNOWN, UP warning badge, tooltip errors, visible filtering, kill switch, and canonical encoded visual-key lookup | ✅ PR #370 CI `frontend-tests` passed on head `3b50923df00abf84a55d51c676c82c1c1d07e067` | ✅ Canonical `encodeTunnelLinkId(link)` lookup regression was added after fresh review found arbitrary `tunnel_link_id` mismatch risk | ✅ Changed-file `lint-frontend` and Prettier checks passed locally and in CI |
+| 3.4 | `frontend/components/TopologyViewer.test.tsx`; `frontend/components/RelationshipManager.visualEditor.test.tsx`; `frontend/components/CIDetailModal.test.tsx` | Component | ✅ CI `frontend-tests` validated after local Vitest was blocked by macOS Rollup/Node signing | ✅ RED tests covered shared medium/icon/status/tooltip rows and scoped public-IP fallback | ✅ PR #370 CI `frontend-tests` passed on head `3b50923df00abf84a55d51c676c82c1c1d07e067` | ✅ Duplicate visible text expectations were corrected to assert intentional duplicate rendering rather than weakening coverage | ✅ Changed-file `lint-frontend` and Prettier checks passed locally and in CI |
+| 3.5 | PR3 CI + local focused backend pytest | Verify | ✅ CI checks and local backend regression tests are available | ✅ Verification criteria were defined in tasks before PR3 implementation | ✅ CI passed for PR3 frontend/OpenSpec changes; backend focused regression remained green locally | ✅ No backend scope, health normalization, bulk health endpoint, poller, asset, or authority-semantic changes were introduced in PR3 | ✅ Fresh reviews cleared authority/public-IP/polling/key blockers before PR3 CI GREEN |
+
+## Remaining Tasks
+
+- [ ] Merge PR3 after review.
+- [ ] After PR3 merge, update tracker PR #359 and decide whether final tracker PR is ready to undraft/merge to `main`.
