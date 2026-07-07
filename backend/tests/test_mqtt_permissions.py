@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.testclient import TestClient
 import pytest
-
 import seed_roles
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from models.user import User, UserPermission
 from services import mqtt_mapping_service
-
 
 
 def _make_user(username: str = "operator", role: str = "OPERATOR", permissions=None):
@@ -92,8 +90,10 @@ def test_require_mqtt_permission_router_negative_path_is_403():
     def _forbidden_user() -> User:
         return _make_user(permissions=[UserPermission.EVENT_VIEW])
 
+    forbidden_user_dependency = Depends(_forbidden_user)
+
     @app.get("/mqtt/read")
-    def protected_endpoint(current_user: User = Depends(_forbidden_user)):
+    def protected_endpoint(current_user: User = forbidden_user_dependency):
         mqtt_mapping_service.require_mqtt_permission("MQTT_READ", current_user)
         return {"ok": True}
 
