@@ -131,5 +131,3 @@ class PasswordChangeRequest(BaseModel):
 
 class UserResetRequest(BaseModel):
     new_password: str
-
-

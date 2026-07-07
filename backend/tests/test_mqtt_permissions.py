@@ -68,8 +68,9 @@ def test_require_mqtt_read_falls_back_to_compatibility_map_on_explicit_missing(m
     mqtt_mapping_service.require_mqtt_permission("MQTT_READ", user)
 
 
-
-def test_require_mqtt_mapping_manage_falls_back_to_compatibility_map_on_explicit_missing(monkeypatch):
+def test_require_mqtt_mapping_manage_falls_back_to_compatibility_map_on_explicit_missing(
+    monkeypatch,
+):
     """Fallback must enforce mapping-manage boundary through central constants."""
 
     monkeypatch.setattr(
@@ -151,7 +152,9 @@ class _SeedRoleDriver:
 
 
 @pytest.mark.asyncio
-async def test_reseed_existing_system_operator_adds_mqtt_permissions_without_clobbering_unrelated_permissions(monkeypatch):
+async def test_reseed_existing_system_operator_adds_mqtt_permissions_without_clobbering_unrelated_permissions(
+    monkeypatch,
+):
     """Reseeding must upgrade protected OPERATOR roles additively for PR2 MQTT permissions."""
 
     existing_operator_permissions = [
@@ -185,7 +188,9 @@ async def test_reseed_existing_system_operator_adds_mqtt_permissions_without_clo
 
 
 @pytest.mark.asyncio
-async def test_reseed_existing_system_operator_only_adds_explicit_mqtt_upgrade_permissions(monkeypatch):
+async def test_reseed_existing_system_operator_only_adds_explicit_mqtt_upgrade_permissions(
+    monkeypatch,
+):
     """Protected OPERATOR reseeds must not backfill unrelated missing seeded permissions."""
 
     session = _SeedRoleSession(
@@ -217,7 +222,9 @@ async def test_reseed_existing_system_operator_only_adds_explicit_mqtt_upgrade_p
 
 
 @pytest.mark.asyncio
-async def test_reseed_existing_system_admin_adds_mqtt_permissions_without_clobbering_unrelated_permissions(monkeypatch):
+async def test_reseed_existing_system_admin_adds_mqtt_permissions_without_clobbering_unrelated_permissions(
+    monkeypatch,
+):
     """Reseeding must upgrade protected ADMIN roles additively for PR2 MQTT permissions."""
 
     existing_admin_permissions = [
@@ -239,9 +246,7 @@ async def test_reseed_existing_system_admin_adds_mqtt_permissions_without_clobbe
 
     await seed_roles.seed_roles()
 
-    admin_updates = [
-        update for update in session.permission_updates if update["name"] == "ADMIN"
-    ]
+    admin_updates = [update for update in session.permission_updates if update["name"] == "ADMIN"]
     assert len(admin_updates) == 1
     updated_permissions = admin_updates[0]["permissions"]
     assert UserPermission.MQTT_READ.value in updated_permissions
@@ -251,7 +256,9 @@ async def test_reseed_existing_system_admin_adds_mqtt_permissions_without_clobbe
 
 
 @pytest.mark.asyncio
-async def test_reseed_existing_system_admin_only_adds_explicit_mqtt_upgrade_permissions(monkeypatch):
+async def test_reseed_existing_system_admin_only_adds_explicit_mqtt_upgrade_permissions(
+    monkeypatch,
+):
     """Protected ADMIN reseeds must not backfill all missing admin permissions."""
 
     session = _SeedRoleSession(
@@ -283,7 +290,9 @@ async def test_reseed_existing_system_admin_only_adds_explicit_mqtt_upgrade_perm
 
 
 @pytest.mark.asyncio
-async def test_reseed_existing_system_operator_does_not_overwrite_protected_role_metadata(monkeypatch):
+async def test_reseed_existing_system_operator_does_not_overwrite_protected_role_metadata(
+    monkeypatch,
+):
     """System-role upgrades may add permissions but must not rewrite protected role metadata."""
 
     session = _SeedRoleSession(

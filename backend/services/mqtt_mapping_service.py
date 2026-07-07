@@ -28,12 +28,11 @@ _SUPPORTED_MQTT_PERMISSION_KINDS = set(MQTT_PERMISSION_COMPATIBILITY_MAP)
 
 def _supports_explicit_mqtt_permissions() -> bool:
     """Return True when the permission enum includes native MQTT permission values."""
-    return (
-        isinstance(getattr(UserPermission, MQTT_READ_PERMISSION_KIND, None), UserPermission)
-        and isinstance(
-            getattr(UserPermission, MQTT_MAPPING_MANAGE_PERMISSION_KIND, None),
-            UserPermission,
-        )
+    return isinstance(
+        getattr(UserPermission, MQTT_READ_PERMISSION_KIND, None), UserPermission
+    ) and isinstance(
+        getattr(UserPermission, MQTT_MAPPING_MANAGE_PERMISSION_KIND, None),
+        UserPermission,
     )
 
 
