@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.12] — 2026-07-07
+
+### Fixed
+
+- **AI chat harness guardrails** (PR #376, closes #375):
+  - Applies `ai_guard_service` before `/api/ai/chat` executes backend-owned operational harnesses.
+  - Keeps entitlement failures as HTTP 403 while returning conversational HTTP 200 denials with structured `harness_result.denied=true` for guardrail blocks, escalations, or guard-unavailable fail-closed paths.
+  - Canonicalizes availability targets as `ci:<ci.id>` and treats missing, blank, or whitespace-only CI IDs as non-executable so no ping runs without a guardable target.
+  - Fully guards availability batches before any ping and prevents partial execution when any target is denied, escalated, guard-unavailable, unresolved, or non-canonical.
+  - Guards event-list requests with `event_query:*` targets without emitting cooldown-producing success records, preserving repeat event-list UX.
+  - Adds OpenSpec/SDD artifacts and canonical `ai-chat-harness-guardrails` spec for the safety contract.
+  - Verification: PR #376 CI passed (`backend-tests`, `ci-verify`, lint, shellcheck, yamllint, actionlint, smoke); targeted local suite `backend/tests/test_ai_chat_service.py` passed with 74 tests.
+
 ## [1.13.5] — 2026-06-28
 
 ### Fixed
