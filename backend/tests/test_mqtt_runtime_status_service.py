@@ -19,7 +19,6 @@ class _RuntimeRepoStub:
         return kwargs
 
 
-
 def test_record_heartbeat_clears_error_metadata():
     """record_heartbeat must ask repository to clear reason/error metadata."""
     repo = _RuntimeRepoStub()

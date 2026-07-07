@@ -250,9 +250,7 @@ class MqttMappingRepo:
                 ),
             )
 
-    def get_approved(
-        self, source_device_id: str, source_metric_id: str
-    ) -> dict[str, Any] | None:
+    def get_approved(self, source_device_id: str, source_metric_id: str) -> dict[str, Any] | None:
         with self._session() as tx:
             query = """
                 // mqtt-mapping-get-approved
@@ -399,7 +397,9 @@ class MqttMappingRepo:
                 raise RuntimeError("Failed to approve mapping")
 
             if (row.get("conflict_count") or 0) > 0:
-                raise MappingConflictError("Another approved mapping already exists for this source pair")
+                raise MappingConflictError(
+                    "Another approved mapping already exists for this source pair"
+                )
 
             tx.commit()
             return self._record(

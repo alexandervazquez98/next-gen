@@ -87,7 +87,14 @@ class _FakeSession:
             clear_reason_code = bool(params.pop("clear_reason_code", False))
 
             for key, value in params.items():
-                if key in {"clear_last_error", "clear_reason_code", "mapped_writes_delta", "unmapped_skips_total_delta", "failed_writes_total_delta", "service_name"}:
+                if key in {
+                    "clear_last_error",
+                    "clear_reason_code",
+                    "mapped_writes_delta",
+                    "unmapped_skips_total_delta",
+                    "failed_writes_total_delta",
+                    "service_name",
+                }:
                     continue
                 if value is None:
                     continue
@@ -102,11 +109,17 @@ class _FakeSession:
                 self._row["reason_code"] = None
 
             if mapped_delta is not None:
-                self._row["mapped_writes_total"] = int(self._row.get("mapped_writes_total", 0)) + mapped_delta
+                self._row["mapped_writes_total"] = (
+                    int(self._row.get("mapped_writes_total", 0)) + mapped_delta
+                )
             if unmapped_delta is not None:
-                self._row["unmapped_skips_total"] = int(self._row.get("unmapped_skips_total", 0)) + unmapped_delta
+                self._row["unmapped_skips_total"] = (
+                    int(self._row.get("unmapped_skips_total", 0)) + unmapped_delta
+                )
             if failed_delta is not None:
-                self._row["failed_writes_total"] = int(self._row.get("failed_writes_total", 0)) + failed_delta
+                self._row["failed_writes_total"] = (
+                    int(self._row.get("failed_writes_total", 0)) + failed_delta
+                )
 
             return _FakeQueryResult(self._row)
 
@@ -173,7 +186,9 @@ def test_heartbeat_updates_connection_and_last_message(repo):
     """Marking heartbeat updates runtime heartbeat and keeps subscriber running."""
     now = datetime(2026, 7, 1, 10, 0, tzinfo=UTC)
 
-    repo.update_status(running=True, connected=True, last_message_at=now, subscribed_patterns=["rtu/+/+/telemetry"])
+    repo.update_status(
+        running=True, connected=True, last_message_at=now, subscribed_patterns=["rtu/+/+/telemetry"]
+    )
     status = repo.get_status(stale_after_seconds=120, now=now)
 
     assert status["running"] is True

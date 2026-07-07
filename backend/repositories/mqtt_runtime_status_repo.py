@@ -212,7 +212,9 @@ class MqttRuntimeStatusRepo:
         }
 
     @staticmethod
-    def _is_stale(last_message_at: Any, stale_after_seconds: int, now: datetime | None = None) -> bool:
+    def _is_stale(
+        last_message_at: Any, stale_after_seconds: int, now: datetime | None = None
+    ) -> bool:
         if last_message_at is None:
             return True
         if now is None:
@@ -231,12 +233,16 @@ class MqttRuntimeStatusRepo:
         db.execute(text(_CREATE_STATUS_TABLE_SQL.strip()))
 
     def _read_row(self, db: Session) -> dict[str, Any] | None:
-        row = self._extract_row(db.execute(text(_SELECT_STATUS_SQL.strip()), {"service_name": self.service_name}))
+        row = self._extract_row(
+            db.execute(text(_SELECT_STATUS_SQL.strip()), {"service_name": self.service_name})
+        )
         if row is None:
             return None
         return self._row_to_dict(row)
 
-    def get_status(self, stale_after_seconds: int = 90, now: datetime | None = None) -> dict[str, Any]:
+    def get_status(
+        self, stale_after_seconds: int = 90, now: datetime | None = None
+    ) -> dict[str, Any]:
         now = now or self._now()
         db = self._get_db()
         try:
@@ -316,11 +322,22 @@ class MqttRuntimeStatusRepo:
                         "connected": connected if connected is not None else base["connected"],
                         "subscribed_patterns": subscribed_patterns or base["subscribed_patterns"],
                         "last_message_at": self._to_iso(last_message_at) or base["last_message_at"],
-                        "last_error": None if clear_last_error else (last_error if last_error is not None else base["last_error"]),
-                        "reason_code": None if clear_reason_code else (reason_code if reason_code is not None else base["reason_code"]),
-                        "mapped_writes_total": int(base["mapped_writes_total"]) + int(mapped_writes_delta or 0),
-                        "unmapped_skips_total": int(base["unmapped_skips_total"]) + int(unmapped_skips_total_delta or 0),
-                        "failed_writes_total": int(base["failed_writes_total"]) + int(failed_writes_total_delta or 0),
+                        "last_error": (
+                            None
+                            if clear_last_error
+                            else (last_error if last_error is not None else base["last_error"])
+                        ),
+                        "reason_code": (
+                            None
+                            if clear_reason_code
+                            else (reason_code if reason_code is not None else base["reason_code"])
+                        ),
+                        "mapped_writes_total": int(base["mapped_writes_total"])
+                        + int(mapped_writes_delta or 0),
+                        "unmapped_skips_total": int(base["unmapped_skips_total"])
+                        + int(unmapped_skips_total_delta or 0),
+                        "failed_writes_total": int(base["failed_writes_total"])
+                        + int(failed_writes_total_delta or 0),
                     }
                 )
                 db.execute(
@@ -348,9 +365,11 @@ class MqttRuntimeStatusRepo:
                         "configured": configured,
                         "running": running,
                         "connected": connected,
-                        "subscribed_patterns": self._to_patterns(subscribed_patterns)
-                        if subscribed_patterns is not None
-                        else None,
+                        "subscribed_patterns": (
+                            self._to_patterns(subscribed_patterns)
+                            if subscribed_patterns is not None
+                            else None
+                        ),
                         "last_message_at": self._to_iso(last_message_at),
                         "last_error": last_error,
                         "clear_last_error": clear_last_error,
@@ -366,7 +385,7 @@ class MqttRuntimeStatusRepo:
             db.commit()
             # Return freshly initialized object with an intentionally long freshness window;
             # staleness is decided by caller on read.
-            return self.get_status(stale_after_seconds=2 ** 31 - 1)
+            return self.get_status(stale_after_seconds=2**31 - 1)
         finally:
             db.close()
 
@@ -417,5 +436,7 @@ def get_mqtt_runtime_status_repo(
 ) -> MqttRuntimeStatusRepo:
     global _status_repo
     if _status_repo is None:
-        _status_repo = MqttRuntimeStatusRepo(service_name=service_name, session_factory=session_factory)
+        _status_repo = MqttRuntimeStatusRepo(
+            service_name=service_name, session_factory=session_factory
+        )
     return _status_repo

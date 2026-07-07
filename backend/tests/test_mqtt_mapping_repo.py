@@ -308,7 +308,10 @@ def test_approve_mapping_already_approved_uses_only_read_path(mock_neo4j_driver)
 
     assert result["status"] == "APPROVED"
     assert len(mock_neo4j_driver.mock_session.queries) == 1
-    assert "merge (l:mqttmappingsourcelock)" not in mock_neo4j_driver.mock_session.queries[0]["query"].lower()
+    assert (
+        "merge (l:mqttmappingsourcelock)"
+        not in mock_neo4j_driver.mock_session.queries[0]["query"].lower()
+    )
 
 
 def test_approve_mapping_marks_status_and_increments_version(mock_neo4j_driver):
@@ -343,7 +346,9 @@ def test_approve_mapping_marks_status_and_increments_version(mock_neo4j_driver):
                 "status": "APPROVED",
                 "version": 2,
                 "approved_by": APPROVED_BY,
-                "approved_at": datetime(2026, 7, 1, 10, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z"),
+                "approved_at": datetime(2026, 7, 1, 10, 0, tzinfo=UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "target_ci_id": TARGET_CI_ID,
                 "target_metric_def_id": TARGET_METRIC_DEF_ID,
                 "conflict_count": 0,
@@ -392,6 +397,7 @@ def test_approve_mapping_rejected_when_already_revoked(mock_neo4j_driver):
     with pytest.raises(MappingConflictError):
         repo.approve(mapping_id="map-004", approved_by=APPROVED_BY)
 
+
 # ── revoke ───────────────────────────────────────────────────────────────────
 
 
@@ -415,7 +421,7 @@ def test_revoke_mapping_marks_revoked_and_bumps_version(mock_neo4j_driver):
         ],
     )
     mock_neo4j_driver.mock_session.set_response(
-        "set m.status = \"REVOKED\"",
+        'set m.status = "REVOKED"',
         [
             {
                 "id": "map-003",
