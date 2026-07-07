@@ -145,6 +145,7 @@ docker-compose.override.yml
 .atl/
 .engram/
 .pi/
+.codegraph/
 .worktrees/
 context.md
 progress.md
