@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-
 pytestmark = [pytest.mark.unit]
 
 

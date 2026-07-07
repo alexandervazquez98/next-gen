@@ -6,15 +6,14 @@ share heartbeat visibility.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
-from typing import Any, Callable
-
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from postgres_db import SessionLocal
-
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 _DEFAULT_SERVICE_NAME = "mqtt-subscriber"
 

@@ -82,7 +82,7 @@ def test_create_draft_persists_draft_status(mock_neo4j_driver):
 
 def test_create_draft_rejects_duplicate_mapping_id(mock_neo4j_driver):
     """create_draft must not overwrite existing mapping IDs (including DRAFT/REVOKED)."""
-    from repositories.mqtt_mapping_repo import MqttMappingRepo, MappingConflictError
+    from repositories.mqtt_mapping_repo import MappingConflictError, MqttMappingRepo
 
     mock_neo4j_driver.mock_session.set_response(
         "match (m:mqttmetricmapping) where m.id = $mapping_id",
@@ -118,7 +118,7 @@ def test_create_draft_rejects_duplicate_mapping_id(mock_neo4j_driver):
 
 def test_create_draft_rejects_missing_source(mock_neo4j_driver):
     """create_draft should reject mappings when source device does not exist."""
-    from repositories.mqtt_mapping_repo import MqttMappingRepo, MappingNotFoundError
+    from repositories.mqtt_mapping_repo import MappingNotFoundError, MqttMappingRepo
 
     # Source missing; target checks may exist but are irrelevant if source is first.
     mock_neo4j_driver.mock_session.set_response("match (d:device)", [])
@@ -180,7 +180,7 @@ def test_get_approved_returns_only_matching_source_pair(mock_neo4j_driver):
 
 def test_approve_mapping_rejects_conflict(mock_neo4j_driver):
     """approve must reject second APPROVED mapping for same source pair."""
-    from repositories.mqtt_mapping_repo import MqttMappingRepo, MappingConflictError
+    from repositories.mqtt_mapping_repo import MappingConflictError, MqttMappingRepo
 
     # Existing mapping under approval.
     mock_neo4j_driver.mock_session.set_response(
@@ -370,7 +370,7 @@ def test_approve_mapping_marks_status_and_increments_version(mock_neo4j_driver):
 
 def test_approve_mapping_rejected_when_already_revoked(mock_neo4j_driver):
     """approve must not resurrect an already REVOKED mapping."""
-    from repositories.mqtt_mapping_repo import MqttMappingRepo, MappingConflictError
+    from repositories.mqtt_mapping_repo import MappingConflictError, MqttMappingRepo
 
     mock_neo4j_driver.mock_session.set_response(
         "match (m:mqttmetricmapping) where m.id = $mapping_id",

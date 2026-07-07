@@ -1,7 +1,6 @@
+from postgres_db import Base
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy.sql import func
-
-from postgres_db import Base
 
 
 class MqttMetricSampleReceiptStatus(str):

@@ -14,7 +14,6 @@ from typing import Any
 
 from database import get_db
 
-
 # Lifecycle constants kept as plain strings for DB neutrality.
 MAPPING_STATUS_DRAFT = "DRAFT"
 MAPPING_STATUS_APPROVED = "APPROVED"

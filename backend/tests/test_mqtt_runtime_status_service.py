@@ -5,9 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
 from services.mqtt_runtime_status import MqttRuntimeStatusService
-
 
 pytestmark = [pytest.mark.unit]
 
