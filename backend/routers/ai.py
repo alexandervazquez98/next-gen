@@ -4,15 +4,13 @@ import asyncio
 import re
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 from config import get_lm_studio_settings
 from database import get_db
-from postgres_db import get_pg_db
+from fastapi import APIRouter, Depends, HTTPException, status
 from models.user import AIPermission, User, UserPermission
+from postgres_db import get_pg_db
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from services import ai_chat_service
-from services.auth_service import check_permission, get_current_active_user
 from services.ai_chat_service import (
     LMStudioError,
     LMStudioTimeoutError,
@@ -24,6 +22,11 @@ from services.ai_chat_service import (
     save_chat_exchange,
 )
 from services.ai_guard_service import check_all_guards, record_operation
+from services.auth_service import check_permission, get_current_active_user
+
+CurrentUserDep = Depends(get_current_active_user)
+PgDbDep = Depends(get_pg_db)
+Neo4jDriverDep = Depends(get_db)
 
 
 router = APIRouter(prefix="/ai", tags=["AI Chat"])
@@ -291,9 +294,9 @@ def _record_chat_operation(
 @router.post("/chat", response_model=AIChatResponse)
 async def chat_with_ai(
     body: AIChatRequest,
-    current_user: User = Depends(get_current_active_user),
-    db=Depends(get_pg_db),
-    neo4j_driver=Depends(get_db),
+    current_user: User = CurrentUserDep,
+    db=PgDbDep,
+    neo4j_driver=Neo4jDriverDep,
 ) -> AIChatResponse:
     if not get_lm_studio_settings().enabled:
         raise HTTPException(
@@ -353,9 +356,17 @@ async def chat_with_ai(
                         )
                         harness_result = denial
                     else:
-                        run_intent = type("ResolvedAvailabilityIntent", (), {"type": "availability_check", "ci_ref": ci_ref})()
-                        setattr(run_intent, "_resolved_ci", ci)
-                        harness_result = await asyncio.to_thread(maybe_run_harness, run_intent, neo4j_driver, current_user)
+                        run_intent = type(
+                            "ResolvedAvailabilityIntent",
+                            (),
+                            {"type": "availability_check", "ci_ref": ci_ref, "_resolved_ci": ci},
+                        )()
+                        harness_result = await asyncio.to_thread(
+                            maybe_run_harness,
+                            run_intent,
+                            neo4j_driver,
+                            current_user,
+                        )
                         _record_chat_operation(
                             user=current_user,
                             intent=intent,
@@ -501,11 +512,11 @@ async def chat_with_ai(
 
         if harness_result is None:
             harness_result = await asyncio.to_thread(maybe_run_harness, intent, neo4j_driver, current_user)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operational harness is unavailable; no diagnostic or event result was executed.",
-        )
+        ) from exc
 
     history = await asyncio.to_thread(load_chat_history, db, current_user.username)
     try:
@@ -516,16 +527,16 @@ async def chat_with_ai(
             harness_result,
             history,
         )
-    except LMStudioTimeoutError:
+    except LMStudioTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LM Studio request timed out",
-        )
-    except LMStudioError:
+        ) from exc
+    except LMStudioError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LM Studio is unavailable",
-        )
+        ) from exc
 
     row = await asyncio.to_thread(
         save_chat_exchange,

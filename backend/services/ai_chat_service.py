@@ -10,12 +10,12 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from config import LMStudioSettings, get_ai_prompts_settings, get_lm_studio_settings
 from models.ai_chat import AIChatMessage
-from services import event_service
 from models.user import AIPermission, User
+from services import event_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ AI_DIR = Path(__file__).resolve().parents[1] / "ai"
 # User override root. ``None`` means "feature off" -> loaders read AI_DIR in
 # place (legacy behavior). Tests monkeypatch this directly; production resolves
 # it lazily from AI_PROMPTS_DIR via _user_dir().
-AI_USER_DIR: Optional[Path] = None
+AI_USER_DIR: Path | None = None
 REQUIRED_PROMPT_SOURCE_FILES = (
     "identity/Soul.md",
     "identity/scope.md",
@@ -63,7 +63,7 @@ class LMStudioTimeoutError(LMStudioError):
     """LM Studio did not answer within the configured timeout."""
 
 
-def _user_dir() -> Optional[Path]:
+def _user_dir() -> Path | None:
     """Resolve the user override root, caching the env lookup in AI_USER_DIR."""
     global AI_USER_DIR
     if AI_USER_DIR is None:
@@ -307,11 +307,27 @@ def _safe_ci_field(ci: Any, field: str) -> Any:
     return getattr(ci, field, None)
 
 
+_PRIVATE_INTENT_MISSING = object()
+
+
+def _private_intent_value(intent: Any, key: str) -> Any:
+    try:
+        intent_vars = vars(intent)
+        if key in intent_vars:
+            return intent_vars[key]
+    except TypeError:
+        return _PRIVATE_INTENT_MISSING
+    try:
+        class_vars = vars(type(intent))
+    except TypeError:
+        return _PRIVATE_INTENT_MISSING
+    return class_vars.get(key, _PRIVATE_INTENT_MISSING)
+
+
 def _run_availability_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_ref = str(getattr(intent, "ci_ref", "")).strip()
-    if hasattr(intent, "_resolved_ci"):
-        ci = getattr(intent, "_resolved_ci")
-    else:
+    ci = _private_intent_value(intent, "_resolved_ci")
+    if ci is _PRIVATE_INTENT_MISSING:
         ci = resolve_ci_for_harness(neo4j_driver, ci_ref)
     if ci is None:
         return {"type": "availability_check", "ci_ref": ci_ref, "status": "ci_not_found"}
@@ -433,13 +449,19 @@ def _run_event_list_harness(intent: Any, neo4j_driver, user: User | None = None)
 
 def _run_availability_batch_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_refs = list(getattr(intent, "ci_refs", []) or [])[:MAX_BATCH_AVAILABILITY_CHECKS]
-    resolved_by_ref = getattr(intent, "_resolved_ci_targets", None)
+    resolved_by_ref = _private_intent_value(intent, "_resolved_ci_targets")
     results = []
     for ci_ref in ci_refs:
         normalized_ref = str(ci_ref).strip()
-        child_intent = type("AvailabilityIntent", (), {"ci_ref": normalized_ref})()
+        child_ci = resolved_by_ref.get(normalized_ref) if isinstance(resolved_by_ref, dict) else None
         if isinstance(resolved_by_ref, dict) and normalized_ref in resolved_by_ref:
-            setattr(child_intent, "_resolved_ci", resolved_by_ref.get(normalized_ref))
+            child_intent = type(
+                "AvailabilityIntent",
+                (),
+                {"ci_ref": normalized_ref, "_resolved_ci": child_ci},
+            )()
+        else:
+            child_intent = type("AvailabilityIntent", (), {"ci_ref": normalized_ref})()
         results.append(_run_availability_harness(child_intent, neo4j_driver))
     return {
         "type": "availability_check_batch",
