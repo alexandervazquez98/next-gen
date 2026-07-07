@@ -1,6 +1,19 @@
 import asyncio
+
 from database import get_db, close_db
 from models.user import UserPermission, AIPermission
+
+
+SYSTEM_ROLE_PERMISSION_UPGRADES = {
+    "ADMIN": [
+        UserPermission.MQTT_READ.value,
+        UserPermission.MQTT_MAPPING_MANAGE.value,
+    ],
+    "OPERATOR": [
+        UserPermission.MQTT_READ.value,
+        UserPermission.MQTT_MAPPING_MANAGE.value,
+    ],
+}
 
 
 async def seed_roles():
@@ -25,6 +38,8 @@ async def seed_roles():
                 UserPermission.CI_EDIT.value,
                 UserPermission.RUN_DIAGNOSTICS.value,
                 UserPermission.METRICS_VIEW.value,
+                UserPermission.MQTT_READ.value,
+                UserPermission.MQTT_MAPPING_MANAGE.value,
             ],
             "is_system": True,
         },
@@ -78,25 +93,48 @@ async def seed_roles():
                         permissions: $perms,
                         is_system: $sys
                     })
-                """,
+                    """,
                     name=name,
                     desc=data["description"],
                     perms=data["permissions"],
                     sys=data["is_system"],
                 )
             else:
-                # System roles are protected from overwrite once created
-                # If is_system is None (key absent or null), treat as non-system and allow update
-                existing_is_system = existing.get("r", {}).get("is_system")
+                # System roles are protected from destructive overwrite once created.
+                # They may still receive additive permission upgrades required by the
+                # current seed definition so existing deployments pick up new grants.
+                # If is_system is None (key absent or null), treat as non-system and allow update.
+                existing_role = existing.get("r", {})
+                existing_is_system = existing_role.get("is_system")
                 if existing_is_system is True:
-                    print(f"Skipping system role {name} — already exists, not overwriting")
+                    current_permissions = list(existing_role.get("permissions") or [])
+                    permitted_upgrades = SYSTEM_ROLE_PERMISSION_UPGRADES.get(name, [])
+                    missing_permissions = [
+                        permission
+                        for permission in permitted_upgrades
+                        if permission in data["permissions"]
+                        and permission not in current_permissions
+                    ]
+
+                    if missing_permissions:
+                        print(f"Upgrading system role {name} with explicit permissions")
+                        session.run(
+                            """
+                            MATCH (r:Role {name: $name})
+                            SET r.permissions = $perms
+                            """,
+                            name=name,
+                            perms=current_permissions + missing_permissions,
+                        )
+                    else:
+                        print(f"Skipping system role {name} — already up to date")
                 else:
                     print(f"Updating non-system role: {name}")
                     session.run(
                         """
                         MATCH (r:Role {name: $name})
                         SET r.permissions = $perms, r.is_system = false
-                    """,
+                        """,
                         name=name,
                         perms=data["permissions"],
                     )
