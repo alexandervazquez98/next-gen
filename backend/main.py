@@ -314,6 +314,8 @@ async def startup_event():
 
     # Initialize TimescaleDB Hypertables
     try:
+        # PR1: import MQTT bridge idempotency model so Base metadata can create table.
+        from models.mqtt_metric_sample_receipt import MqttMetricSampleReceipt  # noqa: F401
         from postgres_db import Base, SessionLocal, engine
         from repositories.metric_repo import create_hypertable
 
