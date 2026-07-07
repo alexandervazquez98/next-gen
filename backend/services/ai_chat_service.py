@@ -295,9 +295,24 @@ def run_bounded_ping(target: str) -> PingResult:
     return PingResult(status=status, target=target, latency_ms=latency_ms, detail=detail)
 
 
+def _safe_ci_field(ci: Any, field: str) -> Any:
+    if isinstance(ci, dict):
+        return ci.get(field)
+    getter = getattr(ci, "get", None)
+    if callable(getter):
+        try:
+            return getter(field)
+        except TypeError:
+            return None
+    return getattr(ci, field, None)
+
+
 def _run_availability_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_ref = str(getattr(intent, "ci_ref", "")).strip()
-    ci = resolve_ci_for_harness(neo4j_driver, ci_ref)
+    if hasattr(intent, "_resolved_ci"):
+        ci = getattr(intent, "_resolved_ci")
+    else:
+        ci = resolve_ci_for_harness(neo4j_driver, ci_ref)
     if ci is None:
         return {"type": "availability_check", "ci_ref": ci_ref, "status": "ci_not_found"}
 
@@ -307,8 +322,8 @@ def _run_availability_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     except ValueError as exc:
         return {
             "type": "availability_check",
-            "ci_id": ci.get("id"),
-            "ci_name": ci.get("name"),
+            "ci_id": _safe_ci_field(ci, "id"),
+            "ci_name": _safe_ci_field(ci, "name"),
             "status": "invalid_target",
             "detail": str(exc),
         }
@@ -418,9 +433,13 @@ def _run_event_list_harness(intent: Any, neo4j_driver, user: User | None = None)
 
 def _run_availability_batch_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_refs = list(getattr(intent, "ci_refs", []) or [])[:MAX_BATCH_AVAILABILITY_CHECKS]
+    resolved_by_ref = getattr(intent, "_resolved_ci_targets", None)
     results = []
     for ci_ref in ci_refs:
-        child_intent = type("AvailabilityIntent", (), {"ci_ref": str(ci_ref)})()
+        normalized_ref = str(ci_ref).strip()
+        child_intent = type("AvailabilityIntent", (), {"ci_ref": normalized_ref})()
+        if isinstance(resolved_by_ref, dict) and normalized_ref in resolved_by_ref:
+            setattr(child_intent, "_resolved_ci", resolved_by_ref.get(normalized_ref))
         results.append(_run_availability_harness(child_intent, neo4j_driver))
     return {
         "type": "availability_check_batch",
@@ -735,6 +754,8 @@ def _render_availability_batch_response(query: str, harness_result: dict[str, An
 def render_harness_response(query: str, harness_result: dict[str, Any] | None) -> str | None:
     if not harness_result:
         return None
+    if harness_result.get("status") == "denied":
+        return _render_harness_denial_response(query, harness_result)
     harness_type = harness_result.get("type")
     if harness_type == "event_list":
         load_ai_markdown_contract("templates", "event_list.md")
@@ -808,11 +829,91 @@ def _fallback_availability_batch_response(harness_result: dict[str, Any], spanis
     return "\n".join(lines)
 
 
+def _infer_guard_denial_reason_code(
+    reason: str | None,
+    escalation_required: bool,
+) -> str:
+    if escalation_required:
+        return "escalation_required"
+    reason_text = (reason or "").lower()
+    if "cooldown" in reason_text:
+        return "cooldown_active"
+    if "bulk" in reason_text:
+        return "bulk_operation_too_large"
+    if "behavior" in reason_text or "flood" in reason_text:
+        return "behavioral_guard_denied"
+    return "guard_denied"
+
+
+def build_guard_denial_harness_result(
+    *,
+    intent_type: str,
+    reason: str | None,
+    target_type: str,
+    target_ids: list[str],
+    request_context: dict[str, Any] | None = None,
+    escalation_required: bool = False,
+    escalation_id: str | None = None,
+    cooldown_remaining_seconds: int | None = None,
+    reason_code: str | None = None,
+) -> dict[str, Any]:
+    normalized_reason = reason or "AI guardrail denied execution for safety"
+    normalized_code = reason_code or _infer_guard_denial_reason_code(
+        normalized_reason,
+        escalation_required=escalation_required,
+    )
+    return {
+        "type": intent_type,
+        "status": "denied",
+        "denied": True,
+        "reason": normalized_reason,
+        "reason_code": normalized_code,
+        "cooldown_remaining_seconds": cooldown_remaining_seconds,
+        "escalation_required": escalation_required,
+        "escalation_id": escalation_id,
+        "operation": "diagnose",
+        "target_type": target_type,
+        "target_ids": list(target_ids),
+        "request_context": request_context or {},
+        "source": "ai_guard_service",
+    }
+
+
+def _render_harness_denial_response(query: str, harness_result: dict[str, Any]) -> str:
+    spanish = _prefers_spanish(query)
+    reason = str(harness_result.get("reason") or "").strip()
+    reason_code = harness_result.get("reason_code")
+    if reason_code == "guard_unavailable":
+        if spanish:
+            return (
+                "No puedo ejecutar esta verificación operativa ahora porque el sistema de guardrails de IA "
+                "no pudo verificar que fuera seguro. No se ejecutó ningún diagnóstico ni consulta de eventos."
+            )
+        return (
+            "I cannot run that operational check right now because the AI guardrail system "
+            "could not verify it was safe. No diagnostic or event lookup was executed."
+        )
+
+    if not reason:
+        reason = "an AI guardrail check blocked this harness execution"
+    if spanish:
+        return (
+            f"No puedo ejecutar esa verificación operativa ahora: {reason}. "
+            "No se ejecutó ningún diagnóstico ni consulta de eventos."
+        )
+    return (
+        f"I cannot run that operational check right now because a guardrail blocked it: {reason}. "
+        "No diagnostic or event lookup was executed."
+    )
+
+
 def synthesize_harness_fallback_response(query: str, harness_result: dict[str, Any] | None) -> str | None:
     """Return deterministic text when the model produces no assistant content."""
     if not harness_result:
         return None
     spanish = _prefers_spanish(query)
+    if harness_result.get("status") == "denied":
+        return _render_harness_denial_response(query, harness_result)
     harness_type = harness_result.get("type")
     if harness_type in DETERMINISTIC_HARNESS_TYPES:
         return render_harness_response(query, harness_result)
@@ -835,7 +936,7 @@ def complete_chat(
     settings = get_lm_studio_settings()
     if not settings.enabled:
         raise LMStudioError("LM Studio chat is disabled")
-    if harness_result and harness_result.get("type") in DETERMINISTIC_HARNESS_TYPES:
+    if harness_result and (harness_result.get("status") == "denied" or harness_result.get("type") in DETERMINISTIC_HARNESS_TYPES):
         deterministic_response = render_harness_response(query, harness_result)
         if deterministic_response:
             return {"content": deterministic_response, "model": DETERMINISTIC_MODEL_LABEL}
