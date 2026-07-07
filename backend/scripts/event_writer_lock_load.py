@@ -38,6 +38,14 @@ class WorkloadConfig:
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS
     workload_timeout_s: float = DEFAULT_WORKLOAD_TIMEOUT_S
 
+    def __post_init__(self) -> None:
+        if self.lock_timeout_ms < 1:
+            raise ValueError("lock_timeout_ms must be >= 1")
+        if self.statement_timeout_ms < 1:
+            raise ValueError("statement_timeout_ms must be >= 1")
+        if self.workload_timeout_s <= 0:
+            raise ValueError("workload_timeout_s must be > 0")
+
 
 class WriteSample(NamedTuple):
     lock_wait_ms: float
@@ -202,8 +210,6 @@ def run_workload(
     if iterations < 1:
         raise ValueError("iterations must be >= 1")
     workload_config = config or WorkloadConfig()
-    if workload_config.workload_timeout_s <= 0:
-        raise ValueError("workload_timeout_s must be > 0")
 
     lock_acquirer = acquire_lock or acquire_event_triplet_lock
     write = protected_write or _default_protected_write(0.0)

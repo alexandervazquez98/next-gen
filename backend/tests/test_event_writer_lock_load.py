@@ -136,25 +136,17 @@ def test_threaded_workload_runs_each_writer_iterations_serially():
     assert overlap_detected == []
 
 
-def test_threaded_same_triplet_workload_starts_writers_together():
-    active = 0
-    max_active = 0
-    lock = threading.Lock()
-    both_active = threading.Event()
+def test_threaded_workload_uses_start_barrier(monkeypatch):
+    barrier_waits = []
 
-    def acquire_lock(session, ci_id, metric_id, event_type, *, writer_context):
-        nonlocal active, max_active
-        with lock:
-            active += 1
-            max_active = max(max_active, active)
-            if active == 2:
-                both_active.set()
+    class SpyBarrier:
+        def __init__(self, parties):
+            self.parties = parties
 
-    def protected_write(session, triplet):
-        nonlocal active
-        both_active.wait(timeout=1)
-        with lock:
-            active -= 1
+        def wait(self):
+            barrier_waits.append(self.parties)
+
+    monkeypatch.setattr(load.threading, "Barrier", SpyBarrier)
 
     load.run_workload(
         name="same_triplet",
@@ -162,14 +154,13 @@ def test_threaded_same_triplet_workload_starts_writers_together():
         writers=2,
         iterations=1,
         session_factory=FakeSession,
-        acquire_lock=acquire_lock,
-        protected_write=protected_write,
+        acquire_lock=lambda *args, **kwargs: None,
+        protected_write=lambda session, triplet: None,
         monotonic=lambda: 0.0,
         use_threads=True,
     )
 
-    assert max_active == 2
-
+    assert barrier_waits == [2, 2]
 
 
 def test_database_timeouts_are_configured_before_lock_acquisition():
@@ -223,6 +214,18 @@ def test_main_rejects_invalid_timeout_boundaries(args, message):
         load.main(["--writers", "2", "--iterations", "1", *args])
 
 
+@pytest.mark.parametrize(
+    "config_kwargs, message",
+    [
+        ({"lock_timeout_ms": 0}, "lock_timeout_ms must be >= 1"),
+        ({"statement_timeout_ms": 0}, "statement_timeout_ms must be >= 1"),
+        ({"workload_timeout_s": 0}, "workload_timeout_s must be > 0"),
+    ],
+)
+def test_workload_config_rejects_invalid_timeout_boundaries(config_kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        load.WorkloadConfig(**config_kwargs)
+
 
 def test_build_report_resolves_default_lock_acquirer_at_call_time(monkeypatch):
     acquired = []
@@ -246,12 +249,10 @@ def test_build_report_resolves_default_lock_acquirer_at_call_time(monkeypatch):
 
 
 def test_threaded_workload_times_out_when_a_worker_blocks():
-    worker_started = threading.Event()
     release_worker = threading.Event()
 
     def protected_write(session, triplet):
         if triplet[0] == "ci-0":
-            worker_started.set()
             release_worker.wait(timeout=2)
 
     try:
