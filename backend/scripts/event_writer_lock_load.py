@@ -13,10 +13,11 @@ import json
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from queue import Empty, Queue
 from pathlib import Path
-from typing import Callable, Iterable, Literal, NamedTuple
+from queue import Empty, Queue
+from typing import Literal, NamedTuple
 
 from sqlalchemy import text
 
