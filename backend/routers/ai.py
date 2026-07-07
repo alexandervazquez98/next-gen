@@ -351,7 +351,11 @@ async def chat_with_ai(
                             target_type="ci",
                             target_id=target_id,
                             target_name=target_name,
-                            result="blocked" if denial.get("reason_code") != "escalation_required" else "escalated",
+                            result=(
+                                "blocked"
+                                if denial.get("reason_code") != "escalation_required"
+                                else "escalated"
+                            ),
                             blocked_reason=denial.get("reason_code"),
                         )
                         harness_result = denial
@@ -393,7 +397,11 @@ async def chat_with_ai(
                     target_type="event_query",
                     target_id=target_id,
                     target_name=target_name,
-                    result="blocked" if denial.get("reason_code") != "escalation_required" else "escalated",
+                    result=(
+                        "blocked"
+                        if denial.get("reason_code") != "escalation_required"
+                        else "escalated"
+                    ),
                     blocked_reason=denial.get("reason_code"),
                 )
                 harness_result = denial
@@ -438,7 +446,9 @@ async def chat_with_ai(
                     request_context=guard_context,
                 )
                 block_target_id = resolved_targets[0] if resolved_targets else ""
-                block_target_name = target_names.get(block_target_id, "unresolved availability target")
+                block_target_name = target_names.get(
+                    block_target_id, "unresolved availability target"
+                )
                 _record_chat_operation(
                     user=current_user,
                     intent=intent,
@@ -454,9 +464,15 @@ async def chat_with_ai(
                     run_intent = type(
                         "ResolvedAvailabilityBatchIntent",
                         (),
-                        {"type": "availability_check_batch", "ci_refs": normalized_refs, "_resolved_ci_targets": resolved_by_ref},
+                        {
+                            "type": "availability_check_batch",
+                            "ci_refs": normalized_refs,
+                            "_resolved_ci_targets": resolved_by_ref,
+                        },
                     )()
-                    harness_result = await asyncio.to_thread(maybe_run_harness, run_intent, neo4j_driver, current_user)
+                    harness_result = await asyncio.to_thread(
+                        maybe_run_harness, run_intent, neo4j_driver, current_user
+                    )
                 else:
                     denial = _evaluate_chat_guard(
                         user=current_user,
@@ -479,14 +495,22 @@ async def chat_with_ai(
 
                     if denial is not None:
                         denial_target_id = denial.get("target_ids", [])
-                        record_target_id = denial_target_id[0] if denial_target_id else (resolved_targets[0] if resolved_targets else "")
+                        record_target_id = (
+                            denial_target_id[0]
+                            if denial_target_id
+                            else (resolved_targets[0] if resolved_targets else "")
+                        )
                         _record_chat_operation(
                             user=current_user,
                             intent=intent,
                             target_type="ci",
                             target_id=record_target_id,
                             target_name=target_names.get(record_target_id, record_target_id),
-                            result="blocked" if denial.get("reason_code") != "escalation_required" else "escalated",
+                            result=(
+                                "blocked"
+                                if denial.get("reason_code") != "escalation_required"
+                                else "escalated"
+                            ),
                             blocked_reason=denial.get("reason_code"),
                         )
                         denial["target_ids"] = resolved_targets
@@ -495,9 +519,15 @@ async def chat_with_ai(
                         run_intent = type(
                             "ResolvedAvailabilityBatchIntent",
                             (),
-                            {"type": "availability_check_batch", "ci_refs": normalized_refs, "_resolved_ci_targets": resolved_by_ref},
+                            {
+                                "type": "availability_check_batch",
+                                "ci_refs": normalized_refs,
+                                "_resolved_ci_targets": resolved_by_ref,
+                            },
                         )()
-                        harness_result = await asyncio.to_thread(maybe_run_harness, run_intent, neo4j_driver, current_user)
+                        harness_result = await asyncio.to_thread(
+                            maybe_run_harness, run_intent, neo4j_driver, current_user
+                        )
                         for canonical_id in resolved_targets:
                             _record_chat_operation(
                                 user=current_user,
@@ -508,10 +538,14 @@ async def chat_with_ai(
                                 result="success",
                             )
         else:
-            harness_result = await asyncio.to_thread(maybe_run_harness, intent, neo4j_driver, current_user)
+            harness_result = await asyncio.to_thread(
+                maybe_run_harness, intent, neo4j_driver, current_user
+            )
 
         if harness_result is None:
-            harness_result = await asyncio.to_thread(maybe_run_harness, intent, neo4j_driver, current_user)
+            harness_result = await asyncio.to_thread(
+                maybe_run_harness, intent, neo4j_driver, current_user
+            )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
