@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import subprocess
@@ -8,8 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
+from models.ai_guard_models import GuardResult
 from models.user import User
+from routers.ai import chat_with_ai, get_current_active_user, get_db, get_pg_db, router
 
 
 def _operator_user() -> User:
@@ -105,9 +107,15 @@ class _FakeHistoryDb(_FakeDb):
         return _FakeQuery(self.rows)
 
 
-def _make_client(db=None, user=None):
-    from routers.ai import router, get_pg_db, get_current_active_user, get_db
+@pytest.fixture(autouse=True)
+def _default_ai_chat_guard(monkeypatch):
+    monkeypatch.setattr(
+        "routers.ai.check_all_guards", lambda *args, **kwargs: GuardResult(allowed=True)
+    )
+    monkeypatch.setattr("routers.ai.record_operation", lambda *args, **kwargs: None)
 
+
+def _make_client(db=None, user=None):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     fake_db = db or _FakeDb()
@@ -122,8 +130,6 @@ def _make_client(db=None, user=None):
 
 
 def test_ai_chat_requires_authentication():
-    from routers.ai import router
-
     app = FastAPI()
     app.include_router(router, prefix="/api")
     client = TestClient(app)
@@ -146,7 +152,9 @@ def test_ai_chat_success_uses_server_config_and_persists_history(monkeypatch):
         captured_payloads.append(payload)
         return {"content": "Use the incident timeline first.", "model": settings.model}
 
-    with patch("services.ai_chat_service._post_lm_studio_chat_completion", side_effect=fake_completion):
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion", side_effect=fake_completion
+    ):
         response = client.post(
             "/api/ai/chat",
             json={"query": "What should I check?", "context": "Two Redis alerts"},
@@ -170,9 +178,13 @@ def test_payload_system_prompt_uses_backend_identity_sources(tmp_path, monkeypat
 
     identity_dir = tmp_path / "identity"
     identity_dir.mkdir()
-    (identity_dir / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    (identity_dir / "Soul.md").write_text(
+        "# Custom identity\n\nUnique runtime identity.", encoding="utf-8"
+    )
     (identity_dir / "scope.md").write_text("# Scope\n\nRead-only diagnostics.", encoding="utf-8")
-    (identity_dir / "context-policy.md").write_text("# Context\n\nUse compact context.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text(
+        "# Context\n\nUse compact context.", encoding="utf-8"
+    )
     # User override folder is the parent of identity/; resolver reads identity/<file>.
     monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
 
@@ -197,12 +209,22 @@ def test_payload_system_prompt_loads_optional_tool_catalog(tmp_path, monkeypatch
     tools_dir = tmp_path / "tools"
     identity_dir.mkdir()
     tools_dir.mkdir()
-    (identity_dir / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    (identity_dir / "Soul.md").write_text(
+        "# Custom identity\n\nUnique runtime identity.", encoding="utf-8"
+    )
     (identity_dir / "scope.md").write_text("# Scope\n\nRead-only diagnostics.", encoding="utf-8")
-    (identity_dir / "context-policy.md").write_text("# Context\n\nUse compact context.", encoding="utf-8")
-    (tools_dir / "README.md").write_text("# AI tool system\n\nBackend-owned tool catalog.", encoding="utf-8")
-    (tools_dir / "event-list.md").write_text("# Event list\n\nProvider-neutral event listing.", encoding="utf-8")
-    (tools_dir / "network-basic.md").write_text("# Network basic tools\n\n`availability_check` and planned traceroute.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text(
+        "# Context\n\nUse compact context.", encoding="utf-8"
+    )
+    (tools_dir / "README.md").write_text(
+        "# AI tool system\n\nBackend-owned tool catalog.", encoding="utf-8"
+    )
+    (tools_dir / "event-list.md").write_text(
+        "# Event list\n\nProvider-neutral event listing.", encoding="utf-8"
+    )
+    (tools_dir / "network-basic.md").write_text(
+        "# Network basic tools\n\n`availability_check` and planned traceroute.", encoding="utf-8"
+    )
     monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
 
     payload = ai_chat_service.build_lm_studio_payload(
@@ -256,8 +278,18 @@ def test_complete_chat_falls_back_when_model_returns_empty_event_list(monkeypatc
         "count": 2,
         "truncated": False,
         "events": [
-            {"ci_name": "Router A", "severity": "CRITICAL", "status": "OPEN", "message": "Service down"},
-            {"ci_name": "Switch B", "severity": "INFO", "status": "OPEN", "message": "Ping warning"},
+            {
+                "ci_name": "Router A",
+                "severity": "CRITICAL",
+                "status": "OPEN",
+                "message": "Service down",
+            },
+            {
+                "ci_name": "Switch B",
+                "severity": "INFO",
+                "status": "OPEN",
+                "message": "Ping warning",
+            },
         ],
     }
 
@@ -406,7 +438,9 @@ def test_system_prompt_user_override_wins(tmp_path, monkeypatch):
     (user_dir / "identity").mkdir(parents=True)
     (user_dir / "identity" / "Soul.md").write_text("CUSTOM-SOUL-MARKER", encoding="utf-8")
     (user_dir / "identity" / "scope.md").write_text("Read-only diagnostics.", encoding="utf-8")
-    (user_dir / "identity" / "context-policy.md").write_text("Use compact context.", encoding="utf-8")
+    (user_dir / "identity" / "context-policy.md").write_text(
+        "Use compact context.", encoding="utf-8"
+    )
     monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
 
     payload = ai_chat_service.build_lm_studio_payload(
@@ -537,7 +571,9 @@ def test_render_event_list_response_uses_facts_and_safe_observed_diagnosis():
         ],
     }
 
-    response = render_harness_response("que eventos tenemos abiertos y cual es el diagnostico?", harness_result)
+    response = render_harness_response(
+        "que eventos tenemos abiertos y cual es el diagnostico?", harness_result
+    )
 
     assert response is not None
     assert "Hay 2 eventos" in response
@@ -551,7 +587,13 @@ def test_render_event_list_response_uses_facts_and_safe_observed_diagnosis():
     assert "disponibilidad" in response.lower()
     assert "Resultado truncado" in response
     assert "No confirma causa raíz" in response
-    for unsafe in ("congestión severa", "falla eléctrica", "firewall bloqueando", "estado óptimo", "resuelto"):
+    for unsafe in (
+        "congestión severa",
+        "falla eléctrica",
+        "firewall bloqueando",
+        "estado óptimo",
+        "resuelto",
+    ):
         assert unsafe not in response.lower()
 
 
@@ -707,8 +749,12 @@ def test_payload_system_prompt_falls_back_when_identity_source_missing(tmp_path,
     bundled_dir = tmp_path / "bundled"
     (user_dir / "identity").mkdir(parents=True)
     (bundled_dir / "identity").mkdir(parents=True)
-    (user_dir / "identity" / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
-    (bundled_dir / "identity" / "Soul.md").write_text("# Custom identity\n\nUnique runtime identity.", encoding="utf-8")
+    (user_dir / "identity" / "Soul.md").write_text(
+        "# Custom identity\n\nUnique runtime identity.", encoding="utf-8"
+    )
+    (bundled_dir / "identity" / "Soul.md").write_text(
+        "# Custom identity\n\nUnique runtime identity.", encoding="utf-8"
+    )
     monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", user_dir)
     monkeypatch.setattr(ai_chat_service, "AI_DIR", bundled_dir)
 
@@ -749,7 +795,10 @@ def test_ai_chat_maps_lm_studio_timeout(monkeypatch):
 
     from services.ai_chat_service import LMStudioTimeoutError
 
-    with patch("services.ai_chat_service._post_lm_studio_chat_completion", side_effect=LMStudioTimeoutError("timeout")):
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=LMStudioTimeoutError("timeout"),
+    ):
         response = client.post("/api/ai/chat", json={"query": "hello"})
 
     assert response.status_code == 504
@@ -764,7 +813,10 @@ def test_ai_chat_maps_lm_studio_error_without_traceback(monkeypatch):
 
     from services.ai_chat_service import LMStudioError
 
-    with patch("services.ai_chat_service._post_lm_studio_chat_completion", side_effect=LMStudioError("Connection refused: stack")):
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=LMStudioError("Connection refused: stack"),
+    ):
         response = client.post("/api/ai/chat", json={"query": "hello"})
 
     assert response.status_code == 502
@@ -787,9 +839,14 @@ def test_availability_check_resolves_ci_and_persists_ping_metadata(monkeypatch):
         detail="1 packet received",
     )
 
-    with patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci), \
-         patch("services.ai_chat_service.run_bounded_ping", return_value=ping_result), \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "Router-01 is reachable.", "model": "local-model"}):
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci),
+        patch("services.ai_chat_service.run_bounded_ping", return_value=ping_result),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "Router-01 is reachable.", "model": "local-model"},
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -839,13 +896,16 @@ def test_event_list_query_applies_user_scope():
     session = Session()
     driver = type("Driver", (), {"session": lambda _self: session})()
 
-    assert ai_chat_service.list_events_for_harness(
-        driver,
-        "OPEN",
-        10,
-        None,
-        user=_scoped_event_view_user(),
-    ) == []
+    assert (
+        ai_chat_service.list_events_for_harness(
+            driver,
+            "OPEN",
+            10,
+            None,
+            user=_scoped_event_view_user(),
+        )
+        == []
+    )
 
     assert session.params["is_unscoped"] is False
     assert session.params["allowed_locations"] == ["Site A"]
@@ -855,20 +915,24 @@ def test_event_list_query_applies_user_scope():
 def test_event_list_query_returns_no_rows_without_scope():
     from services import ai_chat_service
 
-    driver = type("Driver", (), {"session": lambda _self: (_ for _ in ()).throw(AssertionError("should not query"))})()
+    driver = type(
+        "Driver",
+        (),
+        {"session": lambda _self: (_ for _ in ()).throw(AssertionError("should not query"))},
+    )()
 
-    assert ai_chat_service.list_events_for_harness(
-        driver,
-        "OPEN",
-        10,
-        user=_event_view_user(),
-    ) == []
+    assert (
+        ai_chat_service.list_events_for_harness(
+            driver,
+            "OPEN",
+            10,
+            user=_event_view_user(),
+        )
+        == []
+    )
 
 
 def test_ai_chat_route_uses_async_offload_for_blocking_work():
-    import inspect
-    from routers.ai import chat_with_ai
-
     assert inspect.iscoroutinefunction(chat_with_ai)
 
 
@@ -908,8 +972,14 @@ def test_event_list_harness_persists_bounded_event_metadata(monkeypatch):
         captured_payloads.append(payload)
         return {"content": "There are 2 active events.", "model": settings.model}
 
-    with patch("services.ai_chat_service.list_events_for_harness", return_value=events) as list_events, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", side_effect=fake_completion):
+    with (
+        patch(
+            "services.ai_chat_service.list_events_for_harness", return_value=events
+        ) as list_events,
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion", side_effect=fake_completion
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -938,8 +1008,13 @@ def test_event_list_harness_infers_open_critical_filters(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client(user=_event_view_user())
 
-    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No critical open events.", "model": "local-model"}):
+    with (
+        patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events,
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "No critical open events.", "model": "local-model"},
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={"query": "lista todos los eventos abiertos criticos"},
@@ -957,8 +1032,13 @@ def test_event_list_harness_accepts_active_events_alias(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
 
-    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]), \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No active events.", "model": "local-model"}):
+    with (
+        patch("services.ai_chat_service.list_events_for_harness", return_value=[]),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "No active events.", "model": "local-model"},
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -977,8 +1057,13 @@ def test_event_list_harness_infers_unrecovered_events_from_query(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client(user=_event_view_user())
 
-    with patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "No unrecovered events.", "model": "local-model"}):
+    with (
+        patch("services.ai_chat_service.list_events_for_harness", return_value=[]) as list_events,
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "No unrecovered events.", "model": "local-model"},
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={"query": "que eventos no se han recuperado?"},
@@ -1017,9 +1102,17 @@ def test_followup_availability_batch_uses_latest_event_list_context(monkeypatch)
     def resolve_ci(_driver, ci_ref):
         return {"id": ci_ref.lower().replace(" ", "-"), "name": ci_ref, "ip": "192.168.1.10"}
 
-    with patch("services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_ci), \
-         patch("services.ai_chat_service.run_bounded_ping", return_value=PingResult("reachable", "192.168.1.10", 1.2, "1 packet received")), \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion", return_value={"content": "Both switches are reachable.", "model": "local-model"}):
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_ci),
+        patch(
+            "services.ai_chat_service.run_bounded_ping",
+            return_value=PingResult("reachable", "192.168.1.10", 1.2, "1 packet received"),
+        ),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "Both switches are reachable.", "model": "local-model"},
+        ),
+    ):
         response = client.post(
             "/api/ai/chat",
             json={"query": "verifica si están funcionando"},
@@ -1058,15 +1151,25 @@ def test_followup_status_filters_latest_event_list_by_named_area(monkeypatch):
 
     from services.ai_chat_service import PingResult
 
-    with patch(
-        "services.ai_chat_service.resolve_ci_for_harness",
-        side_effect=lambda _driver, ci_ref: {"id": ci_ref, "name": ci_ref, "ip": "192.168.1.10"},
-    ), patch(
-        "services.ai_chat_service.run_bounded_ping",
-        return_value=PingResult("unreachable", "192.168.1.10", None, "no response to one bounded ping"),
-    ), patch(
-        "services.ai_chat_service._post_lm_studio_chat_completion",
-        return_value={"content": "Availability checked.", "model": "local-model"},
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness",
+            side_effect=lambda _driver, ci_ref: {
+                "id": ci_ref,
+                "name": ci_ref,
+                "ip": "192.168.1.10",
+            },
+        ),
+        patch(
+            "services.ai_chat_service.run_bounded_ping",
+            return_value=PingResult(
+                "unreachable", "192.168.1.10", None, "no response to one bounded ping"
+            ),
+        ),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "Availability checked.", "model": "local-model"},
+        ),
     ):
         response = client.post(
             "/api/ai/chat",
@@ -1093,22 +1196,33 @@ def test_admin_can_run_followup_availability_without_ai_view_all(monkeypatch):
             "username": "admin-operator",
             "user_message": "eventos abiertos",
             "assistant_response": "Open events listed.",
-            "harness_result": {"type": "event_list", "events": [{"ci_name": "AP01-ISLAS_AGRARIAS-BAJA01"}]},
+            "harness_result": {
+                "type": "event_list",
+                "events": [{"ci_name": "AP01-ISLAS_AGRARIAS-BAJA01"}],
+            },
         },
     )()
     client, _db = _make_client(db=_FakeHistoryDb([previous_row]), user=_admin_user())
 
     from services.ai_chat_service import PingResult
 
-    with patch(
-        "services.ai_chat_service.resolve_ci_for_harness",
-        return_value={"id": "ci-ap01", "name": "AP01-ISLAS_AGRARIAS-BAJA01", "ip": "192.168.1.10"},
-    ), patch(
-        "services.ai_chat_service.run_bounded_ping",
-        return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
-    ), patch(
-        "services.ai_chat_service._post_lm_studio_chat_completion",
-        return_value={"content": "Done.", "model": "local-model"},
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness",
+            return_value={
+                "id": "ci-ap01",
+                "name": "AP01-ISLAS_AGRARIAS-BAJA01",
+                "ip": "192.168.1.10",
+            },
+        ),
+        patch(
+            "services.ai_chat_service.run_bounded_ping",
+            return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
+        ),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "Done.", "model": "local-model"},
+        ),
     ):
         response = client.post(
             "/api/ai/chat",
@@ -1143,15 +1257,23 @@ def test_followup_confirmation_runs_availability_batch_from_recent_event_list(mo
 
     from services.ai_chat_service import PingResult
 
-    with patch(
-        "services.ai_chat_service.resolve_ci_for_harness",
-        side_effect=lambda _driver, ci_ref: {"id": ci_ref, "name": ci_ref, "ip": "192.168.1.10"},
-    ), patch(
-        "services.ai_chat_service.run_bounded_ping",
-        return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
-    ), patch(
-        "services.ai_chat_service._post_lm_studio_chat_completion",
-        return_value={"content": "Done.", "model": "local-model"},
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness",
+            side_effect=lambda _driver, ci_ref: {
+                "id": ci_ref,
+                "name": ci_ref,
+                "ip": "192.168.1.10",
+            },
+        ),
+        patch(
+            "services.ai_chat_service.run_bounded_ping",
+            return_value=PingResult("reachable", "192.168.1.10", 1.0, "1 packet received"),
+        ),
+        patch(
+            "services.ai_chat_service._post_lm_studio_chat_completion",
+            return_value={"content": "Done.", "model": "local-model"},
+        ),
     ):
         response = client.post(
             "/api/ai/chat",
@@ -1181,14 +1303,19 @@ def test_harness_failure_returns_operational_unavailable(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
     client, _ = _make_client(user=_event_view_user())
 
-    with patch("services.ai_chat_service.list_events_for_harness", side_effect=RuntimeError("neo4j down")):
+    with patch(
+        "services.ai_chat_service.list_events_for_harness", side_effect=RuntimeError("neo4j down")
+    ):
         response = client.post(
             "/api/ai/chat",
             json={"query": "dime que eventos hay abiertos"},
         )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Operational harness is unavailable; no diagnostic or event result was executed."
+    assert (
+        response.json()["detail"]
+        == "Operational harness is unavailable; no diagnostic or event result was executed."
+    )
 
 
 def test_event_list_harness_requires_event_permission(monkeypatch):
@@ -1197,8 +1324,10 @@ def test_event_list_harness_requires_event_permission(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client()
 
-    with patch("services.ai_chat_service.list_events_for_harness") as list_events, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete:
+    with (
+        patch("services.ai_chat_service.list_events_for_harness") as list_events,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -1219,9 +1348,11 @@ def test_availability_check_requires_diagnostic_permission(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client()
 
-    with patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci, \
-         patch("services.ai_chat_service.run_bounded_ping") as run_ping, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete:
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -1243,9 +1374,11 @@ def test_availability_check_requires_ai_view_all_before_ci_resolution(monkeypatc
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client(user=_diagnostic_user())
 
-    with patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci, \
-         patch("services.ai_chat_service.run_bounded_ping") as run_ping, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete:
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -1261,15 +1394,612 @@ def test_availability_check_requires_ai_view_all_before_ci_resolution(monkeypatc
     complete.assert_not_called()
 
 
+def test_non_harness_chat_does_not_run_ai_guard_checks(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client()
+
+    with (
+        patch("routers.ai.check_all_guards") as check_all_guards,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        complete.return_value = {"content": "Hello there", "model": "local-model"}
+        response = client.post("/api/ai/chat", json={"query": "hello"})
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Hello there"
+    check_all_guards.assert_not_called()
+
+
+def test_event_list_repeatability_no_success_cooldown_record(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_event_view_user())
+
+    event_list_result = {
+        "type": "event_list",
+        "status": "ACTIVE",
+        "limit": 10,
+        "severity": None,
+        "count": 0,
+        "truncated": False,
+        "events": [],
+    }
+
+    state = {"success_logged": False}
+
+    def fake_guard(*_args, **_kwargs):
+        if state["success_logged"]:
+            return GuardResult(
+                allowed=False, reason="Cooldown active", cooldown_remaining_seconds=12
+            )
+        return GuardResult(allowed=True)
+
+    def fake_record_operation(*_args, **_kwargs):
+        if _kwargs.get("result") == "success":
+            state["success_logged"] = True
+
+    with (
+        patch("routers.ai.check_all_guards", side_effect=fake_guard) as check_all_guards,
+        patch("routers.ai.record_operation", side_effect=fake_record_operation) as record_operation,
+        patch("routers.ai.maybe_run_harness", return_value=event_list_result) as maybe_run_harness,
+    ):
+        first_response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "event_list", "status": "ACTIVE", "severity": None, "limit": 10},
+            },
+        )
+        second_response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "event_list", "status": "ACTIVE", "severity": None, "limit": 10},
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["harness_result"] == event_list_result
+    assert second_response.json()["harness_result"] == event_list_result
+    assert check_all_guards.call_count == 2
+    assert maybe_run_harness.call_count == 2
+    assert not any(
+        call.kwargs.get("result") == "success" for call in record_operation.call_args_list
+    )
+    assert state["success_logged"] is False
+
+
+def test_event_list_guard_uses_event_query_target(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_event_view_user())
+
+    with (
+        patch(
+            "routers.ai.check_all_guards",
+            return_value=GuardResult(allowed=False, reason="Cooldown active"),
+        ) as check_all,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion"),
+        patch("routers.ai.record_operation") as record_operation,
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "List active events",
+                "intent": {"type": "event_list", "status": "ACTIVE", "severity": None, "limit": 10},
+            },
+        )
+
+    assert response.status_code == 200
+    assert maybe_run.call_count == 0
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["target_ids"] == ["event_query:ACTIVE:any"]
+    assert response.json()["harness_result"]["reason_code"] == "cooldown_active"
+    assert response.json()["harness_result"]["operation"] == "diagnose"
+    assert "No diagnostic or event lookup was executed." in response.json()["answer"]
+    check_all.assert_called_once()
+    assert not any(
+        call.kwargs.get("result") == "success" for call in record_operation.call_args_list
+    )
+
+
+def test_availability_check_denied_blocks_execution_and_records_denied_result(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, db = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    ci = {"id": "ci-1", "name": "Router-01", "ip": "192.168.1.10"}
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci) as resolve_ci,
+        patch(
+            "routers.ai.check_all_guards",
+            return_value=GuardResult(
+                allowed=False, reason="Cooldown active", cooldown_remaining_seconds=42
+            ),
+        ),
+        patch("routers.ai.record_operation") as record_operation,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion"),
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Router-01 availability",
+                "intent": {"type": "availability_check", "ci_ref": "Router-01"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["target_ids"] == ["ci:ci-1"]
+    assert response.json()["harness_result"]["reason_code"] == "cooldown_active"
+    assert db.added[0].harness_result == response.json()["harness_result"]
+    maybe_run.assert_not_called()
+    resolve_ci.assert_called_once()
+    record_operation.assert_called_once()
+    assert any(call.kwargs.get("result") == "blocked" for call in record_operation.call_args_list)
+
+
+def test_availability_check_canonicalizes_ci_ref_and_evaluates_guard_before_ping(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    ci = {"id": "CI-ABC", "name": "Router-01", "ip": "192.168.1.10"}
+    calls = []
+
+    def fake_ping(*_args, **_kwargs):
+        calls.append("ping")
+        from services.ai_chat_service import PingResult
+
+        return PingResult(
+            status="reachable", target="192.168.1.10", latency_ms=10.2, detail="1 packet received"
+        )
+
+    def fake_resolve(_driver, ci_ref):
+        calls.append(f"resolve:{ci_ref}")
+        return ci
+
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness", side_effect=fake_resolve
+        ) as resolve_ci,
+        patch("services.ai_chat_service.run_bounded_ping", side_effect=fake_ping) as run_ping,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+        patch("routers.ai.check_all_guards") as check_all,
+    ):
+        complete.return_value = {"content": "Ready", "model": "local-model"}
+        check_all.side_effect = lambda *_args, **_kwargs: GuardResult(allowed=True)
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Router alias-001 availability",
+                "intent": {"type": "availability_check", "ci_ref": "Alias-001"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"].startswith("Availability result for Router-01")
+    assert "status: reachable" in response.json()["answer"]
+    assert response.json()["harness_result"]["type"] == "availability_check"
+    assert response.json()["harness_result"]["status"] == "reachable"
+    assert check_all.call_args.args[2] == ["ci:CI-ABC"]
+    assert calls[0].startswith("resolve:")
+    assert calls[1] == "ping"
+    resolve_ci.assert_called_once()
+    run_ping.assert_called_once()
+
+
+def test_availability_check_resolve_failure_returns_ci_not_found_without_second_resolution_or_ping(
+    monkeypatch,
+):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", side_effect=[None]) as resolve_ci,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        complete.return_value = {"content": "No host alias", "model": "local-model"}
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Alias-404 availability",
+                "intent": {"type": "availability_check", "ci_ref": "Alias-404"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "ci_not_found"
+    assert response.json()["harness_result"]["ci_ref"] == "Alias-404"
+    assert resolve_ci.call_count == 1
+    maybe_run.assert_not_called()
+    run_ping.assert_not_called()
+
+
+def test_availability_check_with_blank_canonical_ci_id_is_non_executable(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    ci = {"id": "   ", "name": "Broken CI", "ip": "192.168.1.8"}
+
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci) as resolve_ci,
+        patch("routers.ai.check_all_guards") as check_all,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        complete.return_value = {"content": "No valid target", "model": "local-model"}
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Alias-blank availability",
+                "intent": {"type": "availability_check", "ci_ref": "Alias-blank"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "ci_not_found"
+    assert response.json()["harness_result"]["ci_ref"] == "Alias-blank"
+    assert resolve_ci.call_count == 1
+    assert check_all.call_count == 0
+    maybe_run.assert_not_called()
+    run_ping.assert_not_called()
+
+
+def test_availability_check_batch_with_canonical_id_missing_no_ping_or_maybe_run_harness(
+    monkeypatch,
+):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    def resolve_side_effect(_driver, ci_ref):
+        if ci_ref == "alias-no-id":
+            return {"id": None, "name": "Broken CI", "ip": "192.168.1.8"}
+        if ci_ref == "alias-whitespace":
+            return {"id": "   ", "name": "Broken CI", "ip": "192.168.1.9"}
+        if ci_ref == "alias-ok":
+            return {"id": "ci-ok", "name": "Alias OK", "ip": "192.168.1.10"}
+        return {"id": "ci-missing", "name": "Missing", "ip": "192.168.1.11"}
+
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_side_effect
+        ) as resolve_ci,
+        patch("routers.ai.check_all_guards") as check_all,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("routers.ai.record_operation") as record_operation,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        complete.return_value = {"content": "Unavailable", "model": "local-model"}
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Batch check",
+                "intent": {
+                    "type": "availability_check_batch",
+                    "ci_refs": ["alias-no-id", "alias-whitespace", "alias-ok"],
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["reason_code"] == "guard_unavailable"
+    maybe_run.assert_not_called()
+    check_all.assert_not_called()
+    run_ping.assert_not_called()
+    assert resolve_ci.call_count == 3
+    assert any(call.kwargs.get("result") == "blocked" for call in record_operation.call_args_list)
+
+
+def test_availability_check_escalation_required_denied(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    ci = {"id": "ci-2", "name": "Router-02", "ip": "10.0.0.1"}
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci),
+        patch(
+            "routers.ai.check_all_guards",
+            return_value=GuardResult(
+                allowed=True,
+                escalation_required=True,
+                escalation_id="esc-1",
+                reason="Need approval",
+            ),
+        ) as check_all,
+        patch("routers.ai.record_operation") as record_operation,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Router-02 availability",
+                "intent": {"type": "availability_check", "ci_ref": "Router-02"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["reason_code"] == "escalation_required"
+    assert response.json()["harness_result"]["escalation_required"] is True
+    assert response.json()["harness_result"]["escalation_id"] == "esc-1"
+    maybe_run.assert_not_called()
+    check_all.assert_called_once()
+    assert any(call.kwargs.get("result") == "escalated" for call in record_operation.call_args_list)
+
+
+def test_availability_batch_denied_if_any_target_fails_harness_targeting(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    def resolve_side_effect(_driver, ci_ref):
+        return {"id": f"id-{ci_ref}", "name": ci_ref, "ip": "192.168.1.10"}
+
+    guard_calls = 0
+
+    def guard_side_effect(_username, _operation, target_ids):
+        nonlocal guard_calls
+        guard_calls += 1
+        if guard_calls == 1:
+            return GuardResult(allowed=True)
+        if target_ids[0].endswith("alias2"):
+            return GuardResult(
+                allowed=False, reason="Cooldown active", cooldown_remaining_seconds=11
+            )
+        return GuardResult(allowed=True)
+
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_side_effect
+        ) as resolve_ci,
+        patch("routers.ai.check_all_guards", side_effect=guard_side_effect) as check_all,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("routers.ai.record_operation") as record_operation,
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Batch check",
+                "intent": {"type": "availability_check_batch", "ci_refs": ["alias1", "alias2"]},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert set(response.json()["harness_result"]["target_ids"]) == {"ci:id-alias1", "ci:id-alias2"}
+    maybe_run.assert_not_called()
+    assert check_all.call_count >= 2
+    assert any(call.kwargs.get("result") == "blocked" for call in record_operation.call_args_list)
+    assert resolve_ci.call_count == 2
+
+
+def test_availability_check_batch_with_mixed_resolved_and_unresolved_refs_denied_without_ping(
+    monkeypatch,
+):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    def resolve_side_effect(_driver, ci_ref):
+        if ci_ref == "alias1":
+            return {"id": "ci-alias1", "name": "Alias 1", "ip": "192.168.1.10"}
+        if ci_ref == "alias3":
+            return {"id": "ci-alias3", "name": "Alias 3", "ip": "192.168.1.11"}
+        return None
+
+    def guard_side_effect(_username, _operation, target_ids):
+        if target_ids == ["ci:ci-alias1", "ci:ci-alias3"]:
+            return GuardResult(allowed=True)
+        if target_ids == ["ci:ci-alias3"]:
+            return GuardResult(
+                allowed=False, reason="Cooldown active", cooldown_remaining_seconds=11
+            )
+        return GuardResult(allowed=True)
+
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_side_effect
+        ) as resolve_ci,
+        patch("routers.ai.check_all_guards", side_effect=guard_side_effect) as check_all,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("routers.ai.record_operation") as record_operation,
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Batch check",
+                "intent": {
+                    "type": "availability_check_batch",
+                    "ci_refs": ["alias1", "missing", "alias3"],
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["reason_code"] == "cooldown_active"
+    assert set(response.json()["harness_result"]["target_ids"]) == {"ci:ci-alias1", "ci:ci-alias3"}
+    for call in check_all.call_args_list:
+        resolved_ids = call.args[2]
+        assert all(target_id in {"ci:ci-alias1", "ci:ci-alias3"} for target_id in resolved_ids)
+    maybe_run.assert_not_called()
+    run_ping.assert_not_called()
+    assert resolve_ci.call_count == 3
+    assert check_all.call_count >= 2
+    assert any(call.kwargs.get("result") == "blocked" for call in record_operation.call_args_list)
+
+
+def test_availability_check_batch_with_mixed_resolved_and_unresolved_refs_returns_ci_not_found(
+    monkeypatch,
+):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    def resolve_side_effect(_driver, ci_ref):
+        if ci_ref == "alias-ok":
+            return {"id": "ci-ok", "name": "Alias OK", "ip": "192.168.1.10"}
+        if ci_ref == "alias-ok-2":
+            return {"id": "ci-ok-2", "name": "Alias OK2", "ip": "192.168.1.11"}
+        return None
+
+    def fake_ping(*_args, **_kwargs):
+        from services.ai_chat_service import PingResult
+
+        return PingResult(
+            status="reachable", target="192.168.1.10", latency_ms=5.5, detail="1 packet received"
+        )
+
+    with (
+        patch(
+            "services.ai_chat_service.resolve_ci_for_harness", side_effect=resolve_side_effect
+        ) as resolve_ci,
+        patch("routers.ai.check_all_guards", return_value=GuardResult(allowed=True)) as check_all,
+        patch("services.ai_chat_service.run_bounded_ping", side_effect=fake_ping) as run_ping,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        complete.return_value = {"content": "ready", "model": "local-model"}
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Batch",
+                "intent": {
+                    "type": "availability_check_batch",
+                    "ci_refs": ["alias-ok", "missing", "alias-ok-2"],
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    batch_results = response.json()["harness_result"]["results"]
+    assert response.json()["harness_result"]["type"] == "availability_check_batch"
+    assert any(
+        item.get("status") == "ci_not_found" and item.get("ci_ref") == "missing"
+        for item in batch_results
+    )
+    assert len(batch_results) == 3
+    for call in check_all.call_args_list:
+        assert all(target_id in {"ci:ci-ok", "ci:ci-ok-2"} for target_id in call.args[2])
+    assert run_ping.call_count == 2
+    assert resolve_ci.call_count == 3
+    assert check_all.call_count >= 2
+
+
+def test_availability_check_batch_guard_unavailable_does_not_execute_harness(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, db = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci,
+        patch(
+            "routers.ai.check_all_guards", side_effect=RuntimeError("guard db offline")
+        ) as check_all,
+        patch("routers.ai.maybe_run_harness") as maybe_run,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
+        resolve_ci.side_effect = [
+            {"id": "ci-a", "name": "A", "ip": "192.168.1.1"},
+            {"id": "ci-b", "name": "B", "ip": "192.168.1.2"},
+        ]
+        complete.return_value = {"content": "unused", "model": "local-model"}
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Batch",
+                "intent": {"type": "availability_check_batch", "ci_refs": ["alias-a", "alias-b"]},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "denied"
+    assert response.json()["harness_result"]["reason_code"] == "guard_unavailable"
+    assert "could not verify it was safe" in response.json()["answer"]
+    maybe_run.assert_not_called()
+    assert db.added[0].harness_result["status"] == "denied"
+    assert check_all.call_count >= 1
+    assert resolve_ci.call_count == 2
+
+
+def test_availability_check_allowed_records_success_result(monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client(user=_ai_cmdb_diagnostic_user())
+
+    ci = {"id": "ci-77", "name": "Router-77", "ip": "192.168.1.77"}
+    harness = {
+        "type": "availability_check",
+        "ci_id": "ci-77",
+        "ci_name": "Router-77",
+        "status": "reachable",
+        "target": "192.168.1.77",
+        "latency_ms": 4.1,
+        "detail": "1 packet received",
+    }
+
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness", return_value=ci),
+        patch("routers.ai.record_operation") as record_operation,
+        patch("routers.ai.maybe_run_harness", return_value=harness),
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={
+                "query": "Check Router-77 availability",
+                "intent": {"type": "availability_check", "ci_ref": "Router-77"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["harness_result"]["status"] == "reachable"
+    assert response.json()["harness_result"]["ci_id"] == "ci-77"
+    assert response.json()["harness_result"].get("denied", False) is False
+    assert any(call.kwargs.get("result") == "success" for call in record_operation.call_args_list)
+    assert any(
+        call.kwargs.get("target_id") == "ci:ci-77" for call in record_operation.call_args_list
+    )
+
+
 def test_disabled_lm_studio_blocks_harness_side_effects(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_ENABLED", "false")
     monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
     client, _ = _make_client(user=_diagnostic_user())
 
-    with patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci, \
-         patch("services.ai_chat_service.run_bounded_ping") as run_ping, \
-         patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete:
+    with (
+        patch("services.ai_chat_service.resolve_ci_for_harness") as resolve_ci,
+        patch("services.ai_chat_service.run_bounded_ping") as run_ping,
+        patch("services.ai_chat_service._post_lm_studio_chat_completion") as complete,
+    ):
         response = client.post(
             "/api/ai/chat",
             json={
@@ -1295,7 +2025,10 @@ def test_ping_harness_rejects_invalid_stored_target():
 def test_bounded_ping_maps_command_timeout():
     from services.ai_chat_service import run_bounded_ping
 
-    with patch("services.ai_chat_service.subprocess.run", side_effect=subprocess.TimeoutExpired(["ping"], 3)):
+    with patch(
+        "services.ai_chat_service.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(["ping"], 3),
+    ):
         result = run_bounded_ping("192.168.1.10")
 
     assert result.status == "error"
@@ -1363,7 +2096,9 @@ def test_bounded_ping_maps_missing_command():
 def test_bounded_ping_maps_execution_failure_without_exception_details():
     from services.ai_chat_service import run_bounded_ping
 
-    with patch("services.ai_chat_service.subprocess.run", side_effect=PermissionError("secret path")):
+    with patch(
+        "services.ai_chat_service.subprocess.run", side_effect=PermissionError("secret path")
+    ):
         result = run_bounded_ping("192.168.1.10")
 
     assert result.status == "error"
@@ -1376,7 +2111,10 @@ def test_bounded_ping_maps_execution_failure_without_exception_details():
 def test_bounded_ping_maps_subprocess_failure_without_exception_details():
     from services.ai_chat_service import run_bounded_ping
 
-    with patch("services.ai_chat_service.subprocess.run", side_effect=subprocess.SubprocessError("secret detail")):
+    with patch(
+        "services.ai_chat_service.subprocess.run",
+        side_effect=subprocess.SubprocessError("secret detail"),
+    ):
         result = run_bounded_ping("192.168.1.10")
 
     assert result.status == "error"
@@ -1390,12 +2128,18 @@ def test_post_lm_studio_logs_timeout_exception(caplog):
     from config import LMStudioSettings
     from services.ai_chat_service import LMStudioTimeoutError, _post_lm_studio_chat_completion
 
-    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
-    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
-        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
-            with pytest.raises(LMStudioTimeoutError):
-                _post_lm_studio_chat_completion(payload, settings)
+    with (
+        patch(
+            "services.ai_chat_service.urllib.request.urlopen", side_effect=TimeoutError("timed out")
+        ),
+        caplog.at_level(logging.ERROR, logger="services.ai_chat_service"),
+        pytest.raises(LMStudioTimeoutError),
+    ):
+        _post_lm_studio_chat_completion(payload, settings)
     assert "LM Studio request timed out" in caplog.text
     assert "lmstudio.local" in caplog.text
 
@@ -1404,12 +2148,19 @@ def test_post_lm_studio_logs_url_error(caplog):
     from config import LMStudioSettings
     from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
 
-    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
-    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
-        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
-            with pytest.raises(LMStudioError, match="unavailable"):
-                _post_lm_studio_chat_completion(payload, settings)
+    with (
+        patch(
+            "services.ai_chat_service.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("Connection refused"),
+        ),
+        caplog.at_level(logging.ERROR, logger="services.ai_chat_service"),
+        pytest.raises(LMStudioError, match="unavailable"),
+    ):
+        _post_lm_studio_chat_completion(payload, settings)
     assert "LM Studio unavailable" in caplog.text
     assert "lmstudio.local" in caplog.text
 
@@ -1418,31 +2169,40 @@ def test_post_lm_studio_logs_parse_error(caplog):
     from config import LMStudioSettings
     from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
 
-    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
-    with patch("services.ai_chat_service.urllib.request.urlopen", side_effect=ValueError("bad data")):
-        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
-            with pytest.raises(LMStudioError, match="could not be parsed"):
-                _post_lm_studio_chat_completion(payload, settings)
+    with (
+        patch(
+            "services.ai_chat_service.urllib.request.urlopen", side_effect=ValueError("bad data")
+        ),
+        caplog.at_level(logging.ERROR, logger="services.ai_chat_service"),
+        pytest.raises(LMStudioError, match="could not be parsed"),
+    ):
+        _post_lm_studio_chat_completion(payload, settings)
     assert "LM Studio response parse error" in caplog.text
     assert "lmstudio.local" in caplog.text
 
 
 def test_post_lm_studio_logs_missing_message(caplog):
-    import io
     from config import LMStudioSettings
     from services.ai_chat_service import LMStudioError, _post_lm_studio_chat_completion
 
-    settings = LMStudioSettings(enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1")
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
     response_body = json.dumps({"choices": []}).encode("utf-8")
     mock_response = MagicMock()
     mock_response.read.return_value = response_body
     mock_response.__enter__ = MagicMock(return_value=mock_response)
     mock_response.__exit__ = MagicMock(return_value=False)
-    with patch("services.ai_chat_service.urllib.request.urlopen", return_value=mock_response):
-        with caplog.at_level(logging.ERROR, logger="services.ai_chat_service"):
-            with pytest.raises(LMStudioError, match="did not contain a chat message"):
-                _post_lm_studio_chat_completion(payload, settings)
+    with (
+        patch("services.ai_chat_service.urllib.request.urlopen", return_value=mock_response),
+        caplog.at_level(logging.ERROR, logger="services.ai_chat_service"),
+        pytest.raises(LMStudioError, match="did not contain a chat message"),
+    ):
+        _post_lm_studio_chat_completion(payload, settings)
     assert "LM Studio response missing chat message" in caplog.text
     assert "lmstudio.local" in caplog.text

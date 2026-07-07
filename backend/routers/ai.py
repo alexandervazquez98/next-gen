@@ -4,23 +4,29 @@ import asyncio
 import re
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 from config import get_lm_studio_settings
 from database import get_db
-from postgres_db import get_pg_db
+from fastapi import APIRouter, Depends, HTTPException, status
 from models.user import AIPermission, User, UserPermission
-from services.auth_service import check_permission, get_current_active_user
+from postgres_db import get_pg_db
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from services import ai_chat_service
 from services.ai_chat_service import (
     LMStudioError,
     LMStudioTimeoutError,
+    build_guard_denial_harness_result,
     complete_chat,
     latest_event_list_ci_refs,
     load_chat_history,
     maybe_run_harness,
     save_chat_exchange,
 )
+from services.ai_guard_service import check_all_guards, record_operation
+from services.auth_service import check_permission, get_current_active_user
+
+CurrentUserDep = Depends(get_current_active_user)
+PgDbDep = Depends(get_pg_db)
+Neo4jDriverDep = Depends(get_db)
 
 
 router = APIRouter(prefix="/ai", tags=["AI Chat"])
@@ -157,12 +163,140 @@ def infer_followup_intent(query: str, db, username: str) -> AIChatIntent | None:
     return AvailabilityBatchIntent(type="availability_check_batch", ci_refs=ci_refs)
 
 
+def _normalize_availability_ci_ref(ci_ref: str) -> str:
+    return str(ci_ref).strip()
+
+
+def _safe_get_ci_field(ci: Any, field: str) -> Any:
+    if isinstance(ci, dict):
+        return ci.get(field)
+    getter = getattr(ci, "get", None)
+    if callable(getter):
+        try:
+            return getter(field)
+        except TypeError:
+            return None
+    return getattr(ci, field, None)
+
+
+def _canonical_ci_target_id(ci: Any) -> str | None:
+    ci_id = _safe_get_ci_field(ci, "id")
+    if ci_id is None:
+        return None
+    canonical = str(ci_id)
+    if not canonical.strip():
+        return None
+    return f"ci:{canonical}"
+
+
+def _build_availability_not_found_result(ci_ref: str) -> dict[str, Any]:
+    return {"type": "availability_check", "ci_ref": ci_ref, "status": "ci_not_found"}
+
+
+def _resolve_ci_for_harness(neo4j_driver, ci_ref: str) -> dict[str, Any] | None:
+    return ai_chat_service.resolve_ci_for_harness(neo4j_driver, ci_ref)
+
+
+def _event_query_target_id(intent: EventListIntent) -> str:
+    status = str(getattr(intent, "status", "ACTIVE") or "ACTIVE").upper()
+    severity = str(getattr(intent, "severity", "any") or "any").lower()
+    return f"event_query:{status}:{severity}"
+
+
+def _build_guard_request_context(intent: AIChatIntent) -> dict[str, Any]:
+    context = {
+        "source": "ai_chat",
+        "intent_type": intent.type,
+    }
+    if isinstance(intent, AvailabilityIntent):
+        context["ci_ref"] = intent.ci_ref
+        context["ci_refs_count"] = 1
+    elif isinstance(intent, AvailabilityBatchIntent):
+        context["ci_refs_count"] = len(intent.ci_refs)
+    else:
+        context["status"] = intent.status
+        context["severity"] = intent.severity
+        context["limit"] = intent.limit
+    return context
+
+
+def _evaluate_chat_guard(
+    *,
+    user: User,
+    target_type: str,
+    target_ids: list[str],
+    reason_context: dict[str, Any],
+    intent_type: str,
+) -> dict[str, Any] | None:
+    try:
+        guard_result = check_all_guards(user.username, "diagnose", target_ids)
+    except Exception:
+        return build_guard_denial_harness_result(
+            intent_type=intent_type,
+            target_type=target_type,
+            target_ids=target_ids,
+            reason="AI guardrail system could not verify this request was safe.",
+            reason_code="guard_unavailable",
+            request_context=reason_context,
+        )
+
+    if guard_result.escalation_required:
+        return build_guard_denial_harness_result(
+            intent_type=intent_type,
+            target_type=target_type,
+            target_ids=target_ids,
+            reason=guard_result.reason,
+            escalation_required=True,
+            escalation_id=guard_result.escalation_id,
+            request_context=reason_context,
+        )
+
+    if not guard_result.allowed:
+        return build_guard_denial_harness_result(
+            intent_type=intent_type,
+            target_type=target_type,
+            target_ids=target_ids,
+            reason=guard_result.reason,
+            cooldown_remaining_seconds=guard_result.cooldown_remaining_seconds,
+            request_context=reason_context,
+        )
+    return None
+
+
+def _record_chat_operation(
+    *,
+    user: User,
+    intent: AIChatIntent,
+    target_type: str,
+    target_id: str,
+    target_name: str,
+    result: str,
+    blocked_reason: str | None = None,
+) -> None:
+    request_context = _build_guard_request_context(intent)
+    request_context["event_category"] = "chat_harness"
+    try:
+        record_operation(
+            ai_persona=str(user.role),
+            ai_agent_id=user.username,
+            operation="diagnose",
+            target_type=target_type,
+            target_id=target_id,
+            target_name=target_name,
+            result=result,
+            blocked_reason=blocked_reason,
+            request_context=request_context,
+        )
+    except Exception:
+        return
+
+
 @router.post("/chat", response_model=AIChatResponse)
 async def chat_with_ai(
     body: AIChatRequest,
-    current_user: User = Depends(get_current_active_user),
-    db=Depends(get_pg_db),
-    neo4j_driver=Depends(get_db),
+    current_user: User = CurrentUserDep,
+    db=PgDbDep,
+    neo4j_driver=Neo4jDriverDep,
 ) -> AIChatResponse:
     if not get_lm_studio_settings().enabled:
         raise HTTPException(
@@ -186,13 +320,237 @@ async def chat_with_ai(
         )
         raise HTTPException(status_code=403, detail=detail)
 
+    harness_result: dict[str, Any] | None = None
+
     try:
-        harness_result = await asyncio.to_thread(maybe_run_harness, intent, neo4j_driver, current_user)
-    except Exception:
+        if intent is None:
+            pass
+        elif intent.type == "availability_check":
+            ci_ref = _normalize_availability_ci_ref(intent.ci_ref)
+            ci = _resolve_ci_for_harness(neo4j_driver, ci_ref)
+            if ci is None:
+                harness_result = _build_availability_not_found_result(ci_ref)
+            else:
+                target_id = _canonical_ci_target_id(ci)
+                if target_id is None:
+                    harness_result = _build_availability_not_found_result(ci_ref)
+                else:
+                    target_name = str(_safe_get_ci_field(ci, "name") or ci_ref)
+                    guard_context = _build_guard_request_context(intent)
+                    denial = _evaluate_chat_guard(
+                        user=current_user,
+                        target_type="ci",
+                        target_ids=[target_id],
+                        reason_context=guard_context,
+                        intent_type="availability_check",
+                    )
+                    if denial is not None:
+                        _record_chat_operation(
+                            user=current_user,
+                            intent=intent,
+                            target_type="ci",
+                            target_id=target_id,
+                            target_name=target_name,
+                            result=(
+                                "blocked"
+                                if denial.get("reason_code") != "escalation_required"
+                                else "escalated"
+                            ),
+                            blocked_reason=denial.get("reason_code"),
+                        )
+                        harness_result = denial
+                    else:
+                        run_intent = type(
+                            "ResolvedAvailabilityIntent",
+                            (),
+                            {"type": "availability_check", "ci_ref": ci_ref, "_resolved_ci": ci},
+                        )()
+                        harness_result = await asyncio.to_thread(
+                            maybe_run_harness,
+                            run_intent,
+                            neo4j_driver,
+                            current_user,
+                        )
+                        _record_chat_operation(
+                            user=current_user,
+                            intent=intent,
+                            target_type="ci",
+                            target_id=target_id,
+                            target_name=target_name,
+                            result="success",
+                        )
+        elif intent.type in {"event_list", "active_events"}:
+            target_id = _event_query_target_id(intent)
+            target_name = f"event query {target_id}"
+            guard_context = _build_guard_request_context(intent)
+            denial = _evaluate_chat_guard(
+                user=current_user,
+                target_type="event_query",
+                target_ids=[target_id],
+                reason_context=guard_context,
+                intent_type="event_list",
+            )
+            if denial is not None:
+                _record_chat_operation(
+                    user=current_user,
+                    intent=intent,
+                    target_type="event_query",
+                    target_id=target_id,
+                    target_name=target_name,
+                    result=(
+                        "blocked"
+                        if denial.get("reason_code") != "escalation_required"
+                        else "escalated"
+                    ),
+                    blocked_reason=denial.get("reason_code"),
+                )
+                harness_result = denial
+            else:
+                harness_result = await asyncio.to_thread(
+                    maybe_run_harness,
+                    intent,
+                    neo4j_driver,
+                    current_user,
+                )
+        elif intent.type == "availability_check_batch":
+            target_names: dict[str, str] = {}
+            resolved_targets: list[str] = []
+            resolved_by_ref: dict[str, Any | None] = {}
+            normalized_refs: list[str] = []
+            non_executable_ci_refs: list[str] = []
+            for ci_ref in intent.ci_refs:
+                ref = _normalize_availability_ci_ref(ci_ref)
+                normalized_refs.append(ref)
+                ci = _resolve_ci_for_harness(neo4j_driver, ref)
+                if ci is None:
+                    resolved_by_ref[ref] = None
+                    continue
+
+                canonical_id = _canonical_ci_target_id(ci)
+                if canonical_id is None:
+                    non_executable_ci_refs.append(ref)
+                    continue
+
+                resolved_by_ref[ref] = ci
+                resolved_targets.append(canonical_id)
+                target_names[canonical_id] = str(_safe_get_ci_field(ci, "name") or ref)
+
+            guard_context = _build_guard_request_context(intent)
+            if non_executable_ci_refs:
+                denial = build_guard_denial_harness_result(
+                    intent_type="availability_check_batch",
+                    target_type="ci",
+                    target_ids=resolved_targets,
+                    reason="Could not verify one or more availability targets for guard-safe execution.",
+                    reason_code="guard_unavailable",
+                    request_context=guard_context,
+                )
+                block_target_id = resolved_targets[0] if resolved_targets else ""
+                block_target_name = target_names.get(
+                    block_target_id, "unresolved availability target"
+                )
+                _record_chat_operation(
+                    user=current_user,
+                    intent=intent,
+                    target_type="ci",
+                    target_id=block_target_id,
+                    target_name=block_target_name,
+                    result="blocked",
+                    blocked_reason=denial.get("reason_code"),
+                )
+                harness_result = denial
+            else:
+                if not resolved_targets:
+                    run_intent = type(
+                        "ResolvedAvailabilityBatchIntent",
+                        (),
+                        {
+                            "type": "availability_check_batch",
+                            "ci_refs": normalized_refs,
+                            "_resolved_ci_targets": resolved_by_ref,
+                        },
+                    )()
+                    harness_result = await asyncio.to_thread(
+                        maybe_run_harness, run_intent, neo4j_driver, current_user
+                    )
+                else:
+                    denial = _evaluate_chat_guard(
+                        user=current_user,
+                        target_type="ci",
+                        target_ids=resolved_targets,
+                        reason_context=guard_context,
+                        intent_type="availability_check_batch",
+                    )
+                    if denial is None:
+                        for canonical_id in resolved_targets:
+                            denial = _evaluate_chat_guard(
+                                user=current_user,
+                                target_type="ci",
+                                target_ids=[canonical_id],
+                                reason_context=guard_context,
+                                intent_type="availability_check_batch",
+                            )
+                            if denial is not None:
+                                break
+
+                    if denial is not None:
+                        denial_target_id = denial.get("target_ids", [])
+                        record_target_id = (
+                            denial_target_id[0]
+                            if denial_target_id
+                            else (resolved_targets[0] if resolved_targets else "")
+                        )
+                        _record_chat_operation(
+                            user=current_user,
+                            intent=intent,
+                            target_type="ci",
+                            target_id=record_target_id,
+                            target_name=target_names.get(record_target_id, record_target_id),
+                            result=(
+                                "blocked"
+                                if denial.get("reason_code") != "escalation_required"
+                                else "escalated"
+                            ),
+                            blocked_reason=denial.get("reason_code"),
+                        )
+                        denial["target_ids"] = resolved_targets
+                        harness_result = denial
+                    else:
+                        run_intent = type(
+                            "ResolvedAvailabilityBatchIntent",
+                            (),
+                            {
+                                "type": "availability_check_batch",
+                                "ci_refs": normalized_refs,
+                                "_resolved_ci_targets": resolved_by_ref,
+                            },
+                        )()
+                        harness_result = await asyncio.to_thread(
+                            maybe_run_harness, run_intent, neo4j_driver, current_user
+                        )
+                        for canonical_id in resolved_targets:
+                            _record_chat_operation(
+                                user=current_user,
+                                intent=intent,
+                                target_type="ci",
+                                target_id=canonical_id,
+                                target_name=target_names.get(canonical_id, canonical_id),
+                                result="success",
+                            )
+        else:
+            harness_result = await asyncio.to_thread(
+                maybe_run_harness, intent, neo4j_driver, current_user
+            )
+
+        if harness_result is None:
+            harness_result = await asyncio.to_thread(
+                maybe_run_harness, intent, neo4j_driver, current_user
+            )
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operational harness is unavailable; no diagnostic or event result was executed.",
-        )
+        ) from exc
 
     history = await asyncio.to_thread(load_chat_history, db, current_user.username)
     try:
@@ -203,16 +561,16 @@ async def chat_with_ai(
             harness_result,
             history,
         )
-    except LMStudioTimeoutError:
+    except LMStudioTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LM Studio request timed out",
-        )
-    except LMStudioError:
+        ) from exc
+    except LMStudioError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LM Studio is unavailable",
-        )
+        ) from exc
 
     row = await asyncio.to_thread(
         save_chat_exchange,

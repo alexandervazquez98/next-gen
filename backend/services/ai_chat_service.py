@@ -10,12 +10,12 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from config import LMStudioSettings, get_ai_prompts_settings, get_lm_studio_settings
 from models.ai_chat import AIChatMessage
-from services import event_service
 from models.user import AIPermission, User
+from services import event_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ AI_DIR = Path(__file__).resolve().parents[1] / "ai"
 # User override root. ``None`` means "feature off" -> loaders read AI_DIR in
 # place (legacy behavior). Tests monkeypatch this directly; production resolves
 # it lazily from AI_PROMPTS_DIR via _user_dir().
-AI_USER_DIR: Optional[Path] = None
+AI_USER_DIR: Path | None = None
 REQUIRED_PROMPT_SOURCE_FILES = (
     "identity/Soul.md",
     "identity/scope.md",
@@ -63,7 +63,7 @@ class LMStudioTimeoutError(LMStudioError):
     """LM Studio did not answer within the configured timeout."""
 
 
-def _user_dir() -> Optional[Path]:
+def _user_dir() -> Path | None:
     """Resolve the user override root, caching the env lookup in AI_USER_DIR."""
     global AI_USER_DIR
     if AI_USER_DIR is None:
@@ -194,7 +194,9 @@ def build_lm_studio_payload(
     }
 
 
-def _post_lm_studio_chat_completion(payload: dict[str, Any], settings: LMStudioSettings) -> dict[str, str]:
+def _post_lm_studio_chat_completion(
+    payload: dict[str, Any], settings: LMStudioSettings
+) -> dict[str, str]:
     url = f"{settings.base_url}/chat/completions"
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -295,9 +297,40 @@ def run_bounded_ping(target: str) -> PingResult:
     return PingResult(status=status, target=target, latency_ms=latency_ms, detail=detail)
 
 
+def _safe_ci_field(ci: Any, field: str) -> Any:
+    if isinstance(ci, dict):
+        return ci.get(field)
+    getter = getattr(ci, "get", None)
+    if callable(getter):
+        try:
+            return getter(field)
+        except TypeError:
+            return None
+    return getattr(ci, field, None)
+
+
+_PRIVATE_INTENT_MISSING = object()
+
+
+def _private_intent_value(intent: Any, key: str) -> Any:
+    try:
+        intent_vars = vars(intent)
+        if key in intent_vars:
+            return intent_vars[key]
+    except TypeError:
+        return _PRIVATE_INTENT_MISSING
+    try:
+        class_vars = vars(type(intent))
+    except TypeError:
+        return _PRIVATE_INTENT_MISSING
+    return class_vars.get(key, _PRIVATE_INTENT_MISSING)
+
+
 def _run_availability_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_ref = str(getattr(intent, "ci_ref", "")).strip()
-    ci = resolve_ci_for_harness(neo4j_driver, ci_ref)
+    ci = _private_intent_value(intent, "_resolved_ci")
+    if ci is _PRIVATE_INTENT_MISSING:
+        ci = resolve_ci_for_harness(neo4j_driver, ci_ref)
     if ci is None:
         return {"type": "availability_check", "ci_ref": ci_ref, "status": "ci_not_found"}
 
@@ -307,8 +340,8 @@ def _run_availability_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     except ValueError as exc:
         return {
             "type": "availability_check",
-            "ci_id": ci.get("id"),
-            "ci_name": ci.get("name"),
+            "ci_id": _safe_ci_field(ci, "id"),
+            "ci_name": _safe_ci_field(ci, "name"),
             "status": "invalid_target",
             "detail": str(exc),
         }
@@ -418,9 +451,21 @@ def _run_event_list_harness(intent: Any, neo4j_driver, user: User | None = None)
 
 def _run_availability_batch_harness(intent: Any, neo4j_driver) -> dict[str, Any]:
     ci_refs = list(getattr(intent, "ci_refs", []) or [])[:MAX_BATCH_AVAILABILITY_CHECKS]
+    resolved_by_ref = _private_intent_value(intent, "_resolved_ci_targets")
     results = []
     for ci_ref in ci_refs:
-        child_intent = type("AvailabilityIntent", (), {"ci_ref": str(ci_ref)})()
+        normalized_ref = str(ci_ref).strip()
+        child_ci = (
+            resolved_by_ref.get(normalized_ref) if isinstance(resolved_by_ref, dict) else None
+        )
+        if isinstance(resolved_by_ref, dict) and normalized_ref in resolved_by_ref:
+            child_intent = type(
+                "AvailabilityIntent",
+                (),
+                {"ci_ref": normalized_ref, "_resolved_ci": child_ci},
+            )()
+        else:
+            child_intent = type("AvailabilityIntent", (), {"ci_ref": normalized_ref})()
         results.append(_run_availability_harness(child_intent, neo4j_driver))
     return {
         "type": "availability_check_batch",
@@ -485,10 +530,15 @@ def _normalized_terms(text: str) -> list[str]:
 def _event_matches_query(event: dict[str, Any], query_terms: list[str]) -> bool:
     if not query_terms:
         return True
-    haystack = " ".join(
-        str(event.get(field) or "")
-        for field in ("ci_name", "ci_id", "ci_hostname", "ci_location_name", "message")
-    ).lower().replace("_", " ").replace("-", " ")
+    haystack = (
+        " ".join(
+            str(event.get(field) or "")
+            for field in ("ci_name", "ci_id", "ci_hostname", "ci_location_name", "message")
+        )
+        .lower()
+        .replace("_", " ")
+        .replace("-", " ")
+    )
     return all(term in haystack for term in query_terms)
 
 
@@ -599,7 +649,9 @@ def _fmt_latency(value: Any) -> str:
 
 
 def _event_symptom(event: dict[str, Any], spanish: bool) -> str:
-    text = " ".join(str(event.get(key) or "") for key in ("message", "metric_name", "metric_id", "event_type")).lower()
+    text = " ".join(
+        str(event.get(key) or "") for key in ("message", "metric_name", "metric_id", "event_type")
+    ).lower()
     ci = event.get("ci_name") or event.get("ci_id") or "CI desconocido"
     severity = event.get("severity") or "UNKNOWN"
     if any(marker in text for marker in ("latency", "threshold", "umbral", "icmp_latency")):
@@ -633,7 +685,11 @@ def _render_event_list_response(query: str, harness_result: dict[str, Any]) -> s
         return f"There are no events for {filter_text}.\n\nLimitations:\n- No event facts are available for diagnosis."
 
     lines = [
-        f"Hay {len(events)} eventos para {filter_text}." if spanish else f"There are {len(events)} events for {filter_text}.",
+        (
+            f"Hay {len(events)} eventos para {filter_text}."
+            if spanish
+            else f"There are {len(events)} events for {filter_text}."
+        ),
         "",
         "Eventos observados:" if spanish else "Observed events:",
     ]
@@ -641,32 +697,44 @@ def _render_event_list_response(query: str, harness_result: dict[str, Any]) -> s
         ci = event.get("ci_name") or event.get("ci_id") or "CI desconocido"
         message = event.get("message") or event.get("metric_name") or "sin detalle"
         last_seen = f"; last_seen={event.get('last_seen')}" if event.get("last_seen") else ""
-        lines.append(f"- [{event.get('severity') or 'UNKNOWN'} / {event.get('status') or status}] {ci}: {message}{last_seen}")
-    lines.extend([
-        "",
-        "Diagnóstico observado:" if spanish else "Observed diagnosis:",
-        *[_event_symptom(event, spanish) for event in events],
-        "",
-        "Límites:" if spanish else "Limitations:",
-    ])
+        lines.append(
+            f"- [{event.get('severity') or 'UNKNOWN'} / {event.get('status') or status}] {ci}: {message}{last_seen}"
+        )
+    lines.extend(
+        [
+            "",
+            "Diagnóstico observado:" if spanish else "Observed diagnosis:",
+            *[_event_symptom(event, spanish) for event in events],
+            "",
+            "Límites:" if spanish else "Limitations:",
+        ]
+    )
     if spanish:
-        lines.extend([
-            "- No confirma causa raíz ni cierre del evento.",
-            "- No confirma congestión, energía, cableado, firewall, salud completa del servicio ni estado estable/óptimo.",
-            "",
-            "Siguiente chequeo sugerido:",
-            "- Ejecutar availability_check para CIs con síntomas de disponibilidad y revisar métricas históricas para latencia.",
-        ])
+        lines.extend(
+            [
+                "- No confirma causa raíz ni cierre del evento.",
+                "- No confirma congestión, energía, cableado, firewall, salud completa del servicio ni estado estable/óptimo.",
+                "",
+                "Siguiente chequeo sugerido:",
+                "- Ejecutar availability_check para CIs con síntomas de disponibilidad y revisar métricas históricas para latencia.",
+            ]
+        )
     else:
-        lines.extend([
-            "- Does not confirm root cause or event closure.",
-            "- Does not confirm congestion, power, cabling, firewall, complete service health, or stable/optimal state.",
-            "",
-            "Suggested next checks:",
-            "- Run availability_check for CIs with availability symptoms and review historical metrics for latency.",
-        ])
+        lines.extend(
+            [
+                "- Does not confirm root cause or event closure.",
+                "- Does not confirm congestion, power, cabling, firewall, complete service health, or stable/optimal state.",
+                "",
+                "Suggested next checks:",
+                "- Run availability_check for CIs with availability symptoms and review historical metrics for latency.",
+            ]
+        )
     if harness_result.get("truncated"):
-        lines.append("- Resultado truncado por seguridad; pedí más detalle si necesitás ampliar." if spanish else "- Result truncated for safety; ask for more detail if needed.")
+        lines.append(
+            "- Resultado truncado por seguridad; pedí más detalle si necesitás ampliar."
+            if spanish
+            else "- Result truncated for safety; ask for more detail if needed."
+        )
     return "\n".join(lines)
 
 
@@ -674,7 +742,11 @@ def _render_availability_check_response(query: str, result: dict[str, Any]) -> s
     spanish = _prefers_spanish(query)
     ci = result.get("ci_name") or result.get("ci_ref") or result.get("ci_id") or "CI desconocido"
     lines = [
-        (f"Resultado de disponibilidad para {ci}:" if spanish else f"Availability result for {ci}:"),
+        (
+            f"Resultado de disponibilidad para {ci}:"
+            if spanish
+            else f"Availability result for {ci}:"
+        ),
         f"- status: {_fmt(result.get('status'))}",
         f"- target: {_fmt(result.get('target'))}",
         f"- latency: {_fmt_latency(result.get('latency_ms'))}",
@@ -682,21 +754,25 @@ def _render_availability_check_response(query: str, result: dict[str, Any]) -> s
         "",
     ]
     if spanish:
-        lines.extend([
-            "Interpretación permitida:",
-            "- Este resultado describe solo un ping acotado actual ejecutado por el backend.",
-            "",
-            "Límites:",
-            "- No confirma salud completa del servicio, causa raíz ni cierre automático de eventos.",
-        ])
+        lines.extend(
+            [
+                "Interpretación permitida:",
+                "- Este resultado describe solo un ping acotado actual ejecutado por el backend.",
+                "",
+                "Límites:",
+                "- No confirma salud completa del servicio, causa raíz ni cierre automático de eventos.",
+            ]
+        )
     else:
-        lines.extend([
-            "Interpretation:",
-            "- This result describes only a current bounded ping executed by the backend.",
-            "",
-            "Limitations:",
-            "- It does not confirm complete service health, root cause, or automatic event closure.",
-        ])
+        lines.extend(
+            [
+                "Interpretation:",
+                "- This result describes only a current bounded ping executed by the backend.",
+                "",
+                "Limitations:",
+                "- It does not confirm complete service health, root cause, or automatic event closure.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -704,37 +780,49 @@ def _render_availability_batch_response(query: str, harness_result: dict[str, An
     spanish = _prefers_spanish(query)
     results = list(harness_result.get("results", []) or [])[:MAX_BATCH_AVAILABILITY_CHECKS]
     lines = [
-        f"Chequeo de disponibilidad ejecutado sobre {len(results)} CIs:" if spanish else f"Availability check executed for {len(results)} CIs:",
+        (
+            f"Chequeo de disponibilidad ejecutado sobre {len(results)} CIs:"
+            if spanish
+            else f"Availability check executed for {len(results)} CIs:"
+        ),
     ]
     for result in results:
-        ci = result.get("ci_name") or result.get("ci_ref") or result.get("ci_id") or "CI desconocido"
+        ci = (
+            result.get("ci_name") or result.get("ci_ref") or result.get("ci_id") or "CI desconocido"
+        )
         lines.append(
             f"- {ci}: {result.get('status') or 'unknown'}, target={_fmt(result.get('target'))}, "
             f"latency={_fmt_latency(result.get('latency_ms'))}, detail={_fmt(result.get('detail'))}"
         )
     lines.append("")
     if spanish:
-        lines.extend([
-            "Interpretación permitida:",
-            "- Los resultados describen ping acotado actual; máximo 5 CIs por lote.",
-            "",
-            "Límites:",
-            "- La respuesta a ping no confirma salud completa del servicio, causa raíz ni cierre automático de eventos.",
-        ])
+        lines.extend(
+            [
+                "Interpretación permitida:",
+                "- Los resultados describen ping acotado actual; máximo 5 CIs por lote.",
+                "",
+                "Límites:",
+                "- La respuesta a ping no confirma salud completa del servicio, causa raíz ni cierre automático de eventos.",
+            ]
+        )
     else:
-        lines.extend([
-            "Interpretation:",
-            "- Results describe current bounded ping checks only; maximum 5 CIs per batch.",
-            "",
-            "Limitations:",
-            "- Ping reachability does not confirm complete service health, root cause, or automatic event closure.",
-        ])
+        lines.extend(
+            [
+                "Interpretation:",
+                "- Results describe current bounded ping checks only; maximum 5 CIs per batch.",
+                "",
+                "Limitations:",
+                "- Ping reachability does not confirm complete service health, root cause, or automatic event closure.",
+            ]
+        )
     return "\n".join(lines)
 
 
 def render_harness_response(query: str, harness_result: dict[str, Any] | None) -> str | None:
     if not harness_result:
         return None
+    if harness_result.get("status") == "denied":
+        return _render_harness_denial_response(query, harness_result)
     harness_type = harness_result.get("type")
     if harness_type == "event_list":
         load_ai_markdown_contract("templates", "event_list.md")
@@ -778,7 +866,12 @@ def _fallback_event_list_response(harness_result: dict[str, Any], spanish: bool)
         return f"There are no{qualifier} events with status {status} right now."
 
     severity_order = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
-    events.sort(key=lambda event: (severity_order.get(str(event.get("severity")), 9), str(event.get("ci_name") or "")))
+    events.sort(
+        key=lambda event: (
+            severity_order.get(str(event.get("severity")), 9),
+            str(event.get("ci_name") or ""),
+        )
+    )
     lines = []
     if spanish:
         lines.append(f"Hay {len(events)} eventos abiertos en este momento:")
@@ -791,33 +884,130 @@ def _fallback_event_list_response(harness_result: dict[str, Any], spanish: bool)
         message = event.get("message") or event.get("metric_name") or "sin detalle"
         lines.append(f"- [{event_severity} / {event_status}] {ci_name}: {message}")
     if harness_result.get("truncated"):
-        lines.append("- Resultado truncado por seguridad; pedí más detalle si necesitás ampliar." if spanish else "- Result truncated for safety; ask for more detail if needed.")
+        lines.append(
+            "- Resultado truncado por seguridad; pedí más detalle si necesitás ampliar."
+            if spanish
+            else "- Result truncated for safety; ask for more detail if needed."
+        )
     return "\n".join(lines)
 
 
 def _fallback_availability_batch_response(harness_result: dict[str, Any], spanish: bool) -> str:
     results = list(harness_result.get("results", []) or [])
     if not results:
-        return "No se ejecutaron verificaciones de disponibilidad." if spanish else "No availability checks were executed."
+        return (
+            "No se ejecutaron verificaciones de disponibilidad."
+            if spanish
+            else "No availability checks were executed."
+        )
     lines = ["Resultado de disponibilidad:" if spanish else "Availability results:"]
     for result in results[:MAX_BATCH_AVAILABILITY_CHECKS]:
-        ci_name = result.get("ci_name") or result.get("ci_ref") or result.get("ci_id") or "CI desconocido"
+        ci_name = (
+            result.get("ci_name") or result.get("ci_ref") or result.get("ci_id") or "CI desconocido"
+        )
         status = result.get("status") or "unknown"
         detail = result.get("detail") or ""
         lines.append(f"- {ci_name}: {status}{f' ({detail})' if detail else ''}")
     return "\n".join(lines)
 
 
-def synthesize_harness_fallback_response(query: str, harness_result: dict[str, Any] | None) -> str | None:
+def _infer_guard_denial_reason_code(
+    reason: str | None,
+    escalation_required: bool,
+) -> str:
+    if escalation_required:
+        return "escalation_required"
+    reason_text = (reason or "").lower()
+    if "cooldown" in reason_text:
+        return "cooldown_active"
+    if "bulk" in reason_text:
+        return "bulk_operation_too_large"
+    if "behavior" in reason_text or "flood" in reason_text:
+        return "behavioral_guard_denied"
+    return "guard_denied"
+
+
+def build_guard_denial_harness_result(
+    *,
+    intent_type: str,
+    reason: str | None,
+    target_type: str,
+    target_ids: list[str],
+    request_context: dict[str, Any] | None = None,
+    escalation_required: bool = False,
+    escalation_id: str | None = None,
+    cooldown_remaining_seconds: int | None = None,
+    reason_code: str | None = None,
+) -> dict[str, Any]:
+    normalized_reason = reason or "AI guardrail denied execution for safety"
+    normalized_code = reason_code or _infer_guard_denial_reason_code(
+        normalized_reason,
+        escalation_required=escalation_required,
+    )
+    return {
+        "type": intent_type,
+        "status": "denied",
+        "denied": True,
+        "reason": normalized_reason,
+        "reason_code": normalized_code,
+        "cooldown_remaining_seconds": cooldown_remaining_seconds,
+        "escalation_required": escalation_required,
+        "escalation_id": escalation_id,
+        "operation": "diagnose",
+        "target_type": target_type,
+        "target_ids": list(target_ids),
+        "request_context": request_context or {},
+        "source": "ai_guard_service",
+    }
+
+
+def _render_harness_denial_response(query: str, harness_result: dict[str, Any]) -> str:
+    spanish = _prefers_spanish(query)
+    reason = str(harness_result.get("reason") or "").strip()
+    reason_code = harness_result.get("reason_code")
+    if reason_code == "guard_unavailable":
+        if spanish:
+            return (
+                "No puedo ejecutar esta verificación operativa ahora porque el sistema de guardrails de IA "
+                "no pudo verificar que fuera seguro. No se ejecutó ningún diagnóstico ni consulta de eventos."
+            )
+        return (
+            "I cannot run that operational check right now because the AI guardrail system "
+            "could not verify it was safe. No diagnostic or event lookup was executed."
+        )
+
+    if not reason:
+        reason = "an AI guardrail check blocked this harness execution"
+    if spanish:
+        return (
+            f"No puedo ejecutar esa verificación operativa ahora: {reason}. "
+            "No se ejecutó ningún diagnóstico ni consulta de eventos."
+        )
+    return (
+        f"I cannot run that operational check right now because a guardrail blocked it: {reason}. "
+        "No diagnostic or event lookup was executed."
+    )
+
+
+def synthesize_harness_fallback_response(
+    query: str, harness_result: dict[str, Any] | None
+) -> str | None:
     """Return deterministic text when the model produces no assistant content."""
     if not harness_result:
         return None
     spanish = _prefers_spanish(query)
+    if harness_result.get("status") == "denied":
+        return _render_harness_denial_response(query, harness_result)
     harness_type = harness_result.get("type")
     if harness_type in DETERMINISTIC_HARNESS_TYPES:
         return render_harness_response(query, harness_result)
     if harness_type == "availability_check":
-        ci_name = harness_result.get("ci_name") or harness_result.get("ci_ref") or harness_result.get("ci_id") or "CI desconocido"
+        ci_name = (
+            harness_result.get("ci_name")
+            or harness_result.get("ci_ref")
+            or harness_result.get("ci_id")
+            or "CI desconocido"
+        )
         status = harness_result.get("status") or "unknown"
         detail = harness_result.get("detail") or ""
         if spanish:
@@ -835,7 +1025,10 @@ def complete_chat(
     settings = get_lm_studio_settings()
     if not settings.enabled:
         raise LMStudioError("LM Studio chat is disabled")
-    if harness_result and harness_result.get("type") in DETERMINISTIC_HARNESS_TYPES:
+    if harness_result and (
+        harness_result.get("status") == "denied"
+        or harness_result.get("type") in DETERMINISTIC_HARNESS_TYPES
+    ):
         deterministic_response = render_harness_response(query, harness_result)
         if deterministic_response:
             return {"content": deterministic_response, "model": DETERMINISTIC_MODEL_LABEL}
