@@ -102,8 +102,11 @@ def _configure_session_timeouts(
     if not callable(execute):
         return
 
-    execute(text(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'"))
-    execute(text(f"SET LOCAL statement_timeout = '{int(statement_timeout_ms)}ms'"))
+    execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": f"{int(lock_timeout_ms)}ms"})
+    execute(
+        text("SELECT set_config('statement_timeout', :value, true)"),
+        {"value": f"{int(statement_timeout_ms)}ms"},
+    )
 
 
 def _run_one_write(

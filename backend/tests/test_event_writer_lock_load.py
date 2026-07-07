@@ -2,6 +2,8 @@ import json
 import threading
 from collections import deque
 
+import pytest
+
 from scripts import event_writer_lock_load as load
 
 
@@ -19,6 +21,15 @@ class FakeSession:
 
     def close(self):
         self.closed = True
+
+
+class RecordingSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.executed = []
+
+    def execute(self, statement, params=None):
+        self.executed.append((str(statement), params))
 
 
 def test_duration_stats_include_required_percentiles():
@@ -158,6 +169,58 @@ def test_threaded_same_triplet_workload_starts_writers_together():
     )
 
     assert max_active == 2
+
+
+
+def test_database_timeouts_are_configured_before_lock_acquisition():
+    sessions = []
+    lock_seen_after_timeouts = []
+
+    def session_factory():
+        session = RecordingSession()
+        sessions.append(session)
+        return session
+
+    def acquire_lock(session_arg, ci_id, metric_id, event_type, *, writer_context):
+        lock_seen_after_timeouts.append(len(session_arg.executed) == 2)
+
+    load.run_workload(
+        name="same_triplet",
+        mode="same-triplet",
+        writers=2,
+        iterations=1,
+        session_factory=session_factory,
+        acquire_lock=acquire_lock,
+        protected_write=lambda session, triplet: None,
+        monotonic=lambda: 0.0,
+        use_threads=False,
+        config=load.WorkloadConfig(lock_timeout_ms=123, statement_timeout_ms=456),
+    )
+
+    assert lock_seen_after_timeouts == [True, True]
+    assert [session.executed for session in sessions] == [
+        [
+            ("SELECT set_config('lock_timeout', :value, true)", {"value": "123ms"}),
+            ("SELECT set_config('statement_timeout', :value, true)", {"value": "456ms"}),
+        ],
+        [
+            ("SELECT set_config('lock_timeout', :value, true)", {"value": "123ms"}),
+            ("SELECT set_config('statement_timeout', :value, true)", {"value": "456ms"}),
+        ],
+    ]
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (["--lock-timeout-ms", "0"], "--lock-timeout-ms must be >= 1"),
+        (["--statement-timeout-ms", "0"], "--statement-timeout-ms must be >= 1"),
+        (["--workload-timeout-s", "0"], "--workload-timeout-s must be > 0"),
+    ],
+)
+def test_main_rejects_invalid_timeout_boundaries(args, message):
+    with pytest.raises(SystemExit, match=message):
+        load.main(["--writers", "2", "--iterations", "1", *args])
 
 
 
