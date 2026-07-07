@@ -5,7 +5,6 @@ import threading
 from collections import deque
 
 import pytest
-
 from scripts import event_writer_lock_load as load
 
 
