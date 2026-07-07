@@ -10,10 +10,12 @@ from datetime import UTC, datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from database import verify_connection
+from config import get_time_sync_settings
+from database import get_db, verify_connection
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from neo4j import Query as Neo4jQuery
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -544,6 +546,10 @@ def _safe_int(value):
     return None if value is None else int(value)
 
 
+def _utc_now(tz=UTC) -> datetime:
+    return datetime.now(tz)
+
+
 def _should_record_system_status_snapshot(latest_snapshot, now: datetime) -> bool:
     """Return true when the latest persisted snapshot is outside the throttle window."""
     if latest_snapshot is None or latest_snapshot.recorded_at is None:
@@ -597,6 +603,111 @@ def _utc_isoformat(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _empty_time_sync_status(settings, error: str, measured_at: datetime) -> dict:
+    return {
+        "status": "UNKNOWN",
+        "sources": {"reference": "backend", "compared": "neo4j"},
+        "skew_ms": None,
+        "thresholds_ms": {
+            "warning": float(settings.warning_ms),
+            "critical": float(settings.critical_ms),
+        },
+        "backend_time": _utc_isoformat(measured_at),
+        "neo4j_time": None,
+        "measured_at": _utc_isoformat(measured_at),
+        "query_latency_ms": None,
+        "error": error,
+    }
+
+
+def _normalize_neo4j_time(value) -> datetime:
+    if hasattr(value, "to_native"):
+        value = value.to_native()
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    raise ValueError("invalid_neo4j_time")
+
+
+def _classify_time_sync_skew(skew_ms: float, settings) -> str:
+    if skew_ms >= settings.critical_ms:
+        return "CRITICAL"
+    if skew_ms >= settings.warning_ms:
+        return "WARNING"
+    return "OK"
+
+
+def _time_sync_query_error(exc: Exception) -> str:
+    timeout_sources = [type(exc).__name__, str(exc)]
+    for attr in ("code", "status_code", "status", "gql_status", "gql_status_code"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            timeout_sources.append(str(value))
+
+    normalized_sources = [re.sub(r"[^a-z0-9]", "", source.lower()) for source in timeout_sources]
+    if any(
+        "timeout" in source or "timedout" in source or "deadline" in source
+        for source in normalized_sources
+    ):
+        return "neo4j_time_query_timeout"
+    return "neo4j_time_query_failed"
+
+
+def _build_time_sync_status(driver=None, settings=None, now_func=None) -> dict:
+    """Build backend-vs-Neo4j clock-skew telemetry without affecting health status."""
+    settings = settings or get_time_sync_settings()
+    now_func = now_func or _utc_now
+    measured_at = now_func(UTC)
+
+    try:
+        driver = driver or get_db()
+        before = measured_at
+        query = Neo4jQuery(
+            "RETURN datetime() AS neo4j_time",
+            timeout=getattr(settings, "query_timeout_s", 1.0),
+        )
+        with driver.session() as session:
+            record = session.run(query).single()
+        after = now_func(UTC)
+    except Exception as exc:
+        logger.warning("Failed to query Neo4j time for time-sync status: %s", exc)
+        return _empty_time_sync_status(settings, _time_sync_query_error(exc), measured_at)
+
+    try:
+        raw_neo4j_time = record["neo4j_time"] if record else None
+        neo4j_time = _normalize_neo4j_time(raw_neo4j_time)
+    except Exception as exc:
+        logger.warning("Failed to normalize Neo4j time for time-sync status: %s", exc)
+        return _empty_time_sync_status(settings, "invalid_neo4j_time", measured_at)
+
+    latency = after - before
+    midpoint = before + (latency / 2)
+    skew_ms = abs((neo4j_time - midpoint).total_seconds() * 1000)
+    skew_ms = round(skew_ms, 3)
+
+    return {
+        "status": _classify_time_sync_skew(skew_ms, settings),
+        "sources": {"reference": "backend", "compared": "neo4j"},
+        "skew_ms": skew_ms,
+        "thresholds_ms": {
+            "warning": float(settings.warning_ms),
+            "critical": float(settings.critical_ms),
+        },
+        "backend_time": _utc_isoformat(midpoint),
+        "neo4j_time": _utc_isoformat(neo4j_time),
+        "measured_at": _utc_isoformat(midpoint),
+        "query_latency_ms": round(latency.total_seconds() * 1000, 3),
+        "error": None,
+    }
 
 
 def _serialize_system_status_snapshot(snapshot):
@@ -689,6 +800,15 @@ def _build_system_status_payload() -> dict:
         logger.warning("Failed to build event lock observability snapshot: %s", exc)
         event_lock_snapshot = {"alert_state": "UNKNOWN", "snapshot_error": True}
 
+    if neo4j_status == "CONNECTED":
+        time_sync = _build_time_sync_status()
+    else:
+        time_sync = _empty_time_sync_status(
+            get_time_sync_settings(),
+            "neo4j_disconnected",
+            _utc_now(UTC),
+        )
+
     return {
         "cpu": round(cpu_percent, 1),
         "ram": round(ram_percent, 1),
@@ -698,6 +818,7 @@ def _build_system_status_payload() -> dict:
         "postgres": postgres_status,
         "collector": collector,
         "event_lock": event_lock_snapshot,
+        "time_sync": time_sync,
         "startup_time": STARTUP_TIME,
     }
 

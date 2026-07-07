@@ -21,11 +21,30 @@ export interface DiskIoStatus {
   sampled_at?: string | null;
 }
 
+export interface TimeSyncStatus {
+  status: "OK" | "WARNING" | "CRITICAL" | "UNKNOWN";
+  sources: {
+    reference: "backend" | string;
+    compared: "neo4j" | string;
+  };
+  skew_ms?: number | null;
+  thresholds_ms: {
+    warning: number;
+    critical: number;
+  };
+  backend_time?: string | null;
+  neo4j_time?: string | null;
+  measured_at?: string | null;
+  query_latency_ms?: number | null;
+  error?: string | null;
+}
+
 export interface SystemStatus {
   cpu: number;
   ram: number;
   disk: number;
   disk_io?: DiskIoStatus | null;
+  time_sync?: TimeSyncStatus | null;
   neo4j: "CONNECTED" | "DISCONNECTED" | "UNKNOWN";
   postgres?: "CONNECTED" | "DISCONNECTED" | "UNKNOWN";
   startup_time?: string | null;

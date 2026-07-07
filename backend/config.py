@@ -67,6 +67,69 @@ EVENT_LOCK_MIN_WRITER_CONTEXTS = 1
 EVENT_LOCK_MAX_WRITER_CONTEXTS = 100
 EVENT_LOCK_TOTAL_WRITER_SAMPLE_BUDGET = 10_000
 
+TIME_SYNC_DEFAULT_WARNING_MS = 1000.0
+TIME_SYNC_DEFAULT_CRITICAL_MS = 5000.0
+TIME_SYNC_DEFAULT_QUERY_TIMEOUT_S = 1.0
+TIME_SYNC_MIN_THRESHOLD_MS = 0.0
+TIME_SYNC_MAX_THRESHOLD_MS = 600_000.0
+TIME_SYNC_MIN_QUERY_TIMEOUT_S = 0.05
+TIME_SYNC_MAX_QUERY_TIMEOUT_S = 30.0
+
+
+class TimeSyncSettings(BaseModel):
+    """Runtime thresholds for backend-vs-database clock-skew telemetry."""
+
+    warning_ms: float = Field(default=TIME_SYNC_DEFAULT_WARNING_MS, ge=0)
+    critical_ms: float = Field(default=TIME_SYNC_DEFAULT_CRITICAL_MS, gt=0)
+    query_timeout_s: float = Field(default=TIME_SYNC_DEFAULT_QUERY_TIMEOUT_S, gt=0)
+
+    @model_validator(mode="after")
+    def validate_threshold_order(self) -> TimeSyncSettings:
+        if self.warning_ms >= self.critical_ms:
+            raise ValueError("TIME_SYNC_WARNING_MS must be less than TIME_SYNC_CRITICAL_MS")
+        return self
+
+    @classmethod
+    def from_env(cls) -> TimeSyncSettings:
+        """Load time-sync skew thresholds from environment variables."""
+        warning_ms = _env_float_bounded(
+            "TIME_SYNC_WARNING_MS",
+            TIME_SYNC_DEFAULT_WARNING_MS,
+            minimum=TIME_SYNC_MIN_THRESHOLD_MS,
+            maximum=TIME_SYNC_MAX_THRESHOLD_MS,
+        )
+        critical_ms = _env_float_bounded(
+            "TIME_SYNC_CRITICAL_MS",
+            TIME_SYNC_DEFAULT_CRITICAL_MS,
+            minimum=TIME_SYNC_MIN_THRESHOLD_MS,
+            maximum=TIME_SYNC_MAX_THRESHOLD_MS,
+        )
+        query_timeout_s = _env_float_bounded(
+            "TIME_SYNC_QUERY_TIMEOUT_S",
+            TIME_SYNC_DEFAULT_QUERY_TIMEOUT_S,
+            minimum=TIME_SYNC_MIN_QUERY_TIMEOUT_S,
+            maximum=TIME_SYNC_MAX_QUERY_TIMEOUT_S,
+        )
+        try:
+            return cls(
+                warning_ms=warning_ms,
+                critical_ms=critical_ms,
+                query_timeout_s=query_timeout_s,
+            )
+        except Exception:
+            return cls()
+
+
+_time_sync_settings: TimeSyncSettings | None = None
+
+
+def get_time_sync_settings() -> TimeSyncSettings:
+    """Return cached time-sync skew settings (singleton)."""
+    global _time_sync_settings
+    if _time_sync_settings is None:
+        _time_sync_settings = TimeSyncSettings.from_env()
+    return _time_sync_settings
+
 
 class EventLockSettings(BaseModel):
     """Runtime observability thresholds for Event advisory-lock acquisition."""
