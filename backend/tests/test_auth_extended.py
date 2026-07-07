@@ -615,6 +615,8 @@ class TestPermissionSecurity:
             UserPermission.ROLE_MANAGE,
             UserPermission.AUDIT_VIEW,
             UserPermission.METRICS_VIEW,
+            UserPermission.MQTT_READ,
+            UserPermission.MQTT_MAPPING_MANAGE,
         }
 
         defined_permissions = set(UserPermission)
