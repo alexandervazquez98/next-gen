@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections import deque
 import json
 import threading
-from collections import deque
 
 import pytest
 
