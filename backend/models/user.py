@@ -45,6 +45,10 @@ class UserPermission(str, Enum):
     # Visualization
     METRICS_VIEW = "METRICS_VIEW"
 
+    # MQTT integration
+    MQTT_READ = "MQTT_READ"
+    MQTT_MAPPING_MANAGE = "MQTT_MAPPING_MANAGE"
+
 
 class Role(BaseModel):
     name: str
@@ -126,3 +130,5 @@ class PasswordChangeRequest(BaseModel):
 
 class UserResetRequest(BaseModel):
     new_password: str
+
+
