@@ -79,7 +79,9 @@ def test_workload_report_records_same_triplet_lock_and_write_stats():
     assert report["event_write"]["count"] == 2
     assert report["lock_wait"]["max_ms"] == 20.0
     assert report["event_write"]["max_ms"] == 30.0
-    assert {item[:3] for item in acquired} == {("ci-contention", "metric-contention", "THRESHOLD_BREACH")}
+    assert {item[:3] for item in acquired} == {
+        ("ci-contention", "metric-contention", "THRESHOLD_BREACH")
+    }
     assert all(session.commits == 1 and session.closed for session in sessions)
 
 

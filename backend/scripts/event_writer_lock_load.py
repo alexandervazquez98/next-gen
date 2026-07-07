@@ -111,7 +111,10 @@ def _configure_session_timeouts(
     if not callable(execute):
         return
 
-    execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": f"{int(lock_timeout_ms)}ms"})
+    execute(
+        text("SELECT set_config('lock_timeout', :value, true)"),
+        {"value": f"{int(lock_timeout_ms)}ms"},
+    )
     execute(
         text("SELECT set_config('statement_timeout', :value, true)"),
         {"value": f"{int(statement_timeout_ms)}ms"},
@@ -333,10 +336,10 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_WORKLOAD_TIMEOUT_S,
         help=(
-                "Maximum seconds the parent waits for each threaded workload; "
-                "timed-out daemon workers may continue until process exit "
-                f"(default: {DEFAULT_WORKLOAD_TIMEOUT_S:g})"
-            ),
+            "Maximum seconds the parent waits for each threaded workload; "
+            "timed-out daemon workers may continue until process exit "
+            f"(default: {DEFAULT_WORKLOAD_TIMEOUT_S:g})"
+        ),
     )
     return parser
 
