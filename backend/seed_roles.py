@@ -1,8 +1,7 @@
 import asyncio
 
-from database import get_db, close_db
-from models.user import UserPermission, AIPermission
-
+from database import close_db, get_db
+from models.user import AIPermission, UserPermission
 
 SYSTEM_ROLE_PERMISSION_UPGRADES = {
     "ADMIN": [

@@ -8,7 +8,6 @@ repeating permission logic.
 from __future__ import annotations
 
 from fastapi import HTTPException, status
-
 from models.user import User, UserPermission, UserRole
 
 # Public permission kind strings. Kept as plain strings to keep dependency
