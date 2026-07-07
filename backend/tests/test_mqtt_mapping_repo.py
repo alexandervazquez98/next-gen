@@ -48,6 +48,7 @@ def test_create_draft_persists_draft_status(mock_neo4j_driver):
 
     # Existence checks pass.
     mock_neo4j_driver.mock_session.set_response("match (d:device)", [{"c": 1}])
+    mock_neo4j_driver.mock_session.set_response("has_metric", [{"c": 1}])
     mock_neo4j_driver.mock_session.set_response("match (c:ci)", [{"c": 1}])
     mock_neo4j_driver.mock_session.set_response("match (md:metricdef)", [{"c": 1}])
 
@@ -114,6 +115,37 @@ def test_create_draft_rejects_duplicate_mapping_id(mock_neo4j_driver):
 
 
 # ── existence helpers ────────────────────────────────────────────────────────
+
+
+def test_create_draft_requires_source_metric_from_source_topic_device(mock_neo4j_driver):
+    """create_draft should require source metrics to belong to source-topic devices."""
+    from repositories.mqtt_mapping_repo import MappingNotFoundError, MqttMappingRepo
+
+    mock_neo4j_driver.mock_session.set_response(
+        "match (m:mqttmetricmapping) where m.id = $mapping_id",
+        [],
+    )
+    mock_neo4j_driver.mock_session.set_response("match (d:device)", [{"c": 1}])
+    mock_neo4j_driver.mock_session.set_response("has_metric", [{"c": 0}])
+
+    repo = MqttMappingRepo(driver=mock_neo4j_driver)
+    with pytest.raises(MappingNotFoundError):
+        repo.create_draft(
+            mapping_id="map-001",
+            source_device_id=SOURCE_DEVICE_ID,
+            source_metric_id=SOURCE_METRIC_ID,
+            source_metric_name=SOURCE_METRIC_NAME,
+            target_ci_id=TARGET_CI_ID,
+            target_metric_def_id=TARGET_METRIC_DEF_ID,
+            created_by=CREATED_BY,
+        )
+
+    source_metric_query = [
+        query["query"].lower()
+        for query in mock_neo4j_driver.mock_session.queries
+        if "has_metric" in query["query"].lower()
+    ][0]
+    assert "source_topic is not null" in source_metric_query
 
 
 def test_create_draft_rejects_missing_source(mock_neo4j_driver):

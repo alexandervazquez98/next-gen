@@ -108,6 +108,72 @@ RETURN m.id AS id,
 ORDER BY m.name
 """
 
+_LIST_DEVICES_CYPHER = """
+MATCH (d:Device)
+WHERE d.source_topic IS NOT NULL
+OPTIONAL MATCH (d)-[:HAS_METRIC]->(m:Metric)
+OPTIONAL MATCH (m)-[:HAS_MQTT_MAPPING]->(mapping:MqttMetricMapping)
+WITH d,
+     count(DISTINCT m) AS metric_count,
+     count(DISTINCT CASE WHEN mapping.status = 'APPROVED' THEN m END) AS mapped_metrics_count
+RETURN d.id AS id,
+       d.name AS name,
+       d.location_id AS location_id,
+       d.source_topic AS source_topic,
+       d.parser_name AS parser_name,
+       d.first_seen AS first_seen,
+       d.last_seen AS last_seen,
+       d.extra AS extra,
+       metric_count AS metric_count,
+       mapped_metrics_count AS mapped_metrics_count
+ORDER BY d.id
+"""
+
+_LIST_DEVICE_METRICS_WITH_MAPPING_STATUS_CYPHER = """
+MATCH (d:Device {id: $device_id})-[:HAS_METRIC]->(m:Metric)
+WHERE d.source_topic IS NOT NULL
+OPTIONAL MATCH (m)-[:HAS_MQTT_MAPPING]->(mapping:MqttMetricMapping)
+WITH m,
+     CASE
+        WHEN count(mapping) = 0 THEN 'UNMAPPED'
+        WHEN any(status IN collect(mapping.status) WHERE status = 'APPROVED') THEN 'APPROVED'
+        WHEN any(status IN collect(mapping.status) WHERE status = 'DRAFT') THEN 'DRAFT'
+        ELSE 'REVOKED'
+     END AS mapping_status
+RETURN m.id AS id,
+       m.device_id AS device_id,
+       m.name AS name,
+       m.last_value AS last_value,
+       m.unit AS unit,
+       m.last_ts AS last_ts,
+       m.tags AS tags,
+       mapping_status AS mapping_status
+ORDER BY m.name
+"""
+
+_LIST_LATEST_READINGS_CYPHER = """
+MATCH (d:Device)-[:HAS_METRIC]->(m:Metric)
+WHERE d.source_topic IS NOT NULL
+OPTIONAL MATCH (m)-[:HAS_MQTT_MAPPING]->(mapping:MqttMetricMapping)
+WITH d, m,
+     CASE
+        WHEN count(mapping) = 0 THEN 'UNMAPPED'
+        WHEN any(status IN collect(mapping.status) WHERE status = 'APPROVED') THEN 'APPROVED'
+        WHEN any(status IN collect(mapping.status) WHERE status = 'DRAFT') THEN 'DRAFT'
+        ELSE 'REVOKED'
+     END AS mapping_status
+RETURN m.id AS id,
+       m.device_id AS device_id,
+       m.name AS name,
+       m.last_value AS last_value,
+       m.unit AS unit,
+       m.last_ts AS last_ts,
+       m.tags AS tags,
+       mapping_status AS mapping_status
+ORDER BY d.id, m.name
+LIMIT $limit
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -341,6 +407,60 @@ class DeviceMetricRepo:
         except Exception as exc:
             logger.exception("list_metrics failed for %s", device_id)
             raise RuntimeError(f"list_metrics failed for {device_id!r}: {exc}") from exc
+
+    def list_devices(self) -> list[dict[str, Any]]:
+        """Return raw MQTT devices with mapping counts for API visibility."""
+        try:
+            with self._driver.session() as session:
+                result = session.run(_LIST_DEVICES_CYPHER)
+                devices = []
+                for record in list(result):
+                    device = _record_to_device(record)
+                    metric_count = int(_get(record, "metric_count") or 0)
+                    mapped_count = int(_get(record, "mapped_metrics_count") or 0)
+                    device["metric_count"] = metric_count
+                    device["mapped_metrics_count"] = mapped_count
+                    device["unmapped_metrics_count"] = max(metric_count - mapped_count, 0)
+                    devices.append(device)
+                return devices
+        except Exception as exc:
+            logger.exception("list_devices failed")
+            raise RuntimeError(f"list_devices failed: {exc}") from exc
+
+    def list_metrics_with_mapping_status(self, device_id: str) -> list[dict[str, Any]]:
+        """Return latest device metrics annotated with mapping lifecycle status."""
+        try:
+            with self._driver.session() as session:
+                result = session.run(
+                    _LIST_DEVICE_METRICS_WITH_MAPPING_STATUS_CYPHER,
+                    device_id=device_id,
+                )
+                metrics = []
+                for record in list(result):
+                    metric = _record_to_metric(record)
+                    metric["mapping_status"] = _get(record, "mapping_status") or "UNMAPPED"
+                    metrics.append(metric)
+                return metrics
+        except Exception as exc:
+            logger.exception("list_metrics_with_mapping_status failed for %s", device_id)
+            raise RuntimeError(
+                f"list_metrics_with_mapping_status failed for {device_id!r}: {exc}"
+            ) from exc
+
+    def list_latest_readings(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return latest raw MQTT metric snapshots across devices."""
+        try:
+            with self._driver.session() as session:
+                result = session.run(_LIST_LATEST_READINGS_CYPHER, limit=limit)
+                readings = []
+                for record in list(result):
+                    metric = _record_to_metric(record)
+                    metric["mapping_status"] = _get(record, "mapping_status") or "UNMAPPED"
+                    readings.append(metric)
+                return readings
+        except Exception as exc:
+            logger.exception("list_latest_readings failed")
+            raise RuntimeError(f"list_latest_readings failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
