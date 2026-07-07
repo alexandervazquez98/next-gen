@@ -26,6 +26,33 @@ python backend/scripts/polling_host_benchmark.py --sink db --allow-db --json
 
 Do not use DB-backed mode on production without a maintenance window and rollback owner.
 
+## Event writer advisory-lock load evidence
+
+Use this harness when changing event writer lock behavior or validating runner/database capacity. It compares writers contending on the same `(ci_id, metric_id, event_type)` triplet with writers using disjoint triplets and emits machine-readable JSON.
+
+```bash
+cd backend
+python scripts/event_writer_lock_load.py \
+  --writers 2 \
+  --iterations 20 \
+  --event-write-ms 25 \
+  --workload-timeout-s 120 \
+  > event-writer-lock-load.json
+```
+
+Requirements:
+
+- PostgreSQL reachable through the normal backend environment variables (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, or `RUNNING_LOCALLY=true` for localhost).
+- Python backend dependencies installed, including SQLAlchemy and `psycopg2-binary`.
+- A non-production database or an approved maintenance window. The script only takes transaction-scoped advisory locks and does not write application rows, but it still opens concurrent database sessions.
+
+Interpretation:
+
+- `workloads.same_triplet.lock_wait` should show higher wait than `workloads.disjoint_triplets.lock_wait` when contention is real.
+- `event_write` measures the protected write window while the lock is held; tune `--event-write-ms` to approximate observed Neo4j Event write latency.
+- `--workload-timeout-s` defaults to `120` seconds per threaded workload. It bounds how long the parent waits for worker results; workers run in daemon threads so a timed-out CLI can return non-zero instead of keeping the process alive. Database lock and statement timeouts still provide the first line of cleanup for PostgreSQL waits.
+- Treat the JSON as baseline evidence, not a CI performance gate. The harness hard-fails only on argument, connection, lock acquisition, timeout, or execution errors; it has no default timing threshold.
+
 ## Queue partitions
 
 - Partition by protocol plus site/subnet/CI hash so one hot site does not block the whole queue.
