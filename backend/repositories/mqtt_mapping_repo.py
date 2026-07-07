@@ -101,6 +101,24 @@ class MqttMappingRepo:
         if int(count or 0) == 0:
             raise MappingNotFoundError(f"MetricDef not found: {target_metric_def_id}")
 
+    def _require_source_metric_exists(
+        self, tx: Any, source_device_id: str, source_metric_id: str
+    ) -> None:
+        query = """
+        MATCH (d:Device {id: $source_device_id})-[:HAS_METRIC]->(m:Metric {id: $source_metric_id})
+        WHERE d.source_topic IS NOT NULL
+        WITH count(m) AS c
+        RETURN c
+        """
+        row = tx.run(
+            query,
+            source_device_id=source_device_id,
+            source_metric_id=source_metric_id,
+        ).single()
+        count = row["c"] if row else 0
+        if int(count or 0) == 0:
+            raise MappingNotFoundError(f"Source metric not found: {source_metric_id}")
+
     def _get(self, tx: Any, mapping_id: str) -> dict[str, Any] | None:
         query = """
         MATCH (m:MqttMetricMapping) WHERE m.id = $mapping_id
@@ -170,6 +188,7 @@ class MqttMappingRepo:
                 raise MappingConflictError(f"Mapping id already exists: {mapping_id}")
 
             self._require_device_exists(tx, source_device_id)
+            self._require_source_metric_exists(tx, source_device_id, source_metric_id)
             self._require_metric_target_exists(tx, target_ci_id)
             self._require_metric_def_exists(tx, target_metric_def_id)
 
@@ -421,6 +440,179 @@ class MqttMappingRepo:
             close = getattr(session, "close", None)
             if callable(close):
                 close()
+
+    def get_mapping(self, mapping_id: str) -> dict[str, Any] | None:
+        with self._session() as tx:
+            return self._get(tx, mapping_id)
+
+    def list_mappings(self, status: str | None = None) -> list[dict[str, Any]]:
+        with self._session() as tx:
+            query = """
+            MATCH (m:MqttMetricMapping)
+            WHERE $status IS NULL OR m.status = $status
+            RETURN
+                m.id AS id,
+                m.source_device_id AS source_device_id,
+                m.source_metric_id AS source_metric_id,
+                m.source_metric_name AS source_metric_name,
+                m.target_ci_id AS target_ci_id,
+                m.target_metric_def_id AS target_metric_def_id,
+                m.status AS status,
+                m.version AS version,
+                m.warning AS warning,
+                m.critical AS critical,
+                m.operator AS operator,
+                m.created_by AS created_by,
+                m.approved_by AS approved_by,
+                m.revoked_by AS revoked_by,
+                m.created_at AS created_at,
+                m.approved_at AS approved_at,
+                m.revoked_at AS revoked_at,
+                m.updated_at AS updated_at
+            ORDER BY m.created_at DESC, m.id
+            """
+            return [
+                self._record(
+                    row,
+                    (
+                        "id",
+                        "source_device_id",
+                        "source_metric_id",
+                        "source_metric_name",
+                        "target_ci_id",
+                        "target_metric_def_id",
+                        "status",
+                        "version",
+                        "warning",
+                        "critical",
+                        "operator",
+                        "created_by",
+                        "approved_by",
+                        "revoked_by",
+                        "created_at",
+                        "approved_at",
+                        "revoked_at",
+                        "updated_at",
+                    ),
+                )
+                for row in list(tx.run(query, status=status))
+            ]
+
+    def update_draft(
+        self,
+        mapping_id: str,
+        source_metric_name: str | None = None,
+        target_ci_id: str | None = None,
+        target_metric_def_id: str | None = None,
+        warning: float | None = None,
+        critical: float | None = None,
+        operator: str | None = None,
+    ) -> dict[str, Any]:
+        with self._session() as tx:
+            mapping = self._get(tx, mapping_id)
+            if not mapping:
+                raise MappingNotFoundError(f"Mapping not found: {mapping_id}")
+            if mapping["status"] != MAPPING_STATUS_DRAFT:
+                raise MappingConflictError("Only DRAFT mappings can be updated")
+
+            resolved_target_ci_id = target_ci_id or mapping.get("target_ci_id")
+            resolved_metric_def_id = target_metric_def_id or mapping.get("target_metric_def_id")
+            self._require_metric_target_exists(tx, resolved_target_ci_id)
+            self._require_metric_def_exists(tx, resolved_metric_def_id)
+
+            now = self._to_iso(self._now())
+            query = """
+            MATCH (m:MqttMetricMapping {id: $mapping_id})
+            SET m.source_metric_name = coalesce($source_metric_name, m.source_metric_name),
+                m.target_ci_id = $target_ci_id,
+                m.target_metric_def_id = $target_metric_def_id,
+                m.warning = $warning,
+                m.critical = $critical,
+                m.operator = $operator,
+                m.updated_at = datetime($updated_at),
+                m.version = toInteger(coalesce(m.version, 0)) + 1
+            RETURN
+                m.id AS id,
+                m.source_device_id AS source_device_id,
+                m.source_metric_id AS source_metric_id,
+                m.source_metric_name AS source_metric_name,
+                m.target_ci_id AS target_ci_id,
+                m.target_metric_def_id AS target_metric_def_id,
+                m.status AS status,
+                m.version AS version,
+                m.warning AS warning,
+                m.critical AS critical,
+                m.operator AS operator
+            """
+            row = tx.run(
+                query,
+                mapping_id=mapping_id,
+                source_metric_name=source_metric_name,
+                target_ci_id=resolved_target_ci_id,
+                target_metric_def_id=resolved_metric_def_id,
+                warning=warning,
+                critical=critical,
+                operator=operator,
+                updated_at=now,
+            ).single()
+            if row is None:
+                raise RuntimeError("Failed to update mapping")
+            return self._record(
+                row,
+                (
+                    "id",
+                    "source_device_id",
+                    "source_metric_id",
+                    "source_metric_name",
+                    "target_ci_id",
+                    "target_metric_def_id",
+                    "status",
+                    "version",
+                    "warning",
+                    "critical",
+                    "operator",
+                ),
+            )
+
+    def update_thresholds(
+        self,
+        mapping_id: str,
+        warning: float | None,
+        critical: float | None,
+        operator: str | None,
+    ) -> dict[str, Any]:
+        with self._session() as tx:
+            mapping = self._get(tx, mapping_id)
+            if not mapping:
+                raise MappingNotFoundError(f"Mapping not found: {mapping_id}")
+
+            now = self._to_iso(self._now())
+            query = """
+            MATCH (m:MqttMetricMapping {id: $mapping_id})
+            SET m.warning = $warning,
+                m.critical = $critical,
+                m.operator = $operator,
+                m.updated_at = datetime($updated_at),
+                m.version = toInteger(coalesce(m.version, 0)) + 1
+            RETURN
+                m.id AS id,
+                m.status AS status,
+                m.version AS version,
+                m.warning AS warning,
+                m.critical AS critical,
+                m.operator AS operator
+            """
+            row = tx.run(
+                query,
+                mapping_id=mapping_id,
+                warning=warning,
+                critical=critical,
+                operator=operator,
+                updated_at=now,
+            ).single()
+            if row is None:
+                raise RuntimeError("Failed to update mapping thresholds")
+            return self._record(row, ("id", "status", "version", "warning", "critical", "operator"))
 
     def revoke(self, mapping_id: str, revoked_by: str | None = None) -> dict[str, Any]:
         with self._session() as tx:
