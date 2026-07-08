@@ -263,8 +263,47 @@ class MQTTSettings(BaseModel):
         )
 
 
+class MQTTRuntimeSettings(BaseModel):
+    """Runtime topology flags for MQTT subscriber and bridge behavior."""
+
+    bridge_enabled: bool = True
+    missed_heartbeat_seconds: int = 90
+    run_subscriber_in_process: bool = False
+
+    @classmethod
+    def from_env(cls) -> MQTTRuntimeSettings:
+        """Load MQTT runtime settings from environment variables.
+
+        ``MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS`` is the preferred
+        primary key. ``MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS`` remains
+        supported for backward compatibility.
+        """
+
+        missed_heartbeat_seconds = _env_int_bounded(
+            "MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS",
+            default=90,
+            minimum=1,
+            maximum=86_400,
+        )
+
+        if os.getenv("MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS") is None:
+            missed_heartbeat_seconds = _env_int_bounded(
+                "MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS",
+                default=missed_heartbeat_seconds,
+                minimum=1,
+                maximum=86_400,
+            )
+
+        return cls(
+            bridge_enabled=_env_bool("MQTT_MAPPING_BRIDGE_ENABLED", default=True),
+            missed_heartbeat_seconds=missed_heartbeat_seconds,
+            run_subscriber_in_process=_env_bool("ENABLE_MQTT_SUBSCRIBER", default=False),
+        )
+
+
 # Singleton instance (lazy-loaded)
 _mqtt_settings: MQTTSettings | None = None
+_mqtt_runtime_settings: MQTTRuntimeSettings | None = None
 
 
 def get_mqtt_settings() -> MQTTSettings:
@@ -273,6 +312,14 @@ def get_mqtt_settings() -> MQTTSettings:
     if _mqtt_settings is None:
         _mqtt_settings = MQTTSettings.from_env()
     return _mqtt_settings
+
+
+def get_mqtt_runtime_settings() -> MQTTRuntimeSettings:
+    """Return cached MQTT runtime settings (singleton)."""
+    global _mqtt_runtime_settings
+    if _mqtt_runtime_settings is None:
+        _mqtt_runtime_settings = MQTTRuntimeSettings.from_env()
+    return _mqtt_runtime_settings
 
 
 # ---------------------------------------------------------------------------

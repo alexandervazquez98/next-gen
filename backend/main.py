@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from config import get_time_sync_settings
+from config import get_mqtt_runtime_settings, get_time_sync_settings
 from database import get_db, verify_connection
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,6 +98,29 @@ def _reload_system_status_env_settings() -> None:
     )
 
 
+def _should_start_embedded_mqtt_subscriber() -> bool:
+    """Return whether the API process should own a in-process MQTT subscriber."""
+    return get_mqtt_runtime_settings().run_subscriber_in_process
+
+
+def _start_embedded_mqtt_subscriber(*, task_factory=asyncio.create_task) -> None:
+    """Start in-process MQTT subscriber when enabled.
+
+    Isolated in a helper so tests can assert startup behavior without invoking the
+    full startup sequence.
+    """
+    if _should_start_embedded_mqtt_subscriber():
+        from services.mqtt.subscriber import mqtt_subscriber_loop
+
+        task_factory(mqtt_subscriber_loop())
+        logger.info("Embedded MQTT subscriber started in backend process")
+        return
+
+    logger.info(
+        "Embedded MQTT subscriber disabled in backend process (ENABLE_MQTT_SUBSCRIBER=false)"
+    )
+
+
 from middleware.rate_limit import RateLimitMiddleware  # noqa: E402
 from seed_admin import seed_admin  # noqa: E402
 from seed_roles import seed_roles  # noqa: E402
@@ -155,6 +178,7 @@ from routers import (  # noqa: E402
     events,
     links,
     metrics,
+    mqtt,
     nodes,
     permissions,
     roles,
@@ -275,6 +299,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(nodes.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
+app.include_router(mqtt.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
 app.include_router(tunnels.router, prefix="/api")
@@ -314,6 +339,8 @@ async def startup_event():
 
     # Initialize TimescaleDB Hypertables
     try:
+        # PR1: import MQTT bridge idempotency model so Base metadata can create table.
+        from models.mqtt_metric_sample_receipt import MqttMetricSampleReceipt  # noqa: F401
         from postgres_db import Base, SessionLocal, engine
         from repositories.metric_repo import create_hypertable
 
@@ -377,6 +404,9 @@ async def startup_event():
         logger.info(
             "Background SNMP Collector in backend process is disabled (DISABLE_BACKEND_COLLECTOR=true)"
         )
+
+    # Start embedded MQTT subscriber only when explicitly enabled.
+    _start_embedded_mqtt_subscriber(task_factory=asyncio.create_task)
 
     # Start Backup Scheduler
     schedule_daily_backup()

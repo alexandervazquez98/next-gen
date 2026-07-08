@@ -315,6 +315,42 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
     return rows
 
 
+def _dedupe_idempotent_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate payloads that share the same ``idempotency_key``.
+
+    Duplicate payloads are possible when the same payload is retried before the
+    upstream caller persists idempotency state. For MQTT bridge replays, only the
+    latest payload for a given key matters; earlier duplicates must not repeat
+    side-effectful Cypher writes.
+    """
+    deduped: list[dict[str, Any]] = []
+    latest_index_by_key: dict[str, int] = {}
+    for row in rows:
+        row_dict = dict(row)
+        row_idempotency_key = row_dict.get("idempotency_key")
+        if row_idempotency_key is None:
+            deduped.append(row_dict)
+            continue
+
+        prior_index = latest_index_by_key.get(row_idempotency_key)
+        if prior_index is None:
+            latest_index_by_key[row_idempotency_key] = len(deduped)
+            deduped.append(row_dict)
+            continue
+
+        prior_row = deduped[prior_index]
+        row_observed_at = row_dict.get("observed_at")
+        prior_observed_at = prior_row.get("observed_at")
+        if prior_observed_at is None or row_observed_at is None:
+            deduped[prior_index] = row_dict
+            continue
+
+        if row_observed_at >= prior_observed_at:
+            deduped[prior_index] = row_dict
+
+    return deduped
+
+
 def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=None) -> int:
     """Apply latest metric/result/event updates with batched UNWIND queries.
 
@@ -341,7 +377,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
         callers (``writer_pool.run_writer_once``) always pass the leased
         ``timescale_db`` as ``lock_db``.
     """
-    rows = build_event_rows(envelopes)
+    rows = _dedupe_idempotent_rows(build_event_rows(envelopes))
     if not rows:
         return 0
     latest_metric_rows = _latest_metric_rows(rows)
@@ -349,19 +385,47 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
     non_collection_state_rows = _dedupe_non_collection_latest_state(rows)
     non_collection_event_rows = _non_collection_event_rows(non_collection_state_rows)
     with driver.session() as session:
-        session.run(
-            """
-            UNWIND $rows AS row
-            MATCH (n:CI {id: row.ci_id})
-            MATCH (m:MetricDef {id: row.metric_id})
-            MERGE (n)-[r:HAS_METRIC]->(m)
-            SET r.last_value = row.value, r.last_updated = datetime(), r.status = row.status, r.last_message = row.message
-            CREATE (res:MetricResult {timestamp: datetime(), value: row.value, status: row.status})
-            CREATE (n)-[:HAS_RESULT]->(res)
-            CREATE (res)-[:FOR_METRIC]->(m)
-            """,
-            rows=latest_metric_rows,
-        )
+        rows_with_idempotency = [
+            row for row in latest_metric_rows if row.get("idempotency_key") is not None
+        ]
+        rows_without_idempotency = [
+            row for row in latest_metric_rows if row.get("idempotency_key") is None
+        ]
+        if rows_with_idempotency:
+            session.run(
+                """
+                UNWIND $rows AS row
+                MATCH (n:CI {id: row.ci_id})
+                MATCH (m:MetricDef {id: row.metric_id})
+                MERGE (n)-[r:HAS_METRIC]->(m)
+                SET r.last_value = row.value, r.last_updated = datetime(), r.status = row.status, r.last_message = row.message
+                MERGE (res:MetricResult {idempotency_key: row.idempotency_key})
+                ON CREATE SET
+                    res.timestamp = datetime(),
+                    res.value = row.value,
+                    res.status = row.status
+                ON MATCH SET
+                    res.value = row.value,
+                    res.status = row.status
+                MERGE (n)-[:HAS_RESULT]->(res)
+                MERGE (res)-[:FOR_METRIC]->(m)
+                """,
+                rows=rows_with_idempotency,
+            )
+        if rows_without_idempotency:
+            session.run(
+                """
+                UNWIND $rows AS row
+                MATCH (n:CI {id: row.ci_id})
+                MATCH (m:MetricDef {id: row.metric_id})
+                MERGE (n)-[r:HAS_METRIC]->(m)
+                SET r.last_value = row.value, r.last_updated = datetime(), r.status = row.status, r.last_message = row.message
+                CREATE (res:MetricResult {timestamp: datetime(), value: row.value, status: row.status})
+                CREATE (n)-[:HAS_RESULT]->(res)
+                CREATE (res)-[:FOR_METRIC]->(m)
+                """,
+                rows=rows_without_idempotency,
+            )
 
         # COLLECTION_FAILURE batch — sorted lock acquisition per design §4.
         if lock_db is not None and collection_failure_rows:
