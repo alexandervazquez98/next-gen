@@ -20,6 +20,7 @@ from services.mqtt_mapping_service import (
     require_mqtt_permission,
 )
 from services.mqtt_raw_reading_service import MqttRawReadingService, get_mqtt_raw_reading_service
+from services.mqtt_runtime_status import get_mqtt_runtime_status_service
 
 router = APIRouter(
     prefix="/mqtt",
@@ -40,9 +41,14 @@ def _mapping_service() -> MqttMappingService:
     return get_mqtt_mapping_service()
 
 
+def _runtime_status_service():
+    return get_mqtt_runtime_status_service()
+
+
 CurrentUserDep = Depends(_current_user)
 RawServiceDep = Depends(_raw_service)
 MappingServiceDep = Depends(_mapping_service)
+RuntimeStatusServiceDep = Depends(_runtime_status_service)
 
 
 @router.get("/devices", response_model=list[MqttRawDeviceResponse])
@@ -72,6 +78,15 @@ def list_mqtt_latest_readings(
 ):
     require_mqtt_permission(MQTT_READ_PERMISSION_KIND, current_user)
     return service.list_latest_readings(limit=limit)
+
+
+@router.get("/status")
+def get_mqtt_status(
+    current_user: User = CurrentUserDep,
+    status_service=RuntimeStatusServiceDep,
+):
+    require_mqtt_permission(MQTT_READ_PERMISSION_KIND, current_user)
+    return status_service.get_status()
 
 
 @router.get("/mappings", response_model=list[MqttMappingResponse])

@@ -5,7 +5,7 @@ from tests.conftest import MockNeo4jDriver
 
 def _event_row(value: float | None = 97.0, status="OK", metadata=None):
     return {
-        "idempotency_key": "idem-1",
+        "idempotency_key": None,
         "ci_id": "ci-1",
         "metric_id": "cpu",
         "protocol": "SNMP",
@@ -199,7 +199,7 @@ def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     queries = "\n".join(q["query"] for q in driver.mock_session.queries)
     assert queries.count("UNWIND $rows AS row") >= 3
     assert "MERGE (n)-[r:HAS_METRIC]->(m)" in queries
-    assert "CREATE (res:MetricResult" in queries
+    assert "CREATE (res:MetricResult" in queries or "MERGE (res:MetricResult" in queries
     assert "status: 'OPEN'" in queries
     assert "id: randomUUID()" in queries
     assert "e.id = coalesce(e.id, randomUUID())" not in queries
@@ -207,6 +207,47 @@ def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     assert "correlation_type" in queries
     assert "root_cause_ci_id" in queries
     assert "PROPAGATED" in queries
+
+
+def test_event_writer_deduplicates_idempotent_payload_rows_before_metric_result_write():
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    first_payload = {**_event_row(95.0), "idempotency_key": "idem-1"}
+    duplicate_payload = {**first_payload, "value": {"numeric": 95.0, "raw": 95.0}}
+
+    batch_update_events(
+        driver,
+        [first_payload, duplicate_payload],
+    )
+
+    metric_queries = [
+        q
+        for q in driver.mock_session.queries
+        if "MetricResult" in q["query"] and "MERGE" in q["query"]
+    ]
+    assert len(metric_queries) == 1
+    deduped_rows = metric_queries[0]["params"]["rows"]
+    assert len(deduped_rows) == 1
+    assert deduped_rows[0]["idempotency_key"] == first_payload["idempotency_key"]
+    assert deduped_rows[0]["ci_id"] == first_payload["ci_id"]
+    assert deduped_rows[0]["metric_id"] == first_payload["metric_id"]
+    assert "MERGE (res)-[:FOR_METRIC]->(m)" in metric_queries[0]["query"]
+    assert "CREATE (res)-[:FOR_METRIC]->(m)" not in metric_queries[0]["query"]
+
+
+def test_metric_result_idempotency_migration_adds_uniqueness_guard():
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1] / "migrations/004_mqtt_metric_result_idempotency.cypher"
+    )
+
+    assert migration.exists()
+    cypher = migration.read_text().lower()
+    assert "metricresult" in cypher
+    assert "idempotency_key" in cypher
+    assert "is unique" in cypher
 
 
 def test_event_writer_icmp_success_recovers_only_icmp_availability_events():

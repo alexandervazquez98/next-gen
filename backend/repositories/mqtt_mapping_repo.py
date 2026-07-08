@@ -319,6 +319,70 @@ class MqttMappingRepo:
                 ),
             )
 
+    def list_mappings_for_source(
+        self, source_device_id: str, source_metric_id: str
+    ) -> list[dict[str, Any]]:
+        """Return mappings for a source metric, regardless of mapping status.
+
+        The result set includes all lifecycle states so callers can apply
+        fail-closed policy explicitly.
+        """
+        with self._session() as tx:
+            query = """
+                MATCH (m:MqttMetricMapping)
+                WHERE m.source_device_id = $source_device_id
+                  AND m.source_metric_id = $source_metric_id
+                RETURN
+                    m.id AS id,
+                    m.source_device_id AS source_device_id,
+                    m.source_metric_id AS source_metric_id,
+                    m.source_metric_name AS source_metric_name,
+                    m.target_ci_id AS target_ci_id,
+                    m.target_metric_def_id AS target_metric_def_id,
+                    m.status AS status,
+                    m.version AS version,
+                    m.warning AS warning,
+                    m.critical AS critical,
+                    m.operator AS operator,
+                    m.approved_by AS approved_by,
+                    m.approved_at AS approved_at
+                ORDER BY m.created_at DESC, m.id
+            """
+            rows = tx.run(
+                query,
+                source_device_id=source_device_id,
+                source_metric_id=source_metric_id,
+            ).data()
+            return [
+                self._record(
+                    row,
+                    (
+                        "id",
+                        "source_device_id",
+                        "source_metric_id",
+                        "source_metric_name",
+                        "target_ci_id",
+                        "target_metric_def_id",
+                        "status",
+                        "version",
+                        "warning",
+                        "critical",
+                        "operator",
+                        "approved_by",
+                        "approved_at",
+                    ),
+                )
+                for row in rows
+            ]
+
+    # Compatibility alias retained for existing callers/tests.
+    def list_approved_mappings_for_source(
+        self,
+        source_device_id: str,
+        source_metric_id: str,
+    ) -> list[dict[str, Any]]:
+        return self.list_mappings_for_source(source_device_id, source_metric_id)
+
     def approve(
         self,
         mapping_id: str,

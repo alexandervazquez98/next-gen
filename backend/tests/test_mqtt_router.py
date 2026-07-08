@@ -9,6 +9,23 @@ from routers import mqtt
 from services.mqtt_raw_reading_service import MqttRawReadingService
 
 
+class _StatusService:
+    def get_status(self):
+        return {
+            "service_name": "mqtt-subscriber",
+            "configured": True,
+            "running": True,
+            "connected": True,
+            "subscribed_patterns": ["rtu/+/telemetry"],
+            "mapped_writes_total": 5,
+            "unmapped_skips_total": 2,
+            "failed_writes_total": 1,
+            "last_error": None,
+            "reason_code": None,
+            "is_stale": False,
+        }
+
+
 class _RawService:
     def list_devices(self):
         return [
@@ -106,7 +123,7 @@ def _user(permissions=None):
     return User(username="operator", role="OPERATOR", permissions=permissions or [])
 
 
-def _client(user=None, mapping_service=None):
+def _client(user=None, mapping_service=None, status_service=None):
     app = FastAPI()
     app.include_router(mqtt.router, prefix="/api")
     app.dependency_overrides[mqtt._current_user] = lambda: user or _user(
@@ -114,6 +131,8 @@ def _client(user=None, mapping_service=None):
     )
     app.dependency_overrides[mqtt._raw_service] = lambda: _RawService()
     app.dependency_overrides[mqtt._mapping_service] = lambda: mapping_service or _MappingService()
+    if status_service is not None:
+        app.dependency_overrides[mqtt._runtime_status_service] = lambda: status_service
     return TestClient(app)
 
 
@@ -212,3 +231,14 @@ def test_threshold_read_and_update_endpoints():
     assert get_response.json()["warning"] == 70
     assert put_response.status_code == 200
     assert put_response.json()["warning"] == 75
+
+
+def test_status_endpoint_exposes_bridge_counters():
+    response = _client(status_service=_StatusService()).get("/api/mqtt/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mapped_writes_total"] == 5
+    assert payload["unmapped_skips_total"] == 2
+    assert payload["failed_writes_total"] == 1
+    assert payload["service_name"] == "mqtt-subscriber"
