@@ -21,7 +21,6 @@ import pytest
 
 from engines.snmp_worker import _resolve_correlation
 
-
 # ---------------------------------------------------------------------------
 # Task 2 — _resolve_correlation helper
 # ---------------------------------------------------------------------------
