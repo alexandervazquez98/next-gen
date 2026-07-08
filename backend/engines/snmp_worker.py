@@ -227,10 +227,12 @@ def _log_observe_only_cycle(
 
 def _count_monitored_cis(session) -> int:
     """Return the stable count of distinct CIs with active metric assignments."""
-    record = session.run("""
+    record = session.run(
+        """
         MATCH (n:CI)-[:HAS_METRIC]->(:MetricDef)
         RETURN count(DISTINCT n) AS cis_monitored
-    """).single()
+    """
+    ).single()
     if not record:
         return 0
     return int(record.get("cis_monitored") or 0)
@@ -246,11 +248,13 @@ def _base_severity_from_criticality(criticality) -> str:
 
 def _previous_latency_ms(db, node_id: str, before: datetime) -> float | None:
     result = db.execute(
-        text("""
+        text(
+            """
             SELECT value FROM metric_values
             WHERE node_id = :node_id AND metric_id = :metric_id AND time < :before
             ORDER BY time DESC LIMIT 1
-        """),
+        """
+        ),
         {"node_id": node_id, "metric_id": ICMP_LATENCY_METRIC_ID, "before": before},
     )
     row = result.first() if hasattr(result, "first") else None
@@ -510,7 +514,9 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
         row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
 
     root_rows = [row for row in availability_events if row.get("correlation_type") != "PROPAGATED"]
-    propagated_rows = [row for row in availability_events if row.get("correlation_type") == "PROPAGATED"]
+    propagated_rows = [
+        row for row in availability_events if row.get("correlation_type") == "PROPAGATED"
+    ]
 
     # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
     # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write (issue #322).
@@ -916,7 +922,8 @@ def poll_snmp():
     try:
         with driver.session() as session:
             # Enhanced query: Get CI credentials and Metric metadata
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (n:CI)-[r:HAS_METRIC]->(m:MetricDef)
                 WITH n, r, m,
                      coalesce(m.polling_interval, 60) as interval,
@@ -930,7 +937,8 @@ def poll_snmp():
                        m.metric_kind as metric_kind,
                        m.availability_source as availability_source,
                        interval
-            """)
+            """
+            )
 
             records = list(result)
             records.sort(

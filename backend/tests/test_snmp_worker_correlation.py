@@ -115,15 +115,17 @@ def test_snmp_collection_failure_propagates_when_parent_open():
 
     _refresh_snmp_collection_failures(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "cpu-load",
-            "severity": "WARNING",
-            "message": "Metric Collection Failed: cpu-load",
-            "event_type": "COLLECTION_FAILURE",
-            "failure_family": "SNMP_NO_RESPONSE",
-            "source_protocol": "SNMP",
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "cpu-load",
+                "severity": "WARNING",
+                "message": "Metric Collection Failed: cpu-load",
+                "event_type": "COLLECTION_FAILURE",
+                "failure_family": "SNMP_NO_RESPONSE",
+                "source_protocol": "SNMP",
+            }
+        ],
         cache=cache,
     )
 
@@ -149,15 +151,17 @@ def test_snmp_collection_failure_root_when_no_parent():
 
     _refresh_snmp_collection_failures(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "cpu-load",
-            "severity": "WARNING",
-            "message": "Metric Collection Failed: cpu-load",
-            "event_type": "COLLECTION_FAILURE",
-            "failure_family": "SNMP_NO_RESPONSE",
-            "source_protocol": "SNMP",
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "cpu-load",
+                "severity": "WARNING",
+                "message": "Metric Collection Failed: cpu-load",
+                "event_type": "COLLECTION_FAILURE",
+                "failure_family": "SNMP_NO_RESPONSE",
+                "source_protocol": "SNMP",
+            }
+        ],
         cache={},
     )
 
@@ -178,17 +182,19 @@ def test_icmp_availability_propagates_when_parent_open():
 
     _refresh_icmp_availability_events(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "PING-CHECK",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "availability_source": "PING",
-            "event_type": "AVAILABILITY",
-            "severity": "CRITICAL",
-            "message": "Service/Host Down: PING-CHECK",
-            "value": 0.0,
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "PING-CHECK",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "availability_source": "PING",
+                "event_type": "AVAILABILITY",
+                "severity": "CRITICAL",
+                "message": "Service/Host Down: PING-CHECK",
+                "value": 0.0,
+            }
+        ],
         cache=cache,
     )
 
@@ -212,17 +218,19 @@ def test_icmp_availability_root_when_no_parent():
 
     _refresh_icmp_availability_events(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "PING-CHECK",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "availability_source": "PING",
-            "event_type": "AVAILABILITY",
-            "severity": "CRITICAL",
-            "message": "Service/Host Down: PING-CHECK",
-            "value": 0.0,
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "PING-CHECK",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "availability_source": "PING",
+                "event_type": "AVAILABILITY",
+                "severity": "CRITICAL",
+                "message": "Service/Host Down: PING-CHECK",
+                "value": 0.0,
+            }
+        ],
         cache={},
     )
 
@@ -242,15 +250,17 @@ def test_icmp_latency_breach_propagates_when_parent_open():
 
     _refresh_icmp_latency_events(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "icmp_latency_ms",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "event_type": "THRESHOLD_BREACH",
-            "status": "WARNING",
-            "message": "Latency warning",
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "Latency warning",
+            }
+        ],
         cache=cache,
     )
 
@@ -362,15 +372,17 @@ def test_icmp_latency_breach_root_when_no_parent():
 
     _refresh_icmp_latency_events(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "icmp_latency_ms",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "event_type": "THRESHOLD_BREACH",
-            "status": "WARNING",
-            "message": "Latency warning",
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "Latency warning",
+            }
+        ],
         cache={},
     )
 
@@ -394,15 +406,17 @@ def test_refresh_helpers_accept_cache_kwarg_backward_compat():
     # No cache kwarg — must not raise.
     _refresh_icmp_latency_events(
         session,
-        [{
-            "node_id": "ci-E",
-            "metric_id": "icmp_latency_ms",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "event_type": "THRESHOLD_BREACH",
-            "status": "WARNING",
-            "message": "Latency warning",
-        }],
+        [
+            {
+                "node_id": "ci-E",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "Latency warning",
+            }
+        ],
     )
 
     calls = [c for c in session.run.call_args_list if "UNWIND" in c.args[0]]
@@ -433,10 +447,18 @@ def _build_poll_snmp_mocks():
 
 
 _POLL_RECORD = {
-    "node_id": "ci-001", "metric_id": "CPU", "protocol": "SNMP",
-    "ip": "192.168.1.1", "community": "public", "oid": "1.3.6.1",
-    "port": 161, "metric_name": "CPU", "criticality": 3,
-    "metric_kind": None, "availability_source": None, "interval": 60,
+    "node_id": "ci-001",
+    "metric_id": "CPU",
+    "protocol": "SNMP",
+    "ip": "192.168.1.1",
+    "community": "public",
+    "oid": "1.3.6.1",
+    "port": 161,
+    "metric_name": "CPU",
+    "criticality": 3,
+    "metric_kind": None,
+    "availability_source": None,
+    "interval": 60,
 }
 
 
@@ -448,18 +470,22 @@ def test_enable_topology_rca_false_skips_cache_build(monkeypatch):
     """
     # The setting is a singleton; reset it so the env var takes effect.
     import config as _config
+
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "false")
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch("engines.snmp_worker.build_open_parent_index") as mock_build:
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch("engines.snmp_worker.build_open_parent_index") as mock_build,
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()
 
     mock_build.assert_not_called()
@@ -472,18 +498,22 @@ def test_enable_topology_rca_true_calls_build_open_parent_index(monkeypatch):
     populated, giving the cache-build real (ci_id, metric_id) pairs to resolve.
     """
     import config as _config
+
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch("engines.snmp_worker.build_open_parent_index", return_value={}) as mock_build:
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch("engines.snmp_worker.build_open_parent_index", return_value={}) as mock_build,
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()
 
     mock_build.assert_called_once()
@@ -496,18 +526,22 @@ def test_enable_topology_rca_true_calls_build_open_parent_index(monkeypatch):
 def test_enable_topology_rca_defaults_to_true_when_unset(monkeypatch):
     """No env var set → topology RCA is ON by default (kill-switch default true)."""
     import config as _config
+
     monkeypatch.delenv("ENABLE_TOPOLOGY_RCA", raising=False)
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch("engines.snmp_worker.build_open_parent_index", return_value={}) as mock_build:
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch("engines.snmp_worker.build_open_parent_index", return_value={}) as mock_build,
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()
 
     mock_build.assert_called_once()
@@ -522,22 +556,26 @@ def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, 
     failure_updates path is exercised end-to-end.
     """
     import config as _config
+
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch(
-             "engines.snmp_worker.build_open_parent_index",
-             side_effect=RuntimeError("neo4j connection lost"),
-         ) as mock_build, \
-         caplog.at_level(logging.WARNING):
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=RuntimeError("neo4j connection lost"),
+        ) as mock_build,
+        caplog.at_level(logging.WARNING),
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()  # must not raise
 
     # Cache-build was attempted and raised.
@@ -545,8 +583,7 @@ def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, 
 
     # The UNWIND...CREATE call for SNMP collection failures still ran.
     create_calls = [
-        c for c in mock_session.queries
-        if "UNWIND" in c["query"] and "CREATE" in c["query"]
+        c for c in mock_session.queries if "UNWIND" in c["query"] and "CREATE" in c["query"]
     ]
     assert create_calls, (
         "UNWIND...CREATE must still run after cache-build failure — "
@@ -567,6 +604,7 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
     The second cycle's cache must not inherit the first's empty state.
     """
     import config as _config
+
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
@@ -581,12 +619,15 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
             raise result
         return result
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch("engines.snmp_worker.build_open_parent_index", side_effect=fake_build) as mock_build:
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch("engines.snmp_worker.build_open_parent_index", side_effect=fake_build) as mock_build,
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()  # cycle 1: cache-build raises → cache={}
         poll_snmp()  # cycle 2: cache-build returns dict → cache used
 
@@ -608,6 +649,7 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
     metadata update query is used instead of creating child events.
     """
     import config as _config
+
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
     monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
 
@@ -621,15 +663,18 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
         }
     }
 
-    with patch("engines.snmp_worker.driver", mock_driver), \
-         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()), \
-         patch("engines.snmp_worker.bulk_insert_metrics"), \
-         patch("engines.snmp_worker.fetch_snmp_value", return_value=None), \
-         patch(
-             "engines.snmp_worker.build_open_parent_index",
-             return_value=populated_cache,
-         ) as mock_build:
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            return_value=populated_cache,
+        ) as mock_build,
+    ):
         from engines.snmp_worker import poll_snmp
+
         poll_snmp()
 
     # Cache-build was called with the (ci_id, metric_id) pairs set.
@@ -637,7 +682,8 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
 
     # Find the propagated-root update call captured on the session and inspect rows.
     propagated_calls = [
-        c for c in mock_session.queries
+        c
+        for c in mock_session.queries
         if "UNWIND" in c["query"] and "propagated_rows" in c["query"]
     ]
     assert propagated_calls, "expected a propagated_rows UNWIND call to be captured"
@@ -649,5 +695,3 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
     assert row["correlation_type"] == "PROPAGATED"
     assert row["propagated_from"] == "evt-A"
     assert row["root_cause_ci_id"] == "ci-A"
-
-
