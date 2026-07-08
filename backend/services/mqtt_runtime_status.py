@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from config import get_mqtt_runtime_settings
 from repositories.mqtt_runtime_status_repo import MqttRuntimeStatusRepo
 
 
@@ -16,10 +17,14 @@ class MqttRuntimeStatusService:
     def __init__(
         self,
         repo: MqttRuntimeStatusRepo | None = None,
-        stale_heartbeat_seconds: int = 90,
+        stale_heartbeat_seconds: int | None = None,
     ):
         self._repo = repo or MqttRuntimeStatusRepo()
-        self._stale_seconds = stale_heartbeat_seconds
+        self._stale_seconds = (
+            stale_heartbeat_seconds
+            if stale_heartbeat_seconds is not None
+            else get_mqtt_runtime_settings().missed_heartbeat_seconds
+        )
 
     @staticmethod
     def _now() -> datetime:
@@ -81,7 +86,7 @@ _status_service: MqttRuntimeStatusService | None = None
 
 def get_mqtt_runtime_status_service(
     repo: MqttRuntimeStatusRepo | None = None,
-    stale_heartbeat_seconds: int = 90,
+    stale_heartbeat_seconds: int | None = None,
 ) -> MqttRuntimeStatusService:
     global _status_service
     if _status_service is None:

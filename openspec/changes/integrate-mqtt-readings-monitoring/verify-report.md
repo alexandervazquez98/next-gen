@@ -1,159 +1,81 @@
-# Verify Report — integrate-mqtt-readings-monitoring PR4 final verification
+# Verify Report — integrate-mqtt-readings-monitoring PR5 Final
 
 ## Status
 
-**PASS for PR4** — the previous PR4 blocker is resolved. The migration guard test now resolves `backend/migrations/004_mqtt_metric_result_idempotency.cypher` relative to `Path(__file__).resolve().parents[1]`, and the PR4 focused suites are green from repo-root execution. The touched migration/event-writer test file is also green when executed from the configured backend working directory.
+PASS — PR5 runtime subscriber topology and the final idle heartbeat no-cancel/reconnect-churn remediation verify successfully.
 
-Whole-change archive is **not ready** because PR5 remains future scope for the overall `integrate-mqtt-readings-monitoring` change.
+## Structured status and action context findings
 
-## Structured Status and Action Context
+- Active change: `integrate-mqtt-readings-monitoring` inferred from PR5 artifacts in the workspace.
+- Artifact store: OpenSpec repo files (`openspec/config.yaml`).
+- Workspace: `.worktrees/issue-321-mqtt-monitoring`.
+- Branch: `feat/issue-321-mqtt-monitoring-pr5-runtime`.
+- Action context: final verification only; no implementation edits performed. This report was updated as the required verification artifact.
+- Blockers: none.
 
-```yaml
-schemaName: spec-driven
-changeName: integrate-mqtt-readings-monitoring
-artifactStore: openspec
-planningHome:
-  root: /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring
-  changesDir: openspec/changes
-changeRoot: openspec/changes/integrate-mqtt-readings-monitoring
-artifactPaths:
-  proposal:
-    - openspec/changes/integrate-mqtt-readings-monitoring/proposal.md
-  design:
-    - openspec/changes/integrate-mqtt-readings-monitoring/design.md
-  tasks:
-    - openspec/changes/integrate-mqtt-readings-monitoring/tasks.md
-  applyProgress:
-    - openspec/changes/integrate-mqtt-readings-monitoring/apply-progress-pr4.md
-  verifyReport:
-    - openspec/changes/integrate-mqtt-readings-monitoring/verify-report.md
-artifacts:
-  proposal: done
-  design: done
-  tasks: done
-  applyProgress: done
-  verifyReport: done
-taskProgress:
-  uncheckedImplementationMarkers: 0
-applyState: pr4_done
-dependencies:
-  verify: ready
-  archive: blocked_by_future_pr5_scope
-actionContext:
-  mode: repo-local
-  workspaceRoot: /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring
-  branch: feat/issue-321-mqtt-monitoring-pr4-bridge
-  warnings:
-    - Full backend suite still has known unrelated auth cookie-domain and Docker/testcontainers advisory-lock failures.
-nextRecommended: pr4-ready-for-pr-review
-isNonAuthoritative: false
-```
+## Spec coverage
 
-## Spec Coverage / PR4 Acceptance
+PR5 scope from `tasks.md` is covered:
 
-| Requirement / focus | Result | Evidence |
-|---|---:|---|
-| Raw MQTT remains non-KPI unless explicitly approved | PASS | PR4 gate/regression tests pass in the 78-test focused command. |
-| Approved mapping enables KPI/event bridge writes | PASS | Bridge and mapped-event tests validate approved-only writes and threshold envelope propagation. |
-| Unapproved/ambiguous mapping fails closed | PASS | Bridge tests cover unmapped, `DRAFT`, `REVOKED`, ambiguous, and non-numeric outcomes without Timescale/event writes. |
-| Idempotent KPI write/event path | PASS | Receipt lifecycle tests and event-writer tests cover duplicate payloads, `PENDING_EVENT` retry, and no duplicate sample/event behavior. |
-| Migration uniqueness guard | PASS | `backend/migrations/004_mqtt_metric_result_idempotency.cypher` contains the `MetricResult.idempotency_key` uniqueness constraint; `tests/test_polling_event_writer.py` now uses a cwd-safe path. |
-| Subscriber bridge wiring with event-writer lock session | PASS | Subscriber bridge integration tests pass. |
-| Review evidence | PASS with warning | review-risk, review-resilience, and review-reliability: no findings. review-readability: PASS with non-blocking duplicate-skip counter warning. |
+- Dedicated subscriber process entrypoint exists and is tested.
+- Backend embedded subscriber startup is explicit/disabled-by-default unless `ENABLE_MQTT_SUBSCRIBER=true`.
+- Runtime status heartbeat/connected/running/stale/disconnect behavior is covered by focused tests.
+- `docker-compose.yml` includes explicit `mqtt-subscriber` command: `python -m scripts.mqtt_subscriber`.
+- Compose `mqtt-subscriber` now requires environment-provided `POSTGRES_PASSWORD` and `MQTT_BROKER_URL` instead of committing fallback secrets/fake broker defaults.
+- Final resilience remediation is present: idle heartbeat uses `asyncio.wait` over a persistent `anext(message_stream)` task instead of `asyncio.wait_for`, avoiding timeout cancellation of the async iterator.
 
-## Task Completion Status
+## Task completion status
 
-- PR4 implementation tasks in `tasks.md`: checked `[x]`.
-- Unchecked implementation task markers matching `^\s*- \[ \]` in `tasks.md`: **none found**.
-- Whole-change archive: **not ready**; PR5 runtime subscriber topology remains future scope.
+- No unchecked implementation task markers matching `- [ ]` remain in `openspec/changes/integrate-mqtt-readings-monitoring/tasks.md`.
+- `apply-progress-pr5.md` records PR5 tasks complete and contains a `TDD Cycle Evidence` table.
+- Non-blocking remaining item: optional manual compose smoke is still listed in `apply-progress-pr5.md`; automated/code-level startup and status contracts passed.
 
-## Strict TDD Compliance
+## Strict TDD compliance
 
-Strict TDD is active via `openspec/config.yaml` and session instructions.
+Strict TDD is active via `openspec/config.yaml`.
 
-| Check | Result | Details |
-|---|---:|---|
-| `TDD Cycle Evidence` table present | PASS | `apply-progress-pr4.md` contains `### TDD Cycle Evidence`. |
-| Reported test files exist | PASS | PR4 bridge, mapped flow, KPI gate, subscriber bridge, event writer, router, subscriber loop, runtime service, and runtime repo tests exist and were executed. |
-| RED evidence cross-reference | PASS | Apply-progress lists test-first evidence for PR4 tasks; corresponding test files exist in the codebase. |
-| GREEN confirmed | PASS | Focused PR4 command passed: `78 passed, 2 warnings`. Backend-cwd event-writer file command passed: `30 passed`. |
-| Triangulation adequate | PASS | PR4 behavior is covered across service, subscriber integration, router/runtime, event-writer, and regression tests. |
-| Safety net | PASS with external warnings | Focused PR4 safety net is green. Full backend command still has unrelated failures outside PR4 acceptance. |
+- `apply-progress-pr5.md` includes `TDD Cycle Evidence`.
+- Reported test files exist and were executed:
+  - `backend/tests/test_mqtt_runtime_entrypoint.py`
+  - `backend/tests/test_mqtt_runtime_status.py`
+  - `backend/tests/test_mqtt_runtime_status_service.py`
+  - `backend/tests/test_mqtt_runtime_status_repo.py`
+  - `backend/tests/test_mqtt_subscriber_loop.py`
+- Assertion quality check: focused tests assert concrete runtime behavior, including heartbeat count and no disconnect except shutdown. No tautology-only, type-only, ghost-loop-only, or CSS/implementation-detail assertions found in the final remediation test.
 
-### Test Layer Distribution
-
-| Layer | Tests | Files | Tools |
-|---|---:|---:|---|
-| Unit/service | 43+ | 3 | pytest |
-| Integration/API/subscriber | 14+ | 3 | pytest / FastAPI test utilities |
-| Runtime/repository focused | 21 | 3 | pytest |
-| E2E | 0 | 0 | not used for PR4 |
-| **Total focused executed** | **78** | **9** | pytest |
-
-### Assertion Quality
-
-Changed/created PR4 tests were scanned for tautologies, ghost loops, type-only assertions alone, smoke-only tests, and CSS implementation-detail assertions. No blocking assertion-quality issue was found. Empty-list assertions in event/bridge tests are paired with side-effect assertions proving no metric/event writes under blocked conditions.
-
-## Review Workload / PR Boundary
-
-- `tasks.md` forecast: chained PRs recommended, 400-line budget risk high, `feature-branch-chain` selected.
-- PR4 remains within the bridge/fail-closed/idempotent KPI-write/event path boundary.
-- No PR5 runtime entrypoint/docker-compose work was included.
-- Scope boundary: **respected**.
-- `size:exception`: not used; chained PR strategy is the active workload control.
-
-## Verification Commands and Evidence
+## Test / validation commands
 
 ```bash
-cd /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring && grep -nE '^\s*- \[ \]' openspec/changes/integrate-mqtt-readings-monitoring/tasks.md || true
-# No matches found
+./backend/.venv/bin/python -m pytest backend/tests/test_mqtt_runtime_entrypoint.py backend/tests/test_mqtt_runtime_status.py backend/tests/test_mqtt_runtime_status_service.py backend/tests/test_mqtt_runtime_status_repo.py backend/tests/test_mqtt_subscriber_loop.py -q
+# 30 passed, 7 warnings in 3.15s
+
+./backend/.venv/bin/ruff check backend/config.py backend/main.py backend/services/mqtt/subscriber.py backend/services/mqtt_runtime_status.py backend/scripts/mqtt_subscriber.py backend/tests/test_mqtt_runtime_entrypoint.py backend/tests/test_mqtt_runtime_status.py backend/tests/test_mqtt_subscriber_loop.py
+# All checks passed!
+
+./backend/.venv/bin/black --check backend/config.py backend/main.py backend/services/mqtt/subscriber.py backend/services/mqtt_runtime_status.py backend/scripts/mqtt_subscriber.py backend/tests/test_mqtt_runtime_entrypoint.py backend/tests/test_mqtt_runtime_status.py backend/tests/test_mqtt_subscriber_loop.py
+# All done! 8 files would be left unchanged.
+
+grep -n "wait_for" backend/services/mqtt/subscriber.py backend/tests/test_mqtt_subscriber_loop.py || true
+# no matches
 ```
 
-```bash
-cd /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring && ./backend/.venv/bin/python -m pytest backend/tests/test_mqtt_bridge_service.py backend/tests/test_mqtt_mapped_event_flow.py backend/tests/test_mqtt_kpi_gate_regression.py backend/tests/test_mqtt_subscriber_bridge_integration.py backend/tests/test_polling_event_writer.py backend/tests/test_mqtt_router.py backend/tests/test_mqtt_subscriber_loop.py backend/tests/test_mqtt_runtime_status_service.py backend/tests/test_mqtt_runtime_status_repo.py -q
-# 78 passed, 2 warnings in 2.13s
-```
+## Remaining warnings
 
-```bash
-cd /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring && ./backend/.venv/bin/ruff check backend/services/mqtt_bridge_service.py backend/services/mqtt/subscriber.py backend/routers/mqtt.py backend/polling/event_writer.py backend/repositories/mqtt_metric_sample_receipt_repo.py backend/repositories/mqtt_mapping_repo.py backend/tests/test_mqtt_bridge_service.py backend/tests/test_mqtt_mapped_event_flow.py backend/tests/test_mqtt_kpi_gate_regression.py backend/tests/test_mqtt_subscriber_bridge_integration.py backend/tests/test_polling_event_writer.py backend/tests/test_mqtt_router.py && ./backend/.venv/bin/black --check backend/services/mqtt_bridge_service.py backend/services/mqtt/subscriber.py backend/routers/mqtt.py backend/polling/event_writer.py backend/repositories/mqtt_metric_sample_receipt_repo.py backend/repositories/mqtt_mapping_repo.py backend/tests/test_mqtt_bridge_service.py backend/tests/test_mqtt_mapped_event_flow.py backend/tests/test_mqtt_kpi_gate_regression.py backend/tests/test_mqtt_subscriber_bridge_integration.py backend/tests/test_polling_event_writer.py backend/tests/test_mqtt_router.py
-# Ruff: All checks passed!
-# Black: 12 files would be left unchanged.
-```
+Pytest emitted 7 existing deprecation warnings:
 
-```bash
-cd /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring/backend && ../backend/.venv/bin/python -m pytest tests/test_polling_event_writer.py -q
-# 30 passed in 0.50s
-```
+- SQLAlchemy `declarative_base()` moved to `sqlalchemy.orm.declarative_base()` in `backend/postgres_db.py`.
+- Python `crypt` deprecation from passlib under Python 3.13.
+- pandas/PyArrow future dependency warning from `backend/services/node_service.py`.
+- FastAPI `on_event` deprecation warnings in `backend/main.py` and FastAPI internals.
 
-```bash
-cd /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/issue-321-mqtt-monitoring/backend && ../backend/.venv/bin/python -m pytest
-# 6 failed, 1625 passed, 1 skipped, 51 warnings in 26.15s
-# Remaining failures are outside PR4 acceptance:
-# - tests/test_auth_router_refresh.py::TestCookieDomainAndSecure::test_get_cookie_domain_and_secure_https_hostname
-# - tests/test_auth_router_refresh.py::TestCookieDomainAndSecure::test_get_cookie_domain_and_secure_cookie_domain_override
-# - tests/test_writer_advisory_lock.py::test_concurrent_writers_block_on_lock
-# - tests/test_writer_advisory_lock.py::test_unsorted_lock_acquisition_deadlocks
-# - tests/test_writer_advisory_lock.py::test_sorted_lock_acquisition_prevents_deadlock
-# - tests/test_writer_advisory_lock.py::test_full_poll_cycle_no_duplicates
-# Docker/testcontainers failures show Docker socket unavailable: FileNotFoundError on Unix socket.
-```
+These are non-blocking for PR5 runtime behavior.
 
-## Findings
+## Review workload / PR boundary findings
 
-### CRITICAL
+- `tasks.md` forecast required chained PRs and `feature-branch-chain`.
+- PR5 changes stay within the assigned runtime topology/operational proof slice.
+- No scope creep into prior PR mapping, permission, raw API, or KPI bridge business logic was observed beyond the runtime bridge enablement gate required for PR5 process ownership.
 
-None for PR4.
+## Blockers
 
-### WARNING
-
-1. **Full backend suite still has unrelated failures.** Two auth cookie-domain assertions fail, and four Docker/testcontainers advisory-lock tests fail because Docker socket access is unavailable in this environment. The previous PR4 migration cwd failure is no longer present.
-2. **review-readability non-blocking warning remains.** Duplicate skip behavior is currently counted under `mapped_writes_total`; reviewers accepted this as non-blocking, but counter semantics may deserve clarification later.
-3. **Focused pytest warnings remain.** The 78-test focused run emits SQLAlchemy `declarative_base()` and Python `crypt` deprecation warnings.
-
-### SUGGESTION
-
-- Track the unrelated full-suite failures separately so PR4 evidence does not keep carrying baseline noise.
-
-## Exact Blockers
-
-None for PR4.
+None.

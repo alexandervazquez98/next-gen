@@ -418,6 +418,97 @@ class TestDispatchMetrics:
             metrics.reset()
 
 
+async def test_persist_reading_skips_bridge_when_disabled(monkeypatch):
+    from services.mqtt.subscriber import _persist_reading
+
+    class _Repo:
+        def __init__(self):
+            self.devices = []
+            self.metrics = []
+
+        def upsert_device(self, **kwargs):
+            self.devices.append(kwargs)
+
+        def upsert_metric(self, **kwargs):
+            self.metrics.append(kwargs)
+
+    repo = _Repo()
+    bridge_calls = []
+    monkeypatch.setattr("services.mqtt.subscriber.get_device_metric_repo", lambda: repo)
+    monkeypatch.setattr(
+        "services.mqtt.subscriber.get_mqtt_runtime_settings",
+        lambda: type("Settings", (), {"bridge_enabled": False})(),
+    )
+    monkeypatch.setattr(
+        "services.mqtt.subscriber.get_mqtt_bridge_service",
+        lambda **kwargs: bridge_calls.append(kwargs),
+    )
+
+    await _persist_reading(
+        _make_reading(metrics=(MetricReading(name="temperature", value=22.0, unit="C"),))
+    )
+
+    assert len(repo.devices) == 1
+    assert len(repo.metrics) == 1
+    assert bridge_calls == []
+
+
+async def test_loop_records_idle_heartbeat_without_messages(monkeypatch):
+    from services.mqtt import subscriber
+
+    class _StatusService:
+        def __init__(self):
+            self.heartbeats = 0
+            self.disconnects = []
+
+        def mark_configured(self, configured):
+            self.configured = configured
+
+        def record_heartbeat(self, **kwargs):
+            self.heartbeats += 1
+
+        def record_disconnect(self, reason_code, error=None):
+            self.disconnects.append((reason_code, error))
+
+    status = _StatusService()
+    mock_client = AsyncMock()
+    mock_client.subscribe = AsyncMock()
+
+    async def waiting_messages():
+        await asyncio.sleep(3600)
+        return
+        yield  # noqa: F841
+
+    mock_client.messages = waiting_messages()
+
+    @asynccontextmanager
+    async def fake_connect(*_args, **_kwargs):
+        yield mock_client
+
+    monkeypatch.setattr(subscriber, "connect_mqtt", fake_connect)
+    monkeypatch.setattr(subscriber, "get_mqtt_runtime_status_service", lambda **kwargs: status)
+    monkeypatch.setattr(
+        subscriber,
+        "get_mqtt_runtime_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {"bridge_enabled": True, "missed_heartbeat_seconds": 1},
+        )(),
+    )
+    monkeypatch.setattr(subscriber, "_HEARTBEAT_IDLE_INTERVAL_MIN_S", 0.01)
+    monkeypatch.setattr(subscriber, "_HEARTBEAT_IDLE_INTERVAL_MAX_S", 0.01)
+
+    task = asyncio.create_task(subscriber.mqtt_subscriber_loop())
+    await asyncio.sleep(0.04)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert status.heartbeats >= 2
+    assert status.disconnects == [("SHUTDOWN", None)]
+
+
 class TestLoopSmoke:
     """Smoke test for mqtt_subscriber_loop: starts, gets cancelled, propagates."""
 

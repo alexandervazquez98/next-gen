@@ -30,7 +30,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from config import get_mqtt_settings
+from config import get_mqtt_runtime_settings, get_mqtt_settings
 from postgres_db import SessionLocal
 from repositories.device_metric_repo import get_device_metric_repo
 from services.mqtt.client import connect_mqtt
@@ -38,6 +38,7 @@ from services.mqtt.metrics import metrics
 from services.mqtt.parsers.base import ParseError
 from services.mqtt.topic_router import TopicRouter
 from services.mqtt_bridge_service import get_mqtt_bridge_service
+from services.mqtt_runtime_status import get_mqtt_runtime_status_service
 
 if TYPE_CHECKING:
     from services.mqtt.parsers.base import Reading
@@ -47,9 +48,22 @@ logger = logging.getLogger(__name__)
 __all__ = ["mqtt_subscriber_loop", "_dispatch", "_persist_reading"]
 
 
+def _safe_status_update(action: str, callback: Any) -> None:
+    """Best-effort runtime status update that never owns subscriber liveness."""
+    try:
+        callback()
+    except Exception:
+        logger.warning("[MQTT] Runtime status update failed during %s", action, exc_info=True)
+
+
 # Reconnect backoff bounds per design §2.6 and REQ-SUB-03.
 _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 30.0
+
+# Heartbeat cadence for idle loops (seconds). The loop emits periodic heartbeats
+# even without inbound messages so raw subscribers stay visible as running.
+_HEARTBEAT_IDLE_INTERVAL_MIN_S = 5.0
+_HEARTBEAT_IDLE_INTERVAL_MAX_S = 60.0
 
 # 4 KB cap on the serialized ``extra`` blob per Q2 decision. The cap prevents
 # a single message from bloating Neo4j property storage; over-cap payloads are
@@ -69,36 +83,113 @@ async def mqtt_subscriber_loop() -> None:
       * Build a :class:`TopicRouter` from the parser registry.
       * Enter a ``while True`` that opens a connection, subscribes to every
         registered pattern, and consumes inbound messages.
+      * Update shared runtime status on connect/disconnect/heartbeat.
       * On connection error, sleep ``backoff`` seconds, double up to
         ``MAX_BACKOFF_S``, and retry.
       * On ``asyncio.CancelledError``, log and propagate so the container
         shutdown signal is honored.
     """
     settings = get_mqtt_settings()
+    runtime_settings = get_mqtt_runtime_settings()
     router: TopicRouter = TopicRouter()
     backoff = _INITIAL_BACKOFF_S
+    subscribed_patterns = list(router.subscribe_patterns())
+
+    status_service = get_mqtt_runtime_status_service(
+        stale_heartbeat_seconds=runtime_settings.missed_heartbeat_seconds
+    )
+    _safe_status_update("configured", lambda: status_service.mark_configured(True))
 
     while True:
         try:
             async with connect_mqtt(settings) as client:
                 # Connected — reset the backoff so a future drop starts at 1s again.
                 backoff = _INITIAL_BACKOFF_S
-                logger.info(
-                    "[MQTT] Connected; subscribing to %d pattern(s)",
-                    len(router.subscribe_patterns()),
+                _safe_status_update(
+                    "heartbeat",
+                    lambda: status_service.record_heartbeat(
+                        running=True,
+                        connected=True,
+                        subscribed_patterns=subscribed_patterns,
+                    ),
                 )
 
-                for pattern in router.subscribe_patterns():
-                    await client.subscribe(pattern, settings.qos)
-                    logger.debug("[MQTT] Subscribed to pattern %r (qos=%d)", pattern, settings.qos)
+                logger.info(
+                    "[MQTT] Connected; subscribing to %d pattern(s)",
+                    len(subscribed_patterns),
+                )
 
-                async for message in client.messages:
-                    await _dispatch(message, router)
+                for pattern in subscribed_patterns:
+                    await client.subscribe(pattern, settings.qos)
+                    logger.debug(
+                        "[MQTT] Subscribed to pattern %r (qos=%d)",
+                        pattern,
+                        settings.qos,
+                    )
+
+                heartbeat_interval = max(
+                    _HEARTBEAT_IDLE_INTERVAL_MIN_S,
+                    min(
+                        _HEARTBEAT_IDLE_INTERVAL_MAX_S,
+                        runtime_settings.missed_heartbeat_seconds / 3,
+                    ),
+                )
+                next_heartbeat_after = asyncio.get_running_loop().time() + heartbeat_interval
+                message_stream = client.messages.__aiter__()
+                message_task = asyncio.create_task(anext(message_stream))
+
+                try:
+                    while True:
+                        timeout = next_heartbeat_after - asyncio.get_running_loop().time()
+                        if timeout <= 0:
+                            timeout = 0
+
+                        done, _pending = await asyncio.wait({message_task}, timeout=timeout)
+                        if not done:
+                            _safe_status_update(
+                                "heartbeat",
+                                lambda: status_service.record_heartbeat(
+                                    running=True,
+                                    connected=True,
+                                    subscribed_patterns=subscribed_patterns,
+                                ),
+                            )
+                            next_heartbeat_after = (
+                                asyncio.get_running_loop().time() + heartbeat_interval
+                            )
+                            continue
+
+                        message = message_task.result()
+                        message_task = asyncio.create_task(anext(message_stream))
+                        await _dispatch(message, router)
+                        _safe_status_update(
+                            "heartbeat",
+                            lambda: status_service.record_heartbeat(
+                                running=True,
+                                connected=True,
+                                subscribed_patterns=subscribed_patterns,
+                            ),
+                        )
+                        next_heartbeat_after = (
+                            asyncio.get_running_loop().time() + heartbeat_interval
+                        )
+                finally:
+                    if not message_task.done():
+                        message_task.cancel()
 
         except asyncio.CancelledError:
             logger.info("[MQTT] Subscriber cancelled — propagating for container shutdown")
+            _safe_status_update("shutdown", lambda: status_service.record_disconnect("SHUTDOWN"))
             raise
         except Exception as e:
+            error_text = str(e)
+            _safe_status_update(
+                "disconnect",
+                lambda error_text=error_text: status_service.record_disconnect(
+                    reason_code="MQTT_SUBSCRIBER_CONNECTION_ERROR",
+                    error=error_text,
+                ),
+            )
             logger.warning(
                 "[MQTT] Connection error: %s; retrying in %.1fs", e, backoff, exc_info=True
             )
@@ -260,12 +351,13 @@ async def _persist_reading(reading: Reading) -> None:
 
     # Bridge to KPI/event path is failure-observability-only by design.
     # Raw persistence must remain independent; never block on bridge failures.
-    try:
-        bridge_service = get_mqtt_bridge_service(event_writer_lock_db=SessionLocal)
-        bridge_service.process_reading(reading)
-    except Exception:
-        logger.warning(
-            "Bridge processing failed for device=%r: continuing raw persistence",
-            reading.device_id,
-            exc_info=True,
-        )
+    if get_mqtt_runtime_settings().bridge_enabled:
+        try:
+            bridge_service = get_mqtt_bridge_service(event_writer_lock_db=SessionLocal)
+            bridge_service.process_reading(reading)
+        except Exception:
+            logger.warning(
+                "Bridge processing failed for device=%r: continuing raw persistence",
+                reading.device_id,
+                exc_info=True,
+            )
