@@ -400,3 +400,73 @@ hard cap (orchestrator's instruction: "If your new commits push it over
   contradict the single-PR strategy)
 
 Re-apply is complete. Ready for re-verify.
+
+---
+
+## Follow-up (post-#341) — prevent propagated child duplication in topology RCA
+
+### Status
+
+complete (bounded bugfix implemented in this slice).
+
+### Scope
+
+A narrow regression fix to `backend/engines/snmp_worker.py` and
+`backend/tests/test_snmp_worker_correlation.py` so propagated rows do not create
+new child Event nodes under an existing root.
+
+### What changed
+
+- Added `_build_propagated_root_update_comment(row)` helper for idempotent
+  per-propagated-row comment strings.
+- Added `_update_propagated_root_events(session, propagated_rows)`:
+  - MATCHes the `root` event by `row.propagated_from`.
+  - Ensures only non-closed ROOT rows are updated (`status IN ['OPEN','ACK','RECOVERED']`).
+  - Appends `row.node_id` to `root.affected_ci_ids` only when absent.
+  - Sets/extends `root.affected_ci_count` from `size(affected_ci_ids)`.
+  - Appends `row`-scoped comment to `root.comments` only when absent.
+  - Returns `updated_roots` and logs `topology_rca_propagated_root_update_partial` when a cached parent event is stale or only partially matched.
+  - Does not update `root.last_seen` or `root.poll_collector_id` from child-only propagated rows, so repeated child polls do not make the root event look freshly observed.
+
+- Updated three refresh helpers to split rows into:
+  - `root_rows` -> unchanged CREATE/UPDATE Event logic with `correlation_type=ROOT`,
+    existing `poll_collector_id` behavior preserved.
+  - `propagated_rows` -> root metadata enrichment only; no child Event create.
+
+- Added/updated tests in
+  `backend/tests/test_snmp_worker_correlation.py`:
+  - `test_snmp_collection_failure_propagates_when_parent_open`
+  - `test_icmp_availability_propagates_when_parent_open`
+  - `test_icmp_latency_breach_propagates_when_parent_open`
+  - `test_propagated_rows_do_not_generate_duplicate_child_events_or_notes_on_repeated_polls`
+  - `test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end`
+
+### Test results
+
+| Scope | Passed | Failed | Notes |
+|-------|--------|--------|-------|
+| `backend/tests/test_snmp_worker_cypher_fallback.py` | 9 | 0 | Existing focused fallback suite unchanged |
+| `backend/tests/test_snmp_worker_correlation.py` | 24 | 0 | New and existing regression coverage for propagated rows, including stale-parent warning |
+
+`/tmp/next-gen-test-venv-py311/bin/python -m pytest backend/tests/test_snmp_worker_cypher_fallback.py backend/tests/test_snmp_worker_correlation.py` passed: 33/33, 1 deprecation warning
+
+### Deviations from task estimates
+
+This work started from an already-open change and reused existing CI coverage; scope stayed below
+400 lines of production code. Net behavior change is small and constrained to writer
+correlation branches.
+
+### PR readiness
+
+- Root behavior for non-propagated failures is unchanged.
+- Propagated cache hits now only enrich existing ROOT events.
+- End-to-end repeated polls keep updates idempotent and do not emit duplicate child
+  events.
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|-----|-------|-------------|----------|
+| `_build_propagated_root_update_comment` + helper wiring | `backend/tests/test_snmp_worker_correlation.py` | Unit/logic + integration-shape | ✅ Written (`test_snmp_collection_failure_propagates_when_parent_open` etc.) | ✅ Passed (`23/23` in file) | ✅ Covered repeated-poll and non-parent edge cases | ✅ In place |
+| Per-helper split root/propagated row routing (`_refresh_*` helpers) | `backend/tests/test_snmp_worker.py` / correlation file | Integration/unit | ✅ Existing/new regression harness covered lock and shape updates | ✅ Passed (`5/5` for targeted helper tests + correlation tests) | ✅ Multiple event-types (collection + availability + latency) | ✅ No-op in production behavior retained |
+| Propagated root-enrichment query shape | `backend/tests/test_snmp_worker_cypher_fallback.py` | Integration (mocked Neo4j session) | ✅ Existing fallback tests and new assertions reused | ✅ Passed (`9/9`) | ✅ Repeated calls verified idempotent metadata growth conditions | ✅ None needed |
