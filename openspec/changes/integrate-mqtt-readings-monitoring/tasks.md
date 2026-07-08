@@ -162,19 +162,19 @@ Chain strategy: feature-branch-chain
 
 **Scope:** `backend/scripts/mqtt_subscriber.py`, `backend/config.py`, `backend/main.py`, `docker-compose.yml`, `backend/repositories/mqtt_runtime_status_repo.py`, `backend/services/mqtt_runtime_status.py`, `backend/tests/test_mqtt_runtime_entrypoint.py`, `backend/tests/test_mqtt_runtime_status.py`.
 
-1. **[RED] Add runtime wiring tests first**
+1. - [x] **[RED] Add runtime wiring tests first**
    - Add `backend/tests/test_mqtt_runtime_entrypoint.py` for startup command behavior and explicit entrypoint semantics.
    - Add `backend/tests/test_mqtt_runtime_status.py` for heartbeat freshness and transition states (`running` true/false, stale heartbeat, disconnect error reason).
 
-2. **[GREEN] Add dedicated subscriber process entrypoint**
+2. - [x] **[GREEN] Add dedicated subscriber process entrypoint**
    - Implement `backend/scripts/mqtt_subscriber.py` that imports and runs the shared mqtt loop.
    - Ensure status service updates `running/connected` and heartbeat timestamps to shared store.
 
-3. **[GREEN] Wire runtime configurability**
+3. - [x] **[GREEN] Wire runtime configurability**
    - Add config flags in `backend/config.py` for `MQTT_MAPPING_BRIDGE_ENABLED` and `MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS` (or equivalent).
    - In `backend/main.py`, avoid implicit in-process subscriber startup; route process ownership to explicit flags/services.
 
-4. **[GREEN] Add deployment wiring**
+4. - [x] **[GREEN] Add deployment wiring**
    - Add `mqtt-subscriber` service in `docker-compose.yml` (explicit command `python -m scripts.mqtt_subscriber`).
 
 5. **[TRIANGULATE] Verify observability behavior end-to-end**
