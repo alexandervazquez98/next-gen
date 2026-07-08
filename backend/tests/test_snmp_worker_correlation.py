@@ -5,9 +5,9 @@ Strict TDD: tests written FIRST, then implementation.
 Covers:
 - Task 2: ``_resolve_correlation`` helper (pure dict lookup, never raises).
 - Task 3: ``poll_snmp`` cache-build wiring (ENABLE_TOPOLOGY_RCA kill-switch,
-  cache built BEFORE the three CREATE sites, local to one cycle).
-- Task 4: the three CREATE sites decorate rows from the cache instead of
-  hardcoding ``correlation_type: 'ROOT'``.
+  cache built BEFORE the three refresh helpers, local to one cycle).
+- Task 4: propagated rows enrich root-event affected-CI metadata instead of
+  creating child operator events.
 - Task 10: failure-fallback resilience (cache-build raises → events still
   created as ROOT, UNWIND...CREATE ran, warning logged).
 """
@@ -99,33 +99,17 @@ def test_resolve_correlation_uses_ci_metric_pair_key():
 
 
 # ---------------------------------------------------------------------------
-# Task 4 — three CREATE sites decorate rows from the cache
+# Task 4 — propagated rows enrich root metadata instead of creating child Events
 # ---------------------------------------------------------------------------
-# Each _refresh_* helper now accepts an optional ``cache`` parameter (default
-# empty dict for backward compatibility with pre-existing tests). When a row's
-# (node_id, metric_id) hits the cache, the UNWIND CREATE emits PROPAGATED with
-# the resolved parent; otherwise ROOT as before. We assert on the row dicts
-# that get passed to ``session.run`` (the UNWIND $rows param), since the Cypher
-# itself references row.correlation_type / row.propagated_from /
-# row.root_cause_ci_id.
-
-
-def _capture_run_params(session):
-    """Return the list of (query, params) captured by a MockNeo4jSession-like object."""
-    return session.queries
-
-
-def _find_unwind_create_call(captured):
-    """Find the captured session.run call that contains 'UNWIND' + 'CREATE'."""
-    for entry in captured:
-        q = entry["query"].upper()
-        if "UNWIND" in q and "CREATE" in q:
-            return entry
-    return None
+# Each _refresh_* helper accepts an optional ``cache`` parameter (default empty
+# dict for backward compatibility with pre-existing tests). A row whose
+# (node_id, metric_id) hits the cache is routed to root-event affected-CI
+# enrichment; cache misses remain ROOT rows and use the existing Event
+# create/update path.
 
 
 def test_snmp_collection_failure_propagates_when_parent_open():
-    """Parent OPEN → child COLLECTION_FAILURE event row is PROPAGATED."""
+    """Propagated collection-failure rows update parent ROOT metadata, no child rows."""
     from engines.snmp_worker import _refresh_snmp_collection_failures
 
     session = MagicMock()
@@ -146,15 +130,17 @@ def test_snmp_collection_failure_propagates_when_parent_open():
         cache=cache,
     )
 
-    # Find the UNWIND run call and inspect the row.
     calls = [c for c in session.run.call_args_list if "UNWIND" in c.args[0]]
-    assert calls, "expected a UNWIND ... CREATE call"
-    rows_param = calls[0].kwargs["failures"]
+    assert calls, "expected an UNWIND call"
+    query = calls[0].args[0]
+    rows_param = calls[0].kwargs["propagated_rows"]
     assert rows_param[0]["correlation_type"] == "PROPAGATED"
     assert rows_param[0]["propagated_from"] == "evt-A"
     assert rows_param[0]["root_cause_ci_id"] == "ci-A"
-    # And the CREATE block references row.* (no hardcoded 'ROOT' literal at this site).
-    assert "row.correlation_type" in calls[0].args[0]
+    assert "CREATE (created" not in query
+    assert "row.node_id IN root.affected_ci_ids" in query
+    assert "row.affected_ci_comment IN root.comments" in query
+    assert "root.last_seen = datetime()" not in query
 
 
 def test_snmp_collection_failure_root_when_no_parent():
@@ -186,7 +172,7 @@ def test_snmp_collection_failure_root_when_no_parent():
 
 
 def test_icmp_availability_propagates_when_parent_open():
-    """Availability CREATE site: parent OPEN → PROPAGATED."""
+    """Availability propagation updates parent ROOT metadata, not child rows."""
     from engines.snmp_worker import _refresh_icmp_availability_events
 
     session = MagicMock()
@@ -210,10 +196,14 @@ def test_icmp_availability_propagates_when_parent_open():
     )
 
     calls = [c for c in session.run.call_args_list if "UNWIND" in c.args[0]]
-    rows_param = calls[0].kwargs["availability_events"]
+    query = calls[0].args[0]
+    rows_param = calls[0].kwargs["propagated_rows"]
     assert rows_param[0]["correlation_type"] == "PROPAGATED"
     assert rows_param[0]["propagated_from"] == "evt-A"
     assert rows_param[0]["root_cause_ci_id"] == "ci-A"
+    assert "CREATE (created" not in query
+    assert "row.node_id IN root.affected_ci_ids" in query
+    assert "root.last_seen = datetime()" not in query
 
 
 def test_icmp_availability_root_when_no_parent():
@@ -246,7 +236,7 @@ def test_icmp_availability_root_when_no_parent():
 
 
 def test_icmp_latency_breach_propagates_when_parent_open():
-    """Latency CREATE site: parent OPEN → PROPAGATED."""
+    """Latency propagation updates parent ROOT metadata, not child rows."""
     from engines.snmp_worker import _refresh_icmp_latency_events
 
     session = MagicMock()
@@ -268,10 +258,102 @@ def test_icmp_latency_breach_propagates_when_parent_open():
     )
 
     calls = [c for c in session.run.call_args_list if "UNWIND" in c.args[0]]
-    rows_param = calls[0].kwargs["breaches"]
+    query = calls[0].args[0]
+    rows_param = calls[0].kwargs["propagated_rows"]
     assert rows_param[0]["correlation_type"] == "PROPAGATED"
     assert rows_param[0]["propagated_from"] == "evt-A"
     assert rows_param[0]["root_cause_ci_id"] == "ci-A"
+    assert "CREATE (created" not in query
+    assert "row.node_id IN root.affected_ci_ids" in query
+    assert "root.last_seen = datetime()" not in query
+
+
+class _FakeUpdateResult:
+    def __init__(self, updated_roots: int):
+        self._updated_roots = updated_roots
+
+    def single(self):
+        return {"updated_roots": self._updated_roots}
+
+
+class _FakeRootUpdateSession:
+    def __init__(self):
+        self.root = {
+            "id": "evt-A",
+            "status": "OPEN",
+            "correlation_type": "ROOT",
+            "affected_ci_ids": [],
+            "affected_ci_count": 0,
+            "comments": [],
+            "last_seen": "root-observed-at",
+        }
+        self.child_events = []
+        self.queries = []
+
+    def run(self, query, **kwargs):
+        self.queries.append({"query": query, "kwargs": kwargs})
+        updated = 0
+        for row in kwargs.get("propagated_rows", []):
+            if row.get("propagated_from") != self.root["id"]:
+                continue
+            if self.root.get("status") not in {"OPEN", "ACK", "RECOVERED"}:
+                continue
+            if self.root.get("correlation_type", "ROOT") != "ROOT":
+                continue
+            node_id = row.get("node_id")
+            comment = row.get("affected_ci_comment")
+            if node_id and node_id not in self.root["affected_ci_ids"]:
+                self.root["affected_ci_ids"].append(node_id)
+            self.root["affected_ci_count"] = len(self.root["affected_ci_ids"])
+            if comment and comment not in self.root["comments"]:
+                self.root["comments"].append(comment)
+            updated += 1
+        return _FakeUpdateResult(updated)
+
+
+def test_propagated_rows_do_not_generate_duplicate_child_events_or_notes_on_repeated_polls():
+    """Repeated propagated rows update one root-event affected entry exactly once."""
+    from engines.snmp_worker import _update_propagated_root_events
+
+    session = _FakeRootUpdateSession()
+    row = {
+        "node_id": "ci-E",
+        "metric_id": "cpu-load",
+        "correlation_type": "PROPAGATED",
+        "propagated_from": "evt-A",
+        "root_cause_ci_id": "ci-A",
+    }
+
+    _update_propagated_root_events(session, [dict(row)])
+    _update_propagated_root_events(session, [dict(row)])
+
+    assert session.child_events == []
+    assert session.root["affected_ci_ids"] == ["ci-E"]
+    assert session.root["affected_ci_count"] == 1
+    assert len(session.root["comments"]) == 1
+    assert session.root["last_seen"] == "root-observed-at"
+    assert all("CREATE (created" not in entry["query"] for entry in session.queries)
+    assert all("root.last_seen = datetime()" not in entry["query"] for entry in session.queries)
+
+
+def test_propagated_root_update_logs_when_cached_parent_is_stale(caplog):
+    """A stale propagated_from cache hit must produce an operational signal."""
+    from engines.snmp_worker import _update_propagated_root_events
+
+    session = _FakeRootUpdateSession()
+    row = {
+        "node_id": "ci-E",
+        "metric_id": "cpu-load",
+        "correlation_type": "PROPAGATED",
+        "propagated_from": "missing-root-event",
+        "root_cause_ci_id": "ci-A",
+    }
+
+    with caplog.at_level(logging.WARNING):
+        _update_propagated_root_events(session, [row])
+
+    assert session.root["affected_ci_ids"] == []
+    assert "topology_rca_propagated_root_update_partial" in caplog.text
 
 
 def test_icmp_latency_breach_root_when_no_parent():
@@ -521,12 +603,12 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
 
 def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
     """End-to-end: build_open_parent_index cache hit flows through poll_snmp()
-    into a PROPAGATED CREATE row.
+    into a propagated child update against the parent ROOT.
 
     Guards the C1 regression (cache built BEFORE the CREATE sites). Unlike the
     Task-3 tests which patch build_open_parent_index to return {}, this test
-    populates the cache with a real parent entry and asserts the UNWIND CREATE
-    row captured on the fake session carries the propagated correlation fields.
+    populates the cache with a real parent entry and asserts the propagated
+    metadata update query is used instead of creating child events.
     """
     import config as _config
     monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
@@ -556,25 +638,17 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
     # Cache-build was called with the (ci_id, metric_id) pairs set.
     mock_build.assert_called_once()
 
-    # Find the UNWIND...CREATE call captured on the session and inspect the row.
-    create_calls = [
+    # Find the propagated-root update call captured on the session and inspect rows.
+    propagated_calls = [
         c for c in mock_session.queries
-        if "UNWIND" in c["query"] and "CREATE" in c["query"]
+        if "UNWIND" in c["query"] and "propagated_rows" in c["query"]
     ]
-    assert create_calls, "expected a UNWIND ... CREATE call to be captured"
+    assert propagated_calls, "expected a propagated_rows UNWIND call to be captured"
 
-    failures_param = create_calls[0]["params"].get("failures", [])
-    assert failures_param, "expected at least one failure row from poll_snmp"
+    rows = propagated_calls[0]["params"].get("propagated_rows", [])
+    assert rows, "expected at least one propagated row from poll_snmp"
 
-    propagated_rows = [
-        row for row in failures_param
-        if row.get("correlation_type") == "PROPAGATED"
-    ]
-    assert propagated_rows, (
-        "expected at least one PROPAGATED failure row when cache is populated"
-    )
-
-    row = propagated_rows[0]
+    row = rows[0]
     assert row["correlation_type"] == "PROPAGATED"
     assert row["propagated_from"] == "evt-A"
     assert row["root_cause_ci_id"] == "ci-A"
