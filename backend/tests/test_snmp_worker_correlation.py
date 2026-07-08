@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from engines import snmp_worker
 from engines.snmp_worker import _resolve_correlation
 
 
