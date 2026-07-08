@@ -5,7 +5,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 ## Que resuelve
 
 - Modela CIs, relaciones topologicas y definiciones de metricas sobre Neo4j.
-- Recolecta telemetria via SNMP/ICMP y genera eventos con snapshot de contexto de negocio.
+- Recolecta telemetria via SNMP/ICMP y MQTT aprobado, generando eventos con snapshot de contexto de negocio.
 - Expone un backend FastAPI y un frontend React para monitoreo, diagnostico y gestion de incidentes.
 - Mantiene el feed `/api/events` liviano y usa `GET /api/events/{event_id}` para el detalle enriquecido del modal.
 
@@ -33,6 +33,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 - [`docs/AI_AGENT_GUIDE.md`](docs/AI_AGENT_GUIDE.md) - guia para agentes IA que operan via REST API: permisos, operaciones permitidas, guards y campos restringidos.
 - [`docs/backup-restore.md`](docs/backup-restore.md) - runbook de backups pre-rebuild, restore PostgreSQL y limitaciones seguras de Neo4j.
 - [`docs/polling-pipeline-runbook.md`](docs/polling-pipeline-runbook.md) - runbook operativo para habilitar, observar, hacer rollback y replay del pipeline escalable de polling.
+- [`docs/mqtt-monitoring.md`](docs/mqtt-monitoring.md) - estado actual, runtime, API y reglas de seguridad de la integracion MQTT monitoring.
 - [`docs/polling-pipeline-tuning.md`](docs/polling-pipeline-tuning.md) - guia de tuning para workers, leases, batching, cache, DBs y benchmarks del polling pipeline.
 - [`docs/snmp-scalable-engine.md`](docs/snmp-scalable-engine.md) - explicacion visual del nuevo motor SNMP escalable, con flujo de leases, result writer y diagrama Mermaid.
 - [`docs/supply-chain.md`](docs/supply-chain.md) - politica de dependencias frontend: pnpm/Corepack, lockfile congelado y aprobacion explicita de build scripts.

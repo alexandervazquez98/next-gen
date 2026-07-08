@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.13] — 2026-07-08
+
+### Added
+
+- **MQTT readings integrated into monitoring metrics** (PRs #377, #378, #381, #382, #383, #384; closes #321):
+  - Adds raw MQTT visibility under `/api/mqtt/*` while keeping raw readings explicitly marked `RAW_MQTT_NON_KPI` and `kpi_eligible=false` until a mapping is approved.
+  - Adds `MQTT_READ` and `MQTT_MAPPING_MANAGE` permissions plus centralized MQTT permission enforcement for raw/status reads and mapping/threshold mutations.
+  - Adds manual MQTT mapping lifecycle (`DRAFT`, `APPROVED`, `REVOKED`) with approved-only KPI/event bridge behavior and fail-closed handling for unmapped, draft, revoked, ambiguous, or non-numeric readings.
+  - Adds manual threshold storage per mapping and forwards threshold metadata through the existing event writer path.
+  - Adds idempotent MQTT bridge receipts so duplicate payloads and partial Timescale/event failures do not duplicate monitoring samples or events.
+  - Adds Neo4j migrations for MQTT mapping schema and `MetricResult.idempotency_key` uniqueness.
+  - Adds dedicated `mqtt-subscriber` runtime topology with explicit `python -m scripts.mqtt_subscriber` Compose service, heartbeat/status reporting, and opt-in embedded subscriber ownership via `ENABLE_MQTT_SUBSCRIBER=true`.
+  - Documents current MQTT monitoring behavior, runtime configuration, safety rules, deployment checklist, and known follow-up gaps in `docs/mqtt-monitoring.md`.
+  - Verification: child PR CI passed for every slice; final tracker #377 CI passed before merge; focused local PR5 runtime suite passed (`30 passed, 7 warnings`) with Ruff and Black checks green.
+
 ## [1.13.12] — 2026-07-07
 
 ### Fixed
