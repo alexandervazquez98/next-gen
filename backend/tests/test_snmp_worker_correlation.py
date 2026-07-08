@@ -18,7 +18,6 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from engines.snmp_worker import _resolve_correlation
 
 # ---------------------------------------------------------------------------

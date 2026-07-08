@@ -14,8 +14,6 @@ from neo4j import GraphDatabase
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "../backend"))
 
-from sqlalchemy import text  # noqa: E402
-
 from config import get_icmp_settings, get_polling_pipeline_settings  # noqa: E402
 from polling.icmp_measurements import (  # noqa: E402
     ICMP_AVAILABILITY_METRIC_ID,
@@ -47,6 +45,7 @@ from services.polling_event_lifecycle import (  # noqa: E402
     is_snmp_no_response_failure,
     normalized_protocol,
 )
+from sqlalchemy import text  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
