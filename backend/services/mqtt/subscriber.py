@@ -31,11 +31,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from config import get_mqtt_settings
+from postgres_db import SessionLocal
 from repositories.device_metric_repo import get_device_metric_repo
 from services.mqtt.client import connect_mqtt
 from services.mqtt.metrics import metrics
 from services.mqtt.parsers.base import ParseError
 from services.mqtt.topic_router import TopicRouter
+from services.mqtt_bridge_service import get_mqtt_bridge_service
 
 if TYPE_CHECKING:
     from services.mqtt.parsers.base import Reading
@@ -182,11 +184,10 @@ async def _persist_reading(reading: Reading) -> None:
     """Persist a canonical :class:`Reading` via :class:`DeviceMetricRepo`.
 
     Replaces the PR2b stub. Implements the Q6 clean cutover: the new subscriber
-    persists ONLY to ``(:Device)-[:HAS_METRIC]->(:Metric)`` nodes — it never
-    calls the legacy persistence path. The legacy helper
-    :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message` is
-    intentionally NOT called from here; it remains in the codebase for
-    back-compat only (external callers + the legacy test suite).
+    persists ONLY to :class:`Device` and :class:`Metric` nodes via
+    :class:`DeviceMetricRepo`. It never calls the legacy persistence path. The
+    legacy helper :func:`services.mqtt.parsers.bliiot_s475e.process_telemetry_message`
+    remains importable for back-compat only (external callers + the legacy test suite).
 
     Contract (per design §2.6 and Q1/Q2 decisions):
 
@@ -256,3 +257,15 @@ async def _persist_reading(reading: Reading) -> None:
             )
         except Exception as e:
             raise RuntimeError(f"Metric upsert failed for {metric_id!r}: {e}") from e
+
+    # Bridge to KPI/event path is failure-observability-only by design.
+    # Raw persistence must remain independent; never block on bridge failures.
+    try:
+        bridge_service = get_mqtt_bridge_service(event_writer_lock_db=SessionLocal)
+        bridge_service.process_reading(reading)
+    except Exception:
+        logger.warning(
+            "Bridge processing failed for device=%r: continuing raw persistence",
+            reading.device_id,
+            exc_info=True,
+        )

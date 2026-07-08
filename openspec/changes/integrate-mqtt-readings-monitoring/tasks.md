@@ -120,7 +120,7 @@ Chain strategy: feature-branch-chain
 
 **Scope:** `backend/services/mqtt_bridge_service.py`, `backend/services/mqtt/subscriber.py`, `backend/services/mqtt_mapping_service.py`, `backend/repositories/mqtt_mapping_repo.py`, `backend/repositories/mqtt_runtime_status_repo.py`, `backend/polling/event_writer.py` (call site only), `backend/repositories/metric_repo.py` (shared write path if needed), `backend/tests/test_mqtt_bridge_service.py`, `backend/tests/test_mqtt_mapped_event_flow.py`, `backend/tests/test_mqtt_kpi_gate_regression.py`, `backend/tests/test_mqtt_subscriber_bridge_integration.py`.
 
-1. **[RED] Add negative/positive bridge tests first**
+1. - [x] **[RED] Add negative/positive bridge tests first**
    - Add/extend:
      - `backend/tests/test_mqtt_bridge_service.py` for outcomes:
        - unmapped, `DRAFT`, `REVOKED`, ambiguous mapping -> no Timescale/event writes
@@ -128,7 +128,7 @@ Chain strategy: feature-branch-chain
        - duplicate payload/idempotency -> skip duplicate writes
        - partial failure after metric persistence retries only event step.
 
-2. **[GREEN] Add fail-closed bridge service**
+2. - [x] **[GREEN] Add fail-closed bridge service**
    - Implement `backend/services/mqtt_bridge_service.py`:
      - resolve approved mapping only
      - map raw samples to `(ci_id, metric_id)`
@@ -138,21 +138,21 @@ Chain strategy: feature-branch-chain
    - Insert metric via existing Timescale path (`metric_repo.insert_metric_value`) and call `polling.event_writer.batch_update_events()` only through bridge envelope.
    - Preserve source-to-history: raw data is already persisted regardless of bridge outcome.
 
-3. **[GREEN] Wire fail-closed path in subscriber ingestion**
+3. - [x] **[GREEN] Wire fail-closed path in subscriber ingestion**
    - Update `backend/services/mqtt/subscriber.py:_persist_reading` to invoke bridge service after successful raw write.
    - Ensure bridge failures are observable and do not block raw ACK policy for raw raw persistence failures.
 
-4. **[GREEN] Add idempotency/state updates and outcome surfacing**
+4. - [x] **[GREEN] Add idempotency/state updates and outcome surfacing**
    - Use receipt status transitions to support:
      - `PENDING_EVENT`, `COMPLETE`, `FAILED`
    - On `TIMESCALE_WRITE` success and event failure, persist `PENDING_EVENT` and retry only event generation on the next cycle.
    - Expose outcome counters in `mqtt/status`.
 
-5. **[TRIANGULATE] Regression and safety proof**
+5. - [x] **[TRIANGULATE] Regression and safety proof**
    - Add `backend/tests/test_mqtt_kpi_gate_regression.py` proving unmapped/unapproved reads cannot alter `metric_values`, `/api/metrics/.../history`, or event write rows.
    - Add `backend/tests/test_mqtt_mapped_event_flow.py` proving mapped writes evaluate thresholds through existing event path and threshold updates apply without remapping.
 
-6. **[REFACTOR] Tighten edge handling**
+6. - [x] **[REFACTOR] Tighten edge handling**
    - Normalize ambiguous mapping behavior to explicit fail-closed outcomes (`SKIPPED_UNMAPPED`, `BLOCKED_AMBIGUOUS_MAPPING`, etc.).
    - Keep raw path unchanged for ingestion observability.
 
