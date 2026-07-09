@@ -6,12 +6,11 @@ paths.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from database import get_db
 from models.itsm import TicketFolioCreate, TicketFolioUpdate
-
 
 _CREATE_TICKET_FOLIO_QUERY = """
 MERGE (tf:TicketFolio {ticket_id: $ticket_id})
@@ -114,7 +113,7 @@ class TicketFolioRepository:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
+        return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
 
     def get(self, ticket_id: str) -> dict[str, Any] | None:
         with self._driver.session() as session:
@@ -183,7 +182,7 @@ class TicketFolioRepository:
 
         query = """
         MATCH (tf:TicketFolio {ticket_id: $ticket_id})
-        SET {}
+        SET __SET_CLAUSES__
         RETURN
           tf.ticket_id AS ticket_id,
           tf.type AS type,
@@ -196,9 +195,7 @@ class TicketFolioRepository:
           tf.created_at AS created_at,
           tf.updated_at AS updated_at,
           tf.updated_by AS updated_by
-        """.format(
-            ",\n  ".join(set_clauses)
-        )
+        """.replace("__SET_CLAUSES__", ",\n  ".join(set_clauses))
 
         with self._driver.session() as session:
             row = session.run(

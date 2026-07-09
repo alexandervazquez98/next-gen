@@ -6,12 +6,11 @@ backend domain contract boundary.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from database import get_db
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
-
 
 _CREATE_SERVICE_CATALOG_QUERY = """
 MERGE (sc:ServiceCatalog {service_id: $service_id})
@@ -137,7 +136,7 @@ class ServiceCatalogRepository:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
+        return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
 
     def get_by_id(self, service_id: str) -> dict[str, Any] | None:
         with self._driver.session() as session:
@@ -208,7 +207,7 @@ class ServiceCatalogRepository:
 
         update_query = """
         MATCH (sc:ServiceCatalog {service_id: $service_id})
-        SET {}
+        SET __SET_CLAUSES__
         RETURN
           sc.id AS id,
           sc.service_id AS service_id,
@@ -224,9 +223,7 @@ class ServiceCatalogRepository:
           sc.created_at AS created_at,
           sc.updated_at AS updated_at,
           sc.updated_by AS updated_by
-        """.format(
-            ",\n  ".join(set_clauses)
-        )
+        """.replace("__SET_CLAUSES__", ",\n  ".join(set_clauses))
 
         with self._driver.session() as session:
             row = session.run(

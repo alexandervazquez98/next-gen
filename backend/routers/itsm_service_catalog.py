@@ -7,23 +7,24 @@ not mutate or trigger event/folio side effects.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
+import services.itsm_service_catalog_service as service_catalog_service
 from fastapi import APIRouter, Depends, HTTPException, Query
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from models.user import User, UserPermission
 from services.auth_service import check_permission, get_current_active_user
 
-import services.itsm_service_catalog_service as service_catalog_service
-
+CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
+LimitQuery = Annotated[int, Query(ge=1, le=500)]
 
 router = APIRouter(prefix="/itsm/service-catalog", tags=["ITSM Service Catalog"])
 
 
 @router.get("", response_model=list[dict[str, Any]])
 async def list_service_catalogs(
-    limit: int = Query(100, ge=1, le=500),
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
+    limit: LimitQuery = 100,
 ):
     if not check_permission(UserPermission.ITSM_VIEW, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view service catalog")
@@ -33,7 +34,7 @@ async def list_service_catalogs(
 @router.get("/{service_id}", response_model=dict[str, Any])
 async def get_service_catalog(
     service_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_VIEW, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view service catalog")
@@ -43,7 +44,7 @@ async def get_service_catalog(
 @router.post("", response_model=dict[str, Any])
 async def create_service_catalog(
     payload: ServiceCatalogCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to manage service catalog")
@@ -57,7 +58,7 @@ async def create_service_catalog(
 async def update_service_catalog(
     service_id: str,
     payload: ServiceCatalogUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to update service catalog")
@@ -71,7 +72,7 @@ async def update_service_catalog(
 @router.post("/{service_id}/deactivate", response_model=dict[str, Any])
 async def deactivate_service_catalog(
     service_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to deactivate service catalog")

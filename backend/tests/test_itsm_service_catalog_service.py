@@ -8,11 +8,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
-from pydantic import ValidationError
-
-from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 import services.itsm_service_catalog_service as service_catalog_service
+from fastapi import HTTPException
+from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 
 
 class _CatalogRepositoryStub:

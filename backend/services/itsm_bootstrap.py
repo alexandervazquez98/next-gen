@@ -20,7 +20,6 @@ from typing import Any
 
 from database import get_db
 
-
 ITSM_SERVICE_ID_POLICY = "fail-fast: resolve identity conflicts before startup"
 
 _BACKFILL_COMPATIBILITY_QUERY = """
@@ -41,7 +40,7 @@ _PRECHECK_DUPLICATE_CANONICAL_ID_QUERY = """
 MATCH (sc:ServiceCatalog)
 WITH trim(toString(coalesce(sc.service_id, sc.id))) AS canonical_id
 WHERE canonical_id IS NOT NULL AND canonical_id <> ''
-WITH canonical_id, count(sc) AS total
+WITH canonical_id, count(*) AS total
 WHERE total > 1
 RETURN canonical_id, total
 """
@@ -101,7 +100,7 @@ def _extract_cypher_statements(content: str) -> list[str]:
     statements: list[str] = []
     for raw_statement in content.split(";"):
         lines = [line.strip() for line in raw_statement.splitlines() if line.strip()]
-        query_lines = [line for line in lines if not line.lstrip().startswith("//") and not line == "--"]
+        query_lines = [line for line in lines if not line.lstrip().startswith("//") and line != "--"]
         normalized = " ".join(query_lines).strip()
         if not normalized:
             continue

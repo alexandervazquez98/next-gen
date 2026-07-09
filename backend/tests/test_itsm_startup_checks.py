@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
 from unittest.mock import MagicMock
 
 import pytest
-
 from services.itsm_bootstrap import (
-    ITSM_SERVICE_ID_POLICY,
-    ItsmBootstrapPreflightError,
     _BACKFILL_COMPATIBILITY_QUERY,
     _PRECHECK_DUPLICATE_CANONICAL_ID_QUERY,
     _PRECHECK_INVALID_IDENTITY_QUERY,
+    ITSM_SERVICE_ID_POLICY,
+    ItsmBootstrapPreflightError,
     _migration_file_path,
     run_service_catalog_startup_checks,
 )

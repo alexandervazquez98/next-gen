@@ -7,12 +7,12 @@ import platform
 import re
 import shutil
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 try:
     from datetime import UTC
 except ImportError:  # pragma: no cover - py<3.11 compatibility
-    UTC = timezone.utc
+    UTC = UTC
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -183,6 +183,7 @@ from routers import (  # noqa: E402
     cli,
     dictionaries,
     events,
+    itsm_service_catalog,
     links,
     metrics,
     mqtt,
@@ -190,10 +191,9 @@ from routers import (  # noqa: E402
     permissions,
     roles,
     rtus,
+    ticket_folios,
     tunnels,
     users,
-    itsm_service_catalog,
-    ticket_folios,
 )
 
 app = FastAPI(
