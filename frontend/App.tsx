@@ -29,6 +29,8 @@ import AuditLogPage from "./components/AuditLogPage";
 import CIDetailModal from "./components/CIDetailModal";
 import MetricAnalytics from "./components/MetricAnalytics";
 import VisualRelationshipEditorPage from "./components/VisualRelationshipEditorPage";
+import ItsmServiceCatalogPage from "./components/ItsmServiceCatalogPage";
+import ItsmTicketFolioPage from "./components/ItsmTicketFolioPage";
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -144,6 +146,21 @@ const MainLayout: React.FC = () => {
 					<NavItem to="/cmdb" icon="mediation" label="Graph CMDB" />
 					<NavItem to="/inventory" icon="inventory_2" label="CI Inventory" />
 					<NavItem to="/network" icon="hub" label="Network Topology" />
+					{(hasPermission("ITSM_VIEW") || hasPermission("ADMIN")) && (
+						<>
+							<NavItem
+								to="/itsm/service-catalog"
+								icon="support_agent"
+								label="ITSM Catalog"
+							/>
+							<NavItem
+								to="/itsm/tickets"
+								icon="confirmation_number"
+								label="ITSM Tickets"
+							/>
+						</>
+					)}
+
 
 					{(hasPermission("ADMIN") || hasPermission("METRICS_VIEW")) && (
 						<NavItem to="/analytics" icon="monitoring" label="Analytics" />
@@ -251,6 +268,8 @@ const MainLayout: React.FC = () => {
 							/>
 							<Route path="analytics" element={<MetricAnalytics />} />
 							<Route path="inventory" element={<GlobalInventory />} />
+							<Route path="itsm/service-catalog" element={<ItsmServiceCatalogPage />} />
+							<Route path="itsm/tickets" element={<ItsmTicketFolioPage />} />
 						</Routes>
 					</div>
 

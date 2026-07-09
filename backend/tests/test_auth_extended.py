@@ -617,6 +617,8 @@ class TestPermissionSecurity:
             UserPermission.METRICS_VIEW,
             UserPermission.MQTT_READ,
             UserPermission.MQTT_MAPPING_MANAGE,
+            UserPermission.ITSM_VIEW,
+            UserPermission.ITSM_EDIT,
         }
 
         defined_permissions = set(UserPermission)

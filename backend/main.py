@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -5,7 +7,12 @@ import platform
 import re
 import shutil
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+try:
+    from datetime import UTC
+except ImportError:  # pragma: no cover - py<3.11 compatibility
+    UTC = timezone.utc
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -185,6 +192,8 @@ from routers import (  # noqa: E402
     rtus,
     tunnels,
     users,
+    itsm_service_catalog,
+    ticket_folios,
 )
 
 app = FastAPI(
@@ -301,8 +310,10 @@ app.include_router(nodes.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(mqtt.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")
+app.include_router(itsm_service_catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
 app.include_router(tunnels.router, prefix="/api")
+app.include_router(ticket_folios.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(dictionaries.router, prefix="/api")
@@ -336,6 +347,10 @@ async def startup_event():
     """
     logger.info("Starting up... Verifying DB connection")
     verify_connection()
+
+    from services.itsm_bootstrap import run_service_catalog_startup_checks
+
+    run_service_catalog_startup_checks()
 
     # Initialize TimescaleDB Hypertables
     try:

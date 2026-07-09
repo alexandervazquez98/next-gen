@@ -5,7 +5,12 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from datetime import UTC, datetime, timedelta
+try:
+    from datetime import UTC, datetime, timedelta
+except ImportError:  # Python < 3.11 compatibility in CI runner
+    from datetime import datetime, timedelta, timezone
+
+    UTC = timezone.utc
 
 import pytest
 from fastapi import HTTPException
@@ -1409,3 +1414,33 @@ class TestEventServiceSmoke:
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Event not found"
+
+    def test_get_event_detail_query_does_not_reference_ticket_folio(self, mock_neo4j_session):
+        mock_neo4j_session.set_response(
+            "return e, ci, m, bs, sc",
+            [
+                {
+                    "e": {
+                        "id": "evt-011",
+                        "ci_id": "ci-011",
+                        "status": "OPEN",
+                        "severity": "WARNING",
+                        "message": "Capacity warning",
+                        "created_at": datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+                        "ack": False,
+                    },
+                    "ci": {"id": "ci-011", "name": "Router-11", "ip": "10.0.0.11"},
+                    "m": {"id": "capacity", "protocol": "SNMP"},
+                    "bs": {"id": "svc-011", "name": "Payments"},
+                    "sc": {"id": "sla-011", "category": "PLATFORM", "sla_minutes": 30},
+                }
+            ],
+        )
+
+        get_event_detail = _load_event_service_module().get_event_detail
+
+        get_event_detail("evt-011")
+
+        query = mock_neo4j_session.queries[0]["query"].lower()
+        assert "ticketfolio" not in query
+        assert "for service" not in query
