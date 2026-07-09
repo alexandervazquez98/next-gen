@@ -66,7 +66,7 @@ const ItsmTicketFolioPage: React.FC = () => {
   }, []);
 
   const onChange = (field: keyof TicketFormState, value: string) => {
-    setFormState(prev => ({ ...prev, [field]: value }));
+    setFormState((prev) => ({ ...prev, [field]: value }));
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -108,7 +108,8 @@ const ItsmTicketFolioPage: React.FC = () => {
   };
 
   const onTransition = async (ticketId: string, nextStatus: TicketFolioStatus) => {
-    const closedReason = nextStatus === "closed" ? window.prompt("Close reason")?.trim() : undefined;
+    const closedReason =
+      nextStatus === "closed" ? window.prompt("Close reason")?.trim() : undefined;
     if (nextStatus === "closed" && !closedReason) {
       setError("Closed tickets require a close reason.");
       return;
@@ -126,7 +127,9 @@ const ItsmTicketFolioPage: React.FC = () => {
     <div className="h-full flex flex-col p-6 gap-4 overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-black text-white tracking-tighter uppercase">ITSM Tickets</h1>
+          <h1 className="text-3xl font-black text-white tracking-tighter uppercase">
+            ITSM Tickets
+          </h1>
           <p className="text-xs font-black text-neutral-400 uppercase tracking-wider">
             Manage request and incident folios independently from event workflows.
           </p>
@@ -145,7 +148,10 @@ const ItsmTicketFolioPage: React.FC = () => {
       </header>
 
       {error && (
-        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 p-3 text-sm">
+        <div
+          role="alert"
+          className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 p-3 text-sm"
+        >
           {error}
         </div>
       )}
@@ -163,7 +169,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                 aria-label="Ticket ID"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.ticket_id}
-                onChange={event => onChange("ticket_id", event.target.value)}
+                onChange={(event) => onChange("ticket_id", event.target.value)}
                 disabled={Boolean(selectedTicketId)}
               />
             </label>
@@ -174,7 +180,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                 aria-label="Type"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.type}
-                onChange={event => onChange("type", event.target.value as TicketFolioType)}
+                onChange={(event) => onChange("type", event.target.value as TicketFolioType)}
                 disabled={Boolean(selectedTicketId)}
               >
                 <option value="request">request</option>
@@ -188,7 +194,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                 aria-label="Title"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.title}
-                onChange={event => onChange("title", event.target.value)}
+                onChange={(event) => onChange("title", event.target.value)}
               />
             </label>
             <label className="text-xs text-neutral-300" htmlFor="service_catalog_id">
@@ -198,7 +204,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                 aria-label="Service Catalog ID"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.service_catalog_id}
-                onChange={event => onChange("service_catalog_id", event.target.value)}
+                onChange={(event) => onChange("service_catalog_id", event.target.value)}
               />
             </label>
             <label className="text-xs text-neutral-300 sm:col-span-2" htmlFor="description">
@@ -208,19 +214,26 @@ const ItsmTicketFolioPage: React.FC = () => {
                 aria-label="Description"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.description}
-                onChange={event => onChange("description", event.target.value)}
+                onChange={(event) => onChange("description", event.target.value)}
               />
             </label>
           </div>
           <div className="flex gap-2">
-            <button type="submit" className="px-4 py-2 rounded-lg bg-brand-600 text-white font-bold">
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg bg-brand-600 text-white font-bold"
+            >
               Save Ticket
             </button>
-            <button type="button" className="px-4 py-2 rounded-lg bg-white/10 text-neutral-200 font-bold" onClick={() => {
-              setShowForm(false);
-              setSelectedTicketId(null);
-              setFormState(emptyForm);
-            }}>
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg bg-white/10 text-neutral-200 font-bold"
+              onClick={() => {
+                setShowForm(false);
+                setSelectedTicketId(null);
+                setFormState(emptyForm);
+              }}
+            >
               Cancel
             </button>
           </div>
@@ -245,20 +258,22 @@ const ItsmTicketFolioPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {tickets.map(ticket => (
+              {tickets.map((ticket) => (
                 <tr key={ticket.ticket_id} className="border-t border-white/5">
                   <td className="p-3">
                     <div className="font-bold text-white">{ticket.title}</div>
                     <div className="text-xs text-neutral-500">{ticket.ticket_id}</div>
                   </td>
                   <td className="p-3 text-neutral-300">{ticket.type}</td>
-                  <td className="p-3 text-neutral-300">{ticket.service_catalog_id || "Unassigned"}</td>
+                  <td className="p-3 text-neutral-300">
+                    {ticket.service_catalog_id || "Unassigned"}
+                  </td>
                   <td className="p-3 text-neutral-300">{statusLabel(ticket.status)}</td>
                   <td className="p-3">
                     <TicketStatusStepper
                       ticketId={ticket.ticket_id}
                       status={ticket.status}
-                      onTransition={nextStatus => onTransition(ticket.ticket_id, nextStatus)}
+                      onTransition={(nextStatus) => onTransition(ticket.ticket_id, nextStatus)}
                     />
                   </td>
                   <td className="p-3">

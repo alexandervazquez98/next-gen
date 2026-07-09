@@ -18,7 +18,11 @@ interface TicketStatusStepperProps {
   onTransition: TicketTransitionHandler;
 }
 
-const TicketStatusStepper: React.FC<TicketStatusStepperProps> = ({ ticketId, status, onTransition }) => {
+const TicketStatusStepper: React.FC<TicketStatusStepperProps> = ({
+  ticketId,
+  status,
+  onTransition,
+}) => {
   const currentIndex = statusOrder.indexOf(status);
   const nextStatus = currentIndex >= 0 ? statusOrder[currentIndex + 1] : undefined;
 

@@ -96,7 +96,11 @@ def update_service_catalog(
     # Authoritative path is service_id in URL.
     path_fields = {"service_id", "id"}
     for key in path_fields:
-        if key in update_values and update_values[key] is not None and update_values[key] != service_id:
+        if (
+            key in update_values
+            and update_values[key] is not None
+            and update_values[key] != service_id
+        ):
             _http_bad_request(f"{key} must match service_id '{service_id}' when provided")
 
     if not update_values:

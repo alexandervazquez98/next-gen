@@ -1,9 +1,4 @@
-export type TicketFolioStatus =
-  | "open"
-  | "in_progress"
-  | "in_validation"
-  | "resolved"
-  | "closed";
+export type TicketFolioStatus = "open" | "in_progress" | "in_validation" | "resolved" | "closed";
 
 export type TicketFolioType = "request" | "incident";
 

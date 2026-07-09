@@ -8,9 +8,7 @@ from pathlib import Path
 import pytest
 
 MIGRATION_FILE = (
-    Path(__file__).resolve().parent.parent
-    / "migrations"
-    / "itsm_service_catalog.cypher"
+    Path(__file__).resolve().parent.parent / "migrations" / "itsm_service_catalog.cypher"
 )
 
 
@@ -39,9 +37,9 @@ class TestItsmCatalogMigrationFile:
         if not MIGRATION_FILE.exists():
             pytest.skip("Migration file does not exist yet (pre-implementation).")
         content = _read_migration()
-        assert "//" in content[:250] or "/*" in content[:250], (
-            "Migration file should start with comments describing intent."
-        )
+        assert (
+            "//" in content[:250] or "/*" in content[:250]
+        ), "Migration file should start with comments describing intent."
 
     def test_service_catalog_unique_constraint_present(self):
         if not MIGRATION_FILE.exists():

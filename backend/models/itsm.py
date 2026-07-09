@@ -130,7 +130,9 @@ class ServiceCatalogCreate(BaseModel):
             if values.get("sla_target_minutes") is None:
                 values["sla_target_minutes"] = values["sla_minutes"]
             elif values["sla_target_minutes"] != values["sla_minutes"]:
-                raise ValueError("sla_target_minutes and sla_minutes must match when both are provided.")
+                raise ValueError(
+                    "sla_target_minutes and sla_minutes must match when both are provided."
+                )
 
         if values.get("sla_target_minutes") is None:
             values["sla_target_minutes"] = 0
@@ -212,7 +214,9 @@ class ServiceCatalogUpdate(BaseModel):
             and values.get("sla_target_minutes") is not None
             and values["sla_minutes"] != values["sla_target_minutes"]
         ):
-            raise ValueError("sla_target_minutes and sla_minutes must match when both are provided.")
+            raise ValueError(
+                "sla_target_minutes and sla_minutes must match when both are provided."
+            )
 
         return values
 
@@ -313,7 +317,6 @@ class TicketFolioUpdateArchive(BaseModel):
     closed_reason: str | None = None
 
 
-
 def validate_ticket_transition(current_status: str, next_status: str) -> bool:
     """Validate a single ticket lifecycle transition.
 
@@ -338,8 +341,6 @@ def validate_ticket_transition(current_status: str, next_status: str) -> bool:
         raise ValueError("Closed folios cannot transition to another state")
 
     if next_idx != current_idx + 1:
-        raise ValueError(
-            "Invalid ticket status transition. Expected strict forward linear steps."
-        )
+        raise ValueError("Invalid ticket status transition. Expected strict forward linear steps.")
 
     return True

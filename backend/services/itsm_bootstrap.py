@@ -100,7 +100,9 @@ def _extract_cypher_statements(content: str) -> list[str]:
     statements: list[str] = []
     for raw_statement in content.split(";"):
         lines = [line.strip() for line in raw_statement.splitlines() if line.strip()]
-        query_lines = [line for line in lines if not line.lstrip().startswith("//") and line != "--"]
+        query_lines = [
+            line for line in lines if not line.lstrip().startswith("//") and line != "--"
+        ]
         normalized = " ".join(query_lines).strip()
         if not normalized:
             continue
@@ -137,10 +139,18 @@ def run_service_catalog_preflight(driver: Any | None = None) -> ItsmPreflightRep
     drv = driver if driver is not None else get_db()
     with drv.session() as session:
         duplicate_rows = _consume_rows(session.run(_PRECHECK_DUPLICATE_CANONICAL_ID_QUERY))
-        duplicate_ids = [str(_row_value(row, "canonical_id")) for row in duplicate_rows if _row_value(row, "canonical_id")]
+        duplicate_ids = [
+            str(_row_value(row, "canonical_id"))
+            for row in duplicate_rows
+            if _row_value(row, "canonical_id")
+        ]
 
         invalid_rows = _consume_rows(session.run(_PRECHECK_INVALID_IDENTITY_QUERY))
-        invalid_ids = [str(_row_value(row, "canonical_id")) for row in invalid_rows if _row_value(row, "canonical_id")]
+        invalid_ids = [
+            str(_row_value(row, "canonical_id"))
+            for row in invalid_rows
+            if _row_value(row, "canonical_id")
+        ]
 
     if duplicate_ids or invalid_ids:
         message = (
@@ -154,14 +164,18 @@ def run_service_catalog_preflight(driver: Any | None = None) -> ItsmPreflightRep
     return ItsmPreflightReport(duplicate_catalog_ids=[], invalid_catalog_nodes=[])
 
 
-def run_service_catalog_migration(driver: Any | None = None, *, statements: list[str] | None = None) -> int:
+def run_service_catalog_migration(
+    driver: Any | None = None, *, statements: list[str] | None = None
+) -> int:
     """Apply ITSM migration statements in order.
 
     Returns:
         Number of statements executed.
     """
 
-    executable_statements = statements if statements is not None else _load_service_catalog_migration_statements()
+    executable_statements = (
+        statements if statements is not None else _load_service_catalog_migration_statements()
+    )
     if not executable_statements:
         return 0
 
@@ -173,7 +187,9 @@ def run_service_catalog_migration(driver: Any | None = None, *, statements: list
     return len(executable_statements)
 
 
-def run_service_catalog_startup_checks(driver: Any | None = None, *, apply_migration: bool = True) -> ItsmPreflightReport:
+def run_service_catalog_startup_checks(
+    driver: Any | None = None, *, apply_migration: bool = True
+) -> ItsmPreflightReport:
     """Run startup bootstrap steps for Service Catalog identity safety.
 
     Steps:
