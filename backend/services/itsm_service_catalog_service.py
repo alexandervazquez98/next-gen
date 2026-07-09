@@ -6,13 +6,11 @@ handles partial-update safety, and delegates persistence to the repository.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
+from pydantic import ValidationError
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 
 

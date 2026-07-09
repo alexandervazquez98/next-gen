@@ -5,9 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
-
 import services.ticket_folio_service as ticket_service
+from fastapi import HTTPException
 
 
 class _CatalogRepoStub:

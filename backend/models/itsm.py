@@ -18,7 +18,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 ServiceCatalogId = str
 TicketId = str
 
@@ -120,9 +119,12 @@ class ServiceCatalogCreate(BaseModel):
 
         if values.get("service_tier") is not None and values.get("tier") is None:
             values["tier"] = values.get("service_tier")
-        elif values.get("service_tier") is not None and values.get("tier") is not None:
-            if values.get("service_tier") != values.get("tier"):
-                raise ValueError("service_tier and tier must match when both are provided.")
+        elif (
+            values.get("service_tier") is not None
+            and values.get("tier") is not None
+            and values.get("service_tier") != values.get("tier")
+        ):
+            raise ValueError("service_tier and tier must match when both are provided.")
 
         if values.get("sla_minutes") is not None:
             if values.get("sla_target_minutes") is None:
@@ -196,15 +198,21 @@ class ServiceCatalogUpdate(BaseModel):
 
         if values.get("service_tier") is not None and values.get("tier") is None:
             values["tier"] = values.get("service_tier")
-        elif values.get("service_tier") is not None and values.get("tier") is not None:
-            if values["service_tier"] != values["tier"]:
-                raise ValueError("service_tier and tier must match when both are provided.")
+        elif (
+            values.get("service_tier") is not None
+            and values.get("tier") is not None
+            and values["service_tier"] != values["tier"]
+        ):
+            raise ValueError("service_tier and tier must match when both are provided.")
 
         if values.get("sla_minutes") is not None and values.get("sla_target_minutes") is None:
             values["sla_target_minutes"] = values["sla_minutes"]
-        elif values.get("sla_minutes") is not None and values.get("sla_target_minutes") is not None:
-            if values["sla_minutes"] != values["sla_target_minutes"]:
-                raise ValueError("sla_target_minutes and sla_minutes must match when both are provided.")
+        elif (
+            values.get("sla_minutes") is not None
+            and values.get("sla_target_minutes") is not None
+            and values["sla_minutes"] != values["sla_target_minutes"]
+        ):
+            raise ValueError("sla_target_minutes and sla_minutes must match when both are provided.")
 
         return values
 

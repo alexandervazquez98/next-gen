@@ -8,13 +8,12 @@ checks) before persistence.
 from __future__ import annotations
 
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from models.itsm import (
     TicketFolioCreate,
     TicketFolioUpdate,
     validate_ticket_transition,
 )
+from pydantic import ValidationError
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 from repositories.ticket_folio_repo import TicketFolioRepository
 

@@ -7,16 +7,14 @@ creating or mutating event relationships as part of this slice.
 
 from __future__ import annotations
 
-from typing import Any
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-
-from models.itsm import TicketFolioCreate, TicketFolioUpdate
-from models.user import User, UserPermission
-from services.auth_service import check_permission, get_current_active_user
+from typing import Annotated, Any
 
 import services.ticket_folio_service as ticket_folio_service
+from fastapi import APIRouter, Depends, HTTPException, Query
+from models.itsm import TicketFolioCreate, TicketFolioUpdate
+from models.user import User, UserPermission
+from pydantic import BaseModel
+from services.auth_service import check_permission, get_current_active_user
 
 
 class TicketTransitionRequest(BaseModel):
@@ -24,16 +22,20 @@ class TicketTransitionRequest(BaseModel):
     closed_reason: str | None = None
 
 
+
+CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
+LimitQuery = Annotated[int, Query(ge=1, le=500)]
+
 router = APIRouter(prefix="/itsm/tickets", tags=["ITSM Tickets"])
 
 
 @router.get("", response_model=list[dict[str, Any]])
 async def list_ticket_folios(
+    current_user: CurrentUserDep,
     status: str | None = None,
     service_catalog_id: str | None = None,
     archived: bool | None = None,
-    limit: int = Query(100, ge=1, le=500),
-    current_user: User = Depends(get_current_active_user),
+    limit: LimitQuery = 100,
 ):
     if not check_permission(UserPermission.ITSM_VIEW, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view tickets")
@@ -48,7 +50,7 @@ async def list_ticket_folios(
 @router.get("/{ticket_id}", response_model=dict[str, Any])
 async def get_ticket_folio(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_VIEW, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view tickets")
@@ -58,7 +60,7 @@ async def get_ticket_folio(
 @router.post("", response_model=dict[str, Any])
 async def create_ticket_folio(
     payload: TicketFolioCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to create tickets")
@@ -72,7 +74,7 @@ async def create_ticket_folio(
 async def update_ticket_folio(
     ticket_id: str,
     payload: TicketFolioUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to update tickets")
@@ -87,7 +89,7 @@ async def update_ticket_folio(
 async def transition_ticket_folio(
     ticket_id: str,
     payload: TicketTransitionRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to transition tickets")

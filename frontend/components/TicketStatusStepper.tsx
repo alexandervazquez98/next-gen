@@ -9,10 +9,13 @@ const statusOrder: TicketFolioStatus[] = [
   "closed",
 ];
 
+// eslint-disable-next-line no-unused-vars
+type TicketTransitionHandler = (status: TicketFolioStatus) => void;
+
 interface TicketStatusStepperProps {
   ticketId: string;
   status: TicketFolioStatus;
-  onTransition: (nextStatus: TicketFolioStatus) => void;
+  onTransition: TicketTransitionHandler;
 }
 
 const TicketStatusStepper: React.FC<TicketStatusStepperProps> = ({ ticketId, status, onTransition }) => {
