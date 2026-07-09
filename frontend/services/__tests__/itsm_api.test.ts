@@ -156,8 +156,12 @@ describe("ITSM service catalog API wrapper", () => {
     mocks.mockPost.mockResolvedValueOnce(created);
     mocks.mockPut.mockResolvedValueOnce({ ...created, title: "Alarm follow-up updated" });
 
-    await expect(createTicketFolio({ ticket_id: "TK-002", type: "incident", title: "Alarm follow-up" })).resolves.toEqual(created);
-    await expect(updateTicketFolio("TK-002", { title: "Alarm follow-up updated" })).resolves.toMatchObject({
+    await expect(
+      createTicketFolio({ ticket_id: "TK-002", type: "incident", title: "Alarm follow-up" }),
+    ).resolves.toEqual(created);
+    await expect(
+      updateTicketFolio("TK-002", { title: "Alarm follow-up updated" }),
+    ).resolves.toMatchObject({
       title: "Alarm follow-up updated",
     });
 

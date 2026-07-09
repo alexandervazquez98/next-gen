@@ -110,7 +110,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
   };
 
   const onChange = (field: keyof CatalogFormState, value: string) => {
-    setFormState(prev => ({ ...prev, [field]: value }));
+    setFormState((prev) => ({ ...prev, [field]: value }));
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -121,7 +121,10 @@ const ItsmServiceCatalogPage: React.FC = () => {
       return;
     }
 
-    if (Number(formState.sla_target_minutes) < 0 || Number.isNaN(Number(formState.sla_target_minutes))) {
+    if (
+      Number(formState.sla_target_minutes) < 0 ||
+      Number.isNaN(Number(formState.sla_target_minutes))
+    ) {
       setError("SLA target minutes must be a non-negative number.");
       return;
     }
@@ -153,7 +156,9 @@ const ItsmServiceCatalogPage: React.FC = () => {
     <div className="h-full flex flex-col p-6 gap-4 overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-black text-white tracking-tighter uppercase">ITSM Service Catalog</h1>
+          <h1 className="text-3xl font-black text-white tracking-tighter uppercase">
+            ITSM Service Catalog
+          </h1>
           <p className="text-xs font-black text-neutral-400 uppercase tracking-wider">
             Manage operational service definitions and SLA targets in a dedicated ITSM surface.
           </p>
@@ -169,7 +174,10 @@ const ItsmServiceCatalogPage: React.FC = () => {
       </header>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 p-3 text-sm" role="alert">
+        <div
+          className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 p-3 text-sm"
+          role="alert"
+        >
           {error}
         </div>
       )}
@@ -186,7 +194,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="service_id"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.service_id}
-                onChange={event => onChange("service_id", event.target.value)}
+                onChange={(event) => onChange("service_id", event.target.value)}
                 disabled={mode === "edit"}
                 aria-label="Service ID"
               />
@@ -197,7 +205,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="name"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.name}
-                onChange={event => onChange("name", event.target.value)}
+                onChange={(event) => onChange("name", event.target.value)}
                 aria-label="Name"
               />
             </label>
@@ -207,7 +215,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="owner_team"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.owner_team}
-                onChange={event => onChange("owner_team", event.target.value)}
+                onChange={(event) => onChange("owner_team", event.target.value)}
                 aria-label="Owner Team"
               />
             </label>
@@ -217,7 +225,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="category"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.category}
-                onChange={event => onChange("category", event.target.value)}
+                onChange={(event) => onChange("category", event.target.value)}
                 aria-label="Category"
               />
             </label>
@@ -227,7 +235,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="tier"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.tier}
-                onChange={event => onChange("tier", event.target.value)}
+                onChange={(event) => onChange("tier", event.target.value)}
                 aria-label="Tier"
               />
             </label>
@@ -237,7 +245,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="criticality"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.criticality}
-                onChange={event => onChange("criticality", event.target.value)}
+                onChange={(event) => onChange("criticality", event.target.value)}
                 aria-label="Criticality"
               />
             </label>
@@ -247,7 +255,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
                 id="sla_target_minutes"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.sla_target_minutes}
-                onChange={event => onChange("sla_target_minutes", event.target.value)}
+                onChange={(event) => onChange("sla_target_minutes", event.target.value)}
                 inputMode="numeric"
                 aria-label="SLA Target Minutes"
               />
@@ -261,7 +269,10 @@ const ItsmServiceCatalogPage: React.FC = () => {
             >
               Cancel
             </button>
-            <button className="px-3 py-2 rounded-lg bg-brand-600 text-white font-bold text-sm" type="submit">
+            <button
+              className="px-3 py-2 rounded-lg bg-brand-600 text-white font-bold text-sm"
+              type="submit"
+            >
               Save
             </button>
           </div>
@@ -273,19 +284,22 @@ const ItsmServiceCatalogPage: React.FC = () => {
           <p className="text-sm text-neutral-400">Loading service catalog...</p>
         ) : hasCatalogs ? (
           <div className="space-y-3">
-            {catalogs.map(catalog => (
+            {catalogs.map((catalog) => (
               <article
                 key={catalog.service_id}
-                className={`p-4 rounded-lg border ${catalog.active ? "border-white/10" : "border-red-500/40"} bg-black/40 flex items-center justify-between gap-3`
-                }
+                className={`p-4 rounded-lg border ${catalog.active ? "border-white/10" : "border-red-500/40"} bg-black/40 flex items-center justify-between gap-3`}
                 aria-label={`service catalog ${catalog.service_id}`}
               >
                 <div className="space-y-1">
                   <p className="text-white font-bold">{catalog.name}</p>
                   <p className="text-xs text-neutral-400">
-                    {catalog.service_id} · {catalog.category || "No category"} · {catalog.owner_team || "Unowned"}
+                    {catalog.service_id} · {catalog.category || "No category"} ·{" "}
+                    {catalog.owner_team || "Unowned"}
                   </p>
-                  <p className="text-xs text-neutral-500">SLA {catalog.sla_target_minutes} min · {catalog.criticality || "Unknown"} · {catalog.tier || "Unknown tier"}</p>
+                  <p className="text-xs text-neutral-500">
+                    SLA {catalog.sla_target_minutes} min · {catalog.criticality || "Unknown"} ·{" "}
+                    {catalog.tier || "Unknown tier"}
+                  </p>
                   <p className="text-[11px] text-neutral-500">
                     {catalog.active ? "Status: Active" : "Status: Deactivated"}
                   </p>
@@ -322,7 +336,9 @@ const ItsmServiceCatalogPage: React.FC = () => {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-neutral-400">No service catalog entries yet. Create your first service above.</p>
+          <p className="text-sm text-neutral-400">
+            No service catalog entries yet. Create your first service above.
+          </p>
         )}
       </section>
     </div>

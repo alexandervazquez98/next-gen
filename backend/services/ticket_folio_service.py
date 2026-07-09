@@ -52,7 +52,9 @@ def _check_catalog_exists(
         _raise_not_found(f"service_catalog not found: {service_catalog_id}")
 
 
-def _sync_relation(ticket_id: str, service_catalog_id: str | None, repository: TicketFolioRepository) -> None:
+def _sync_relation(
+    ticket_id: str, service_catalog_id: str | None, repository: TicketFolioRepository
+) -> None:
     # Keep property and relationship in sync for migration compatibility.
     repository.sync_service_relationship(ticket_id, service_catalog_id)
 
@@ -66,7 +68,9 @@ def list_ticket_folios(
     repository: TicketFolioRepository | None = None,
 ):
     repository = repository or TicketFolioRepository()
-    return repository.list(status=status, service_catalog_id=service_catalog_id, archived=archived, limit=limit)
+    return repository.list(
+        status=status, service_catalog_id=service_catalog_id, archived=archived, limit=limit
+    )
 
 
 def get_ticket_folio(

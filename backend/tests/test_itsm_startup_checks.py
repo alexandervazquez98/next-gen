@@ -104,10 +104,6 @@ def test_migration_file_documents_startup_conflict_policy():
     """Migration docs should keep startup policy consistent with runtime checks."""
 
     migration_path = _migration_file_path()
-    assert migration_path.exists(), (
-        f"Migration file not found at {migration_path}."
-    )
+    assert migration_path.exists(), f"Migration file not found at {migration_path}."
     migration_text = migration_path.read_text(encoding="utf-8")
     assert "fail-fast" in migration_text.lower()
-
-

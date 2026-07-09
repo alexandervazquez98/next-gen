@@ -102,10 +102,14 @@ class TicketFolioRepository:
             "type": row.get("type") if hasattr(row, "get") else row["type"],
             "title": row.get("title") if hasattr(row, "get") else row["title"],
             "description": row.get("description") if hasattr(row, "get") else row["description"],
-            "service_catalog_id": row.get("service_catalog_id") if hasattr(row, "get") else row["service_catalog_id"],
+            "service_catalog_id": (
+                row.get("service_catalog_id") if hasattr(row, "get") else row["service_catalog_id"]
+            ),
             "status": row.get("status") if hasattr(row, "get") else row["status"],
             "archived": row.get("archived") if hasattr(row, "get") else row["archived"],
-            "closed_reason": row.get("closed_reason") if hasattr(row, "get") else row["closed_reason"],
+            "closed_reason": (
+                row.get("closed_reason") if hasattr(row, "get") else row["closed_reason"]
+            ),
             "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
             "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],
             "updated_by": row.get("updated_by") if hasattr(row, "get") else row["updated_by"],
@@ -138,7 +142,9 @@ class TicketFolioRepository:
             return [self._record(row) for row in result if self._record(row) is not None]
 
     def upsert(self, payload: TicketFolioCreate) -> dict[str, Any]:
-        payload = payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
+        payload = (
+            payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
+        )
         now = self._now()
         with self._driver.session() as session:
             row = session.run(
@@ -158,7 +164,9 @@ class TicketFolioRepository:
         return self._record(row) or {}
 
     def update(self, ticket_id: str, payload: TicketFolioUpdate) -> dict[str, Any] | None:
-        payload = payload if isinstance(payload, TicketFolioUpdate) else TicketFolioUpdate(**payload)
+        payload = (
+            payload if isinstance(payload, TicketFolioUpdate) else TicketFolioUpdate(**payload)
+        )
         updates = payload.model_dump(exclude_unset=True)
         if not updates:
             return self.get(ticket_id)

@@ -19,17 +19,17 @@ export const listServiceCatalog = ({ signal }: ServiceCatalogListOptions = {}) =
 export const createServiceCatalog = (payload: ServiceCatalogCreatePayload) =>
   api.post<ServiceCatalogResponse>("/itsm/service-catalog", payload);
 
-export const updateServiceCatalog = (
-  serviceId: string,
-  payload: ServiceCatalogUpdatePayload,
-) =>
+export const updateServiceCatalog = (serviceId: string, payload: ServiceCatalogUpdatePayload) =>
   api.put<ServiceCatalogResponse>(
     `/itsm/service-catalog/${encodeURIComponent(serviceId)}`,
     payload,
   );
 
 export const deactivateServiceCatalog = (serviceId: string) =>
-  api.post<ServiceCatalogResponse>(`/itsm/service-catalog/${encodeURIComponent(serviceId)}/deactivate`, {});
+  api.post<ServiceCatalogResponse>(
+    `/itsm/service-catalog/${encodeURIComponent(serviceId)}/deactivate`,
+    {},
+  );
 
 export interface TicketFolioListOptions {
   status?: TicketFolioStatus;

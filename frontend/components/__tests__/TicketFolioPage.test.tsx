@@ -69,8 +69,15 @@ describe("ItsmTicketFolioPage", () => {
     const user = userEvent.setup();
     mocks.listTicketFolios
       .mockResolvedValueOnce(sampleTickets)
-      .mockResolvedValueOnce([...sampleTickets, { ...sampleTickets[0], ticket_id: "TK-003", title: "New request" }]);
-    mocks.createTicketFolio.mockResolvedValueOnce({ ...sampleTickets[0], ticket_id: "TK-003", title: "New request" });
+      .mockResolvedValueOnce([
+        ...sampleTickets,
+        { ...sampleTickets[0], ticket_id: "TK-003", title: "New request" },
+      ]);
+    mocks.createTicketFolio.mockResolvedValueOnce({
+      ...sampleTickets[0],
+      ticket_id: "TK-003",
+      title: "New request",
+    });
 
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
@@ -95,11 +102,16 @@ describe("ItsmTicketFolioPage", () => {
 
   it("updates an existing ticket folio", async () => {
     const user = userEvent.setup();
-    mocks.listTicketFolios.mockResolvedValueOnce(sampleTickets).mockResolvedValueOnce([
-      { ...sampleTickets[0], title: "Access request updated" },
-      sampleTickets[1],
-    ]);
-    mocks.updateTicketFolio.mockResolvedValueOnce({ ...sampleTickets[0], title: "Access request updated" });
+    mocks.listTicketFolios
+      .mockResolvedValueOnce(sampleTickets)
+      .mockResolvedValueOnce([
+        { ...sampleTickets[0], title: "Access request updated" },
+        sampleTickets[1],
+      ]);
+    mocks.updateTicketFolio.mockResolvedValueOnce({
+      ...sampleTickets[0],
+      title: "Access request updated",
+    });
 
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
@@ -110,40 +122,63 @@ describe("ItsmTicketFolioPage", () => {
     await user.type(titleInput, "Access request updated");
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
 
-    await waitFor(() => expect(mocks.updateTicketFolio).toHaveBeenCalledWith("TK-001", {
-      title: "Access request updated",
-      description: "Grant VPN access",
-      service_catalog_id: "svc-auth",
-    }));
+    await waitFor(() =>
+      expect(mocks.updateTicketFolio).toHaveBeenCalledWith("TK-001", {
+        title: "Access request updated",
+        description: "Grant VPN access",
+        service_catalog_id: "svc-auth",
+      }),
+    );
   });
 
   it("only exposes the next linear status transition", async () => {
     const user = userEvent.setup();
-    mocks.listTicketFolios.mockResolvedValueOnce(sampleTickets).mockResolvedValueOnce(sampleTickets);
-    mocks.transitionTicketFolio.mockResolvedValueOnce({ ...sampleTickets[0], status: "in_progress" });
+    mocks.listTicketFolios
+      .mockResolvedValueOnce(sampleTickets)
+      .mockResolvedValueOnce(sampleTickets);
+    mocks.transitionTicketFolio.mockResolvedValueOnce({
+      ...sampleTickets[0],
+      status: "in_progress",
+    });
 
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
-    expect(screen.queryByRole("button", { name: /move TK-001 to resolved/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /move TK-001 to resolved/i }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /move TK-001 to in_progress/i }));
 
-    await waitFor(() => expect(mocks.transitionTicketFolio).toHaveBeenCalledWith("TK-001", "in_progress", undefined));
+    await waitFor(() =>
+      expect(mocks.transitionTicketFolio).toHaveBeenCalledWith("TK-001", "in_progress", undefined),
+    );
   });
 
   it("asks for a close reason when moving to closed", async () => {
     const user = userEvent.setup();
     const resolvedTicket = { ...sampleTickets[0], status: "resolved" };
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Validated by requester");
-    mocks.listTicketFolios.mockResolvedValueOnce([resolvedTicket]).mockResolvedValueOnce([{ ...resolvedTicket, status: "closed" }]);
-    mocks.transitionTicketFolio.mockResolvedValueOnce({ ...resolvedTicket, status: "closed", closed_reason: "Validated by requester" });
+    mocks.listTicketFolios
+      .mockResolvedValueOnce([resolvedTicket])
+      .mockResolvedValueOnce([{ ...resolvedTicket, status: "closed" }]);
+    mocks.transitionTicketFolio.mockResolvedValueOnce({
+      ...resolvedTicket,
+      status: "closed",
+      closed_reason: "Validated by requester",
+    });
 
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /move TK-001 to closed/i }));
 
-    await waitFor(() => expect(mocks.transitionTicketFolio).toHaveBeenCalledWith("TK-001", "closed", "Validated by requester"));
+    await waitFor(() =>
+      expect(mocks.transitionTicketFolio).toHaveBeenCalledWith(
+        "TK-001",
+        "closed",
+        "Validated by requester",
+      ),
+    );
     promptSpy.mockRestore();
   });
 });

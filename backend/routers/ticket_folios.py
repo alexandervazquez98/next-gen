@@ -22,7 +22,6 @@ class TicketTransitionRequest(BaseModel):
     closed_reason: str | None = None
 
 
-
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 LimitQuery = Annotated[int, Query(ge=1, le=500)]
 

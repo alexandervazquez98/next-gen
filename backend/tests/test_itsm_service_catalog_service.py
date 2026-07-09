@@ -131,7 +131,11 @@ class TestServiceCatalogService:
     def test_update_allows_clearing_optional_fields(self):
         repository = _CatalogRepositoryStub()
         repository.get_by_id.return_value = _sample_catalog_record()
-        repository.update.return_value = {**_sample_catalog_record(), "owner_team": None, "category": None}
+        repository.update.return_value = {
+            **_sample_catalog_record(),
+            "owner_team": None,
+            "category": None,
+        }
 
         service_catalog_service.update_service_catalog(
             "svc-001",

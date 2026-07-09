@@ -43,7 +43,10 @@ def _make_pydantic_user(
     return User(
         username=username,
         role=role,
-        permissions=[permission.value if isinstance(permission, UserPermission) else permission for permission in (permissions or [])],
+        permissions=[
+            permission.value if isinstance(permission, UserPermission) else permission
+            for permission in (permissions or [])
+        ],
         allowed_locations=[],
     )
 
@@ -227,7 +230,9 @@ class TestItsmTicketRouter:
                 if endpoint.endswith("/transition"):
                     response = client.post(endpoint, json={"next_status": "in_progress"})
                 else:
-                    response = client.post(endpoint, json={"ticket_id": "TK-1", "type": "request", "title": "Access"})
+                    response = client.post(
+                        endpoint, json={"ticket_id": "TK-1", "type": "request", "title": "Access"}
+                    )
             elif method == "put":
                 response = client.put(endpoint, json={"title": "Changed"})
 

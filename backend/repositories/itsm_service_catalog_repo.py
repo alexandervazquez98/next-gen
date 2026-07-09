@@ -126,7 +126,9 @@ class ServiceCatalogRepository:
             "tier": row.get("tier") if hasattr(row, "get") else row["tier"],
             "service_tier": row.get("service_tier") if hasattr(row, "get") else row["service_tier"],
             "criticality": row.get("criticality") if hasattr(row, "get") else row["criticality"],
-            "sla_target_minutes": row.get("sla_target_minutes") if hasattr(row, "get") else row["sla_target_minutes"],
+            "sla_target_minutes": (
+                row.get("sla_target_minutes") if hasattr(row, "get") else row["sla_target_minutes"]
+            ),
             "sla_minutes": row.get("sla_minutes") if hasattr(row, "get") else row["sla_minutes"],
             "active": row.get("active") if hasattr(row, "get") else row["active"],
             "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
@@ -149,7 +151,11 @@ class ServiceCatalogRepository:
             return [self._record(row) for row in result if self._record(row) is not None]
 
     def upsert(self, payload: ServiceCatalogCreate) -> dict[str, Any]:
-        payload = payload if isinstance(payload, ServiceCatalogCreate) else ServiceCatalogCreate(**payload)
+        payload = (
+            payload
+            if isinstance(payload, ServiceCatalogCreate)
+            else ServiceCatalogCreate(**payload)
+        )
         now = self._now()
         with self._driver.session() as session:
             row = session.run(
@@ -179,7 +185,11 @@ class ServiceCatalogRepository:
         return self._record(row)
 
     def update(self, service_id: str, payload: ServiceCatalogUpdate) -> dict[str, Any] | None:
-        payload = payload if isinstance(payload, ServiceCatalogUpdate) else ServiceCatalogUpdate(**payload)
+        payload = (
+            payload
+            if isinstance(payload, ServiceCatalogUpdate)
+            else ServiceCatalogUpdate(**payload)
+        )
         updates = payload.model_dump(exclude_unset=True)
         if not updates:
             return self.get_by_id(service_id)
