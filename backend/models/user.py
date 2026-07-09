@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import Enum
 from typing import Literal
 
@@ -34,6 +36,10 @@ class UserPermission(str, Enum):  # noqa: UP042
     CI_VIEW = "CI_VIEW"
     CI_EDIT = "CI_EDIT"
     CI_DELETE = "CI_DELETE"
+
+    # ITSM
+    ITSM_VIEW = "ITSM_VIEW"
+    ITSM_EDIT = "ITSM_EDIT"
 
     # Diagnostics
     RUN_DIAGNOSTICS = "RUN_DIAGNOSTICS"
