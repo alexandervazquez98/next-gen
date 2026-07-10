@@ -1215,7 +1215,7 @@ const MonitoringConsole: React.FC = () => {
               if (cleanableCount === 0) return;
               if (
                 !window.confirm(
-                      `About to close ${cleanableCount} RECOVERED events that are not acknowledged. Proceed?`,
+                  `About to close ${cleanableCount} RECOVERED events that are not acknowledged. Proceed?`,
                 )
               )
                 return;
