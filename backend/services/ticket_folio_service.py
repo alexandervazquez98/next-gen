@@ -99,6 +99,10 @@ def create_ticket_folio(
     except ValidationError as exc:
         _raise_bad_request(str(exc))
 
+    existing = repository.get(payload_model.ticket_id)
+    if existing:
+        _raise_conflict(f"Ticket folio already exists: {payload_model.ticket_id}")
+
     _check_catalog_exists(payload_model.service_catalog_id, catalog_repository=catalog_repository)
 
     payload_model = payload_model.model_copy(update={"updated_by": actor})

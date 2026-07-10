@@ -11,6 +11,8 @@ SYSTEM_ROLE_PERMISSION_UPGRADES = {
     "OPERATOR": [
         UserPermission.MQTT_READ.value,
         UserPermission.MQTT_MAPPING_MANAGE.value,
+        UserPermission.ITSM_VIEW.value,
+        UserPermission.ITSM_EDIT.value,
     ],
 }
 
@@ -39,6 +41,8 @@ async def seed_roles():
                 UserPermission.METRICS_VIEW.value,
                 UserPermission.MQTT_READ.value,
                 UserPermission.MQTT_MAPPING_MANAGE.value,
+                UserPermission.ITSM_VIEW.value,
+                UserPermission.ITSM_EDIT.value,
             ],
             "is_system": True,
         },

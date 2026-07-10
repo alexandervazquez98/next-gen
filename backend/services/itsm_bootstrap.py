@@ -15,12 +15,14 @@ migrations and API operations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
 from database import get_db
 
 ITSM_SERVICE_ID_POLICY = "fail-fast: resolve identity conflicts before startup"
+logger = logging.getLogger(__name__)
 
 _BACKFILL_COMPATIBILITY_QUERY = """
 MATCH (sc:ServiceCatalog)
@@ -189,18 +191,27 @@ def run_service_catalog_migration(
 
 def run_service_catalog_startup_checks(
     driver: Any | None = None, *, apply_migration: bool = True
-) -> ItsmPreflightReport:
-    """Run startup bootstrap steps for Service Catalog identity safety.
+) -> ItsmPreflightReport | None:
+    """Run startup checks without blocking API availability on operational failures.
 
-    Steps:
-        1. run preflight identity checks
-        2. apply startup migration statements (idempotent)
+    Identity-integrity conflicts remain explicit fail-fast blockers; transient
+    backfill, preflight, and idempotent migration failures are logged instead.
     """
 
-    run_service_catalog_compatibility_backfill(driver=driver)
-    report = run_service_catalog_preflight(driver=driver)
+    try:
+        run_service_catalog_compatibility_backfill(driver=driver)
+        report = run_service_catalog_preflight(driver=driver)
+    except ItsmBootstrapPreflightError:
+        raise
+    except Exception:
+        logger.exception("ITSM service catalog startup checks failed; continuing API startup")
+        return None
+
     if apply_migration:
-        run_service_catalog_migration(driver=driver)
+        try:
+            run_service_catalog_migration(driver=driver)
+        except Exception:
+            logger.exception("ITSM service catalog migration failed; continuing API startup")
     return report
 
 
