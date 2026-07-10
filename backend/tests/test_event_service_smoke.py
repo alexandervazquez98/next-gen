@@ -1023,6 +1023,20 @@ class TestEventServiceSmoke:
         assert result["count"] == 3
         assert "Cleaned up" in result["message"]
 
+    def test_prune_recovered_events_does_not_require_comment_state(self, mock_neo4j_session):
+        """Recovered event cleanup eligibility ignores comment state when selecting events."""
+        prune_recovered_events = _load_event_service_module().prune_recovered_events
+
+        mock_neo4j_session.set_response("recovered", [{"closed_count": 1}])
+
+        prune_recovered_events("system")
+
+        assert len(mock_neo4j_session.queries) >= 1
+        query = mock_neo4j_session.queries[0]["query"].lower()
+        assert "where e.status = 'recovered'" in query
+        assert "and (e.ack is null or e.ack = false)" in query
+        assert "comments" not in query
+
     def test_build_event_detail_prefers_snapshot_values_and_sla_math(self):
         event_service = _load_event_service_module()
         now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)

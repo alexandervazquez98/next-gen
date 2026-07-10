@@ -376,35 +376,47 @@ class TestEventBatchPrunerTimeout:
 
 
 class TestEventBatchPrunerSafetyGuards:
-    """Verify streaming prune preserves ACK/comment safeguards at close time."""
+    """Verify streaming prune only requires recovered, unacknowledged events."""
 
-    def test_close_query_rechecks_ack_and_comments_after_selection(self, mock_driver):
-        """Events ACKed or commented after selection must not be closed by prune."""
+    def test_commented_recovered_unacknowledged_event_is_closed(self, mock_driver):
+        """Non-ACK comments do not make a recovered event ineligible for pruning."""
         event_service = _load_event_service_module()
         session = mock_driver.session()
         session.set_response("return count(e) as total", [{"total": 1}])
         session.set_response(
             "return e.id as event_id, e.status",
-            [{"event_id": "evt-1", "status": "RECOVERED"}],
+            [
+                {
+                    "event_id": "evt-commented",
+                    "status": "RECOVERED",
+                    "comments": [{"text": "operator note"}],
+                }
+            ],
         )
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
+            progress_list = []
 
             async def consume():
-                async for _ in event_service.event_batch_pruner(user="system", batch_delay_ms=0):
-                    pass
+                async for progress in event_service.event_batch_pruner(
+                    user="system", batch_delay_ms=0
+                ):
+                    progress_list.append(progress)
 
             _run_async(consume())
 
             close_queries = [
-                q["query"] for q in session.queries if "RETURN e.id AS closed_id" in q["query"]
+                q for q in session.queries if "RETURN e.id AS closed_id" in q["query"]
             ]
-            assert close_queries, "Expected guarded close query to run"
-            close_query = close_queries[0]
+            assert close_queries, "Expected commented recovered event to be closed"
+            assert close_queries[0]["params"]["eid"] == "evt-commented"
+            assert progress_list[-1]["processed"] == 1
+
+            close_query = close_queries[0]["query"]
             assert "WHERE e.status = 'RECOVERED'" in close_query
             assert "AND (e.ack IS NULL OR e.ack = false)" in close_query
-            assert "AND (e.comments IS NULL OR size(e.comments) = 0)" in close_query
+            assert "comments" not in close_query.lower()
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
 
