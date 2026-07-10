@@ -98,9 +98,7 @@ def _normalize_ack_note(comment_message: str | None) -> str | None:
     return normalized or None
 
 
-def _build_close_audit_message(
-    user: str, forced: bool, comment_message: str | None
-) -> str:
+def _build_close_audit_message(user: str, forced: bool, comment_message: str | None) -> str:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
         lines = [f"[AUDIT][FORCED_CLOSE] Cierre forzado por {user}"]
@@ -114,9 +112,7 @@ def _build_close_audit_message(
     return "\n".join(lines)
 
 
-def _optional_contract(
-    payload: dict[str, Any], required_keys: set[str]
-) -> dict[str, Any] | None:
+def _optional_contract(payload: dict[str, Any], required_keys: set[str]) -> dict[str, Any] | None:
     cleaned = _clean_dict(payload)
     if not required_keys.issubset(cleaned):
         return None
@@ -147,9 +143,7 @@ def _build_event_summary(
     summary = {key: _serialize_value(value) for key, value in event_data.items()}
     if summary.get("created_at") is None:
         summary["created_at"] = (
-            summary.get("last_seen")
-            or summary.get("recovered_at")
-            or summary.get("closed_at")
+            summary.get("last_seen") or summary.get("recovered_at") or summary.get("closed_at")
         )
     summary["ci_node_id"] = ci_data.get("id")
     summary["ci_name"] = ci_data.get("name")
@@ -197,9 +191,7 @@ def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "source_protocol",
     }
     result = {
-        key: value
-        for key, value in summary.items()
-        if key in allowed_keys and value is not None
+        key: value for key, value in summary.items() if key in allowed_keys and value is not None
     }
     # Add computed propagated flag only when correlation_type is PROPAGATED
     if summary.get("correlation_type") == "PROPAGATED":
@@ -366,9 +358,7 @@ def _build_business_context(
     return business_context
 
 
-def build_event_detail_response(
-    record: Any, now: datetime | None = None
-) -> dict[str, Any]:
+def build_event_detail_response(record: Any, now: datetime | None = None) -> dict[str, Any]:
     event_data = _node_to_dict(_record_value(record, "e"))
     ci_data = _node_to_dict(_record_value(record, "ci"))
     metric_data = _node_to_dict(_record_value(record, "m"))
@@ -380,9 +370,7 @@ def build_event_detail_response(
         event_data, ci_data, business_service, service_catalog, now=now
     )
     business_service_context = business_context.get("business_service") or {}
-    escalation_tier = event_data.get("escalation_tier") or business_service_context.get(
-        "tier"
-    )
+    escalation_tier = event_data.get("escalation_tier") or business_service_context.get("tier")
 
     return {
         "event": {
@@ -396,14 +384,12 @@ def build_event_detail_response(
         },
         "business_context": business_context,
         "itsm_context": {
-            "assignment_state": "assigned"
-            if event_data.get("ack") and event_data.get("ack_by")
-            else "unassigned",
+            "assignment_state": (
+                "assigned" if event_data.get("ack") and event_data.get("ack_by") else "unassigned"
+            ),
             "assigned_to": event_data.get("ack_by"),
             "opened_by": "system",
-            "escalation_tier": escalation_tier
-            if escalation_tier in {"T1", "T2", "T3"}
-            else None,
+            "escalation_tier": escalation_tier if escalation_tier in {"T1", "T2", "T3"} else None,
             "external_ticket": _build_external_ticket_ref(event_data),
         },
     }
@@ -542,7 +528,6 @@ def _snmp_no_response_event_summary(event_data: dict[str, Any]) -> dict[str, Any
     )
 
 
-
 def _is_sensitive_ci_key(key: str) -> bool:
     normalized = key.lower()
     return any(part in normalized for part in _SENSITIVE_CI_KEY_PARTS)
@@ -608,9 +593,7 @@ def _merge_availability_ci_metadata(
         return incoming
     if not incoming:
         return existing
-    incoming_values = {
-        key: value for key, value in incoming.items() if value is not None
-    }
+    incoming_values = {key: value for key, value in incoming.items() if value is not None}
     merged = {**existing, **incoming_values}
     existing_raw_metadata = existing.get("metadata")
     incoming_raw_metadata = incoming.get("metadata")
@@ -661,7 +644,7 @@ def get_availability_report(
                 "ci_name": ci_name,
                 "event_type": key[1],
                 "failure_starts": [],
-                    "completed_incidents": [],
+                "completed_incidents": [],
                 "repair_seconds": [],
                 "downtime_seconds": 0.0,
                 "active_events": 0,
@@ -722,9 +705,7 @@ def get_availability_report(
             row["repair_seconds"].append(repair_seconds)
             clipped_start = max(created_at, window_start)
             clipped_end = min(recovered_at, window_end)
-            row["downtime_seconds"] += max(
-                0.0, (clipped_end - clipped_start).total_seconds()
-            )
+            row["downtime_seconds"] += max(0.0, (clipped_end - clipped_start).total_seconds())
 
         active_result = session.run(
             """
@@ -759,12 +740,9 @@ def get_availability_report(
             if window_start <= created_at <= window_end:
                 row["failure_starts"].append(created_at)
             clipped_start = max(created_at, window_start)
-            row["active_downtime_seconds"] += max(
-                0.0, (window_end - clipped_start).total_seconds()
-            )
+            row["active_downtime_seconds"] += max(0.0, (window_end - clipped_start).total_seconds())
 
-        snmp_result = session.run(
-            """
+        snmp_result = session.run("""
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -779,17 +757,14 @@ def get_availability_report(
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS failing_ci,
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS no_response_ci,
                    sum(open_no_response_events) AS no_response_event_count
-            """
-        )
+            """)
         snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
 
     rows: list[dict[str, Any]] = []
     for row in groups.values():
         failure_starts = sorted(row["failure_starts"])
         repair_seconds = row["repair_seconds"]
-        mttr_seconds = (
-            sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
-        )
+        mttr_seconds = sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
         intervals = []
         effective_outage_end = None
         seen_incidents = set()
@@ -827,12 +802,8 @@ def get_availability_report(
                 "active_events": row["active_events"],
                 "active_downtime_seconds": row["active_downtime_seconds"],
                 "availability_percentage": availability_percentage,
-                "first_failure_at": failure_starts[0].isoformat()
-                if failure_starts
-                else None,
-                "last_failure_at": failure_starts[-1].isoformat()
-                if failure_starts
-                else None,
+                "first_failure_at": failure_starts[0].isoformat() if failure_starts else None,
+                "last_failure_at": failure_starts[-1].isoformat() if failure_starts else None,
                 "ci": row.get("ci"),
             }
         )
@@ -873,8 +844,7 @@ def get_availability_snmp_no_response_drilldown(
 
     driver = get_db()
     with driver.session() as session:
-        summary_record = session.run(
-            """
+        summary_record = session.run("""
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -885,8 +855,7 @@ def get_availability_snmp_no_response_drilldown(
               AND e.failure_family = 'SNMP_NO_RESPONSE'
             RETURN count(DISTINCT ci) AS total_ci_with_no_response,
                    count(e) AS total_events_with_no_response
-            """
-        ).single()
+            """).single()
         if summary_record is not None:
             summary = {
                 "total_ci_with_no_response": int(
@@ -940,8 +909,7 @@ def get_availability_snmp_no_response_drilldown(
             ci_data = _node_to_dict(_record_value(record, "ci"))
             event_items = _record_value(record, "events") or []
             events = [
-                _snmp_no_response_event_summary(_node_to_dict(event))
-                for event in event_items
+                _snmp_no_response_event_summary(_node_to_dict(event)) for event in event_items
             ]
             rows.append(
                 _clean_dict(
@@ -1050,9 +1018,7 @@ def get_related_events(ci_id: str) -> list[dict[str, Any]]:
             metric_value = _record_value(record, "m")
             if metric_value is not None:
                 metric_data = _node_to_dict(metric_value)
-                event_data["metric_name"] = metric_data.get("name") or metric_data.get(
-                    "id"
-                )
+                event_data["metric_name"] = metric_data.get("name") or metric_data.get("id")
             else:
                 event_data["metric_name"] = _record_value(record, "metric_name")
             related.append(_public_event_summary(event_data))
@@ -1060,9 +1026,7 @@ def get_related_events(ci_id: str) -> list[dict[str, Any]]:
         return related
 
 
-def ack_event(
-    event_id: str, user: str, comment_message: str | None = None
-) -> dict[str, str]:
+def ack_event(event_id: str, user: str, comment_message: str | None = None) -> dict[str, str]:
     driver = get_db()
     audit_message = _build_ack_audit_message(user)
     note_message = _normalize_ack_note(comment_message)
@@ -1106,8 +1070,7 @@ def close_event(
     with driver.session() as session:
         # Check current status first to provide a better error message
         current = session.run(
-            "MATCH (e:Event {id: $eid}) RETURN e.status as status",
-            eid=event_id
+            "MATCH (e:Event {id: $eid}) RETURN e.status as status", eid=event_id
         ).single()
 
         if not current:
@@ -1154,16 +1117,19 @@ def add_event_comment(event_id: str, user: str, message: str) -> dict[str, str]:
 def prune_recovered_events(user: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
-        result = session.run(
-            """
+        result = (
+            session.run(
+                """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             RETURN count(e) as closed_count
         """,
-            user=user,
-        ).single() or {"closed_count": 0}
+                user=user,
+            ).single()
+            or {"closed_count": 0}
+        )
     closed_count = _record_value(result, "closed_count") or 0
     return {
         "message": f"Cleaned up {closed_count} events",
@@ -1198,7 +1164,7 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
                     ON CONFLICT (lock_key) DO NOTHING
                     RETURNING id
                 """),
-                {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at}
+                {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at},
             )
             row = result.fetchone()
 
@@ -1227,7 +1193,7 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
                         SET expires_at = :expires_at
                         WHERE lock_key = 'prune' AND owner = :owner
                     """),
-                    {"owner": owner, "expires_at": expires_at}
+                    {"owner": owner, "expires_at": expires_at},
                 )
                 db.commit()
                 return True
@@ -1236,7 +1202,7 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
                 # Expired — delete and retry
                 db.execute(
                     text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND expires_at < :now"),
-                    {"now": datetime.utcnow()}
+                    {"now": datetime.utcnow()},
                 )
                 db.commit()
                 continue
@@ -1256,7 +1222,7 @@ def release_prune_lock(owner: str) -> bool:
     try:
         result = db.execute(
             text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND owner = :owner RETURNING id"),
-            {"owner": owner}
+            {"owner": owner},
         )
         released = result.fetchone() is not None
         db.commit()
@@ -1343,14 +1309,12 @@ async def event_batch_pruner(
 
     # First: get total count of recoverable events
     with driver.session() as session:
-        result = session.run(
-            """
+        result = session.run("""
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             RETURN count(e) as total
-            """
-        ).single()
+            """).single()
         total = _record_value(result, "total") or 0
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
