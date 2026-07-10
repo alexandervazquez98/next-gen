@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import get_db
 from fastapi import HTTPException
@@ -14,12 +14,12 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
-def _node_to_dict(value: Any) -> Dict[str, Any]:
+def _node_to_dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, dict):
         return {key: _serialize_value(item) for key, item in value.items()}
-    return {key: _serialize_value(value[key]) for key in value.keys()}
+    return {key: _serialize_value(value[key]) for key in value.keys()}  # noqa: SIM118
 
 
 def _record_value(record: Any, key: str) -> Any:
@@ -31,39 +31,39 @@ def _record_value(record: Any, key: str) -> Any:
         return record.get(key) if hasattr(record, "get") else None
 
 
-def _parse_datetime(value: Any) -> Optional[datetime]:
+def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         normalized = value.replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(normalized)
         except ValueError:
             return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
 
 
 def _compute_sla_remaining_minutes(
-    created_at: Any, sla_minutes: Optional[int], now: Optional[datetime] = None
-) -> Optional[int]:
+    created_at: Any, sla_minutes: int | None, now: datetime | None = None
+) -> int | None:
     if sla_minutes is None:
         return None
     created_dt = _parse_datetime(created_at)
     if created_dt is None:
         return None
-    reference = now or datetime.now(timezone.utc)
+    reference = now or datetime.now(UTC)
     age_minutes = int((reference - created_dt).total_seconds() // 60)
     return int(sla_minutes) - age_minutes
 
 
-def _clean_dict(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _clean_dict(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
-def _strip_known_audit_prefixes(message: Optional[str]) -> str:
+def _strip_known_audit_prefixes(message: str | None) -> str:
     if not message:
         return ""
     cleaned = message.strip()
@@ -88,7 +88,7 @@ def _build_ack_audit_message(user: str) -> str:
     return f"[AUDIT][OWNERSHIP] Caso tomado por {user}"
 
 
-def _normalize_ack_note(comment_message: Optional[str]) -> Optional[str]:
+def _normalize_ack_note(comment_message: str | None) -> str | None:
     if not comment_message:
         return None
     cleaned = comment_message.strip()
@@ -99,7 +99,7 @@ def _normalize_ack_note(comment_message: Optional[str]) -> Optional[str]:
 
 
 def _build_close_audit_message(
-    user: str, forced: bool, comment_message: Optional[str]
+    user: str, forced: bool, comment_message: str | None
 ) -> str:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
@@ -115,15 +115,15 @@ def _build_close_audit_message(
 
 
 def _optional_contract(
-    payload: Dict[str, Any], required_keys: set[str]
-) -> Optional[Dict[str, Any]]:
+    payload: dict[str, Any], required_keys: set[str]
+) -> dict[str, Any] | None:
     cleaned = _clean_dict(payload)
     if not required_keys.issubset(cleaned):
         return None
     return cleaned
 
 
-def _build_external_ticket_ref(event_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _build_external_ticket_ref(event_data: dict[str, Any]) -> dict[str, Any] | None:
     system = event_data.get("external_ticket_system")
     key = event_data.get("external_ticket_key")
     if system not in {"Jira", "ServiceNow"} or not key:
@@ -142,8 +142,8 @@ def _raise_event_not_found(event_id: str) -> None:
 
 
 def _build_event_summary(
-    event_data: Dict[str, Any], ci_data: Dict[str, Any], metric_data: Dict[str, Any]
-) -> Dict[str, Any]:
+    event_data: dict[str, Any], ci_data: dict[str, Any], metric_data: dict[str, Any]
+) -> dict[str, Any]:
     summary = {key: _serialize_value(value) for key, value in event_data.items()}
     if summary.get("created_at") is None:
         summary["created_at"] = (
@@ -170,7 +170,7 @@ def _build_event_summary(
     return summary
 
 
-def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "id",
         "ci_id",
@@ -207,10 +207,10 @@ def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[str, str]:
+def _extract_structured_close_fields(comment_message: str | None) -> tuple[str, str]:
     detail = _strip_known_audit_prefixes(comment_message)
     root_cause = ""
-    note_lines: List[str] = []
+    note_lines: list[str] = []
     collecting_note = False
 
     for raw_line in detail.splitlines():
@@ -231,7 +231,7 @@ def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[st
     return root_cause, note
 
 
-def _validate_close_request(forced: bool, comment_message: Optional[str]) -> None:
+def _validate_close_request(forced: bool, comment_message: str | None) -> None:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
         # Strip the "Motivo:" label the frontend adds before checking for content
@@ -257,7 +257,7 @@ def _validate_close_request(forced: bool, comment_message: Optional[str]) -> Non
         )
 
 
-def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, Optional[str]]:
+def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, str | None]:
     if snapshot_value is not None:
         return snapshot_value, "snapshot"
     if resolved_value is not None:
@@ -266,12 +266,12 @@ def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, Optional
 
 
 def _build_business_context(
-    event_data: Dict[str, Any],
-    ci_data: Dict[str, Any],
-    business_service: Dict[str, Any],
-    service_catalog: Dict[str, Any],
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    event_data: dict[str, Any],
+    ci_data: dict[str, Any],
+    business_service: dict[str, Any],
+    service_catalog: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
     business_service_id, bs_id_source = _pick_value(
         event_data.get("business_service_id"), business_service.get("id")
     )
@@ -367,8 +367,8 @@ def _build_business_context(
 
 
 def build_event_detail_response(
-    record: Any, now: Optional[datetime] = None
-) -> Dict[str, Any]:
+    record: Any, now: datetime | None = None
+) -> dict[str, Any]:
     event_data = _node_to_dict(_record_value(record, "e"))
     ci_data = _node_to_dict(_record_value(record, "ci"))
     metric_data = _node_to_dict(_record_value(record, "m"))
@@ -410,17 +410,17 @@ def build_event_detail_response(
 
 
 def _resolve_availability_window(
-    start: Optional[datetime] = None,
-    end: Optional[datetime] = None,
-    now: Optional[datetime] = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    now: datetime | None = None,
 ) -> tuple[datetime, datetime, datetime]:
-    generated_at = now or datetime.now(timezone.utc)
+    generated_at = now or datetime.now(UTC)
     window_end = end or generated_at
     if window_end.tzinfo is None:
-        window_end = window_end.replace(tzinfo=timezone.utc)
+        window_end = window_end.replace(tzinfo=UTC)
     window_start = start or (window_end - timedelta(days=30))
     if window_start.tzinfo is None:
-        window_start = window_start.replace(tzinfo=timezone.utc)
+        window_start = window_start.replace(tzinfo=UTC)
     if window_start > window_end:
         raise HTTPException(status_code=400, detail="start must be before end")
     return window_start, window_end, generated_at
@@ -463,7 +463,7 @@ _SENSITIVE_CI_KEY_PARTS = (
 )
 
 
-def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
+def _is_authoritative_availability_event(event_data: dict[str, Any]) -> bool:
     event_type = str(event_data.get("event_type") or "").upper()
     availability_source = str(event_data.get("availability_source") or "").upper()
     correlation_type = str(event_data.get("correlation_type") or "ROOT").upper()
@@ -474,7 +474,7 @@ def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
     )
 
 
-def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
+def _availability_group_key(event_data: dict[str, Any]) -> tuple[str, str] | None:
     if not _is_authoritative_availability_event(event_data):
         return None
     ci_id = event_data.get("ci_id")
@@ -484,7 +484,7 @@ def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, s
     return str(ci_id), str(event_type)
 
 
-def _empty_snmp_coverage_summary() -> Dict[str, Any]:
+def _empty_snmp_coverage_summary() -> dict[str, Any]:
     return {
         "total_ci_with_snmp": 0,
         "functional_ci": 0,
@@ -496,7 +496,7 @@ def _empty_snmp_coverage_summary() -> Dict[str, Any]:
     }
 
 
-def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
+def _build_snmp_coverage_summary(record: Any) -> dict[str, Any]:
     summary = _empty_snmp_coverage_summary()
     if record is None:
         return summary
@@ -521,7 +521,7 @@ def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
     return summary
 
 
-def _isoformat_or_none(value: Any) -> Optional[str]:
+def _isoformat_or_none(value: Any) -> str | None:
     parsed = _parse_datetime(value)
     if parsed is not None:
         return parsed.isoformat()
@@ -530,7 +530,7 @@ def _isoformat_or_none(value: Any) -> Optional[str]:
     return str(value)
 
 
-def _snmp_no_response_event_summary(event_data: Dict[str, Any]) -> Dict[str, Any]:
+def _snmp_no_response_event_summary(event_data: dict[str, Any]) -> dict[str, Any]:
     return _clean_dict(
         {
             "id": event_data.get("id"),
@@ -562,8 +562,8 @@ def _json_safe_ci_value(value: Any) -> Any:
     return None
 
 
-def _sanitize_ci_metadata(ci_data: Dict[str, Any]) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {}
+def _sanitize_ci_metadata(ci_data: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     for key, value in ci_data.items():
         if key in _CI_CANONICAL_FIELDS or _is_sensitive_ci_key(key):
             continue
@@ -574,8 +574,8 @@ def _sanitize_ci_metadata(ci_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_availability_ci_metadata(
-    ci_data: Dict[str, Any], category: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    ci_data: dict[str, Any], category: str | None = None
+) -> dict[str, Any] | None:
     if not ci_data:
         return None
     ci_type = category or ci_data.get("type") or ci_data.get("layer")
@@ -602,8 +602,8 @@ def _build_availability_ci_metadata(
 
 
 def _merge_availability_ci_metadata(
-    existing: Optional[Dict[str, Any]], incoming: Optional[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
+    existing: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any] | None:
     if not existing:
         return incoming
     if not incoming:
@@ -614,10 +614,10 @@ def _merge_availability_ci_metadata(
     merged = {**existing, **incoming_values}
     existing_raw_metadata = existing.get("metadata")
     incoming_raw_metadata = incoming.get("metadata")
-    existing_metadata: Dict[str, Any] = (
+    existing_metadata: dict[str, Any] = (
         existing_raw_metadata if isinstance(existing_raw_metadata, dict) else {}
     )
-    incoming_metadata: Dict[str, Any] = (
+    incoming_metadata: dict[str, Any] = (
         incoming_raw_metadata if isinstance(incoming_raw_metadata, dict) else {}
     )
     metadata = {**existing_metadata, **incoming_metadata}
@@ -627,10 +627,10 @@ def _merge_availability_ci_metadata(
 
 
 def get_availability_report(
-    start: Optional[datetime] = None,
-    end: Optional[datetime] = None,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    start: datetime | None = None,
+    end: datetime | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return MTTR/MTBF availability metrics grouped by CI + event type.
 
     MTTR uses technical recovery (`recovered_at - created_at`). MTBF uses the
@@ -646,14 +646,14 @@ def get_availability_report(
         now=now,
     )
     window_seconds = max((window_end - window_start).total_seconds(), 0)
-    groups: Dict[tuple[str, str], Dict[str, Any]] = {}
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
     snmp_coverage = _empty_snmp_coverage_summary()
 
     def ensure_group(
         key: tuple[str, str],
-        ci_name: Optional[str] = None,
-        ci_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        ci_name: str | None = None,
+        ci_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         row = groups.setdefault(
             key,
             {
@@ -783,7 +783,7 @@ def get_availability_report(
         )
         snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for row in groups.values():
         failure_starts = sorted(row["failure_starts"])
         repair_seconds = row["repair_seconds"]
@@ -859,17 +859,17 @@ def get_availability_report(
 def get_availability_snmp_no_response_drilldown(
     limit: int = 25,
     offset: int = 0,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return affected CIs with active SNMP no-response collection failures."""
     safe_limit = max(1, min(int(limit or 25), 100))
     safe_offset = max(0, int(offset or 0))
-    generated_at = now or datetime.now(timezone.utc)
+    generated_at = now or datetime.now(UTC)
     summary = {
         "total_ci_with_no_response": 0,
         "total_events_with_no_response": 0,
     }
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
 
     driver = get_db()
     with driver.session() as session:
@@ -972,7 +972,7 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
-def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_events(status: str | None = None) -> list[dict[str, Any]]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1003,7 +1003,7 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
         ]
 
 
-def get_event_detail(event_id: str) -> Dict[str, Any]:
+def get_event_detail(event_id: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1024,7 +1024,7 @@ def get_event_detail(event_id: str) -> Dict[str, Any]:
         return build_event_detail_response(result)
 
 
-def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
+def get_related_events(ci_id: str) -> list[dict[str, Any]]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1061,12 +1061,12 @@ def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
 
 
 def ack_event(
-    event_id: str, user: str, comment_message: Optional[str] = None
-) -> Dict[str, str]:
+    event_id: str, user: str, comment_message: str | None = None
+) -> dict[str, str]:
     driver = get_db()
     audit_message = _build_ack_audit_message(user)
     note_message = _normalize_ack_note(comment_message)
-    with driver.session() as session:
+    with driver.session() as session:  # noqa: SIM117
         with session.begin_transaction() as tx:
             result = tx.run(
                 """
@@ -1093,8 +1093,8 @@ def close_event(
     event_id: str,
     user: str,
     forced: bool = False,
-    comment_message: Optional[str] = None,
-) -> Dict[str, str]:
+    comment_message: str | None = None,
+) -> dict[str, str]:
     # 1. Validate request content first (no DB hit)
     _validate_close_request(forced, comment_message)
 
@@ -1106,18 +1106,18 @@ def close_event(
     with driver.session() as session:
         # Check current status first to provide a better error message
         current = session.run(
-            "MATCH (e:Event {id: $eid}) RETURN e.status as status", 
+            "MATCH (e:Event {id: $eid}) RETURN e.status as status",
             eid=event_id
         ).single()
-        
+
         if not current:
             _raise_event_not_found(event_id)
         assert current is not None
-        
+
         if current["status"] == "CLOSED":
             raise HTTPException(status_code=400, detail=f"Event {event_id} is already CLOSED")
 
-        result = session.run(
+        session.run(
             """
             MATCH (e:Event {id: $eid})
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
@@ -1133,7 +1133,7 @@ def close_event(
     return {"message": "Event Closed"}
 
 
-def add_event_comment(event_id: str, user: str, message: str) -> Dict[str, str]:
+def add_event_comment(event_id: str, user: str, message: str) -> dict[str, str]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1151,7 +1151,7 @@ def add_event_comment(event_id: str, user: str, message: str) -> Dict[str, str]:
     return {"message": "Comment added"}
 
 
-def prune_recovered_events(user: str) -> Dict[str, Any]:
+def prune_recovered_events(user: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1175,10 +1175,8 @@ def prune_recovered_events(user: str) -> Dict[str, Any]:
 # Distributed Prune Lock — prevents concurrent prune operations across operators
 # ---------------------------------------------------------------------------
 
-from datetime import datetime, timedelta, timezone
-from sqlalchemy import text
-from postgres_db import SessionLocal
-from models.prune_lock import PruneLock
+from postgres_db import SessionLocal  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 
 def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3) -> bool:
@@ -1189,7 +1187,7 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
     """
     db = SessionLocal()
     try:
-        for attempt in range(max_attempts):
+        for _attempt in range(max_attempts):
             expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
 
             # Atomic: try to insert, if lock exists and not expired, conflict
@@ -1272,21 +1270,22 @@ def release_prune_lock(owner: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-import asyncio
-import time
-import threading
-from typing import AsyncIterator, Set, Dict, Optional
-from config import get_event_batch_settings
+import asyncio  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from collections.abc import AsyncIterator  # noqa: E402
+
+from config import get_event_batch_settings  # noqa: E402
 
 
 async def event_batch_pruner(
     user: str,
-    batch_size: Optional[int] = None,
-    batch_delay_ms: Optional[int] = None,
-    batch_timeout_s: Optional[int] = None,
-    _idempotency_cache: Optional[Dict[str, float]] = None,
-    last_cursor: Optional[str] = None,
-) -> AsyncIterator[Dict[str, Any]]:
+    batch_size: int | None = None,
+    batch_delay_ms: int | None = None,
+    batch_timeout_s: int | None = None,
+    _idempotency_cache: dict[str, float] | None = None,
+    last_cursor: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     """
     Async generator that yields progress after each chunk.
 
@@ -1311,7 +1310,7 @@ async def event_batch_pruner(
     # generator's lifetime.
     if _idempotency_cache is None:
         _idempotency_cache = {}
-    _CACHE_TTL_S = 300  # 5 minutes — events processed within this window are cached
+    cache_ttl_s = 300  # 5 minutes — events processed within this window are cached
 
     # Lock ensures atomic cache operations (WARNING #7 fix)
     _cache_lock = threading.Lock()
@@ -1328,7 +1327,7 @@ async def event_batch_pruner(
 
     def _cache_add(event_id: str) -> None:
         """Add event_id to cache with current TTL expiry."""
-        _idempotency_cache[event_id] = time.monotonic() + _CACHE_TTL_S
+        _idempotency_cache[event_id] = time.monotonic() + cache_ttl_s
 
     def _cache_check_and_add(event_id: str) -> bool:
         """Atomically check if event_id is in cache and add if not. Returns True if added."""
@@ -1363,8 +1362,6 @@ async def event_batch_pruner(
     while total_processed < total:
         batch += 1
         processed_in_chunk = 0
-        chunk_start = time.monotonic()
-
         # Cursor-based pagination: resume from last processed event's created_at
         cursor_filter = ""
         if last_cursor is not None:
@@ -1386,7 +1383,7 @@ async def event_batch_pruner(
                     last_cursor=last_cursor if last_cursor else None,
                 )
 
-                event_ids: Set[str] = set()
+                event_ids: set[str] = set()
                 last_processed_cursor = None
                 for record in result:
                     event_id = record.get("event_id")
@@ -1458,7 +1455,7 @@ async def event_batch_pruner(
             await asyncio.sleep(max(0, jitter_ms / 1000.0))
 
 
-def run_event_diagnostic(event_id: str, user: str) -> Dict[str, str]:
+def run_event_diagnostic(event_id: str, user: str) -> dict[str, str]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
