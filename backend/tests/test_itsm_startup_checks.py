@@ -107,3 +107,42 @@ def test_migration_file_documents_startup_conflict_policy():
     assert migration_path.exists(), f"Migration file not found at {migration_path}."
     migration_text = migration_path.read_text(encoding="utf-8")
     assert "fail-fast" in migration_text.lower()
+
+
+def test_startup_checks_continue_when_operational_backfill_fails(monkeypatch):
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_compatibility_backfill",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("temporary Neo4j outage")),
+    )
+
+    assert run_service_catalog_startup_checks() is None
+
+
+def test_startup_checks_continue_when_idempotent_migration_fails(monkeypatch):
+    expected_report = object()
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_compatibility_backfill", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_preflight", lambda **_: expected_report
+    )
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_migration",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("constraint temporarily unavailable")),
+    )
+
+    assert run_service_catalog_startup_checks() is expected_report
+
+
+def test_startup_checks_preserve_actionable_identity_preflight_failures(monkeypatch):
+    expected_error = ItsmBootstrapPreflightError("duplicate identity values")
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_compatibility_backfill", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "services.itsm_bootstrap.run_service_catalog_preflight",
+        lambda **_: (_ for _ in ()).throw(expected_error),
+    )
+
+    with pytest.raises(ItsmBootstrapPreflightError, match="duplicate identity values"):
+        run_service_catalog_startup_checks()

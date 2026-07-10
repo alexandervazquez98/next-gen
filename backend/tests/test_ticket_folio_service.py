@@ -16,7 +16,7 @@ class _CatalogRepoStub:
 
 class _TicketRepoStub:
     def __init__(self):
-        self.get = MagicMock()
+        self.get = MagicMock(return_value=None)
         self.list = MagicMock()
         self.upsert = MagicMock()
         self.update = MagicMock()
@@ -65,6 +65,32 @@ class TestTicketFolioService:
         assert created["status"] == "open"
         assert created["service_catalog_id"] == "svc-001"
         assert ticket_repo.sync_service_relationship.call_count == 1
+
+    def test_create_ticket_rejects_duplicate_without_mutating_closed_ticket(self):
+        catalog_repo = _CatalogRepoStub()
+        ticket_repo = _TicketRepoStub()
+        ticket_repo.get.return_value = {
+            **_sample_ticket_record("closed"),
+            "archived": True,
+            "closed_reason": "Completed",
+        }
+
+        with pytest.raises(HTTPException) as exc:
+            ticket_service.create_ticket_folio(
+                {
+                    "ticket_id": "TK-001",
+                    "type": "request",
+                    "title": "Retry request",
+                },
+                actor="admin",
+                repository=ticket_repo,
+                catalog_repository=catalog_repo,
+            )
+
+        assert exc.value.status_code == 409
+        assert "already exists" in exc.value.detail.lower()
+        ticket_repo.upsert.assert_not_called()
+        ticket_repo.sync_service_relationship.assert_not_called()
 
     def test_create_ticket_rejects_blank_title(self):
         catalog_repo = _CatalogRepoStub()

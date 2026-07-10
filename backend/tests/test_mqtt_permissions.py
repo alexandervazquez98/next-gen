@@ -116,6 +116,7 @@ class _SeedRoleSession:
     def __init__(self, existing_roles):
         self.existing_roles = existing_roles
         self.permission_updates = []
+        self.created_roles = []
 
     def __enter__(self):
         return self
@@ -133,6 +134,15 @@ class _SeedRoleSession:
 
         if "set r.permissions" in normalized:
             self.permission_updates.append(
+                {
+                    "name": role_name,
+                    "permissions": params["perms"],
+                    "query": normalized,
+                }
+            )
+
+        if normalized.startswith("create (r:role"):
+            self.created_roles.append(
                 {
                     "name": role_name,
                     "permissions": params["perms"],
@@ -315,3 +325,46 @@ async def test_reseed_existing_system_operator_does_not_overwrite_protected_role
     )
     assert "description" not in operator_update["query"]
     assert "is_system" not in operator_update["query"]
+
+
+@pytest.mark.asyncio
+async def test_reseed_existing_system_operator_adds_itsm_permissions_additively(monkeypatch):
+    existing_permissions = [UserPermission.EVENT_VIEW.value, "CUSTOM_KEEP"]
+    session = _SeedRoleSession(
+        {
+            "OPERATOR": {
+                "name": "OPERATOR",
+                "description": "Existing protected operator role",
+                "permissions": existing_permissions,
+                "is_system": True,
+            }
+        }
+    )
+    monkeypatch.setattr(seed_roles, "get_db", lambda: _SeedRoleDriver(session))
+    monkeypatch.setattr(seed_roles, "close_db", lambda: None)
+
+    await seed_roles.seed_roles()
+
+    operator_update = next(
+        update for update in session.permission_updates if update["name"] == "OPERATOR"
+    )
+    assert UserPermission.ITSM_VIEW.value in operator_update["permissions"]
+    assert UserPermission.ITSM_EDIT.value in operator_update["permissions"]
+    assert "CUSTOM_KEEP" in operator_update["permissions"]
+
+
+@pytest.mark.asyncio
+async def test_seed_new_default_operator_includes_itsm_permissions(monkeypatch):
+    """Newly seeded OPERATOR roles must receive both ITSM permissions."""
+
+    session = _SeedRoleSession({})
+    monkeypatch.setattr(seed_roles, "get_db", lambda: _SeedRoleDriver(session))
+    monkeypatch.setattr(seed_roles, "close_db", lambda: None)
+
+    await seed_roles.seed_roles()
+
+    operator_create = next(
+        create for create in session.created_roles if create["name"] == "OPERATOR"
+    )
+    assert UserPermission.ITSM_VIEW.value in operator_create["permissions"]
+    assert UserPermission.ITSM_EDIT.value in operator_create["permissions"]
