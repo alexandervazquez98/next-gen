@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-07-10
+
+### Added
+
+- **ITSM Service Catalog and Ticket/Folio module** (PR #395, closes #14):
+  - Adds a dedicated operational Service Catalog, separate from inventory, with canonical service identity, SLA metadata, and logical deactivation.
+  - Adds request and incident Ticket/Folios with an enforced linear lifecycle: `open → in_progress → in_validation → resolved → closed`.
+  - Adds ITSM API and console workflows protected by `ITSM_VIEW` and `ITSM_EDIT`; the default `OPERATOR` role receives both permissions.
+  - Rejects duplicate ticket IDs so closed folios cannot be reopened through a create request.
+  - Adds idempotent Neo4j bootstrap/migration behavior: identity-integrity conflicts fail fast, while operational migration failures are logged without preventing API startup.
+  - Documents operator workflows, API routes, permissions, lifecycle, recovery behavior, and scope boundaries in `docs/itsm/service-catalog-ticket-folios.md`.
+
 ## [1.13.13] — 2026-07-08
 
 ### Added
