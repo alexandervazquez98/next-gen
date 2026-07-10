@@ -186,7 +186,7 @@ class TestEventServiceSmoke:
         assert row["event_type"] == "AVAILABILITY"
         assert row["recovered_incidents"] == 2
         assert row["mttr_seconds"] == 900
-        assert row["mtbf_seconds"] == 7200
+        assert row["mtbf_seconds"] == 6600
         assert row["downtime_seconds"] == 1800
         assert row["active_events"] == 1
         assert row["active_downtime_seconds"] == 3600
@@ -317,7 +317,7 @@ class TestEventServiceSmoke:
         assert report["offset"] == 0
         assert mock_neo4j_session.queries[1]["params"] == {"limit": 100, "offset": 0}
 
-    def test_get_availability_report_includes_active_failure_starts_in_mtbf(
+    def test_get_availability_report_excludes_active_incidents_from_mtbf(
         self, mock_neo4j_session
     ):
         get_availability_report = _load_event_service_module().get_availability_report
@@ -362,8 +362,78 @@ class TestEventServiceSmoke:
         row = report["rows"][0]
         assert row["recovered_incidents"] == 1
         assert row["mttr_seconds"] == 600
-        assert row["mtbf_seconds"] == 10800
+        assert row["mtbf_seconds"] is None
         assert row["active_events"] == 1
+
+    def test_get_availability_report_calculates_completed_intervals_across_window_boundaries(
+            self, mock_neo4j_session
+        ):
+            get_availability_report = _load_event_service_module().get_availability_report
+            start = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+            end = datetime(2026, 1, 3, 0, 0, tzinfo=UTC)
+            mock_neo4j_session.set_response(
+                "not e.status in ['open', 'ack']",
+                [
+                    {
+                        "e": {
+                            "id": "before-window", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "created_at": datetime(2026, 1, 1, 20, 0, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 1, 21, 0, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                    {
+                        "e": {
+                            "id": "inside-window", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "created_at": datetime(2026, 1, 2, 4, 0, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 2, 5, 0, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                    {
+                        "e": {
+                            "id": "duplicate-candidate", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "created_at": datetime(2026, 1, 2, 4, 0, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 2, 5, 0, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                    {
+                        "e": {
+                            "id": "overlapping-candidate", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "created_at": datetime(2026, 1, 2, 4, 30, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 2, 6, 0, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                    {
+                        "e": {
+                            "id": "subsequent-failure", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "created_at": datetime(2026, 1, 2, 8, 0, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 2, 8, 10, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                    {
+                        "e": {
+                            "id": "propagated", "ci_id": "ci-1", "status": "RECOVERED",
+                            "event_type": "AVAILABILITY", "availability_source": "PING",
+                            "correlation_type": "PROPAGATED",
+                            "created_at": datetime(2026, 1, 2, 9, 0, tzinfo=UTC),
+                            "recovered_at": datetime(2026, 1, 2, 9, 10, tzinfo=UTC),
+                        }, "ci": {"id": "ci-1", "name": "Router-01"},
+                    },
+                ],
+            )
+
+            report = get_availability_report(start=start, end=end, now=end)
+
+            row = report["rows"][0]
+            assert row["mtbf_seconds"] == 4.5 * 3600
+            assert row["recovered_incidents"] == 4
+            recovered_query = mock_neo4j_session.queries[0]["query"]
+            assert "e.created_at <= $window_end" in recovered_query
+            assert "e.created_at >= $window_start" not in recovered_query
 
     def test_get_availability_report_enriches_rows_with_sanitized_ci_metadata(
         self, mock_neo4j_session

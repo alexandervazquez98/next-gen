@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from tests.conftest import MockNeo4jDriver
 
@@ -204,9 +204,105 @@ def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     assert "id: randomUUID()" in queries
     assert "e.id = coalesce(e.id, randomUUID())" not in queries
     assert "RECOVERED" in queries
+    assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" not in queries
     assert "correlation_type" in queries
     assert "root_cause_ci_id" in queries
     assert "PROPAGATED" in queries
+
+
+def test_event_writer_creates_a_new_incident_after_availability_recovery():
+    from polling.event_writer import batch_update_events
+
+    class LifecycleSession:
+        def __init__(self):
+            self.events = []
+            self.queries = []
+            self._clock = datetime(2026, 1, 1, tzinfo=UTC)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def run(self, query, **params):
+            self.queries.append({"query": query, "params": params})
+            rows = params.get("rows", [])
+            if "WITH row WHERE row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in query:
+                eligible_statuses = {"OPEN", "ACK"}
+                if "'RECOVERED'" in query:
+                    eligible_statuses.add("RECOVERED")
+                for row in rows:
+                    if not row["is_breach"]:
+                        continue
+                    existing = next(
+                        (
+                            event
+                            for event in self.events
+                            if event["ci_id"] == row["ci_id"]
+                            and event["metric_id"] == row["metric_id"]
+                            and event["event_type"] == row["event_type"]
+                            and event["status"] in eligible_statuses
+                        ),
+                        None,
+                    )
+                    if existing is None:
+                        self._clock += timedelta(minutes=1)
+                        self.events.append(
+                            {
+                                "ci_id": row["ci_id"],
+                                "metric_id": row["metric_id"],
+                                "event_type": row["event_type"],
+                                "status": "OPEN",
+                                "created_at": self._clock,
+                                "recovered_at": None,
+                            }
+                        )
+                    else:
+                        existing["status"] = "OPEN"
+                        existing["recovered_at"] = None
+            elif "WITH row WHERE row.recover_non_collection_event" in query:
+                for row in rows:
+                    if not row["recover_non_collection_event"]:
+                        continue
+                    for event in self.events:
+                        if (
+                            event["ci_id"] == row["ci_id"]
+                            and event["metric_id"] == row["metric_id"]
+                            and event["status"] in {"OPEN", "ACK"}
+                        ):
+                            self._clock += timedelta(minutes=1)
+                            event["status"] = "RECOVERED"
+                            event["recovered_at"] = self._clock
+            return []
+
+    class LifecycleDriver:
+        def __init__(self):
+            self.session_obj = LifecycleSession()
+
+        def session(self):
+            return self.session_obj
+
+    driver = LifecycleDriver()
+    failed_ping = {
+        **_event_row(0.0),
+        "protocol": "ICMP",
+        "metric_id": "PING-CHECK",
+        "metadata": {"availability_source": "PING", "criticality": 3},
+    }
+    recovered_ping = {**failed_ping, "value": {"numeric": 1.0, "raw": 1.0}}
+
+    batch_update_events(driver, [failed_ping])
+    batch_update_events(driver, [recovered_ping])
+    first_incident = driver.session_obj.events[0].copy()
+    batch_update_events(driver, [failed_ping])
+
+    assert first_incident["status"] == "RECOVERED"
+    assert first_incident["recovered_at"] is not None
+    assert len(driver.session_obj.events) == 2
+    next_incident = driver.session_obj.events[1]
+    assert next_incident["status"] == "OPEN"
+    assert next_incident["created_at"] > first_incident["created_at"]
 
 
 def test_event_writer_deduplicates_idempotent_payload_rows_before_metric_result_write():

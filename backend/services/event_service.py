@@ -634,8 +634,9 @@ def get_availability_report(
     """Return MTTR/MTBF availability metrics grouped by CI + event type.
 
     MTTR uses technical recovery (`recovered_at - created_at`). MTBF uses the
-    average interval between consecutive failure starts in the report window,
-    including valid currently open/acknowledged starts. Incomplete legacy events
+    average completed operating interval: an eligible failure start minus the
+    prior eligible failure's recovery. Active incidents never complete an interval.
+        Incomplete legacy events
     are excluded from MTTR; active events are reported separately as current
     downtime where possible.
     """
@@ -660,6 +661,7 @@ def get_availability_report(
                 "ci_name": ci_name,
                 "event_type": key[1],
                 "failure_starts": [],
+                    "completed_incidents": [],
                 "repair_seconds": [],
                 "downtime_seconds": 0.0,
                 "active_events": 0,
@@ -683,7 +685,6 @@ def get_availability_report(
               AND e.availability_source IN ['PING', 'ICMP']
               AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'
               AND NOT e.status IN ['OPEN', 'ACK']
-              AND e.created_at >= $window_start
               AND e.created_at <= $window_end
               AND e.recovered_at <= $window_end
             OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
@@ -704,7 +705,7 @@ def get_availability_report(
             recovered_at = _parse_datetime(event_data.get("recovered_at"))
             if created_at is None or recovered_at is None:
                 continue
-            if created_at < window_start or created_at > window_end:
+            if created_at > window_end:
                 continue
             if recovered_at < created_at or recovered_at > window_end:
                 continue
@@ -713,6 +714,9 @@ def get_availability_report(
                 ci_data, _record_value(record, "category")
             )
             row = ensure_group(key, ci_data.get("name"), ci_metadata)
+            row["completed_incidents"].append((created_at, recovered_at))
+            if created_at < window_start:
+                continue
             repair_seconds = (recovered_at - created_at).total_seconds()
             row["failure_starts"].append(created_at)
             row["repair_seconds"].append(repair_seconds)
@@ -786,10 +790,23 @@ def get_availability_report(
         mttr_seconds = (
             sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
         )
-        intervals = [
-            (failure_starts[index] - failure_starts[index - 1]).total_seconds()
-            for index in range(1, len(failure_starts))
-        ]
+        intervals = []
+        effective_outage_end = None
+        seen_incidents = set()
+        for created_at, recovered_at in sorted(row["completed_incidents"]):
+            incident_key = (created_at, recovered_at)
+            if incident_key in seen_incidents:
+                continue
+            seen_incidents.add(incident_key)
+            if effective_outage_end is None:
+                effective_outage_end = recovered_at
+                continue
+            if created_at < effective_outage_end:
+                effective_outage_end = max(effective_outage_end, recovered_at)
+                continue
+            if created_at >= window_start:
+                intervals.append((created_at - effective_outage_end).total_seconds())
+            effective_outage_end = recovered_at
         mtbf_seconds = sum(intervals) / len(intervals) if intervals else None
         total_downtime = row["downtime_seconds"] + row["active_downtime_seconds"]
         availability_percentage = None
