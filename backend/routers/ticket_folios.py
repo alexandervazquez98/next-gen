@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 import services.ticket_folio_service as ticket_folio_service
 from fastapi import APIRouter, Depends, HTTPException, Query
-from models.itsm import TicketFolioCreate, TicketFolioUpdate
+from models.itsm import TicketFolioCreate, TicketFolioResponse, TicketFolioUpdate
 from models.user import User, UserPermission
 from pydantic import BaseModel
 from services.auth_service import check_permission, get_current_active_user
@@ -46,9 +46,9 @@ async def list_ticket_folios(
     )
 
 
-@router.get("/{ticket_id}", response_model=dict[str, Any])
+@router.get("/{ticket_id}", response_model=TicketFolioResponse)
 async def get_ticket_folio(
-    ticket_id: str,
+    ticket_id: int,
     current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_VIEW, current_user):
@@ -56,7 +56,7 @@ async def get_ticket_folio(
     return ticket_folio_service.get_ticket_folio(ticket_id)
 
 
-@router.post("", response_model=dict[str, Any])
+@router.post("", response_model=TicketFolioResponse)
 async def create_ticket_folio(
     payload: TicketFolioCreate,
     current_user: CurrentUserDep,
@@ -69,9 +69,9 @@ async def create_ticket_folio(
     )
 
 
-@router.put("/{ticket_id}", response_model=dict[str, Any])
+@router.put("/{ticket_id}", response_model=TicketFolioResponse)
 async def update_ticket_folio(
-    ticket_id: str,
+    ticket_id: int,
     payload: TicketFolioUpdate,
     current_user: CurrentUserDep,
 ):
@@ -84,9 +84,9 @@ async def update_ticket_folio(
     )
 
 
-@router.post("/{ticket_id}/transition", response_model=dict[str, Any])
+@router.post("/{ticket_id}/transition", response_model=TicketFolioResponse)
 async def transition_ticket_folio(
-    ticket_id: str,
+    ticket_id: int,
     payload: TicketTransitionRequest,
     current_user: CurrentUserDep,
 ):

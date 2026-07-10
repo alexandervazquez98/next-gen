@@ -13,28 +13,26 @@ from database import get_db
 from models.itsm import TicketFolioCreate, TicketFolioUpdate
 
 _CREATE_TICKET_FOLIO_QUERY = """
-MERGE (tf:TicketFolio {ticket_id: $ticket_id})
-ON CREATE SET
-  tf.type = $type,
-  tf.title = $title,
-  tf.description = $description,
-  tf.service_catalog_id = $service_catalog_id,
-  tf.status = $status,
-  tf.archived = $archived,
-  tf.closed_reason = $closed_reason,
-  tf.created_at = datetime($created_at),
-  tf.updated_at = datetime($updated_at),
-  tf.updated_by = $updated_by
-ON MATCH SET
-  tf.type = coalesce($type, tf.type),
-  tf.title = coalesce($title, tf.title),
-  tf.description = coalesce($description, tf.description),
-  tf.service_catalog_id = coalesce($service_catalog_id, tf.service_catalog_id),
-  tf.status = coalesce($status, tf.status),
-  tf.archived = coalesce($archived, tf.archived),
-  tf.closed_reason = coalesce($closed_reason, tf.closed_reason),
-  tf.updated_at = datetime($updated_at),
-  tf.updated_by = coalesce($updated_by, tf.updated_by)
+MATCH (seq:TicketSequence {name: 'ticket_folio'})
+MATCH (sc:ServiceCatalog {service_id: $service_catalog_id})
+WHERE coalesce(sc.active, true) = true AND sc.service_type = $type
+SET seq.next_value = seq.next_value + 1
+WITH seq.next_value AS ticket_id, sc
+CREATE (tf:TicketFolio {
+  ticket_id: ticket_id,
+  type: $type,
+  title: $title,
+  description: $description,
+  service_catalog_id: $service_catalog_id,
+  status: $status,
+  archived: $archived,
+  closed_reason: $closed_reason,
+  created_at: datetime($created_at),
+  updated_at: datetime($updated_at),
+  updated_by: $updated_by
+})
+WITH tf, sc
+MERGE (tf)-[:FOR_SERVICE]->(sc)
 RETURN
   tf.ticket_id AS ticket_id,
   tf.type AS type,
@@ -141,15 +139,14 @@ class TicketFolioRepository:
             )
             return [self._record(row) for row in result if self._record(row) is not None]
 
-    def upsert(self, payload: TicketFolioCreate) -> dict[str, Any]:
-        payload = (
-            payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
-        )
+    def create_with_generated_id(self, payload: TicketFolioCreate) -> dict[str, Any]:
+        """Allocate, create, and synchronize the service relation atomically."""
+        payload = payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
         now = self._now()
-        with self._driver.session() as session:
-            row = session.run(
+
+        def write_transaction(tx):
+            row = tx.run(
                 _CREATE_TICKET_FOLIO_QUERY,
-                ticket_id=payload.ticket_id,
                 type=payload.type,
                 title=payload.title,
                 description=payload.description,
@@ -161,7 +158,12 @@ class TicketFolioRepository:
                 updated_at=now,
                 updated_by=payload.updated_by,
             ).single()
-        return self._record(row) or {}
+            if row is None:
+                raise RuntimeError("TicketSequence 'ticket_folio' or referenced ServiceCatalog is missing")
+            return self._record(row) or {}
+
+        with self._driver.session() as session:
+            return session.execute_write(write_transaction)
 
     def update(self, ticket_id: str, payload: TicketFolioUpdate) -> dict[str, Any] | None:
         payload = (

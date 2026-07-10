@@ -17,6 +17,10 @@ This design defines the initial target state for Service Management in a confirm
 | CI bulk reuse | Reuse CI import interaction shape and route ergonomics where useful, but Service Management imports are atomic and never partially successful. |
 | Strict TDD | Implementation must begin with failing tests for every requirement seam before production changes. |
 
+## Approved PR1 boundary adjustment
+
+PR1 includes the minimum catalog backend contract required for an independently usable ticket create flow. The catalog API/repository now persists and returns immutable `service_type` (`incident` or `service_request`) plus `active` status. Ticket selection and the same Neo4j write transaction require an existing active catalog whose persisted `service_type` matches the ticket `type`; incompatible or inactive references create no ticket. This slice does not include value streams, catalog UI, XLSX import, user locking/lifecycle, or frontend changes.
+
 ## Current code anchors
 
 | Concern | Current anchor | Required change |
@@ -44,7 +48,7 @@ Create the Service Management ticket model in the target form:
 | `type` | Required enum: `incident` or `service_request`. |
 | `title` | Required non-empty string. |
 | `description` | Required for imports; single create follows product validation and should reject blank values unless explicitly relaxed. |
-| `service_catalog_id` | Required for catalog-linked workflows; must point to an active compatible service. |
+| `service_catalog_id` | Required for every ticket; must point to an existing active compatible service. |
 | `assignee_username` | Required; exactly one active user. |
 | `assignee_display_name` | Snapshot at assignment time for stable display. |
 | `assignee_active_at_assignment` | `true` at create time. Current active state may be shown as enrichment later. |
@@ -158,7 +162,7 @@ Validation:
 - If request body contains `ticket_id`, return `400` or `422` with a deterministic field error and create nothing.
 - `type` must be `incident` or `service_request`.
 - `assignee_username` is required and must resolve to exactly one active user.
-- `service_catalog_id` must resolve to an active service with matching `service_type`.
+- `service_catalog_id` is required and must resolve to an existing active service with matching `service_type`.
 - Preflight validation may provide early feedback, but is not authoritative for persistence.
 - The ticket write transaction must re-read the catalog service, confirm that it is active and type-compatible, then create the ticket, store assignment snapshot fields, and link the selected catalog service. PostgreSQL user state cannot be re-read in that Neo4j transaction.
 - Active-assignee revalidation uses the cross-store serialization protocol below. It is authoritative at persistence time; preflight is not.

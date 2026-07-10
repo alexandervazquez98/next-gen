@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 ServiceCatalogId = str
-TicketId = str
+TicketId = int
 
 
 TICKET_STATUS_ORDER = (
@@ -40,8 +40,8 @@ class TicketStatus:
 
 
 class TicketFolioType:
-    REQUEST = "request"
     INCIDENT = "incident"
+    SERVICE_REQUEST = "service_request"
 
 
 class ServiceCatalogCreate(BaseModel):
@@ -59,6 +59,7 @@ class ServiceCatalogCreate(BaseModel):
     tier: str | None = None
     criticality: str | None = None
     sla_target_minutes: int = Field(ge=0)
+    service_type: str
     active: bool = True
     updated_by: str | None = None
 
@@ -88,6 +89,13 @@ class ServiceCatalogCreate(BaseModel):
     def _validate_sla_target_minutes(cls, value: int) -> int:
         if value < 0:
             raise ValueError("sla_target_minutes must be >= 0")
+        return value
+
+    @field_validator("service_type")
+    @classmethod
+    def _validate_service_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("service_type must be either 'incident' or 'service_request'")
         return value
 
     @field_validator("sla_minutes")
@@ -164,6 +172,7 @@ class ServiceCatalogUpdate(BaseModel):
     tier: str | None = None
     criticality: str | None = None
     sla_target_minutes: int | None = None
+    service_type: str | None = None
     active: bool | None = None
     updated_by: str | None = None
 
@@ -231,6 +240,14 @@ class ServiceCatalogUpdate(BaseModel):
         return self
 
 
+    @field_validator("service_type")
+    @classmethod
+    def _validate_service_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("service_type must be either 'incident' or 'service_request'")
+        return value
+
+
 class ServiceCatalogResponse(ServiceCatalogCreate):
     """Response contract for ServiceCatalog domain reads."""
 
@@ -238,13 +255,14 @@ class ServiceCatalogResponse(ServiceCatalogCreate):
 
 
 class TicketFolioCreate(BaseModel):
-    """Input contract for creating a ticket/folio."""
+    """Input contract for creating a ticket; the server allocates its ID."""
 
-    ticket_id: str
+    model_config = {"extra": "forbid"}
+
     type: str
     title: str
     description: str | None = None
-    service_catalog_id: str | None = None
+    service_catalog_id: str
     status: str = TicketStatus.OPEN
     archived: bool = False
     closed_reason: str | None = None
@@ -255,8 +273,8 @@ class TicketFolioCreate(BaseModel):
     @field_validator("type")
     @classmethod
     def _validate_type(cls, value: str) -> str:
-        if value not in (TicketFolioType.REQUEST, TicketFolioType.INCIDENT):
-            raise ValueError("type must be either 'request' or 'incident'")
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("type must be either 'incident' or 'service_request'")
         return value
 
     @field_validator("title")
@@ -277,9 +295,30 @@ class TicketFolioCreate(BaseModel):
     def _normalize_defaults(self):
         if self.status != TicketStatus.OPEN:
             raise ValueError("New folios must start as 'open'")
-        if self.ticket_id is None or not str(self.ticket_id).strip():
-            raise ValueError("ticket_id is required")
         return self
+
+
+class TicketFolioResponse(BaseModel):
+    """Response contract exposing the server-generated numeric ticket ID."""
+
+    ticket_id: int
+    type: str
+    title: str
+    description: str | None = None
+    service_catalog_id: str | None = None
+    status: str = TicketStatus.OPEN
+    archived: bool = False
+    closed_reason: str | None = None
+    updated_by: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("type")
+    @classmethod
+    def _validate_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("type must be either 'incident' or 'service_request'")
+        return value
 
 
 class TicketFolioUpdate(BaseModel):

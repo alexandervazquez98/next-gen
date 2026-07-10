@@ -70,7 +70,7 @@ The service catalog SHALL require and persist each record with:
 
 ### Requirement: Ticket and catalog compatibility SHALL be enforced in both UI and backend
 
-The system SHALL ensure that ticket workflows only allow catalog services with matching `service_type` at both UI interaction time and backend validation time.
+Every ticket SHALL reference an existing active service catalog record. Ticket workflows SHALL only allow catalog services with matching `service_type` at both UI interaction time and backend validation time.
 
 #### Scenario: Backend rejects incompatible service mapping
 
