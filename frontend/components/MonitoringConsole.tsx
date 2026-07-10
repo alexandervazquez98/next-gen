@@ -1099,9 +1099,7 @@ const MonitoringConsole: React.FC = () => {
   const kpiCritical = openEvents.filter((e) => e.severity === "CRITICAL").length;
   const kpiWarning = openEvents.filter((e) => e.severity === "WARNING").length;
   const kpiAck = ackEvents.length;
-  // Helper for Cleanup Button Logic
-  // Note: summary feed doesn't include comments, so count is best-effort.
-  // Backend may skip events with comments during prune.
+  // Eligibility matches backend policy: RECOVERED + not acknowledged.
   const cleanableCount = events.filter((e) => e.status === "RECOVERED" && !e.ack).length;
 
   // Streaming prune state
@@ -1217,7 +1215,7 @@ const MonitoringConsole: React.FC = () => {
               if (cleanableCount === 0) return;
               if (
                 !window.confirm(
-                  `About to close ${cleanableCount} RECOVERED events that have no Acks or Comments. Proceed?`,
+                  `About to close ${cleanableCount} RECOVERED events that are not acknowledged. Proceed?`,
                 )
               )
                 return;

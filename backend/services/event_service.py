@@ -1142,7 +1142,6 @@ def prune_recovered_events(user: str) -> Dict[str, Any]:
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
-              AND (e.comments IS NULL OR size(e.comments) = 0)
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             RETURN count(e) as closed_count
         """,
@@ -1333,7 +1332,6 @@ async def event_batch_pruner(
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
-              AND (e.comments IS NULL OR size(e.comments) = 0)
             RETURN count(e) as total
             """
         ).single()
@@ -1362,7 +1360,6 @@ async def event_batch_pruner(
                     MATCH (e:Event)
                     WHERE e.status = 'RECOVERED'
                       AND (e.ack IS NULL OR e.ack = false)
-                      AND (e.comments IS NULL OR size(e.comments) = 0)
                       {cursor_filter}
                     RETURN e.id as event_id, e.status, e.created_at as created_at
                     ORDER BY e.created_at ASC
@@ -1394,7 +1391,6 @@ async def event_batch_pruner(
                                 MATCH (e:Event {id: $eid})
                                 WHERE e.status = 'RECOVERED'
                                   AND (e.ack IS NULL OR e.ack = false)
-                                  AND (e.comments IS NULL OR size(e.comments) = 0)
                                 SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
                                 RETURN e.id AS closed_id
                                 """,
