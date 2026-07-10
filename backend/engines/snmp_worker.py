@@ -547,7 +547,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
-            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+            WHERE existing.status IN ['OPEN', 'ACK']
               AND existing.event_type = 'AVAILABILITY'
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND existing.availability_source IN ['PING', 'ICMP']
@@ -592,7 +592,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
-            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+            WHERE existing.status IN ['OPEN', 'ACK']
               AND existing.event_type = 'AVAILABILITY'
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND existing.availability_source IN ['PING', 'ICMP']

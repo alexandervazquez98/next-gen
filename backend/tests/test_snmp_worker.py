@@ -759,6 +759,8 @@ class TestICMPDebounce:
         assert availability_queries, mock_session.queries
         availability_query = "\n".join(q["query"] for q in availability_queries)
         assert "source_protocol" in availability_query
+        assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" not in availability_query
+        assert "existing.status IN ['OPEN', 'ACK']" in availability_query
         assert (
             "MERGE (created)-[:TRIGGERED_BY]->(m)" in availability_query
             or "MERGE (existing)-[:TRIGGERED_BY]->(m)" in availability_query
