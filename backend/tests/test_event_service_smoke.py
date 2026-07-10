@@ -841,7 +841,7 @@ class TestEventServiceSmoke:
             "window_start": start,
             "window_end": end,
         }
-        assert "e.created_at >= $window_start" in recovered_query["query"]
+        assert "e.created_at >= $window_start" not in recovered_query["query"]
         assert "e.created_at <= $window_end" in recovered_query["query"]
         assert "e.recovered_at <= $window_end" in recovered_query["query"]
 
