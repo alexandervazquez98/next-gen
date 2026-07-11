@@ -4,6 +4,7 @@ These endpoints are intentionally isolated from event workflows.
 They only manage Service Catalog state via the ITSM API slice and do
 not mutate or trigger event/folio side effects.
 """
+# ruff: noqa: I001
 
 from __future__ import annotations
 
