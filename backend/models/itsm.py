@@ -58,8 +58,10 @@ class ServiceCatalogCreate(BaseModel):
     category: str | None = None
     tier: str | None = None
     criticality: str | None = None
-    sla_target_minutes: int = Field(ge=0)
+    sla_target_minutes: int = Field(..., ge=0)
+    description: str
     service_type: str
+    value_stream: str
     active: bool = True
     updated_by: str | None = None
 
@@ -82,7 +84,14 @@ class ServiceCatalogCreate(BaseModel):
     def _validate_name(cls, value: str) -> str:
         if not str(value).strip():
             raise ValueError("name cannot be empty")
-        return value
+        return value.strip()
+
+    @field_validator("description", "value_stream")
+    @classmethod
+    def _validate_required_text(cls, value: str, info) -> str:
+        if not str(value).strip():
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return value.strip()
 
     @field_validator("sla_target_minutes")
     @classmethod
@@ -142,9 +151,6 @@ class ServiceCatalogCreate(BaseModel):
                     "sla_target_minutes and sla_minutes must match when both are provided."
                 )
 
-        if values.get("sla_target_minutes") is None:
-            values["sla_target_minutes"] = 0
-
         return values
 
     @model_validator(mode="after")
@@ -172,7 +178,9 @@ class ServiceCatalogUpdate(BaseModel):
     tier: str | None = None
     criticality: str | None = None
     sla_target_minutes: int | None = None
+    description: str | None = None
     service_type: str | None = None
+    value_stream: str | None = None
     active: bool | None = None
     updated_by: str | None = None
 
@@ -181,22 +189,25 @@ class ServiceCatalogUpdate(BaseModel):
     service_tier: str | None = None
     sla_minutes: int | None = None
 
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, value: str | None) -> str:
+        if value is None or not value.strip():
+            raise ValueError("description cannot be empty")
+        return value.strip()
+
     @field_validator("sla_target_minutes")
     @classmethod
-    def _validate_sla_target_minutes(cls, value: int | None) -> int | None:
-        if value is None:
-            return value
-        if value < 0:
-            raise ValueError("sla_target_minutes must be >= 0")
+    def _validate_sla_target_minutes(cls, value: int | None) -> int:
+        if value is None or value < 0:
+            raise ValueError("sla_target_minutes must be non-null and >= 0")
         return value
 
     @field_validator("sla_minutes")
     @classmethod
-    def _validate_legacy_sla_minutes(cls, value: int | None) -> int | None:
-        if value is None:
-            return value
-        if value < 0:
-            raise ValueError("sla_minutes must be >= 0")
+    def _validate_legacy_sla_minutes(cls, value: int | None) -> int:
+        if value is None or value < 0:
+            raise ValueError("sla_minutes must be non-null and >= 0")
         return value
 
     @model_validator(mode="before")

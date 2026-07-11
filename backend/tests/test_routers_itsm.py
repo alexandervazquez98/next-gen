@@ -101,7 +101,7 @@ class TestItsmServiceCatalogRouter:
 
         response = client.post(
             "/api/itsm/service-catalog",
-            json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"},
+            json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "description": "Core incident support", "service_type": "incident", "value_stream": "operate"},
         )
         assert response.status_code == 403
 
@@ -123,7 +123,7 @@ class TestItsmServiceCatalogRouter:
             ("/api/itsm/service-catalog/svc-1/deactivate", "post", [UserPermission.EVENT_VIEW]),
         ]:
             _override_current_user(_make_pydantic_user(permissions=permissions))
-            payload = {"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"}
+            payload = {"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "description": "Core incident support", "service_type": "incident", "value_stream": "operate"}
 
             if method == "get":
                 response = client.get(endpoint)
@@ -149,7 +149,7 @@ class TestItsmServiceCatalogRouter:
 
             response = client.post(
                 "/api/itsm/service-catalog",
-                json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"},
+                json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "description": "Core incident support", "service_type": "incident", "value_stream": "operate"},
             )
 
         assert response.status_code == 200

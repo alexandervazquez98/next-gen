@@ -16,6 +16,24 @@
 // - Event snapshot fields on Event nodes are intentionally left untouched.
 
 // -----------------------------------------------------------------------------
+// Managed value-stream dictionary bootstrap
+// -----------------------------------------------------------------------------
+// Value streams use the existing MetricDictionary node model, scoped by
+// dictionary_key. These idempotent seeds make a clean-slate deployment usable
+// without weakening active-value validation.
+CREATE CONSTRAINT value_stream_dictionary_value IF NOT EXISTS
+FOR (value:MetricDictionary) REQUIRE (value.dictionary_key, value.value) IS UNIQUE;
+
+CREATE INDEX metric_dictionary_key IF NOT EXISTS
+FOR (value:MetricDictionary) ON (value.dictionary_key);
+
+MERGE (operate:MetricDictionary {dictionary_key: 'value_stream', value: 'operate'})
+ON CREATE SET operate.label = 'Operate', operate.active = true;
+
+MERGE (deliver:MetricDictionary {dictionary_key: 'value_stream', value: 'deliver'})
+ON CREATE SET deliver.label = 'Deliver', deliver.active = true;
+
+// -----------------------------------------------------------------------------
 // ServiceCatalog constraints and indexes
 // -----------------------------------------------------------------------------
 
