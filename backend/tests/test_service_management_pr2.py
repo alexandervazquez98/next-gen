@@ -49,7 +49,7 @@ def test_catalog_create_rejects_inactive_value_stream_before_persistence():
     repository = MagicMock()
     lookup = ActiveValueStreamLookup({"operate"})
 
-    with pytest.raises(Exception, match="active value stream"):
+    with pytest.raises(HTTPException, match="active value stream"):
         create_service_catalog(
             catalog_payload(value_stream="retire"),
             repository=repository,
@@ -69,7 +69,7 @@ def test_catalog_create_rejects_duplicate_service_id_and_same_type_name():
     }
     lookup = ActiveValueStreamLookup({"operate"})
 
-    with pytest.raises(Exception, match="service_id"):
+    with pytest.raises(HTTPException, match="service_id"):
         create_service_catalog(
             catalog_payload(service_id="svc-existing", name="Another"),
             repository=repository,
@@ -78,7 +78,7 @@ def test_catalog_create_rejects_duplicate_service_id_and_same_type_name():
     repository.upsert.assert_not_called()
 
     repository.get_by_id.return_value = None
-    with pytest.raises(Exception, match="service_type.*name|name.*service_type"):
+    with pytest.raises(HTTPException, match="service_type.*name|name.*service_type"):
         create_service_catalog(
             catalog_payload(service_id="svc-new"),
             repository=repository,
@@ -97,7 +97,7 @@ def test_catalog_update_validates_new_value_stream_and_preserves_immutable_type(
     }
     lookup = ActiveValueStreamLookup({"operate"})
 
-    with pytest.raises(Exception, match="active value stream"):
+    with pytest.raises(HTTPException, match="active value stream"):
         update_service_catalog(
             "svc-001",
             ServiceCatalogUpdate(value_stream="retire"),
