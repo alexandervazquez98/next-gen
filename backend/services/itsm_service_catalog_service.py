@@ -93,6 +93,14 @@ def update_service_catalog(
 
     update_values = update_model.model_dump(exclude_unset=True)
 
+    if "service_type" in update_values:
+        if update_values["service_type"] != current.get("service_type"):
+            _http_bad_request("service_type is immutable after catalog creation")
+        # An unchanged immutable field is accepted, but must not reach the
+        # repository's mutation guard alongside mutable updates.
+        update_values.pop("service_type")
+        update_model = ServiceCatalogUpdate(**update_values)
+
     # Authoritative path is service_id in URL.
     path_fields = {"service_id", "id"}
     for key in path_fields:

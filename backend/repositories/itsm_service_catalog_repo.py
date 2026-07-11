@@ -24,6 +24,7 @@ ON CREATE SET
   sc.criticality = $criticality,
   sc.sla_target_minutes = $sla_target_minutes,
   sc.sla_minutes = $sla_target_minutes,
+  sc.service_type = $service_type,
   sc.active = $active,
   sc.created_at = datetime($created_at),
   sc.updated_at = datetime($updated_at),
@@ -50,6 +51,7 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.service_type AS service_type,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -70,6 +72,7 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.service_type AS service_type,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -89,6 +92,7 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.service_type AS service_type,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -130,6 +134,7 @@ class ServiceCatalogRepository:
                 row.get("sla_target_minutes") if hasattr(row, "get") else row["sla_target_minutes"]
             ),
             "sla_minutes": row.get("sla_minutes") if hasattr(row, "get") else row["sla_minutes"],
+            "service_type": row.get("service_type") if hasattr(row, "get") else row["service_type"],
             "active": row.get("active") if hasattr(row, "get") else row["active"],
             "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
             "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],
@@ -167,6 +172,7 @@ class ServiceCatalogRepository:
                 tier=payload.tier,
                 criticality=payload.criticality,
                 sla_target_minutes=payload.sla_target_minutes,
+                service_type=payload.service_type,
                 active=payload.active,
                 created_at=payload.created_at or now,
                 updated_at=now,
@@ -212,6 +218,8 @@ class ServiceCatalogRepository:
         if "sla_target_minutes" in updates:
             set_clauses.append("sc.sla_target_minutes = $sla_target_minutes")
             set_clauses.append("sc.sla_minutes = $sla_target_minutes")
+        if "service_type" in updates:
+            raise ValueError("service_type is immutable after catalog creation")
         if "active" in updates:
             set_clauses.append("sc.active = $active")
 
@@ -229,11 +237,14 @@ class ServiceCatalogRepository:
           sc.criticality AS criticality,
           sc.sla_target_minutes AS sla_target_minutes,
           sc.sla_minutes AS sla_minutes,
+          sc.service_type AS service_type,
           sc.active AS active,
           sc.created_at AS created_at,
           sc.updated_at AS updated_at,
           sc.updated_by AS updated_by
-        """.replace("__SET_CLAUSES__", ",\n  ".join(set_clauses))
+        """.replace(
+            "__SET_CLAUSES__", ",\n  ".join(set_clauses)
+        )
 
         with self._driver.session() as session:
             row = session.run(

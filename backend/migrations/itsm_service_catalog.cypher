@@ -35,6 +35,12 @@ FOR (sc:ServiceCatalog) ON (sc.id);
 CREATE CONSTRAINT ticket_folio_ticket_id IF NOT EXISTS
 FOR (tf:TicketFolio) REQUIRE tf.ticket_id IS UNIQUE;
 
+CREATE CONSTRAINT ticket_sequence_name IF NOT EXISTS
+FOR (seq:TicketSequence) REQUIRE seq.name IS UNIQUE;
+
+MERGE (seq:TicketSequence {name: 'ticket_folio'})
+ON CREATE SET seq.next_value = 0;
+
 CREATE INDEX ticket_folio_status IF NOT EXISTS
 FOR (tf:TicketFolio) ON (tf.status);
 

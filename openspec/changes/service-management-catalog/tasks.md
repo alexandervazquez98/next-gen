@@ -26,6 +26,8 @@ Chain strategy: feature-branch-chain (tracker; child PRs merge sequentially to t
 - Excel catalog header for SLA must be `SLA` (external workbook), mapped to internal `sla_target_minutes`.
 - Ticket template must include service reference worksheets.
 - Maintain backend/frontend contract compatibility for shared types/endpoints.
+- **Approved PR1 boundary adjustment:** include only the catalog backend `service_type`/`active` contract needed for independently usable required compatible-ticket creation. Exclude value streams, catalog UI, XLSX, user locking/lifecycle, and frontend work.
+    - Every ticket create contract requires `service_catalog_id`; the referenced catalog must exist, be active, and match the ticket type.
 
 ## Strict TDD loop (per work unit)
 **RED -> GREEN -> TRIANGULATE -> REFACTOR**
@@ -44,7 +46,7 @@ Chain strategy: feature-branch-chain (tracker; child PRs merge sequentially to t
 - **REQ-07**: Ticket import is atomic, template-based, reference-driven, compatibility- and assignee-safe.
 - **REQ-08**: Strict TDD evidence for all requirements.
 
-## Work Unit 1 — backend: ticket domain contracts and clean-slate identity model (foundational)
+## [x] Work Unit 1 — backend: ticket domain contracts and clean-slate identity model (foundational)
 Dependencies: proposal, design, spec complete.
 
 - **Target areas**: `backend/models/itsm.py`, `backend/tests/test_itsm_domain_contracts.py`
@@ -65,7 +67,7 @@ Dependencies: proposal, design, spec complete.
 - **REFACTOR evidence**:
   - Normalize naming and validation messages to keep API error shapes deterministic across tests and UI clients.
 
-## Work Unit 2 — backend: sequence allocator + single-ticket create persistence with shared lock semantics
+## [x] Work Unit 2 — backend: sequence allocator + single-ticket create persistence with shared lock semantics
 Dependencies: Work Unit 1 complete.
 
 - **Target areas**:
@@ -91,6 +93,14 @@ Dependencies: Work Unit 1 complete.
   - Validate transaction boundary: sequence increment and ticket create are atomic and rollback-safe.
 - **REFACTOR evidence**:
   - Extract allocation + mapping helpers for easier lock/transaction testing.
+
+## [x] PR1 boundary extension — minimum persisted catalog compatibility contract
+Dependencies: Work Units 1–2 complete.
+
+- **Completed scope:** `ServiceCatalogCreate`/update validation accepts only immutable `service_type` values (`incident`, `service_request`); repository create/read/update responses persist and return `service_type` and `active`; ticket preflight and same-transaction Neo4j write require active type compatibility.
+- **RED/GREEN evidence:** integration/service coverage creates a catalog through the supported catalog service, creates a same-type ticket, rejects an incompatible persisted type, and rejects service-type mutation; focused backend suite passes.
+- **Explicit exclusions:** value streams, catalog UI, XLSX import, user locking/lifecycle, and frontend work remain later work units.
+- **Acceptance linkage:** REQ-02 and REQ-03 (minimum backend contract only).
 
 ## Work Unit 3 — backend: shared active-user locking + logical deactivation contract
 Dependencies: Work Unit 2 complete.

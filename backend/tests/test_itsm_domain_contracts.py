@@ -31,6 +31,7 @@ class TestServiceCatalogDomainContract:
             sla_target_minutes=45,
             owner_team="NetOps",
             criticality="High",
+            service_type="incident",
         )
 
         assert payload.service_id == "svc-net-01"
@@ -47,6 +48,7 @@ class TestServiceCatalogDomainContract:
             category="CORE",
             service_tier="Silver",
             sla_minutes=60,
+            service_type="service_request",
         )
 
         assert payload.service_id == "svc-legacy-01"
@@ -84,22 +86,24 @@ class TestServiceCatalogDomainContract:
 class TestTicketFolioTypeAndLifecycle:
     """Contract expectations for Ticket/Folio type and linear lifecycle order."""
 
-    def test_ticket_folio_type_is_limited_to_request_and_incident(self):
-        for ticket_type in (TicketFolioType.REQUEST, TicketFolioType.INCIDENT):
+    def test_ticket_folio_type_is_limited_to_incident_and_service_request(self):
+        for ticket_type in (TicketFolioType.SERVICE_REQUEST, TicketFolioType.INCIDENT):
             payload = TicketFolioCreate(
                 type=ticket_type,
                 title="Reset password",
                 description="Request access reset",
-                ticket_id="T-001",
+                service_catalog_id="svc-request",
             )
             assert payload.type == ticket_type
 
         with pytest.raises(ValidationError):
-            TicketFolioCreate(
-                type="change",  # invalid
-                title="Change request",
-                ticket_id="T-002",
-            )
+            TicketFolioCreate(type="request", title="Legacy request")
+
+        with pytest.raises(ValidationError):
+            TicketFolioCreate(type="change", title="Change request")
+
+        with pytest.raises(ValidationError, match="ticket_id"):
+            TicketFolioCreate(type="incident", title="Client supplied ID", ticket_id=2)
 
     def test_ticket_transition_only_allows_linear_progression(self):
         assert validate_ticket_transition(TicketStatus.OPEN, TicketStatus.IN_PROGRESS)

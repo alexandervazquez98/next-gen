@@ -39,17 +39,22 @@ def _raise_conflict(message: str) -> None:
 
 
 def _check_catalog_exists(
-    service_catalog_id: str | None,
+    service_catalog_id: str,
+    ticket_type: str,
     *,
     catalog_repository: ServiceCatalogRepository | None = None,
 ) -> None:
     if not service_catalog_id:
-        return
+        _raise_bad_request("service_catalog_id is required")
 
     catalog_repository = catalog_repository or ServiceCatalogRepository()
     catalog = catalog_repository.get_by_id(service_catalog_id)
     if not catalog:
         _raise_not_found(f"service_catalog not found: {service_catalog_id}")
+    if catalog.get("active") is False:
+        _raise_bad_request("service_catalog_id references an inactive service")
+    if catalog.get("service_type") != ticket_type:
+        _raise_bad_request("service_catalog_id must reference a compatible service_type")
 
 
 def _sync_relation(
@@ -99,18 +104,18 @@ def create_ticket_folio(
     except ValidationError as exc:
         _raise_bad_request(str(exc))
 
-    existing = repository.get(payload_model.ticket_id)
-    if existing:
-        _raise_conflict(f"Ticket folio already exists: {payload_model.ticket_id}")
-
-    _check_catalog_exists(payload_model.service_catalog_id, catalog_repository=catalog_repository)
+    _check_catalog_exists(
+        payload_model.service_catalog_id, payload_model.type, catalog_repository=catalog_repository
+    )
 
     payload_model = payload_model.model_copy(update={"updated_by": actor})
-    created = repository.upsert(payload_model)
+    try:
+        created = repository.create_with_generated_id(payload_model)
+    except RuntimeError as exc:
+        _raise_conflict(str(exc))
 
-    # Keep legacy relationship up to date for read compatibility; property is
-    # authoritative.
-    _sync_relation(created["ticket_id"], created.get("service_catalog_id"), repository)
+    # Creation and relation synchronization are committed by the repository as one
+    # Neo4j transaction; a relation failure therefore rolls back the ticket and ID.
     return created
 
 
@@ -156,7 +161,9 @@ def update_ticket_folio(
     has_service_catalog_update = "service_catalog_id" in updates
     new_service_catalog_id = updates.get("service_catalog_id")
     if has_service_catalog_update:
-        _check_catalog_exists(new_service_catalog_id, catalog_repository=catalog_repository)
+        _check_catalog_exists(
+            new_service_catalog_id, current.get("type"), catalog_repository=catalog_repository
+        )
 
     normalized_updates = {**updates, "updated_by": actor}
     if next_status == "closed":
