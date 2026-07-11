@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-import services.itsm_service_catalog_service as service_catalog_service
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+import services.itsm_service_catalog_service as service_catalog_service
 from models.itsm import ServiceCatalogCreate
 from models.user import User, UserPermission
 from services.auth_service import check_permission, get_current_active_user
