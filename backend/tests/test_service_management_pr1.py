@@ -8,13 +8,13 @@ from pydantic import ValidationError
 
 from models.itsm import TicketFolioCreate, TicketFolioResponse
 from repositories.ticket_folio_repo import TicketFolioRepository
-from services.itsm_service_catalog_service import create_service_catalog
+from services.itsm_service_catalog_service import create_service_catalog, update_service_catalog
+from services.ticket_folio_service import create_ticket_folio
 
 
 class ActiveValueStreamLookup:
     def is_active(self, value: str) -> bool:
         return value == "operate"
-from services.ticket_folio_service import create_ticket_folio
 
 
 def test_create_payload_rejects_client_ticket_id_and_uses_canonical_types():
@@ -299,8 +299,11 @@ def test_catalog_service_type_is_immutable_on_update():
     }
 
     with pytest.raises(HTTPException, match="service_type"):
+<<<<<<< HEAD
         from services.itsm_service_catalog_service import update_service_catalog
 
+=======
+>>>>>>> 0f7843a (test(service-management): satisfy backend lint)
         update_service_catalog(
             "svc-incident",
             {"service_type": "service_request"},
