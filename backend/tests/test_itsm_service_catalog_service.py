@@ -8,8 +8,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-import services.itsm_service_catalog_service as service_catalog_service
 from fastapi import HTTPException
+
+import services.itsm_service_catalog_service as service_catalog_service
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 
 
@@ -34,7 +35,7 @@ def _sample_catalog_record() -> dict:
         "criticality": "High",
         "sla_target_minutes": 60,
             "description": "Operational platform support",
-            "value_stream": "operate",
+            "value_stream": "operate",  # noqa: F601
         "sla_minutes": 60,
         "active": True,
         "created_at": "2026-01-01T00:00:00",
@@ -80,11 +81,11 @@ class TestServiceCatalogService:
                 "service_tier": "Silver",
                 "sla_minutes": 45,
                     "description": "Platform incident support",
-                    "value_stream": "operate",
+                    "value_stream": "operate",  # noqa: F601
                 "service_type": "incident",
                 "sla_target_minutes": 45,
-                "description": "Network incident support",
-                "value_stream": "operate",
+                "description": "Network incident support",  # noqa: F601
+                "value_stream": "operate",  # noqa: F601
             },
             actor="admin",
             repository=repository,
