@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from models.itsm import TicketFolioCreate, TicketFolioResponse
+from pydantic import ValidationError
 from repositories.ticket_folio_repo import TicketFolioRepository
 from services.itsm_service_catalog_service import create_service_catalog, update_service_catalog
 from services.ticket_folio_service import create_ticket_folio
