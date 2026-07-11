@@ -33,8 +33,8 @@ def _sample_catalog_record() -> dict:
         "service_tier": "Gold",
         "criticality": "High",
         "sla_target_minutes": 60,
-            "description": "Operational platform support",
-            "value_stream": "operate",  # noqa: F601
+        "description": "Operational platform support",
+        "value_stream": "operate",  # noqa: F601
         "sla_minutes": 60,
         "active": True,
         "created_at": "2026-01-01T00:00:00",
@@ -79,8 +79,8 @@ class TestServiceCatalogService:
                 "name": "Platform Core",
                 "service_tier": "Silver",
                 "sla_minutes": 45,
-                    "description": "Platform incident support",
-                    "value_stream": "operate",  # noqa: F601
+                "description": "Platform incident support",
+                "value_stream": "operate",  # noqa: F601
                 "service_type": "incident",
                 "sla_target_minutes": 45,
                 "description": "Network incident support",  # noqa: F601

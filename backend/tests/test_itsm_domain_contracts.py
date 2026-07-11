@@ -96,7 +96,7 @@ class TestTicketFolioTypeAndLifecycle:
                 type=ticket_type,
                 title="Reset password",
                 description="Request access reset",
-                    service_catalog_id="svc-request",
+                service_catalog_id="svc-request",
             )
             assert payload.type == ticket_type
 

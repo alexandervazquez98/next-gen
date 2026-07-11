@@ -45,11 +45,15 @@ def _validate_unique_catalog(
     if isinstance(existing, dict) and payload.service_id != exclude_service_id:
         _http_bad_request(f"service_id already exists: {payload.service_id}")
     finder = getattr(repository, "find_by_type_and_normalized_name", None)
-    conflict = finder(
-        payload.service_type,
-        payload.name,
-        exclude_service_id=exclude_service_id,
-    ) if finder else None
+    conflict = (
+        finder(
+            payload.service_type,
+            payload.name,
+            exclude_service_id=exclude_service_id,
+        )
+        if finder
+        else None
+    )
     if isinstance(conflict, dict):
         _http_bad_request("name must be unique within service_type")
 
@@ -148,9 +152,11 @@ def update_service_catalog(
         _validate_value_stream(update_values["value_stream"], value_stream_lookup)
     if "name" in update_values:
         finder = getattr(repository, "find_by_type_and_normalized_name", None)
-        conflict = finder(
-            current["service_type"], update_values["name"], exclude_service_id=service_id
-        ) if finder else None
+        conflict = (
+            finder(current["service_type"], update_values["name"], exclude_service_id=service_id)
+            if finder
+            else None
+        )
         if isinstance(conflict, dict):
             _http_bad_request("name must be unique within service_type")
 
