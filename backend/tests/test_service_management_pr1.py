@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from models.itsm import TicketFolioCreate, TicketFolioResponse
@@ -138,7 +139,7 @@ def test_create_service_rejects_omitted_service_catalog_id_before_persistence():
     with pytest.raises(ValidationError, match="service_catalog_id"):
         TicketFolioCreate(type="incident", title="Router down")
 
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         create_ticket_folio(
             {"type": "incident", "title": "Router down"},
             actor="admin",
@@ -152,7 +153,7 @@ def test_create_service_rejects_missing_catalog_without_persistence():
     catalog_repository = MagicMock()
     catalog_repository.get_by_id.return_value = None
 
-    with pytest.raises(Exception, match="service_catalog"):
+    with pytest.raises(HTTPException, match="service_catalog"):
         create_ticket_folio(
             {
                 "type": "incident",
@@ -241,7 +242,7 @@ def test_ticket_rejects_incompatible_persisted_catalog_type():
     }
     ticket_repository = MagicMock()
 
-    with pytest.raises(Exception, match="compatible service_type"):
+    with pytest.raises(HTTPException, match="compatible service_type"):
         create_ticket_folio(
             {
                 "type": "incident",
@@ -264,7 +265,7 @@ def test_ticket_rejects_inactive_persisted_catalog():
     }
     ticket_repository = MagicMock()
 
-    with pytest.raises(Exception, match="inactive"):
+    with pytest.raises(HTTPException, match="inactive"):
         create_ticket_folio(
             {
                 "type": "incident",
@@ -286,7 +287,7 @@ def test_catalog_service_type_is_immutable_on_update():
         "active": True,
     }
 
-    with pytest.raises(Exception, match="service_type"):
+    with pytest.raises(HTTPException, match="service_type"):
         from services.itsm_service_catalog_service import update_service_catalog
 
         update_service_catalog(
