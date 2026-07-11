@@ -283,7 +283,10 @@ async def bulk_upload_nodes(file_contents: bytes, filename: str) -> JSONResponse
         elif status_upper == "MAINTENANCE":
             status = "MAINTENANCE"
         else:
-            status = "ACTIVE"
+            validation_errors.append(
+                f"Row {row_idx} (ID: {nid}): OperationalStatus '{status}' is not supported."
+            )
+            continue
 
         # Params
         brand = str(row.get("Brand", "")).strip()

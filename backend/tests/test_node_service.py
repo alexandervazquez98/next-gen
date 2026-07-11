@@ -1278,8 +1278,8 @@ class TestBulkUploadNodes:
 
             assert mock_repo.bulk_insert_node.call_args[0][3] == "MAINTENANCE"
 
-    def test_status_normalization_unknown_defaults_to_active(self):
-        """Unknown status should default to 'ACTIVE'."""
+    def test_status_normalization_rejects_unknown_status(self):
+        """Unknown statuses must be rejected instead of being marked healthy."""
         import openpyxl
 
         wb = openpyxl.Workbook()
@@ -1338,9 +1338,12 @@ class TestBulkUploadNodes:
 
             from services.node_service import bulk_upload_nodes
 
-            _run(bulk_upload_nodes(buf.getvalue(), "import.xlsx"))
+            result = _run(bulk_upload_nodes(buf.getvalue(), "import.xlsx"))
 
-            assert mock_repo.bulk_insert_node.call_args[0][3] == "ACTIVE"
+            assert mock_repo.bulk_insert_node.call_count == 0
+            assert isinstance(result, JSONResponse)
+            data = json.loads(result.body)
+            assert "OperationalStatus 'SOME_WEIRD_STATUS' is not supported" in data["errors"][0]
 
     def test_auto_generated_id_when_empty(self):
         """When ID is empty, an auto-generated CI-XXXXXXXX ID should be used."""
