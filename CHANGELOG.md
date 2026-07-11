@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.2] — 2026-07-11
+
+### Fixed
+
+- **Availability MTBF now measures completed operating intervals** (PR #402, closes #400): MTBF is calculated from an incident recovery to the next failure, and each outage cycle retains its own immutable event record.
+- **Event-service lint is reproducible** (PRs #406 and #409, closes #399): clears the inherited Ruff baseline and pins CI Black to the published `25.11.0` version.
+
 ## [1.14.0] — 2026-07-10
 
 ### Added
