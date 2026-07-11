@@ -242,7 +242,9 @@ class ServiceCatalogRepository:
           sc.created_at AS created_at,
           sc.updated_at AS updated_at,
           sc.updated_by AS updated_by
-        """.replace("__SET_CLAUSES__", ",\n  ".join(set_clauses))
+        """.replace(
+            "__SET_CLAUSES__", ",\n  ".join(set_clauses)
+        )
 
         with self._driver.session() as session:
             row = session.run(

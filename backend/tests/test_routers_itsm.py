@@ -101,7 +101,12 @@ class TestItsmServiceCatalogRouter:
 
         response = client.post(
             "/api/itsm/service-catalog",
-            json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"},
+            json={
+                "service_id": "svc-new",
+                "name": "Core",
+                "sla_target_minutes": 45,
+                "service_type": "incident",
+            },
         )
         assert response.status_code == 403
 
@@ -123,7 +128,12 @@ class TestItsmServiceCatalogRouter:
             ("/api/itsm/service-catalog/svc-1/deactivate", "post", [UserPermission.EVENT_VIEW]),
         ]:
             _override_current_user(_make_pydantic_user(permissions=permissions))
-            payload = {"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"}
+            payload = {
+                "service_id": "svc-new",
+                "name": "Core",
+                "sla_target_minutes": 45,
+                "service_type": "incident",
+            }
 
             if method == "get":
                 response = client.get(endpoint)
@@ -149,7 +159,12 @@ class TestItsmServiceCatalogRouter:
 
             response = client.post(
                 "/api/itsm/service-catalog",
-                json={"service_id": "svc-new", "name": "Core", "sla_target_minutes": 45, "service_type": "incident"},
+                json={
+                    "service_id": "svc-new",
+                    "name": "Core",
+                    "sla_target_minutes": 45,
+                    "service_type": "incident",
+                },
             )
 
         assert response.status_code == 200
@@ -264,7 +279,12 @@ class TestItsmTicketRouter:
                     response = client.post(endpoint, json={"next_status": "in_progress"})
                 else:
                     response = client.post(
-                        endpoint, json={"type": "service_request", "title": "Access", "service_catalog_id": "svc-001"}
+                        endpoint,
+                        json={
+                            "type": "service_request",
+                            "title": "Access",
+                            "service_catalog_id": "svc-001",
+                        },
                     )
             elif method == "put":
                 response = client.put(endpoint, json={"title": "Changed"})
@@ -314,7 +334,11 @@ class TestItsmTicketRouter:
 
             response_create = client.post(
                 "/api/itsm/tickets",
-                json={"type": "service_request", "title": "Access", "service_catalog_id": "svc-001"},
+                json={
+                    "type": "service_request",
+                    "title": "Access",
+                    "service_catalog_id": "svc-001",
+                },
             )
             response_update = client.put("/api/itsm/tickets/1", json={"title": "Escalated"})
             response_transition = client.post(

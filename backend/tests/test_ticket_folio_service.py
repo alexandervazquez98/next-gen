@@ -45,7 +45,11 @@ class TestTicketFolioService:
 
     def test_create_ticket_defaults_to_open_and_resolves_catalog_id(self):
         catalog_repo = _CatalogRepoStub()
-        catalog_repo.get_by_id.return_value = {"service_id": "svc-001", "service_type": "service_request", "active": True}
+        catalog_repo.get_by_id.return_value = {
+            "service_id": "svc-001",
+            "service_type": "service_request",
+            "active": True,
+        }
         ticket_repo = _TicketRepoStub()
         ticket_repo.create_with_generated_id.return_value = _sample_ticket_record()
 
@@ -101,7 +105,11 @@ class TestTicketFolioService:
 
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
-                {"type": "incident", "title": "Production alarm", "service_catalog_id": "svc-missing"},
+                {
+                    "type": "incident",
+                    "title": "Production alarm",
+                    "service_catalog_id": "svc-missing",
+                },
                 repository=ticket_repo,
                 catalog_repository=catalog_repo,
             )

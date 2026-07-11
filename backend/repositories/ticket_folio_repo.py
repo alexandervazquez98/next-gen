@@ -141,7 +141,9 @@ class TicketFolioRepository:
 
     def create_with_generated_id(self, payload: TicketFolioCreate) -> dict[str, Any]:
         """Allocate, create, and synchronize the service relation atomically."""
-        payload = payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
+        payload = (
+            payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
+        )
         now = self._now()
 
         def write_transaction(tx):
@@ -159,7 +161,9 @@ class TicketFolioRepository:
                 updated_by=payload.updated_by,
             ).single()
             if row is None:
-                raise RuntimeError("TicketSequence 'ticket_folio' or referenced ServiceCatalog is missing")
+                raise RuntimeError(
+                    "TicketSequence 'ticket_folio' or referenced ServiceCatalog is missing"
+                )
             return self._record(row) or {}
 
         with self._driver.session() as session:
@@ -205,7 +209,9 @@ class TicketFolioRepository:
           tf.created_at AS created_at,
           tf.updated_at AS updated_at,
           tf.updated_by AS updated_by
-        """.replace("__SET_CLAUSES__", ",\n  ".join(set_clauses))
+        """.replace(
+            "__SET_CLAUSES__", ",\n  ".join(set_clauses)
+        )
 
         with self._driver.session() as session:
             row = session.run(

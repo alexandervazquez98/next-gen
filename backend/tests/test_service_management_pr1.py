@@ -1,4 +1,5 @@
 """RED tests for PR1 server-generated ticket identity contracts."""
+
 # ruff: noqa: I001
 
 from unittest.mock import MagicMock

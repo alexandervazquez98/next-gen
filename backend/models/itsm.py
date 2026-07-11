@@ -239,7 +239,6 @@ class ServiceCatalogUpdate(BaseModel):
             self.sla_minutes = self.sla_target_minutes
         return self
 
-
     @field_validator("service_type")
     @classmethod
     def _validate_service_type(cls, value: str) -> str:
