@@ -57,7 +57,7 @@ async def create_service_catalog(
 @router.put("/{service_id}", response_model=dict[str, Any])
 async def update_service_catalog(
     service_id: str,
-    payload: ServiceCatalogUpdate,
+    payload: dict[str, Any],
     current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):

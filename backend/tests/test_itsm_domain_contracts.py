@@ -31,6 +31,8 @@ class TestServiceCatalogDomainContract:
             sla_target_minutes=45,
             owner_team="NetOps",
             criticality="High",
+            description="WAN platform support",
+            value_stream="operate",
             service_type="incident",
         )
 
@@ -48,6 +50,8 @@ class TestServiceCatalogDomainContract:
             category="CORE",
             service_tier="Silver",
             sla_minutes=60,
+            description="Legacy service support",
+            value_stream="operate",
             service_type="service_request",
         )
 

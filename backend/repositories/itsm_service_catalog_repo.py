@@ -24,7 +24,9 @@ ON CREATE SET
   sc.criticality = $criticality,
   sc.sla_target_minutes = $sla_target_minutes,
   sc.sla_minutes = $sla_target_minutes,
+  sc.description = $description,
   sc.service_type = $service_type,
+  sc.value_stream = $value_stream,
   sc.active = $active,
   sc.created_at = datetime($created_at),
   sc.updated_at = datetime($updated_at),
@@ -51,7 +53,9 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.description AS description,
   sc.service_type AS service_type,
+  sc.value_stream AS value_stream,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -72,7 +76,9 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.description AS description,
   sc.service_type AS service_type,
+  sc.value_stream AS value_stream,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -92,7 +98,9 @@ RETURN
   sc.criticality AS criticality,
   sc.sla_target_minutes AS sla_target_minutes,
   sc.sla_minutes AS sla_minutes,
+  sc.description AS description,
   sc.service_type AS service_type,
+  sc.value_stream AS value_stream,
   sc.active AS active,
   sc.created_at AS created_at,
   sc.updated_at AS updated_at,
@@ -109,6 +117,27 @@ SET
   sc.updated_by = $updated_by
 RETURN sc.service_id AS service_id, sc.active AS active
 """
+
+
+class ValueStreamLookup:
+    """Lookup seam over the managed dictionary/list value surface."""
+
+    _ACTIVE_QUERY = """
+    MATCH (value:MetricDictionary {dictionary_key: 'value_stream'})
+    WHERE coalesce(value.active, false) = true
+    RETURN value.value AS value
+    ORDER BY value.value
+    """
+
+    def __init__(self, driver: Any | None = None):
+        self._driver = driver if driver is not None else get_db()
+
+    def list_active(self) -> list[dict[str, Any]]:
+        with self._driver.session() as session:
+            return [dict(row) for row in session.run(self._ACTIVE_QUERY)]
+
+    def is_active(self, value: str) -> bool:
+        return any(item.get("value") == value for item in self.list_active())
 
 
 class ServiceCatalogRepository:
@@ -134,7 +163,9 @@ class ServiceCatalogRepository:
                 row.get("sla_target_minutes") if hasattr(row, "get") else row["sla_target_minutes"]
             ),
             "sla_minutes": row.get("sla_minutes") if hasattr(row, "get") else row["sla_minutes"],
+            "description": row.get("description") if hasattr(row, "get") else row.get("description"),
             "service_type": row.get("service_type") if hasattr(row, "get") else row["service_type"],
+            "value_stream": row.get("value_stream") if hasattr(row, "get") else row.get("value_stream"),
             "active": row.get("active") if hasattr(row, "get") else row["active"],
             "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
             "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],
@@ -144,6 +175,26 @@ class ServiceCatalogRepository:
     @staticmethod
     def _now() -> str:
         return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+
+    def find_by_type_and_normalized_name(
+        self, service_type: str, name: str, *, exclude_service_id: str | None = None
+    ) -> dict[str, Any] | None:
+        query = """
+        MATCH (sc:ServiceCatalog)
+        WHERE sc.service_type = $service_type
+          AND toLower(trim(sc.name)) = toLower(trim($name))
+          AND ($exclude_service_id IS NULL OR sc.service_id <> $exclude_service_id)
+        RETURN sc.service_id AS service_id, sc.name AS name, sc.service_type AS service_type
+        LIMIT 1
+        """
+        with self._driver.session() as session:
+            row = session.run(
+                query,
+                service_type=service_type,
+                name=name,
+                exclude_service_id=exclude_service_id,
+            ).single()
+        return dict(row) if row else None
 
     def get_by_id(self, service_id: str) -> dict[str, Any] | None:
         with self._driver.session() as session:
@@ -172,7 +223,9 @@ class ServiceCatalogRepository:
                 tier=payload.tier,
                 criticality=payload.criticality,
                 sla_target_minutes=payload.sla_target_minutes,
+                description=payload.description,
                 service_type=payload.service_type,
+                value_stream=payload.value_stream,
                 active=payload.active,
                 created_at=payload.created_at or now,
                 updated_at=now,
@@ -218,6 +271,10 @@ class ServiceCatalogRepository:
         if "sla_target_minutes" in updates:
             set_clauses.append("sc.sla_target_minutes = $sla_target_minutes")
             set_clauses.append("sc.sla_minutes = $sla_target_minutes")
+        if "description" in updates:
+            set_clauses.append("sc.description = $description")
+        if "value_stream" in updates:
+            set_clauses.append("sc.value_stream = $value_stream")
         if "service_type" in updates:
             raise ValueError("service_type is immutable after catalog creation")
         if "active" in updates:
@@ -237,7 +294,9 @@ class ServiceCatalogRepository:
           sc.criticality AS criticality,
           sc.sla_target_minutes AS sla_target_minutes,
           sc.sla_minutes AS sla_minutes,
+          sc.description AS description,
           sc.service_type AS service_type,
+          sc.value_stream AS value_stream,
           sc.active AS active,
           sc.created_at AS created_at,
           sc.updated_at AS updated_at,
@@ -258,6 +317,8 @@ class ServiceCatalogRepository:
                 tier=updates.get("tier"),
                 criticality=updates.get("criticality"),
                 sla_target_minutes=updates.get("sla_target_minutes"),
+                description=updates.get("description"),
+                value_stream=updates.get("value_stream"),
                 active=updates.get("active"),
             ).single()
         return self._record(row)
