@@ -70,7 +70,10 @@ def test_repository_rolls_back_ticket_and_sequence_when_relation_sync_fails():
             self.query = ""
 
         def execute_write(self, callback):
-            snapshot = {"next_value": self.state["next_value"], "tickets": list(self.state["tickets"])}
+            snapshot = {
+                "next_value": self.state["next_value"],
+                "tickets": list(self.state["tickets"]),
+            }
             try:
                 return callback(self)
             except Exception:
@@ -129,7 +132,9 @@ def test_repository_rejects_missing_sequence_without_persisting_ticket():
     repository = TicketFolioRepository(driver=driver)
     with pytest.raises(RuntimeError, match="TicketSequence"):
         repository.create_with_generated_id(
-            TicketFolioCreate(type="incident", title="Router down", service_catalog_id="svc-incident")
+            TicketFolioCreate(
+                type="incident", title="Router down", service_catalog_id="svc-incident"
+            )
         )
 
 
@@ -204,7 +209,9 @@ def test_catalog_api_then_same_type_ticket_uses_persisted_type_and_active_status
         "service_type": payload.service_type,
         "active": payload.active,
     }
-    catalog_repository.get_by_id.side_effect = lambda service_id: catalog_repository.upsert.call_args.args[0].model_dump()
+    catalog_repository.get_by_id.side_effect = (
+        lambda service_id: catalog_repository.upsert.call_args.args[0].model_dump()
+    )
     ticket_repository = MagicMock()
     ticket_repository.create_with_generated_id.return_value = {
         "ticket_id": 19,
