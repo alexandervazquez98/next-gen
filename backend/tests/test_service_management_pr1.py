@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from models.itsm import TicketFolioCreate, TicketFolioResponse
+from pydantic import ValidationError
 from repositories.ticket_folio_repo import TicketFolioRepository
 from services.itsm_service_catalog_service import create_service_catalog, update_service_catalog
 from services.ticket_folio_service import create_ticket_folio
@@ -299,11 +298,6 @@ def test_catalog_service_type_is_immutable_on_update():
     }
 
     with pytest.raises(HTTPException, match="service_type"):
-<<<<<<< HEAD
-        from services.itsm_service_catalog_service import update_service_catalog
-
-=======
->>>>>>> 0f7843a (test(service-management): satisfy backend lint)
         update_service_catalog(
             "svc-incident",
             {"service_type": "service_request"},
