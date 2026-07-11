@@ -163,9 +163,13 @@ class ServiceCatalogRepository:
                 row.get("sla_target_minutes") if hasattr(row, "get") else row["sla_target_minutes"]
             ),
             "sla_minutes": row.get("sla_minutes") if hasattr(row, "get") else row["sla_minutes"],
-            "description": row.get("description") if hasattr(row, "get") else row.get("description"),
+            "description": (
+                row.get("description") if hasattr(row, "get") else row.get("description")
+            ),
             "service_type": row.get("service_type") if hasattr(row, "get") else row["service_type"],
-            "value_stream": row.get("value_stream") if hasattr(row, "get") else row.get("value_stream"),
+            "value_stream": (
+                row.get("value_stream") if hasattr(row, "get") else row.get("value_stream")
+            ),
             "active": row.get("active") if hasattr(row, "get") else row["active"],
             "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
             "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],

@@ -74,7 +74,10 @@ def test_repository_rolls_back_ticket_and_sequence_when_relation_sync_fails():
             self.query = ""
 
         def execute_write(self, callback):
-            snapshot = {"next_value": self.state["next_value"], "tickets": list(self.state["tickets"])}
+            snapshot = {
+                "next_value": self.state["next_value"],
+                "tickets": list(self.state["tickets"]),
+            }
             try:
                 return callback(self)
             except Exception:
@@ -133,7 +136,9 @@ def test_repository_rejects_missing_sequence_without_persisting_ticket():
     repository = TicketFolioRepository(driver=driver)
     with pytest.raises(RuntimeError, match="TicketSequence"):
         repository.create_with_generated_id(
-            TicketFolioCreate(type="incident", title="Router down", service_catalog_id="svc-incident")
+            TicketFolioCreate(
+                type="incident", title="Router down", service_catalog_id="svc-incident"
+            )
         )
 
 
@@ -222,7 +227,14 @@ def test_catalog_api_then_same_type_ticket_uses_persisted_type_and_active_status
     }
 
     catalog = create_service_catalog(
-        {"service_id": "svc-incident", "name": "Network Incident", "sla_target_minutes": 60, "description": "Network incident support", "service_type": "incident", "value_stream": "operate"},
+        {
+            "service_id": "svc-incident",
+            "name": "Network Incident",
+            "sla_target_minutes": 60,
+            "description": "Network incident support",
+            "service_type": "incident",
+            "value_stream": "operate",
+        },
         actor="admin",
         repository=catalog_repository,
         value_stream_lookup=ActiveValueStreamLookup(),

@@ -41,7 +41,9 @@ def test_catalog_create_requires_description_and_value_stream():
 
 def test_catalog_create_rejects_missing_required_sla():
     with pytest.raises(ValidationError, match="sla_target_minutes"):
-        ServiceCatalogCreate(**{k: v for k, v in catalog_payload().items() if k != "sla_target_minutes"})
+        ServiceCatalogCreate(
+            **{k: v for k, v in catalog_payload().items() if k != "sla_target_minutes"}
+        )
 
 
 def test_catalog_create_rejects_inactive_value_stream_before_persistence():
@@ -158,10 +160,13 @@ def test_catalog_update_rejects_blank_description_without_repository_write():
     repository.update.assert_not_called()
 
 
-@pytest.mark.parametrize("payload", [
-    {"sla_target_minutes": None},
-    {"sla_target_minutes": -1},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"sla_target_minutes": None},
+        {"sla_target_minutes": -1},
+    ],
+)
 def test_catalog_update_rejects_invalid_sla_without_repository_write(payload):
     repository = MagicMock()
     repository.get_by_id.return_value = {
@@ -187,8 +192,12 @@ def test_catalog_update_rejects_invalid_sla_without_repository_write(payload):
 def test_clean_bootstrap_seeds_active_value_streams_for_real_lookup_and_create():
     statements = _load_service_catalog_migration_statements()
     seed_statements = [statement for statement in statements if "value_stream" in statement]
-    assert any("MetricDictionary" in statement and "operate" in statement for statement in seed_statements)
-    assert any("MetricDictionary" in statement and "deliver" in statement for statement in seed_statements)
+    assert any(
+        "MetricDictionary" in statement and "operate" in statement for statement in seed_statements
+    )
+    assert any(
+        "MetricDictionary" in statement and "deliver" in statement for statement in seed_statements
+    )
 
     session = MagicMock()
     session.run.return_value = [{"value": "operate"}]
