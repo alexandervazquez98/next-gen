@@ -7,6 +7,7 @@ Tests:
   4.3  Recovery propagation — ROOT recovers → PROPAGATED events also recover
   4.4  3-level CI chain (CI-A → CI-B → CI-C): CI-C breach marks CI-A ROOT, CI-B/C PROPAGATED
   4.5  GET /api/events returns propagated=true for PROPAGATED events
+  P0   cycle_root_candidates + materialize + attach (fix #416)
 
 Follows Strict TDD: RED (test written first) → GREEN (minimum impl) → TRIANGULATE.
 """
@@ -14,6 +15,8 @@ Follows Strict TDD: RED (test written first) → GREEN (minimum impl) → TRIANG
 import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
+
+pytestmark = [pytest.mark.event]
 
 
 # ---------------------------------------------------------------------------
@@ -445,3 +448,276 @@ class TestCanPropagate:
         result = determine_correlation_fields(parent_event=parent_event, ci_id="ci-child-001")
         assert result["correlation_type"] == "PROPAGATED"
         assert result["propagated_from"] == "evt-parent-001"
+
+
+# ---------------------------------------------------------------------------
+# P0 (fix #416) — cycle_root_candidates: select same-cycle ROOT candidates
+#
+# Pure helper from engines.correlation.cycle_root_candidates. It must
+# enumerate, for each event-producing observation, whether the per-cycle
+# topology cache already resolves a parent for that (ci_id, metric_id) pair.
+# Missing pairs → ROOT candidates; hits → not returned (the existing
+# _refresh_* path will route them through PROPAGATED in pass 3).
+#
+# Coverage: SCN-001..003 (order independence) and SCN-007 (non-propagating
+# metric → cache miss → ROOT candidate).
+# ---------------------------------------------------------------------------
+
+
+def _obs(node_id, metric_id, event_type, **extra):
+    """Build a minimal event-producing observation row."""
+    row = {
+        "node_id": node_id,
+        "metric_id": metric_id,
+        "event_type": event_type,
+    }
+    row.update(extra)
+    return row
+
+
+class TestCycleRootCandidates:
+    """cycle_root_candidates is a pure selection helper — no I/O, no globals."""
+
+    def test_empty_observations_returns_empty_set(self):
+        """No observations → empty candidate set, no key error."""
+        from engines.correlation import cycle_root_candidates
+
+        assert cycle_root_candidates([], {}) == set()
+
+    def test_empty_index_returns_all_event_producing_observations(self):
+        """An empty topology index marks every event-producing observation ROOT."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-B", "ping", "AVAILABILITY"),
+            _obs("ci-C", "icmp_latency_ms", "THRESHOLD_BREACH"),
+        ]
+
+        result = cycle_root_candidates(observations, {})
+
+        assert result == {
+            ("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+            ("ci-B", "ping", "AVAILABILITY"),
+            ("ci-C", "icmp_latency_ms", "THRESHOLD_BREACH"),
+        }
+
+    def test_none_topology_index_is_treated_as_empty(self):
+        """Passing None (kill-switch path) degrades safely to all-ROOT."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [_obs("ci-A", "cpu-load", "COLLECTION_FAILURE")]
+
+        result = cycle_root_candidates(observations, None)
+
+        assert ("ci-A", "cpu-load", "COLLECTION_FAILURE") in result
+
+    def test_skips_observations_without_event_type(self):
+        """Rows without event_type are not event-producing; they must not surface as candidates."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-A", "cpu-load", None),
+            _obs("ci-B", "ping", "AVAILABILITY"),
+        ]
+
+        result = cycle_root_candidates(observations, {})
+
+        assert ("ci-A", "cpu-load", None) not in result
+        assert ("ci-B", "ping", "AVAILABILITY") in result
+
+    def test_cache_hit_excludes_pair_from_candidates(self):
+        """If (ci_id, metric_id) is in the topology index, the observation is NOT a ROOT candidate."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child", "cpu-load", "COLLECTION_FAILURE"),
+        ]
+        # Parent already persisted → child is PROPAGATED, parent is the only ROOT candidate.
+        index = {
+            ("ci-child", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+        }
+
+        result = cycle_root_candidates(observations, index)
+
+        assert ("ci-parent", "cpu-load", "COLLECTION_FAILURE") in result
+        assert ("ci-child", "cpu-load", "COLLECTION_FAILURE") not in result
+
+    def test_non_propagating_metric_is_root_candidate(self):
+        """Metric with can_propagate=False never appears in the index → ROOT candidate."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [_obs("ci-X", "cpu-noisy", "COLLECTION_FAILURE")]
+        # Index filtered by Cypher `WHERE coalesce(m.can_propagate, true) = true`
+        # → cpu-noisy absent → ROOT.
+        index = {}
+
+        result = cycle_root_candidates(observations, index)
+
+        assert ("ci-X", "cpu-noisy", "COLLECTION_FAILURE") in result
+
+    def test_order_independent_parent_then_children(self):
+        """SCN-001: parent processed first then N children → parent is the sole candidate.
+
+        The topology_index mirrors what ``build_open_parent_index`` returns for the
+        children: each child maps to a parent event. The parent itself is missing
+        from the index (no upstream ROOT) so it is the sole ROOT candidate.
+        """
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-1", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-2", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
+        ]
+        index = {
+            ("ci-child-1", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-2", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-3", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+        }
+
+        result = cycle_root_candidates(observations, index)
+
+        assert result == {("ci-parent", "cpu-load", "COLLECTION_FAILURE")}
+
+    def test_order_independent_children_then_parent(self):
+        """SCN-002: children processed first then parent → same single-candidate result."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-child-1", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-2", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+        ]
+        index = {
+            ("ci-child-1", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-2", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-3", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+        }
+
+        result = cycle_root_candidates(observations, index)
+
+        assert result == {("ci-parent", "cpu-load", "COLLECTION_FAILURE")}
+
+    def test_order_independent_interleaved(self):
+        """SCN-003: any interleaved order produces the same candidate set.
+
+        The cpu-load group is fully resolved to the parent: every child with
+        metric ``cpu-load`` is in the index (regardless of event_type) so the
+        function returns ONLY the parent. The ci-child-2/ping observation has
+        a different metric and is not in the index, so it surfaces as a
+        candidate independently.
+        """
+        from engines.correlation import cycle_root_candidates
+
+        interleaved = [
+            _obs("ci-child-1", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-2", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-child-1", "cpu-load", "AVAILABILITY"),
+            _obs("ci-child-2", "ping", "AVAILABILITY"),
+        ]
+        index = {
+            ("ci-child-1", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-2", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+            ("ci-child-3", "cpu-load"): {
+                "parent_event_id": "evt-parent",
+                "root_cause_ci_id": "ci-parent",
+            },
+        }
+
+        result = cycle_root_candidates(interleaved, index)
+
+        assert result == {
+            ("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+            ("ci-child-2", "ping", "AVAILABILITY"),
+        }
+
+    def test_multi_event_family_returns_one_candidate_per_observation(self):
+        """Each (ci_id, metric_id, event_type) triple is a distinct candidate."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-A", "ping", "AVAILABILITY"),
+            _obs("ci-A", "icmp_latency_ms", "THRESHOLD_BREACH"),
+        ]
+
+        result = cycle_root_candidates(observations, {})
+
+        assert len(result) == 3
+        assert ("ci-A", "cpu-load", "COLLECTION_FAILURE") in result
+        assert ("ci-A", "ping", "AVAILABILITY") in result
+        assert ("ci-A", "icmp_latency_ms", "THRESHOLD_BREACH") in result
+
+    def test_malformed_topology_index_value_does_not_raise(self):
+        """A non-dict topology index (defensive: matches _resolve_correlation contract) → all ROOT."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [_obs("ci-A", "cpu-load", "COLLECTION_FAILURE")]
+
+        # Whatever the caller passes, the helper must not raise; it just falls back to all-ROOT.
+        result = cycle_root_candidates(observations, "not-a-dict")  # type: ignore[arg-type]
+
+        assert ("ci-A", "cpu-load", "COLLECTION_FAILURE") in result
+
+    def test_dedupes_duplicate_triples(self):
+        """Two observations for the same (ci, metric, event_type) collapse to one candidate."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+            _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+        ]
+
+        result = cycle_root_candidates(observations, {})
+
+        assert result == {("ci-A", "cpu-load", "COLLECTION_FAILURE")}
+
+    def test_observations_missing_node_id_or_metric_id_are_skipped(self):
+        """Observations without (node_id, metric_id) cannot form a cache key — skip them."""
+        from engines.correlation import cycle_root_candidates
+
+        observations = [
+            {"node_id": None, "metric_id": "cpu-load", "event_type": "COLLECTION_FAILURE"},
+            {"node_id": "ci-A", "metric_id": None, "event_type": "COLLECTION_FAILURE"},
+            {"node_id": "", "metric_id": "cpu-load", "event_type": "COLLECTION_FAILURE"},
+            _obs("ci-B", "cpu-load", "COLLECTION_FAILURE"),
+        ]
+
+        result = cycle_root_candidates(observations, {})
+
+        assert ("ci-B", "cpu-load", "COLLECTION_FAILURE") in result
+        # The malformed rows do not surface as candidates because they cannot be keyed.
+        assert len(result) == 1
