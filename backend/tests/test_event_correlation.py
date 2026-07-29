@@ -767,6 +767,26 @@ def _candidate(node_id, metric_id, event_type):
     return (node_id, metric_id, event_type)
 
 
+def _full_obs(node_id, metric_id, event_type, **extra):
+    """Build a realistic observation row for materialize tests.
+
+    Mirrors the row shape that ``poll_snmp`` builds for the
+    ``_refresh_*`` helpers so the tests exercise the full payload path
+    (severity, message, value) — not just the (ci, metric, event_type)
+    keys that the candidate selector uses.
+    """
+    row = {
+        "node_id": node_id,
+        "metric_id": metric_id,
+        "event_type": event_type,
+        "severity": "WARNING",
+        "message": f"Test event for {node_id}/{metric_id}",
+        "value": 1.0,
+    }
+    row.update(extra)
+    return row
+
+
 def test_materialize_current_cycle_roots_routes_collection_failures_to_refresh():
     """COLLECTION_FAILURE candidates → collection refresh helper with cache={}."""
     from engines.correlation import (
@@ -775,11 +795,13 @@ def test_materialize_current_cycle_roots_routes_collection_failures_to_refresh()
     )
 
     rec = _CallRecorder()
+    observations = [_full_obs("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE)]
     candidates = {_candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE)}
 
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -801,11 +823,13 @@ def test_materialize_current_cycle_roots_routes_availability_to_refresh():
     )
 
     rec = _CallRecorder()
+    observations = [_full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY)]
     candidates = {_candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY)}
 
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -826,11 +850,13 @@ def test_materialize_current_cycle_roots_routes_latency_to_refresh():
     )
 
     rec = _CallRecorder()
+    observations = [_full_obs("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH)]
     candidates = {_candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH)}
 
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -865,6 +891,11 @@ def test_materialize_current_cycle_roots_forces_cache_empty_to_enforce_root_writ
     rec_availability = make_capture("availability")
     rec_latency = make_capture("latency")
 
+    observations = [
+        _full_obs("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _full_obs("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    ]
     candidates = {
         _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
         _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
@@ -875,6 +906,7 @@ def test_materialize_current_cycle_roots_forces_cache_empty_to_enforce_root_writ
     materialize_current_cycle_roots(
         session=object(),
         db=sentinel_db,
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec_collection,
         refresh_icmp_availability=rec_availability,
@@ -902,6 +934,12 @@ def test_materialize_current_cycle_roots_returns_count_of_materialized_candidate
     )
 
     rec = _CallRecorder()
+    observations = [
+        _full_obs("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _full_obs("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+        _full_obs("ci-D", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+    ]
     candidates = {
         _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
         _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
@@ -912,6 +950,7 @@ def test_materialize_current_cycle_roots_returns_count_of_materialized_candidate
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -930,10 +969,12 @@ def test_materialize_current_cycle_roots_empty_candidates_is_noop():
     from engines.correlation import materialize_current_cycle_roots
 
     rec = _CallRecorder()
+    observations = [_full_obs("ci-A", "cpu-load", "COLLECTION_FAILURE")]
 
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=set(),
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -963,6 +1004,11 @@ def test_materialize_current_cycle_roots_helper_failure_does_not_abort_cycle(cap
     )
 
     rec = _CallRecorder(fail_on={"availability"})
+    observations = [
+        _full_obs("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _full_obs("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    ]
     candidates = {
         _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
         _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
@@ -973,6 +1019,7 @@ def test_materialize_current_cycle_roots_helper_failure_does_not_abort_cycle(cap
         materialized = materialize_current_cycle_roots(
             session=object(),
             db=object(),
+            observations=observations,
             candidates=candidates,
             refresh_collection_failures=rec.collection,
             refresh_icmp_availability=rec.availability,
@@ -996,6 +1043,10 @@ def test_materialize_current_cycle_roots_unknown_event_type_is_skipped(caplog):
     from engines.correlation import materialize_current_cycle_roots
 
     rec = _CallRecorder()
+    observations = [
+        _full_obs("ci-A", "cpu-load", "MYSTERY_TYPE"),
+        _full_obs("ci-B", "ping", "AVAILABILITY"),
+    ]
     candidates = {
         _candidate("ci-A", "cpu-load", "MYSTERY_TYPE"),
         _candidate("ci-B", "ping", "AVAILABILITY"),
@@ -1005,6 +1056,7 @@ def test_materialize_current_cycle_roots_unknown_event_type_is_skipped(caplog):
         materialized = materialize_current_cycle_roots(
             session=object(),
             db=object(),
+            observations=observations,
             candidates=candidates,
             refresh_collection_failures=rec.collection,
             refresh_icmp_availability=rec.availability,
@@ -1030,6 +1082,11 @@ def test_materialize_current_cycle_roots_all_three_families_in_one_call():
     )
 
     rec = _CallRecorder()
+    observations = [
+        _full_obs("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _full_obs("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    ]
     candidates = {
         _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
         _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
@@ -1039,6 +1096,7 @@ def test_materialize_current_cycle_roots_all_three_families_in_one_call():
     materialized = materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
@@ -1060,11 +1118,13 @@ def test_materialize_current_cycle_roots_payload_includes_event_type_for_helper(
     )
 
     rec = _CallRecorder()
+    observations = [_full_obs("ci-B", "ping", EVENT_TYPE_AVAILABILITY)]
     candidates = {_candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY)}
 
     materialize_current_cycle_roots(
         session=object(),
         db=object(),
+        observations=observations,
         candidates=candidates,
         refresh_collection_failures=rec.collection,
         refresh_icmp_availability=rec.availability,
