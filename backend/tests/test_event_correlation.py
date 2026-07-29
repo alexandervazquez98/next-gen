@@ -721,3 +721,368 @@ class TestCycleRootCandidates:
         assert ("ci-B", "cpu-load", "COLLECTION_FAILURE") in result
         # The malformed rows do not surface as candidates because they cannot be keyed.
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# P0 (fix #416) — materialize_current_cycle_roots: route candidates through
+# the existing _refresh_* helpers with cache={} so every row follows ROOT
+# semantics.
+#
+# Coverage: REQ-001 (one ROOT per candidate), REQ-005 (lookup errors do not
+# abort the cycle), REQ-007 (preserves existing coordination invariants via
+# the existing helpers), SCN-006 (no parent → ROOT), SCN-009 (lookup error
+# → ROOT fallback), SCN-011 (all three event families supported).
+# ---------------------------------------------------------------------------
+
+
+class _CallRecorder:
+    """Capture every invocation of the injected refresh helpers.
+
+    Mirrors the per-family payload that ``poll_snmp`` builds so we can
+    assert (a) which family the candidate was routed to, and (b) that
+    ``cache={}`` was passed (which forces ROOT writes via the existing
+    ``_resolve_correlation`` fallback in each helper).
+    """
+
+    def __init__(self, fail_on=None):
+        self.collection_calls: list[list[dict]] = []
+        self.availability_calls: list[list[dict]] = []
+        self.latency_calls: list[list[dict]] = []
+        self.fail_on = set(fail_on or ())
+
+    def _make(self, bucket_name, sink):
+        def _fn(session, observations, cache=None, lock_db=None):
+            if bucket_name in self.fail_on:
+                raise RuntimeError(f"simulated {bucket_name} failure")
+            sink.append(list(observations))
+        return _fn
+
+    def collection(self, session, observations, cache=None, lock_db=None):
+        return self._make("collection", self.collection_calls)(
+            session, observations, cache=cache, lock_db=lock_db
+        )
+
+    def availability(self, session, observations, cache=None, lock_db=None):
+        return self._make("availability", self.availability_calls)(
+            session, observations, cache=cache, lock_db=lock_db
+        )
+
+    def latency(self, session, observations, cache=None, lock_db=None):
+        return self._make("latency", self.latency_calls)(
+            session, observations, cache=cache, lock_db=lock_db
+        )
+
+
+def _candidate(node_id, metric_id, event_type):
+    return (node_id, metric_id, event_type)
+
+
+def test_materialize_current_cycle_roots_routes_collection_failures_to_refresh():
+    """COLLECTION_FAILURE candidates → collection refresh helper with cache={}."""
+    from engines.correlation import (
+        EVENT_TYPE_COLLECTION_FAILURE,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {_candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE)}
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert rec.collection_calls and rec.collection_calls[0][0]["node_id"] == "ci-A"
+    assert materialized == 1
+    # No other family should have been invoked.
+    assert rec.availability_calls == []
+    assert rec.latency_calls == []
+
+
+def test_materialize_current_cycle_roots_routes_availability_to_refresh():
+    """AVAILABILITY candidates → ICMP availability refresh helper with cache={}."""
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {_candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY)}
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert rec.availability_calls and rec.availability_calls[0][0]["node_id"] == "ci-B"
+    assert materialized == 1
+    assert rec.collection_calls == []
+    assert rec.latency_calls == []
+
+
+def test_materialize_current_cycle_roots_routes_latency_to_refresh():
+    """THRESHOLD_BREACH candidates → ICMP latency refresh helper with cache={}."""
+    from engines.correlation import (
+        EVENT_TYPE_THRESHOLD_BREACH,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {_candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH)}
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert rec.latency_calls and rec.latency_calls[0][0]["node_id"] == "ci-C"
+    assert materialized == 1
+    assert rec.collection_calls == []
+    assert rec.availability_calls == []
+
+
+def test_materialize_current_cycle_roots_forces_cache_empty_to_enforce_root_writes():
+    """REQ-001: every call uses cache={} so the existing _resolve_correlation
+    helper tags each row as ROOT (no PROPAGATED writes, no child events)."""
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        EVENT_TYPE_COLLECTION_FAILURE,
+        EVENT_TYPE_THRESHOLD_BREACH,
+        materialize_current_cycle_roots,
+    )
+
+    captured_kwargs: list[dict] = []
+
+    def make_capture(bucket_name):
+        def _fn(session, observations, cache=None, lock_db=None):
+            captured_kwargs.append(
+                {"bucket": bucket_name, "cache": cache, "lock_db": lock_db}
+            )
+        return _fn
+
+    rec_collection = make_capture("collection")
+    rec_availability = make_capture("availability")
+    rec_latency = make_capture("latency")
+
+    candidates = {
+        _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    }
+    sentinel_db = object()
+
+    materialize_current_cycle_roots(
+        session=object(),
+        db=sentinel_db,
+        candidates=candidates,
+        refresh_collection_failures=rec_collection,
+        refresh_icmp_availability=rec_availability,
+        refresh_icmp_latency=rec_latency,
+    )
+
+    assert len(captured_kwargs) == 3
+    for call in captured_kwargs:
+        # cache MUST be an empty dict so the existing _resolve_correlation
+        # helper inside the refresh function returns ROOT for every row.
+        assert call["cache"] == {}
+        # lock_db MUST be the same SQLAlchemy session poll_snmp owns so the
+        # transaction-scoped pg_advisory_xact_lock triplet survives Pass 2
+        # → Pass 3 (REQ-007).
+        assert call["lock_db"] is sentinel_db
+
+
+def test_materialize_current_cycle_roots_returns_count_of_materialized_candidates():
+    """Materialize returns the number of candidates actually routed to a helper."""
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        EVENT_TYPE_COLLECTION_FAILURE,
+        EVENT_TYPE_THRESHOLD_BREACH,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {
+        _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+        _candidate("ci-D", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+    }
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert materialized == 4
+    # Two candidates routed to collection, one to availability, one to latency.
+    assert sum(len(c) for c in rec.collection_calls) == 2
+    assert sum(len(c) for c in rec.availability_calls) == 1
+    assert sum(len(c) for c in rec.latency_calls) == 1
+
+
+def test_materialize_current_cycle_roots_empty_candidates_is_noop():
+    """No candidates → no helper invocation, no count, no errors."""
+    from engines.correlation import materialize_current_cycle_roots
+
+    rec = _CallRecorder()
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=set(),
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert materialized == 0
+    assert rec.collection_calls == []
+    assert rec.availability_calls == []
+    assert rec.latency_calls == []
+
+
+def test_materialize_current_cycle_roots_helper_failure_does_not_abort_cycle(caplog):
+    """REQ-005 / SCN-009: a helper raising must NOT stop the rest of the cycle.
+
+    The failing family is skipped, the OTHER families still get their
+    candidates, and the call returns the count of successfully materialized
+    candidates. The function MUST log the failure so operators can see it.
+    """
+    import logging
+
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        EVENT_TYPE_COLLECTION_FAILURE,
+        EVENT_TYPE_THRESHOLD_BREACH,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder(fail_on={"availability"})
+    candidates = {
+        _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    }
+
+    with caplog.at_level(logging.ERROR):
+        materialized = materialize_current_cycle_roots(
+            session=object(),
+            db=object(),
+            candidates=candidates,
+            refresh_collection_failures=rec.collection,
+            refresh_icmp_availability=rec.availability,
+            refresh_icmp_latency=rec.latency,
+        )
+
+    # 2 candidates succeeded (collection + latency); availability failed.
+    assert materialized == 2
+    # Other families still ran.
+    assert rec.collection_calls and rec.collection_calls[0][0]["node_id"] == "ci-A"
+    assert rec.latency_calls and rec.latency_calls[0][0]["node_id"] == "ci-C"
+    # And the failure was logged.
+    assert "topology_rca_materialize_family_failed" in caplog.text
+
+
+def test_materialize_current_cycle_roots_unknown_event_type_is_skipped(caplog):
+    """Unknown event types are silently skipped (defensive: a stale enum value
+    must not crash the cycle). The skip is logged so operators see it."""
+    import logging
+
+    from engines.correlation import materialize_current_cycle_roots
+
+    rec = _CallRecorder()
+    candidates = {
+        _candidate("ci-A", "cpu-load", "MYSTERY_TYPE"),
+        _candidate("ci-B", "ping", "AVAILABILITY"),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        materialized = materialize_current_cycle_roots(
+            session=object(),
+            db=object(),
+            candidates=candidates,
+            refresh_collection_failures=rec.collection,
+            refresh_icmp_availability=rec.availability,
+            refresh_icmp_latency=rec.latency,
+        )
+
+    # Only the AVAILABILITY candidate was routed.
+    assert materialized == 1
+    assert rec.availability_calls and rec.availability_calls[0][0]["node_id"] == "ci-B"
+    assert rec.collection_calls == []
+    assert rec.latency_calls == []
+    assert "topology_rca_materialize_unknown_event_type" in caplog.text
+
+
+def test_materialize_current_cycle_roots_all_three_families_in_one_call():
+    """SCN-011: a single cycle can route candidates to all three event families
+    in one call. Each family receives only its own candidates."""
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        EVENT_TYPE_COLLECTION_FAILURE,
+        EVENT_TYPE_THRESHOLD_BREACH,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {
+        _candidate("ci-A", "cpu-load", EVENT_TYPE_COLLECTION_FAILURE),
+        _candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY),
+        _candidate("ci-C", "icmp_latency_ms", EVENT_TYPE_THRESHOLD_BREACH),
+    }
+
+    materialized = materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    assert materialized == 3
+    assert [row["node_id"] for row in rec.collection_calls[0]] == ["ci-A"]
+    assert [row["node_id"] for row in rec.availability_calls[0]] == ["ci-B"]
+    assert [row["node_id"] for row in rec.latency_calls[0]] == ["ci-C"]
+
+
+def test_materialize_current_cycle_roots_payload_includes_event_type_for_helper():
+    """Each observation row must carry its event_type so the helper can
+    route it through the same UNWIND...CREATE path it always has."""
+    from engines.correlation import (
+        EVENT_TYPE_AVAILABILITY,
+        materialize_current_cycle_roots,
+    )
+
+    rec = _CallRecorder()
+    candidates = {_candidate("ci-B", "ping", EVENT_TYPE_AVAILABILITY)}
+
+    materialize_current_cycle_roots(
+        session=object(),
+        db=object(),
+        candidates=candidates,
+        refresh_collection_failures=rec.collection,
+        refresh_icmp_availability=rec.availability,
+        refresh_icmp_latency=rec.latency,
+    )
+
+    row = rec.availability_calls[0][0]
+    assert row["event_type"] == EVENT_TYPE_AVAILABILITY
+    assert row["node_id"] == "ci-B"
+    assert row["metric_id"] == "ping"
