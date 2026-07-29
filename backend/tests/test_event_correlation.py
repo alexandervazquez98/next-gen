@@ -588,20 +588,7 @@ class TestCycleRootCandidates:
             _obs("ci-child-2", "cpu-load", "COLLECTION_FAILURE"),
             _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
         ]
-        index = {
-            ("ci-child-1", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-2", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-3", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-        }
+        index = {}
 
         result = cycle_root_candidates(observations, index)
 
@@ -617,20 +604,7 @@ class TestCycleRootCandidates:
             _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
             _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
         ]
-        index = {
-            ("ci-child-1", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-2", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-3", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-        }
+        index = {}
 
         result = cycle_root_candidates(observations, index)
 
@@ -655,20 +629,7 @@ class TestCycleRootCandidates:
             _obs("ci-child-1", "cpu-load", "AVAILABILITY"),
             _obs("ci-child-2", "ping", "AVAILABILITY"),
         ]
-        index = {
-            ("ci-child-1", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-2", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-            ("ci-child-3", "cpu-load"): {
-                "parent_event_id": "evt-parent",
-                "root_cause_ci_id": "ci-parent",
-            },
-        }
+        index = {}
 
         result = cycle_root_candidates(interleaved, index)
 
