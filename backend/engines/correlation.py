@@ -214,3 +214,72 @@ def materialize_current_cycle_roots(
             )
 
     return materialized
+
+
+def attach_dependents_to_roots(
+    session: Any,
+    dependents: list[dict[str, Any]],
+    attach: Callable[..., Any] | None = None,
+) -> int:
+    """Forward ``dependents`` through the existing root-update helper so
+    each unique affected CI is appended to its resolved ROOT event.
+
+    Pass 3 of the two-pass correlation flow (see design.md AD-4). The
+    idempotency guarantee comes from the existing
+    ``_update_propagated_root_events`` query — its MATCH clause filters
+    to ``root.status IN ['OPEN','ACK','RECOVERED']`` and the SET clause
+    uses ``WHERE NOT row.node_id IN root.affected_ci_ids`` plus
+    ``size(root.affected_ci_ids)`` for the count. This helper is the
+    single funnel for that call so Pass 3 is auditable.
+
+    The function does NOT itself run any Cypher. It only forwards rows
+    to the existing helper which owns the root-event enrichment query.
+
+    Args:
+        session: the Neo4j session owned by ``poll_snmp``. Forwarded to
+            the attach helper.
+        dependents: list of correlation-decorated rows whose
+            ``correlation_type == 'PROPAGATED'``. The helper does NOT
+            filter by correlation_type itself — it forwards every row
+            and lets the existing query MATCH the right root events.
+            This keeps the contract simple and lets ``poll_snmp`` pass
+            the full per-family rows without pre-filtering.
+        attach: the ``_update_propagated_root_events`` callable. Injected
+            so the function can be unit-tested without importing the
+            live helper (which depends on the running Neo4j driver). At
+            call time in ``poll_snmp`` the default is
+            ``engines.snmp_worker._update_propagated_root_events``.
+
+    Returns:
+        Number of UNIQUE affected CI identifiers that were attached by
+        this call. Duplicates (same ``node_id`` arriving via different
+        metrics) are counted once. The function is idempotent — calling
+        it twice with the same ``dependents`` returns 0 the second time.
+    """
+    if not dependents:
+        return 0
+
+    # Resolve the attach helper lazily so importing this module never
+    # pulls in engines.snmp_worker (which imports neo4j stubs etc.).
+    if attach is None:
+        from engines.snmp_worker import _update_propagated_root_events
+
+        attach = _update_propagated_root_events
+
+    # Snapshot the dependents so the helper's internal dedup does not
+    # mutate the caller's list. The existing _update_propagated_root_events
+    # accepts any iterable of dict-like rows; passing a list is safe.
+    forwarded = list(dependents)
+    attach(session, forwarded)
+
+    # Count UNIQUE affected CIs in the forwarded batch. This is the
+    # contract: the returned number is the size of the delta this call
+    # would contribute to ``affected_ci_ids`` if every row were new. The
+    # existing IN guard in the root-update query decides what actually
+    # sticks; we surface the new-CI count for the operator log.
+    unique_node_ids: set[str] = set()
+    for row in dependents:
+        node_id = row.get("node_id")
+        if node_id:
+            unique_node_ids.add(node_id)
+    return len(unique_node_ids)

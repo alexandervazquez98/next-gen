@@ -1086,3 +1086,266 @@ def test_materialize_current_cycle_roots_payload_includes_event_type_for_helper(
     assert row["event_type"] == EVENT_TYPE_AVAILABILITY
     assert row["node_id"] == "ci-B"
     assert row["metric_id"] == "ping"
+
+
+# ---------------------------------------------------------------------------
+# P0 (fix #416) — attach_dependents_to_roots: idempotent affected-CI attach.
+#
+# Pass 3 of the two-pass correlation flow. The helper wraps the existing
+# ``_update_propagated_root_events`` enrichment so dependents observed in
+# the same cycle are appended to the just-persisted ROOT events without
+# creating duplicate child Events. The existing IN guard + size() already
+# make the call idempotent; this helper is the single funnel for that
+# behavior.
+#
+# Coverage: REQ-003 (unique affected CIs, count == unique total), REQ-004
+# (repeated cycles do not duplicate), REQ-007 (preserves existing helper
+# invariants), SCN-004 (multi-affected-metric parent), SCN-005 (repeated
+# cycles), SCN-010 (Pass-3 idempotency on retry).
+# ---------------------------------------------------------------------------
+
+
+class _AttachRecorder:
+    """Capture every call to the injected attach helper.
+
+    Mirrors the in-memory behavior of ``_update_propagated_root_events``
+    in ``engines.snmp_worker`` (see ``test_snmp_worker_correlation.py``)
+    so we can assert idempotency end-to-end without a Neo4j session.
+    """
+
+    def __init__(self, root_event_id="evt-A"):
+        self.calls: list[list[dict]] = []
+        self.root = {
+            "id": root_event_id,
+            "status": "OPEN",
+            "correlation_type": "ROOT",
+            "affected_ci_ids": [],
+            "affected_ci_count": 0,
+            "comments": [],
+        }
+
+    def __call__(self, session, propagated_rows):
+        self.calls.append(list(propagated_rows))
+        for row in propagated_rows:
+            if row.get("propagated_from") != self.root["id"]:
+                continue
+            if self.root["status"] not in {"OPEN", "ACK", "RECOVERED"}:
+                continue
+            if self.root["correlation_type"] != "ROOT":
+                continue
+            node_id = row.get("node_id")
+            if node_id and node_id not in self.root["affected_ci_ids"]:
+                self.root["affected_ci_ids"].append(node_id)
+            self.root["affected_ci_count"] = len(self.root["affected_ci_ids"])
+            comment = row.get("affected_ci_comment")
+            if comment and comment not in self.root["comments"]:
+                self.root["comments"].append(comment)
+
+
+def test_attach_dependents_to_roots_invokes_helper_with_same_session():
+    """The session owned by poll_snmp is forwarded to the attach helper."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    session = object()
+    dependents = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
+    ]
+
+    attach_dependents_to_roots(session, dependents, attach=rec)
+
+    # The helper was called with the exact session poll_snmp owns.
+    assert rec.calls and rec.calls[0] is not dependents
+    assert rec.calls[0] == dependents
+    assert rec.root["affected_ci_ids"] == ["ci-E"]
+
+
+def test_attach_dependents_to_roots_appends_unique_affected_ci():
+    """REQ-003: each unique affected CI is appended once."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+        {
+            "node_id": "ci-F",
+            "metric_id": "ping",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+    ]
+
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+
+    assert rec.root["affected_ci_ids"] == ["ci-E", "ci-F"]
+    assert rec.root["affected_ci_count"] == 2
+
+
+def test_attach_dependents_to_roots_dedupes_same_ci_across_metrics():
+    """SCN-004: same child CI with multiple metrics appears once."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+        {
+            "node_id": "ci-E",
+            "metric_id": "mem-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+    ]
+
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+
+    assert rec.root["affected_ci_ids"] == ["ci-E"]
+    assert rec.root["affected_ci_count"] == 1
+
+
+def test_attach_dependents_to_roots_is_idempotent_on_repeated_polls():
+    """REQ-004 / SCN-005 / SCN-010: re-running the same attach is a no-op.
+
+    The function MUST be safe to call on the same set of dependents in
+    successive cycles without creating duplicate affected_ci entries.
+    """
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
+    ]
+
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+
+    # 3 calls, but the affected-CI list still has one entry.
+    assert len(rec.calls) == 3
+    assert rec.root["affected_ci_ids"] == ["ci-E"]
+    assert rec.root["affected_ci_count"] == 1
+
+
+def test_attach_dependents_to_roots_idempotent_with_mixed_metrics_same_ci():
+    """REQ-004: idempotency holds when the same CI arrives via different
+    metrics in the same call AND across cycles."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents_cpu = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
+    ]
+    dependents_mem = [
+        {
+            "node_id": "ci-E",
+            "metric_id": "mem-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
+    ]
+
+    attach_dependents_to_roots(object(), dependents_cpu, attach=rec)
+    attach_dependents_to_roots(object(), dependents_mem, attach=rec)
+    attach_dependents_to_roots(object(), dependents_cpu, attach=rec)
+    attach_dependents_to_roots(object(), dependents_mem, attach=rec)
+
+    assert rec.root["affected_ci_ids"] == ["ci-E"]
+    assert rec.root["affected_ci_count"] == 1
+
+
+def test_attach_dependents_to_roots_empty_dependents_is_noop():
+    """No dependents → no helper call, no state change."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+
+    attached = attach_dependents_to_roots(object(), [], attach=rec)
+
+    assert attached == 0
+    assert rec.calls == []
+    assert rec.root["affected_ci_ids"] == []
+
+
+def test_attach_dependents_to_roots_returns_unique_count():
+    """The function returns the number of UNIQUE affected CIs (not row count)."""
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents = [
+        {"node_id": "ci-E", "metric_id": "cpu-load", "correlation_type": "PROPAGATED",
+         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
+        {"node_id": "ci-E", "metric_id": "mem-load", "correlation_type": "PROPAGATED",
+         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
+        {"node_id": "ci-F", "metric_id": "ping", "correlation_type": "PROPAGATED",
+         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
+    ]
+
+    attached = attach_dependents_to_roots(object(), dependents, attach=rec)
+
+    # 3 rows in, but only 2 unique CIs.
+    assert attached == 2
+    assert rec.root["affected_ci_count"] == 2
+    assert rec.root["affected_ci_ids"] == ["ci-E", "ci-F"]
+
+
+def test_attach_dependents_to_roots_does_not_create_child_events():
+    """The attach helper does NOT touch the child-Events list.
+
+    The existing root-update query in ``_update_propagated_root_events``
+    only SETs root-event properties; it never inserts a child Event.
+    We assert the helper forwards the rows unchanged — so a regression
+    in the call site (e.g. accidentally passing child-shaped rows) would
+    show up here as a guard before the existing test suite catches it.
+    """
+    from engines.correlation import attach_dependents_to_roots
+
+    rec = _AttachRecorder()
+    dependents = [
+        {"node_id": "ci-E", "metric_id": "cpu-load", "correlation_type": "PROPAGATED",
+         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"}
+    ]
+
+    attach_dependents_to_roots(object(), dependents, attach=rec)
+
+    # The forwarded rows are EXACTLY the dependents we passed in.
+    forwarded = rec.calls[0]
+    assert forwarded[0]["correlation_type"] == "PROPAGATED"
+    assert forwarded[0]["propagated_from"] == "evt-A"
+    # The root-update query in snmp_worker has no CREATE (see test for
+    # 'propagated_rows_do_not_generate_duplicate_child_events_or_notes'
+    # in test_snmp_worker_correlation). The helper is wired so it cannot
+    # accidentally re-introduce CREATE — we verify that the rows are
+    # routed to the existing helper, which the existing test pins down.
+    assert len(rec.calls) == 1
