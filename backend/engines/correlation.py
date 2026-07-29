@@ -42,6 +42,7 @@ EVENT_TYPE_THRESHOLD_BREACH = "THRESHOLD_BREACH"
 def cycle_root_candidates(
     observations: list[dict[str, Any]],
     topology_index: dict[tuple[str, str], dict[str, Any]] | None,
+    cycle_parent_index: dict[tuple[str, str], str | None] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Return the (ci_id, metric_id, event_type) tuples that must be ROOT.
 
@@ -59,13 +60,19 @@ def cycle_root_candidates(
             ``None`` when the kill-switch is off or the cache build failed.
             A non-dict value (defensive — mirrors the ``_resolve_correlation``
             contract) is treated as empty so the helper never raises.
+        cycle_parent_index: in-memory mapping from an observed ``(ci, metric)``
+            pair to an upstream CI that is also event-producing in this cycle.
+            Such rows are dependents and are withheld from Pass 2 while their
+            upstream candidate is materialized. Missing keys and ``None``
+            values preserve independent-ROOT behavior. Defaults to empty for
+            backward compatibility.
 
     Returns:
-        Set of ``(ci_id, metric_id, event_type)`` tuples that are missing
-        from ``topology_index`` and therefore must be materialized as ROOT
-        Events before the dependent-attachment pass. Malformed rows (missing
-        ``node_id`` or ``metric_id``) are dropped because they cannot form a
-        valid cache key.
+        Set of ``(ci_id, metric_id, event_type)`` tuples missing from the open
+        parent cache and without an observed in-cycle parent. These tuples must
+        be materialized as ROOT Events before the dependent-attachment pass.
+        Malformed rows (missing ``node_id`` or ``metric_id``) are dropped
+        because they cannot form a valid cache key.
     """
     candidates: set[tuple[str, str, str]] = set()
 
@@ -74,6 +81,9 @@ def cycle_root_candidates(
     # ``_resolve_correlation``: degrade to all-ROOT.
     safe_index: dict[tuple[str, str], dict[str, Any]]
     safe_index = topology_index if isinstance(topology_index, dict) else {}
+    safe_cycle_parent_index = (
+        cycle_parent_index if isinstance(cycle_parent_index, dict) else {}
+    )
 
     for row in observations:
         node_id = row.get("node_id")
@@ -85,9 +95,15 @@ def cycle_root_candidates(
         # Rows missing node_id or metric_id cannot form a cache key — skip.
         if not node_id or not metric_id:
             continue
-        # Cache hit ⇒ the row will resolve to PROPAGATED via the existing
-        # _refresh_* path; do not include it as a ROOT candidate.
-        if (node_id, metric_id) in safe_index:
+        key = (node_id, metric_id)
+        # Existing open parent hit ⇒ the row resolves as PROPAGATED via the
+        # existing refresh path; do not include it as a ROOT candidate.
+        if key in safe_index:
+            continue
+        # An observed upstream CI will be materialized first in Pass 2. Keep
+        # this row dependent so Pass 3 can attach it to the new ROOT instead of
+        # creating a same-cycle child ROOT.
+        if safe_cycle_parent_index.get(key):
             continue
         candidates.add((node_id, metric_id, event_type))
 

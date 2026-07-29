@@ -589,8 +589,13 @@ class TestCycleRootCandidates:
             _obs("ci-child-3", "cpu-load", "COLLECTION_FAILURE"),
         ]
         index = {}
+        cycle_parent_index = {
+            ("ci-child-1", "cpu-load"): "ci-parent",
+            ("ci-child-2", "cpu-load"): "ci-parent",
+            ("ci-child-3", "cpu-load"): "ci-parent",
+        }
 
-        result = cycle_root_candidates(observations, index)
+        result = cycle_root_candidates(observations, index, cycle_parent_index)
 
         assert result == {("ci-parent", "cpu-load", "COLLECTION_FAILURE")}
 
@@ -605,8 +610,13 @@ class TestCycleRootCandidates:
             _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
         ]
         index = {}
+        cycle_parent_index = {
+            ("ci-child-1", "cpu-load"): "ci-parent",
+            ("ci-child-2", "cpu-load"): "ci-parent",
+            ("ci-child-3", "cpu-load"): "ci-parent",
+        }
 
-        result = cycle_root_candidates(observations, index)
+        result = cycle_root_candidates(observations, index, cycle_parent_index)
 
         assert result == {("ci-parent", "cpu-load", "COLLECTION_FAILURE")}
 
@@ -630,8 +640,13 @@ class TestCycleRootCandidates:
             _obs("ci-child-2", "ping", "AVAILABILITY"),
         ]
         index = {}
+        cycle_parent_index = {
+            ("ci-child-1", "cpu-load"): "ci-parent",
+            ("ci-child-2", "cpu-load"): "ci-parent",
+            ("ci-child-3", "cpu-load"): "ci-parent",
+        }
 
-        result = cycle_root_candidates(interleaved, index)
+        result = cycle_root_candidates(interleaved, index, cycle_parent_index)
 
         assert result == {
             ("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
