@@ -158,3 +158,148 @@ def test_build_open_parent_index_prefers_critical_over_warning():
 
     assert "CASE pe.severity" in session.last_query or "CASE parent.severity" in session.last_query
     assert result[("ci-E", "cpu-load")]["parent_event_id"] == "evt-crit"
+
+
+# ---------------------------------------------------------------------------
+# P0 (fix #416) — current_cycle_parent_candidates
+#
+# Pure helper that enumerates the (ci_id, metric_id, event_type) tuples
+# representing event-producing observations in the current cycle. It is the
+# in-memory complement to ``build_open_parent_index`` (vocabulary) — same
+# "what is a candidate that could become ROOT" intent, but with no Neo4j
+# I/O so it can be unit-tested without a driver.
+#
+# Coverage: REQ-002 (order-independence) and REQ-005 (safe independent-ROOT
+# behavior when the lookup is unavailable). SCN-006 (no parent relationship)
+# and SCN-007 (non-propagating metric) manifest as "the observation IS a
+# candidate" because the helper has no topology index to filter against.
+# ---------------------------------------------------------------------------
+
+
+def _obs(node_id, metric_id, event_type, **extra):
+    """Build a minimal event-producing observation row."""
+    row = {
+        "node_id": node_id,
+        "metric_id": metric_id,
+        "event_type": event_type,
+    }
+    row.update(extra)
+    return row
+
+
+def test_current_cycle_parent_candidates_empty_observations_returns_empty_set():
+    """No observations → empty candidate set, no key error."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    assert current_cycle_parent_candidates([]) == set()
+
+
+def test_current_cycle_parent_candidates_returns_all_event_producing_tuples():
+    """Every event-producing observation surfaces as a candidate ROOT tuple."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    observations = [
+        _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+        _obs("ci-B", "ping", "AVAILABILITY"),
+        _obs("ci-C", "icmp_latency_ms", "THRESHOLD_BREACH"),
+    ]
+
+    result = current_cycle_parent_candidates(observations)
+
+    assert result == {
+        ("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+        ("ci-B", "ping", "AVAILABILITY"),
+        ("ci-C", "icmp_latency_ms", "THRESHOLD_BREACH"),
+    }
+
+
+def test_current_cycle_parent_candidates_dedupes_identical_triples():
+    """Two observations for the same (ci, metric, event_type) collapse to one candidate."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    observations = [
+        _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+        _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+
+    result = current_cycle_parent_candidates(observations)
+
+    assert result == {("ci-A", "cpu-load", "COLLECTION_FAILURE")}
+
+
+def test_current_cycle_parent_candidates_skips_rows_without_event_type():
+    """Rows without event_type are not event-producing — skip them (REQ-002)."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    observations = [
+        _obs("ci-A", "cpu-load", None),
+        _obs("ci-B", "ping", "AVAILABILITY"),
+    ]
+
+    result = current_cycle_parent_candidates(observations)
+
+    assert ("ci-A", "cpu-load", None) not in result
+    assert ("ci-B", "ping", "AVAILABILITY") in result
+
+
+def test_current_cycle_parent_candidates_skips_rows_missing_node_or_metric():
+    """Rows missing (node_id, metric_id) cannot form a cache key — skip them."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    observations = [
+        {"node_id": None, "metric_id": "cpu-load", "event_type": "COLLECTION_FAILURE"},
+        {"node_id": "ci-A", "metric_id": None, "event_type": "COLLECTION_FAILURE"},
+        {"node_id": "", "metric_id": "cpu-load", "event_type": "COLLECTION_FAILURE"},
+        _obs("ci-B", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+
+    result = current_cycle_parent_candidates(observations)
+
+    assert ("ci-B", "cpu-load", "COLLECTION_FAILURE") in result
+    assert len(result) == 1
+
+
+def test_current_cycle_parent_candidates_order_independent():
+    """REQ-002: any order of observations produces the same candidate set."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    forward = [
+        _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+        _obs("ci-B", "ping", "AVAILABILITY"),
+        _obs("ci-C", "icmp_latency_ms", "THRESHOLD_BREACH"),
+    ]
+    reverse = list(reversed(forward))
+    interleaved = [forward[0], forward[2], forward[1], forward[0], forward[1]]
+
+    assert current_cycle_parent_candidates(forward) == current_cycle_parent_candidates(reverse)
+    assert current_cycle_parent_candidates(forward) == current_cycle_parent_candidates(interleaved)
+
+
+def test_current_cycle_parent_candidates_never_raises_on_malformed_observations():
+    """REQ-005: malformed rows must be silently dropped, not raised."""
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    bad = [
+        None,
+        {},
+        {"node_id": 123, "metric_id": "cpu-load", "event_type": "COLLECTION_FAILURE"},
+        _obs("ci-A", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+
+    result = current_cycle_parent_candidates(bad)  # type: ignore[arg-type]
+
+    assert ("ci-A", "cpu-load", "COLLECTION_FAILURE") in result
+
+
+def test_current_cycle_parent_candidates_is_pure_no_session_argument():
+    """REQ-002: signature MUST NOT take a Neo4j session (pure helper)."""
+    import inspect
+
+    from repositories.topology_repo import current_cycle_parent_candidates
+
+    sig = inspect.signature(current_cycle_parent_candidates)
+    params = list(sig.parameters.values())
+    # First parameter is the observations list; there is NO Neo4j session.
+    assert params[0].name == "observations"
+    assert len(params) == 1
+

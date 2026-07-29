@@ -40,8 +40,8 @@ The function under test was NOT modified.
 |------|----------|------------|----------|--------|
 | 1 | done | n/a | n/a | Commit A |
 | 2 | covered by task 1 | done | n/a | Commit A |
-| 3 | pending | n/a | n/a | Commit B |
-| 4 | covered by task 3 | pending | n/a | Commit B |
+| 3 | done | n/a | n/a | Commit B |
+| 4 | covered by task 3 | done | n/a | Commit B |
 | 5 | pending | n/a | n/a | Commit C |
 | 6 | covered by task 5 | pending | n/a | Commit C |
 | 7 | pending | n/a | n/a | Commit D |
