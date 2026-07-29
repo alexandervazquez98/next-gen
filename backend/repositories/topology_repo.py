@@ -845,6 +845,70 @@ def build_open_parent_index(
     return index
 
 
+def build_cycle_parent_index(
+    observations: list[Any],
+    topology_relations: dict[str, set[str]] | None,
+) -> dict[tuple[str, str], str]:
+    """Resolve each observed CI/metric to an observed upstream CI in memory.
+
+    ``topology_relations`` is an adjacency map from a CI to its upstream CIs,
+    pre-filtered to ``DEPENDS_ON``, ``HOSTED_ON`` and ``CONNECTS_TO``. The walk
+    mirrors ``build_open_parent_index``'s depth-three limit without issuing a
+    Neo4j query. Only event-producing CIs observed in this cycle are eligible
+    parents, ensuring that Pass 2 can materialize the selected root before the
+    dependent-attachment pass.
+
+    The nearest observed ancestor wins. Equal-depth matches are sorted by CI id
+    so the result is independent of relationship and observation order.
+    Missing, malformed or incomplete topology safely leaves the pair absent,
+    which preserves independent-ROOT behavior.
+    """
+    event_rows = [
+        row
+        for row in observations
+        if isinstance(row, dict)
+        and row.get("node_id")
+        and row.get("metric_id")
+        and row.get("event_type")
+    ]
+    observed_ci_ids = {row["node_id"] for row in event_rows}
+    safe_relations = topology_relations if isinstance(topology_relations, dict) else {}
+    index: dict[tuple[str, str], str] = {}
+
+    for row in event_rows:
+        ci_id = row["node_id"]
+        key = (ci_id, row["metric_id"])
+        visited = {ci_id}
+        frontier = {ci_id}
+
+        for _depth in range(3):
+            upstream: set[str] = set()
+            for current_ci_id in frontier:
+                parent_ids = safe_relations.get(current_ci_id, set())
+                if isinstance(parent_ids, str):
+                    parent_ids = {parent_ids}
+                if not isinstance(parent_ids, (set, list, tuple)):
+                    continue
+                upstream.update(
+                    parent_id
+                    for parent_id in parent_ids
+                    if isinstance(parent_id, str) and parent_id and parent_id not in visited
+                )
+
+            if not upstream:
+                break
+
+            observed_parents = sorted(upstream & observed_ci_ids)
+            if observed_parents:
+                index[key] = observed_parents[0]
+                break
+
+            visited.update(upstream)
+            frontier = upstream
+
+    return index
+
+
 def current_cycle_parent_candidates(
     observations: list[Any],
 ) -> set[tuple[str, str, str]]:
