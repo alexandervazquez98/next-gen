@@ -11,8 +11,6 @@ the Cypher at cache-build time (design C2 fix) — they never appear as keys.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from repositories.topology_repo import build_open_parent_index
 
 
@@ -52,9 +50,17 @@ def _row(ci_id, metric_id, parent_event_id=None, root_cause_ci_id=None, parent_c
 
 def test_build_open_parent_index_returns_parent_for_propagating_metric():
     """One (ci, metric) pair with an OPEN parent via DEPENDS_ON → hit."""
-    session = _FakeSession([
-        _row("ci-E", "cpu-load", parent_event_id="evt-A", root_cause_ci_id="ci-A", parent_ci_id="ci-A"),
-    ])
+    session = _FakeSession(
+        [
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-A",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+            ),
+        ]
+    )
 
     result = build_open_parent_index(session, {("ci-E", "cpu-load")})
 
@@ -80,10 +86,24 @@ def test_build_open_parent_index_skips_can_propagate_false():
 
 def test_build_open_parent_index_keys_by_ci_metric_pair():
     """Same CI, two metrics with different parents → two independent keys."""
-    session = _FakeSession([
-        _row("ci-E", "cpu-load", parent_event_id="evt-A", root_cause_ci_id="ci-A", parent_ci_id="ci-A"),
-        _row("ci-E", "mem-load", parent_event_id="evt-B", root_cause_ci_id="ci-B", parent_ci_id="ci-B"),
-    ])
+    session = _FakeSession(
+        [
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-A",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+            ),
+            _row(
+                "ci-E",
+                "mem-load",
+                parent_event_id="evt-B",
+                root_cause_ci_id="ci-B",
+                parent_ci_id="ci-B",
+            ),
+        ]
+    )
 
     result = build_open_parent_index(session, {("ci-E", "cpu-load"), ("ci-E", "mem-load")})
 
@@ -106,9 +126,17 @@ def test_build_open_parent_index_traverses_connects_to():
     The query must include CONNECTS_TO in the relationship traversal, mirroring
     find_open_parent_event.
     """
-    session = _FakeSession([
-        _row("ci-E", "cpu-load", parent_event_id="evt-A", root_cause_ci_id="ci-A", parent_ci_id="ci-A"),
-    ])
+    session = _FakeSession(
+        [
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-A",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+            ),
+        ]
+    )
 
     result = build_open_parent_index(session, {("ci-E", "cpu-load")})
 
@@ -148,11 +176,19 @@ def test_build_open_parent_index_empty_input_returns_empty_dict():
 
 def test_build_open_parent_index_prefers_critical_over_warning():
     """ORDER BY severity mirrors find_open_parent_event — CRITICAL wins."""
-    session = _FakeSession([
-        # First row in DB order is WARNING, but query ORDER BY should surface CRITICAL.
-        # Here we simulate the DB already returning the CRITICAL one first (post-ORDER BY).
-        _row("ci-E", "cpu-load", parent_event_id="evt-crit", root_cause_ci_id="ci-A", parent_ci_id="ci-A"),
-    ])
+    session = _FakeSession(
+        [
+            # First row in DB order is WARNING, but query ORDER BY should surface CRITICAL.
+            # Here we simulate the DB already returning the CRITICAL one first (post-ORDER BY).
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-crit",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+            ),
+        ]
+    )
 
     result = build_open_parent_index(session, {("ci-E", "cpu-load")})
 
@@ -302,4 +338,3 @@ def test_current_cycle_parent_candidates_is_pure_no_session_argument():
     # First parameter is the observations list; there is NO Neo4j session.
     assert params[0].name == "observations"
     assert len(params) == 1
-

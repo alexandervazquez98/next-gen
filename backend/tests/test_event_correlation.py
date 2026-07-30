@@ -12,9 +12,9 @@ Tests:
 Follows Strict TDD: RED (test written first) → GREEN (minimum impl) → TRIANGULATE.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime
+
+import pytest
 
 pytestmark = [pytest.mark.event]
 
@@ -22,6 +22,7 @@ pytestmark = [pytest.mark.event]
 # ---------------------------------------------------------------------------
 # Helper — pure correlation logic extracted for unit testing
 # ---------------------------------------------------------------------------
+
 
 def determine_correlation_fields(
     parent_event: dict | None,
@@ -58,6 +59,7 @@ def determine_correlation_fields(
 # Task 4.1 — find_open_parent_event() Cypher traversal depth & relationship types
 # ---------------------------------------------------------------------------
 
+
 class TestFindOpenParentEvent:
     """Unit tests for topology_repo.find_open_parent_event()."""
 
@@ -65,8 +67,9 @@ class TestFindOpenParentEvent:
         """
         When no parent CI has an OPEN/ACK event, find_open_parent_event returns None.
         """
-        from backend.tests.conftest import MockNeo4jSession, MockNeo4jRecord
         from repositories.topology_repo import find_open_parent_event
+
+        from backend.tests.conftest import MockNeo4jSession
 
         # Mock the driver so the query returns no parent event
         mock_session = MockNeo4jSession()
@@ -85,8 +88,9 @@ class TestFindOpenParentEvent:
         """
         When a parent CI (via DEPENDS_ON) has an OPEN event, return that event's info.
         """
-        from backend.tests.conftest import MockNeo4jSession, MockNeo4jRecord
         from repositories.topology_repo import find_open_parent_event
+
+        from backend.tests.conftest import MockNeo4jSession
 
         parent_event_record = {
             "parent_event_id": "evt-parent-001",
@@ -117,8 +121,9 @@ class TestFindOpenParentEvent:
         find_open_parent_event uses max_depth in the Cypher traversal.
         Verify the query string contains the depth parameter.
         """
-        from backend.tests.conftest import MockNeo4jSession
         from repositories.topology_repo import find_open_parent_event
+
+        from backend.tests.conftest import MockNeo4jSession
 
         mock_session = MockNeo4jSession()
         mock_session.set_default_response([])
@@ -141,6 +146,7 @@ class TestFindOpenParentEvent:
 # ---------------------------------------------------------------------------
 # Task 4.2 — Correlation type assignment: ROOT vs PROPAGATED
 # ---------------------------------------------------------------------------
+
 
 class TestCorrelationTypeAssignment:
     """Unit tests for correlation type determination in store_metric_result."""
@@ -195,6 +201,7 @@ class TestCorrelationTypeAssignment:
 # Task 4.2 (placeholder) — store_metric_result integration test
 # ---------------------------------------------------------------------------
 
+
 def _placeholder_store_metric_result_integration():
     """
     Integration test placeholder for store_metric_result correlation injection.
@@ -209,6 +216,7 @@ def _placeholder_store_metric_result_integration():
 # Task 4.3 — Recovery propagation: ROOT recovers → PROPAGATED also recover
 # ---------------------------------------------------------------------------
 
+
 class TestRecoveryPropagation:
     """Unit tests for correlation-aware recovery in store_metric_result."""
 
@@ -217,13 +225,14 @@ class TestRecoveryPropagation:
         When a ROOT event transitions to RECOVERED,
         all PROPAGATED events with the same root_cause_ci_id should also recover.
         """
-        from backend.tests.conftest import MockNeo4jSession
         from services.snmp_service import store_metric_result
+
+        from backend.tests.conftest import MockNeo4jSession
 
         mock_session = MockNeo4jSession()
         mock_session.set_response("where existing.ci_id", [])  # no existing event to update
-        mock_session.set_response("match (ci)-[", [])   # no parent event
-        mock_session.set_response("match (m:metricdef", [])   # resolve_event_snapshot empty
+        mock_session.set_response("match (ci)-[", [])  # no parent event
+        mock_session.set_response("match (m:metricdef", [])  # resolve_event_snapshot empty
 
         mock_driver = MagicMock()
         mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -244,7 +253,8 @@ class TestRecoveryPropagation:
 
         # Check that a recovery (RECOVERED) query was run
         recovered_queries = [
-            q for q in mock_session.queries
+            q
+            for q in mock_session.queries
             if "RECOVERED" in q["query"] or "recovered_at" in q["query"].lower()
         ]
         assert len(recovered_queries) >= 1, "Expected at least one RECOVERED query"
@@ -253,6 +263,7 @@ class TestRecoveryPropagation:
 # ---------------------------------------------------------------------------
 # Task 4.4 — 3-level CI chain integration: CI-A → CI-B → CI-C
 # ---------------------------------------------------------------------------
+
 
 class TestThreeLevelCorrelation:
     """Integration tests for 3-level CI chain correlation."""
@@ -301,6 +312,7 @@ class TestThreeLevelCorrelation:
 # ---------------------------------------------------------------------------
 # Task 4.5 — API: GET /api/events returns propagated=true for PROPAGATED events
 # ---------------------------------------------------------------------------
+
 
 class TestPropagatedFlagInAPI:
     """Tests for the computed propagated boolean field in event API."""
@@ -384,6 +396,7 @@ class TestPropagatedFlagInAPI:
 # ---------------------------------------------------------------------------
 # Task 4 (new) — can_propagate field tests
 # ---------------------------------------------------------------------------
+
 
 class TestCanPropagate:
     """Unit tests for can_propagate field behavior."""
@@ -755,6 +768,7 @@ class _CallRecorder:
             if bucket_name in self.fail_on:
                 raise RuntimeError(f"simulated {bucket_name} failure")
             sink.append(list(observations))
+
         return _fn
 
     def collection(self, session, observations, cache=None, lock_db=None):
@@ -867,9 +881,8 @@ def test_materialize_current_cycle_roots_forces_cache_empty_to_enforce_root_writ
 
     def make_capture(bucket_name):
         def _fn(session, observations, cache=None, lock_db=None):
-            captured_kwargs.append(
-                {"bucket": bucket_name, "cache": cache, "lock_db": lock_db}
-            )
+            captured_kwargs.append({"bucket": bucket_name, "cache": cache, "lock_db": lock_db})
+
         return _fn
 
     rec_collection = make_capture("collection")
@@ -1304,12 +1317,27 @@ def test_attach_dependents_to_roots_returns_unique_count():
 
     rec = _AttachRecorder()
     dependents = [
-        {"node_id": "ci-E", "metric_id": "cpu-load", "correlation_type": "PROPAGATED",
-         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
-        {"node_id": "ci-E", "metric_id": "mem-load", "correlation_type": "PROPAGATED",
-         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
-        {"node_id": "ci-F", "metric_id": "ping", "correlation_type": "PROPAGATED",
-         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"},
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+        {
+            "node_id": "ci-E",
+            "metric_id": "mem-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
+        {
+            "node_id": "ci-F",
+            "metric_id": "ping",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        },
     ]
 
     attached = attach_dependents_to_roots(object(), dependents, attach=rec)
@@ -1333,8 +1361,13 @@ def test_attach_dependents_to_roots_does_not_create_child_events():
 
     rec = _AttachRecorder()
     dependents = [
-        {"node_id": "ci-E", "metric_id": "cpu-load", "correlation_type": "PROPAGATED",
-         "propagated_from": "evt-A", "root_cause_ci_id": "ci-A"}
+        {
+            "node_id": "ci-E",
+            "metric_id": "cpu-load",
+            "correlation_type": "PROPAGATED",
+            "propagated_from": "evt-A",
+            "root_cause_ci_id": "ci-A",
+        }
     ]
 
     attach_dependents_to_roots(object(), dependents, attach=rec)

@@ -25,8 +25,8 @@ All three helpers stay within the strict TDD contract:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +73,7 @@ def cycle_root_candidates(
     # the write path. We mirror the resilience contract already established by
     # ``_resolve_correlation``: degrade to all-ROOT.
     safe_index: dict[tuple[str, str], dict[str, Any]]
-    if isinstance(topology_index, dict):
-        safe_index = topology_index
-    else:
-        safe_index = {}
+    safe_index = topology_index if isinstance(topology_index, dict) else {}
 
     for row in observations:
         node_id = row.get("node_id")
@@ -206,8 +203,7 @@ def materialize_current_cycle_roots(
             # above; downstream passes will fall back to ROOT naturally
             # because the cache we hand to them is empty.
             logger.error(
-                "topology_rca_materialize_family_failed family=%s "
-                "candidates=%s error=%s",
+                "topology_rca_materialize_family_failed family=%s " "candidates=%s error=%s",
                 family,
                 rows,
                 exc,
