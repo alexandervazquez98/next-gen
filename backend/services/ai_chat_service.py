@@ -385,8 +385,16 @@ def list_events_for_harness(
     limit: int,
     severity_filter: str | None = None,
     user: User | None = None,
+    include_children: bool = True,
 ) -> list[dict[str, Any]]:
-    """Fetch at most limit + 1 scoped event summaries for bounded chat context."""
+    """Fetch at most limit + 1 scoped event summaries for bounded chat context.
+
+    P2 REQ-009: AI chat context historically needs the raw N+1 set so the
+    agent can reason about every state. The new public `get_events`
+    defaults to root-only via `include_children=False`. The harness
+    boundary preserves the prior behaviour by passing `include_children=True`
+    explicitly so the P2 default flip is transparent to the AI consumer.
+    """
     is_unscoped, allowed_locations, allowed_ci_types = _event_scope_for_user(user)
     if not is_unscoped and not allowed_locations:
         return []
@@ -406,6 +414,10 @@ def list_events_for_harness(
             AND ($severity IS NULL OR e.severity = $severity)
             AND ($is_unscoped OR ci.location_name IN $allowed_locations)
             AND ($allowed_ci_types IS NULL OR ci.layer IN $allowed_ci_types)
+            AND (
+                $include_children
+                OR coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+            )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
@@ -416,6 +428,7 @@ def list_events_for_harness(
             is_unscoped=is_unscoped,
             allowed_locations=allowed_locations or [],
             allowed_ci_types=allowed_ci_types,
+            include_children=include_children,
             limit=query_limit,
         )
         return [
