@@ -5,9 +5,57 @@
  * Tests ranking order, top-n cap, and stable sort for equal scores.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { rankCIs } from '../MonitoringConsole';
 import { GraphNode, Event } from '../../types';
+
+// ---------------------------------------------------------------------------
+// P2 REQ-005 / SCN-008: shared mocks for the KPI root filter test
+// ---------------------------------------------------------------------------
+
+const { mockApi } = vi.hoisted(() => ({
+    mockApi: vi.fn(),
+}));
+
+vi.mock('../../services/api', () => ({
+    api: { get: mockApi, post: vi.fn() },
+}));
+vi.mock('../../hooks/useEventCorrelation', () => ({
+    useEventCorrelation: (events: any[]) => events,
+}));
+vi.mock('react-leaflet', () => ({
+    MapContainer: ({ children }: any) => <div>{children}</div>,
+    TileLayer: () => null,
+    Polyline: () => null,
+    useMap: () => ({}),
+}));
+vi.mock('leaflet', () => ({
+    default: {
+        icon: () => ({}),
+        Marker: { prototype: { options: { icon: null } } },
+        latLngBounds: () => ({ isValid: () => true }),
+    },
+    icon: () => ({}),
+    Marker: { prototype: { options: { icon: null } } },
+    latLngBounds: () => ({}),
+}));
+vi.mock('leaflet/dist/leaflet.css', () => ({}));
+vi.mock('../../context/AuthContext', () => ({
+    useAuth: () => ({
+        user: {
+            username: 'admin',
+            role: 'ADMIN',
+            permissions: [],
+            tier: 'T3',
+            allowed_locations: [],
+        },
+        hasPermission: () => true,
+        isAuthenticated: true,
+        token: 't',
+        login: () => undefined,
+        logout: () => undefined,
+    }),
+}));
 
 describe('rankCIs', () => {
     // -------------------------------------------------------------------------
@@ -179,6 +227,100 @@ describe('rankCIs', () => {
             // Both score=4, ci-2warn comes first in original array
             expect(result[0].id).toBe('ci-2warn');
             expect(result[1].id).toBe('ci-4info');
+        });
+    });
+
+    // ---------------------------------------------------------------------------
+    // P2 REQ-005 / SCN-008: KPI cards count ROOT events only and render the
+    // "affecting N CIs" sub-label sourced from `affected_count`.
+    // ---------------------------------------------------------------------------
+
+    describe('KPI root filter + sub-label (SCN-008)', () => {
+        it('counts only ROOT events and renders affecting-N-CIs sub-label', async () => {
+            const React = await import('react');
+            const { render, screen, waitFor } = await import('@testing-library/react');
+            const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+
+            mockApi.mockImplementation((url: string) => {
+                if (url === '/nodes') return Promise.resolve([]);
+                if (url === '/links') return Promise.resolve([]);
+                if (url === '/categories') return Promise.resolve([]);
+                if (url === '/events?status=CONSOLE') {
+                    return Promise.resolve([
+                        {
+                            id: 'evt-root-1',
+                            ci_id: 'ci-1',
+                            ci_name: 'Router-01',
+                            metric_id: 'cpu',
+                            metric_name: 'CPU',
+                            status: 'OPEN',
+                            severity: 'CRITICAL',
+                            message: 'CPU high',
+                            created_at: '2026-04-04T20:00:00.000Z',
+                            last_seen: '2026-04-04T20:00:00.000Z',
+                            ack: false,
+                            correlation_type: 'ROOT',
+                            affected_count: 3,
+                        },
+                        {
+                            id: 'evt-root-2',
+                            ci_id: 'ci-2',
+                            ci_name: 'Router-02',
+                            metric_id: 'mem',
+                            metric_name: 'Memory',
+                            status: 'OPEN',
+                            severity: 'WARNING',
+                            message: 'Memory high',
+                            created_at: '2026-04-04T20:00:00.000Z',
+                            last_seen: '2026-04-04T20:00:00.000Z',
+                            ack: false,
+                            correlation_type: 'ROOT',
+                            affected_count: 2,
+                        },
+                        {
+                            id: 'evt-prop',
+                            ci_id: 'ci-3',
+                            ci_name: 'Router-03',
+                            metric_id: 'latency',
+                            metric_name: 'Latency',
+                            status: 'OPEN',
+                            severity: 'CRITICAL',
+                            message: 'Propagated noise',
+                            created_at: '2026-04-04T20:00:00.000Z',
+                            last_seen: '2026-04-04T20:00:00.000Z',
+                            ack: false,
+                            correlation_type: 'PROPAGATED',
+                        },
+                    ]);
+                }
+                return Promise.resolve([]);
+            });
+
+            const { default: MonitoringConsole } = await import('../MonitoringConsole');
+
+            const client = new QueryClient({
+                defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+            });
+
+            render(
+                React.createElement(
+                    QueryClientProvider,
+                    { client },
+                    React.createElement(MonitoringConsole),
+                ),
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('CPU high')).toBeInTheDocument();
+            });
+
+            // Sub-label sums `affected_count` over roots: 3 + 2 = 5.
+            const subLabel = await screen.findByTestId('stat-sublabel-total-active');
+            expect(subLabel.textContent).toBe('affecting 5 CIs');
+
+            // Total KPI counts ROOT rows only (2), not 3 (PROPAGATED excluded).
+            const totalCard = screen.getByText('Total Active').closest('div');
+            expect(totalCard?.textContent).toContain('2');
         });
     });
 });
