@@ -235,3 +235,99 @@ class TestGetEventsIncludeChildren:
         # The param is the contract: when default, server filters.
         params = mock_neo4j_session.queries[0]["params"]
         assert params["include_children"] is False
+
+
+# ---------------------------------------------------------------------------
+# REQ-004 — `get_affected_siblings` drill-down (SCN-004, SCN-005)
+# ---------------------------------------------------------------------------
+
+
+class TestGetAffectedSiblings:
+    """SCN-004 / SCN-005: returns ordered CI entries for a ROOT; unknown or
+    non-ROOT ids respond 404 with the canonical detail string."""
+
+    def test_returns_ordered_affected_ci_rows(self, mock_neo4j_session):
+        """SCN-004: ROOT with `affected_ci_ids` returns ordered CI rows."""
+        event_service = _load_event_service_module()
+        mock_neo4j_session.set_response(
+            "match (e:event {id:",
+            [
+                {
+                    "correlation_type": "ROOT",
+                    "affected_ci_ids": ["ci-A", "ci-B"],
+                },
+            ],
+        )
+        mock_neo4j_session.set_response(
+            "unwind $ci_ids",
+            [
+                {
+                    "ci_id": "ci-A",
+                    "ci_name": "Router-A",
+                    "status": "OK",
+                    "ci_hostname": "10.0.0.1",
+                    "ci_location_name": "Madrid HQ",
+                },
+                {
+                    "ci_id": "ci-B",
+                    "ci_name": "Router-B",
+                    "status": "OK",
+                    "ci_hostname": "10.0.0.2",
+                    "ci_location_name": "Madrid HQ",
+                },
+            ],
+        )
+
+        rows = event_service.get_affected_siblings("evt-root")
+
+        assert [row["ci_id"] for row in rows] == ["ci-A", "ci-B"]
+        assert rows[0]["ci_name"] == "Router-A"
+        assert rows[0]["status"] == "OK"
+
+    def test_empty_root_returns_empty_list(self, mock_neo4j_session):
+        """SCN-010: empty ROOT returns `[]` (no 404)."""
+        event_service = _load_event_service_module()
+        mock_neo4j_session.set_response(
+            "match (e:event {id:",
+            [
+                {
+                    "correlation_type": "ROOT",
+                    "affected_ci_ids": [],
+                },
+            ],
+        )
+        mock_neo4j_session.set_response("unwind", [])
+
+        rows = event_service.get_affected_siblings("evt-root")
+
+        assert rows == []
+
+    def test_unknown_event_id_raises_404(self, mock_neo4j_session):
+        """SCN-005: unknown id raises 404 with canonical detail."""
+        event_service = _load_event_service_module()
+        mock_neo4j_session.set_response("match (e:event {id:", [])
+
+        with pytest.raises(HTTPException) as excinfo:
+            event_service.get_affected_siblings("missing-id")
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Event not found: missing-id"
+
+    def test_non_root_event_raises_404(self, mock_neo4j_session):
+        """REQ-004: a non-ROOT event is also 404 (drill-down is ROOT-only)."""
+        event_service = _load_event_service_module()
+        mock_neo4j_session.set_response(
+            "match (e:event {id:",
+            [
+                {
+                    "correlation_type": "PROPAGATED",
+                    "affected_ci_ids": [],
+                },
+            ],
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            event_service.get_affected_siblings("evt-prop")
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Event not found: evt-prop"

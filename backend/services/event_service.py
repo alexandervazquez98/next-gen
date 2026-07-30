@@ -958,6 +958,66 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
+def get_affected_siblings(event_id: str) -> list[dict[str, Any]]:
+    """Return the list of CIs affected by the given ROOT event.
+
+    P2 REQ-004: this is the operator-facing drill-down. The ROOT event is
+    fetched first and validated as a ROOT (legacy PROPAGATED children are
+    not drill-down targets). `affected_ci_ids` is the membership list that
+    P0 writes onto the ROOT; the lookup is an `UNWIND` + `MATCH (:CI)` that
+    preserves the original ordering and returns at least `{ci_id, ci_name,
+    status}`. Empty membership returns `[]` (no 404).
+
+    Unknown or non-ROOT ids raise `HTTPException(404, "Event not found: <id>")`.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        lookup = session.run(
+            """
+            MATCH (e:Event {id: $event_id})
+            RETURN e.correlation_type AS correlation_type,
+                   e.affected_ci_ids AS affected_ci_ids
+            """,
+            event_id=event_id,
+        ).single()
+
+        if not lookup or lookup.get("correlation_type") != "ROOT":
+            _raise_event_not_found(event_id)
+
+        ci_ids = list(lookup.get("affected_ci_ids") or [])
+        if not ci_ids:
+            return []
+
+        result = session.run(
+            """
+            UNWIND $ci_ids AS ci_id
+            MATCH (ci:CI {id: ci_id})
+            RETURN ci.id AS ci_id,
+                   ci.name AS ci_name,
+                   ci.status AS status,
+                   ci.ip AS ci_hostname,
+                   ci.location_name AS ci_location_name
+            """,
+            ci_ids=ci_ids,
+        )
+
+        rows_by_id = {
+            record["ci_id"]: {
+                "ci_id": record["ci_id"],
+                "ci_name": record["ci_name"],
+                "status": record["status"],
+                "ci_hostname": record["ci_hostname"],
+                "ci_location_name": record["ci_location_name"],
+            }
+            for record in result
+        }
+
+        # Preserve the original ordering of `affected_ci_ids` and drop any
+        # ids Neo4j did not resolve (defensive — should not happen in
+        # practice because the writer pins the relationship).
+        return [rows_by_id[ci_id] for ci_id in ci_ids if ci_id in rows_by_id]
+
+
 def get_events(
     status: str | None = None,
     include_children: bool = False,

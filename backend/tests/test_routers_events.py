@@ -17,6 +17,7 @@ import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -660,3 +661,70 @@ class TestGetEventsIncludeChildren:
             mock_service.get_events.assert_called_once_with(
                 "CONSOLE", include_children=False
             )
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/events/{event_id}/affected
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventAffected:
+    """REQ-004 / SCN-004 / SCN-005: drill-down endpoint."""
+
+    def test_affected_returns_200_with_ordered_rows(self):
+        async def override():
+            return _operator_user(permissions=[UserPermission.EVENT_VIEW])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_affected_siblings.return_value = [
+                {"ci_id": "ci-A", "ci_name": "Router-A", "status": "OK"},
+                {"ci_id": "ci-B", "ci_name": "Router-B", "status": "OK"},
+            ]
+
+            response = client.get("/api/events/evt-1/affected")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert len(body) == 2
+            assert body[0]["ci_id"] == "ci-A"
+            mock_service.get_affected_siblings.assert_called_once_with("evt-1")
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_affected_unknown_event_returns_404(self):
+        async def override():
+            return _operator_user(permissions=[UserPermission.EVENT_VIEW])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_affected_siblings.side_effect = HTTPException(
+                status_code=404, detail="Event not found: missing-id"
+            )
+
+            response = client.get("/api/events/missing-id/affected")
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Event not found: missing-id"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_affected_missing_event_view_returns_403(self):
+        async def override():
+            return User(
+                username="viewer",
+                role="VIEWER",
+                permissions=[],
+                allowed_locations=[],
+            )
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        response = client.get("/api/events/evt-1/affected")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to view events"
+
+        app.dependency_overrides.pop(get_current_active_user, None)

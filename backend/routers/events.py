@@ -5,6 +5,7 @@ import services.event_service as event_service
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from models.core import (
+    AffectedCI,
     AvailabilityReportResponse,
     AvailabilitySnmpNoResponseResponse,
     EventDetailResponse,
@@ -94,6 +95,22 @@ async def get_availability_snmp_no_response(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/{event_id}/affected", response_model=list[AffectedCI])
+async def get_event_affected(
+    event_id: str, current_user: User = Depends(get_current_active_user)  # noqa: B008
+):
+    """Drill-down endpoint returning the CI list affected by a ROOT event.
+
+    P2 REQ-004: declared BEFORE `/{event_id}` so the path resolver wins
+    the precedence race. Unknown or non-ROOT ids answer 404 with the
+    canonical detail string from `_raise_event_not_found`. The guard
+    mirrors `GET /events/{event_id}`.
+    """
+    if not check_permission(UserPermission.EVENT_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view events")
+    return event_service.get_affected_siblings(event_id)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse)
