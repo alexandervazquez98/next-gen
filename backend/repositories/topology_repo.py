@@ -845,6 +845,41 @@ def build_open_parent_index(
     return index
 
 
+def get_topology_relations(session, ci_ids: set[str]) -> dict[str, set[str]]:
+    """Preload the eligible upstream adjacency graph for observed CIs.
+
+    The query expands each observed CI to the same depth-three relationship
+    boundary as ``build_open_parent_index`` and returns the direct edges from
+    those paths. ``build_cycle_parent_index`` then performs the deterministic
+    in-memory walk without additional Neo4j round-trips.
+    """
+    safe_ci_ids = sorted(ci_id for ci_id in ci_ids if ci_id)
+    if not safe_ci_ids:
+        return {}
+
+    records = session.run(
+        """
+        UNWIND $ci_ids AS ci_id
+        MATCH path=(ci:CI {id: ci_id})
+            -[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3]->(:CI)
+        UNWIND relationships(path) AS rel
+        WITH startNode(rel) AS source, endNode(rel) AS parent
+        RETURN DISTINCT source.id AS source_ci_id,
+                        parent.id AS parent_ci_id
+        """,
+        ci_ids=safe_ci_ids,
+    )
+
+    relations: dict[str, set[str]] = {}
+    for row in records:
+        source_ci_id = row.get("source_ci_id")
+        parent_ci_id = row.get("parent_ci_id")
+        if not source_ci_id or not parent_ci_id:
+            continue
+        relations.setdefault(source_ci_id, set()).add(parent_ci_id)
+    return relations
+
+
 def build_cycle_parent_index(
     observations: list[Any],
     topology_relations: dict[str, set[str]] | None,
