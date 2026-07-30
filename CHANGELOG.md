@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Verification: REQ-001..007 and SCN-001..011 green; 1760/1760 backend tests pass after excluding 4 pre-existing Docker-dependent `test_writer_advisory_lock.py` failures; smoke and image builds green.
   - Deferred slices (separate SDD): P1 legacy collector parity (`backend/services/snmp_service.py`), P2 public API fields + monitoring KPI rendering, P3 leased queue writer + topology backfill.
 
+### BREAKING
+
+- **Event feed root-only default + `affected_ci_ids` / `affected_count` exposure** (P2 follow-up to #416, change `fix-416-event-amplification-p2`):
+  - **`GET /api/events` now defaults to root-only.** The new `?include_children=true` query parameter restores the prior raw N+1 set for audit re-ingestion and any consumer that still needs legacy PROPAGATED rows. AI chat context preserves its prior behaviour by passing `include_children=true` explicitly at `backend/services/ai_chat_service.py:422`.
+  - **New additive fields on `EventFeedSummary` / `EventSummary`:** `affected_ci_ids: list[str]` and `affected_count: int`. Both are populated from the ROOT annotations P0 already writes (`backend/engines/snmp_worker.py:315-353`) and are omitted from the JSON payload when the ROOT has no dependents (empty list, null, or zero count).
+  - **New `GET /api/events/{id}/affected` drill-down endpoint** returning the flat list of CIs affected by a ROOT, guarded by `EVENT_VIEW`. The Monitoring Console "Total Active" KPI now filters to ROOT events only via the backend `correlation_type` discriminator and renders an "affecting N CIs" sub-label sourced from `affected_count`; clicking the card opens a per-root drill-down modal backed by the new endpoint.
+  - **React Query cache key isolation:** `queryKeys.activeEvents({ includeChildren })` discriminates the cache so root-only and raw-mode polls never overwrite each other.
+  - **Migration / mitigation:** consumers that need the raw set must pass `?include_children=true` (backend) or `include_children: true` (frontend). Frontend smoke tests have been updated to mock the root-only contract. Pre-P0 legacy PROPAGATED rows are out of scope for P2 — a follow-up backfill lives in the archived `recommend-legacy-event-backfill` change.
+  - **Caveats:** the new default hides pre-P0 legacy `PROPAGATED` rows from the monitoring feed; consumer UIs that relied on them must either opt in or migrate to the ROOT + `affected_ci_ids` view.
+
 ## [1.14.2] — 2026-07-11
 
 ### Fixed
