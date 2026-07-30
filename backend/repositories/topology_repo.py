@@ -845,6 +845,64 @@ def build_open_parent_index(
     return index
 
 
+def current_cycle_parent_candidates(
+    observations: list[Any],
+) -> set[tuple[str, str, str]]:
+    """Enumerate the (ci_id, metric_id, event_type) tuples that COULD become ROOT.
+
+    Pure helper — in-memory complement to ``build_open_parent_index`` (same
+    vocabulary: depth-three ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3`` walk over
+    OPEN/ACK parents) but with NO Neo4j I/O. The caller already owns the
+    pre-built ``build_open_parent_index`` cache and uses it in
+    ``engines.correlation.cycle_root_candidates`` to filter the actual
+    PROPAGATED rows. This helper exists to:
+
+    1. Give the topology repo a thin, dependency-free entry point that the
+       same-cycle correlation pass in ``poll_snmp`` can call without
+       importing ``engines.correlation``.
+    2. Enforce the strict TDD contract: a single source of truth for
+       "what is an event-producing observation" — REQ-002/REQ-005.
+    3. Guarantee safe independent-ROOT behaviour (REQ-005, SCN-006/007):
+       a row whose topology lookup would fail or whose metric is
+       non-propagating is STILL a candidate here. The cache-based filter
+       is applied by the caller, so the absence of topology data
+       (kill-switch OFF, cache build raised, ``can_propagate=false``) never
+       silently drops a row.
+
+    Args:
+        observations: list of observation rows from the current cycle. Each
+            row is expected to expose at least ``node_id``, ``metric_id`` and
+            ``event_type``. Rows whose ``event_type`` is missing or empty
+            are not event-producing and are skipped. Rows missing
+            ``node_id`` or ``metric_id`` cannot form a cache key and are
+            dropped. Malformed inputs (e.g. ``None`` entries, empty dicts)
+            are silently ignored — the helper MUST NEVER raise on bad
+            input because the hot CREATE path consumes the result.
+
+    Returns:
+        Set of ``(ci_id, metric_id, event_type)`` tuples for every
+        event-producing observation. Order-independent (a ``set`` is
+        returned). The set may contain duplicates in pathological input
+        (e.g. two observations with the same triple) but the returned
+        type collapses them.
+    """
+    candidates: set[tuple[str, str, str]] = set()
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        node_id = row.get("node_id")
+        metric_id = row.get("metric_id")
+        event_type = row.get("event_type")
+        # Rows without an event_type are not event-producing — skip them.
+        if not event_type:
+            continue
+        # Rows missing node_id or metric_id cannot form a cache key — skip.
+        if not node_id or not metric_id:
+            continue
+        candidates.add((node_id, metric_id, event_type))
+    return candidates
+
+
 def ensure_icmp_sidecar_metric_defs(session) -> None:
     icmp_settings = get_icmp_settings()
     session.run(
