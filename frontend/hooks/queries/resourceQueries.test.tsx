@@ -214,4 +214,45 @@ describe('resource query hooks', () => {
 
     expect(mockApiGet).not.toHaveBeenCalled();
   });
+
+  // ---------------------------------------------------------------------------
+  // P2 REQ-006 / SCN-007: include_children Boolean discriminates the cache
+  // ---------------------------------------------------------------------------
+
+  it('SCN-007: distinct cache keys for include_children=true vs default', async () => {
+    mockApiGet.mockResolvedValue([]);
+
+    render(<HookProbe resource="events" />, { wrapper: createQueryWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Default hook → include_children=false. The mock URL stays the same
+    // (no `include_children` param) so the Operating Console keeps its
+    // existing wire signature.
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/events?status=CONSOLE',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+
+    // A raw caller (e.g. audit re-ingestion) opts in explicitly.
+    mockApiGet.mockClear();
+    mockApiGet.mockResolvedValue([]);
+    const { fetchActiveEvents } = await import('../../services/queryResources');
+    await act(async () => {
+      await fetchActiveEvents({ include_children: true });
+    });
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/events?status=CONSOLE&include_children=true',
+      expect.anything(),
+    );
+
+    // The two requests must hit DIFFERENT cache keys.
+    const { queryKeys } = await import('../../services/queryKeys');
+    expect(queryKeys.activeEvents({ includeChildren: false })).not.toEqual(
+      queryKeys.activeEvents({ includeChildren: true }),
+    );
+  });
 });

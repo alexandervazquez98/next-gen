@@ -143,8 +143,40 @@ export const fetchTunnelHealth = (linkId: string, { signal }: { signal?: AbortSi
 export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<CategoryRecord[]>("/categories", { signal });
 
-export const fetchActiveEvents = ({ signal }: { signal?: AbortSignal } = {}) =>
-  api.get<EventSummary[]>("/events?status=CONSOLE", { signal });
+export interface FetchActiveEventsOptions {
+  include_children?: boolean;
+  signal?: AbortSignal;
+}
+
+/**
+ * P2 REQ-006: `include_children` defaults to `false` (root-only feed) so the
+ * Monitoring Console stops counting legacy PROPAGATED rows in its KPIs. Raw
+ * consumers (audit, AI chat context) pass `include_children: true` explicitly.
+ */
+export const fetchActiveEvents = ({
+  include_children = false,
+  signal,
+}: FetchActiveEventsOptions = {}) => {
+  const params = new URLSearchParams({ status: "CONSOLE" });
+  if (include_children) params.set("include_children", "true");
+  return api.get<EventSummary[]>(`/events?${params.toString()}`, { signal });
+};
+
+export interface AffectedCI {
+  ci_id: string;
+  ci_name?: string | null;
+  status?: string | null;
+  ci_hostname?: string | null;
+  ci_location_name?: string | null;
+}
+
+export const fetchAffectedCIs = (
+  eventId: string,
+  { signal }: { signal?: AbortSignal } = {},
+) =>
+  api.get<AffectedCI[]>(`/events/${encodeURIComponent(eventId)}/affected`, {
+    signal,
+  });
 
 export interface FetchAvailabilityReportOptions {
   start?: string;

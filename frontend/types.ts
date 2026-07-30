@@ -296,6 +296,12 @@ export interface EventSummary {
   recovered_at?: string;
   event_type?: string;
   source_protocol?: string;
+  /** P2 REQ-008: backend correlation discriminator (ROOT vs PROPAGATED). */
+  correlation_type?: "ROOT" | "PROPAGATED" | null;
+  /** P2 REQ-008: CI ids this ROOT event is affecting. */
+  affected_ci_ids?: string[];
+  /** P2 REQ-008: count of CIs this ROOT event is affecting. */
+  affected_count?: number;
   relatedEvents?: EventSummary[];
 }
 

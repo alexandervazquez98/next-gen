@@ -11,7 +11,11 @@ export const queryKeys = {
   tunnelHealth: (linkId: string) => ["tunnels", "health", linkId] as const,
   categories: () => ["categories"] as const,
   owners: () => ["owners"] as const,
-  activeEvents: () => ["events", "CONSOLE"] as const,
+  // P2 REQ-006: the `includeChildren` boolean is part of the cache key so
+  // root-only and raw-mode polls never overwrite each other.
+  activeEvents: (options: { includeChildren: boolean } = { includeChildren: false }) =>
+    ["events", "CONSOLE", { includeChildren: options.includeChildren }] as const,
+  affectedCIs: (eventId: string) => ["events", "affected", eventId] as const,
   availabilityReport: () => ["events", "availability-report"] as const,
   availabilitySnmpNoResponse: (params?: { limit?: number; offset?: number }) =>
     ["events", "availability-report", "snmp-no-response", params ?? {}] as const,

@@ -7,7 +7,10 @@ import { useNodesQuery } from "./useNodesQuery";
 export const useMonitoringConsoleData = () => {
 	const nodesQuery = useNodesQuery();
 	const linksQuery = useLinksQuery();
-	const eventsQuery = useActiveEventsQuery();
+	// P2 REQ-005: root-only feed for the KPI cards. The hook signature stays
+	// parametrised so future raw-mode rows can be re-added without changing
+	// the consumer.
+	const eventsQuery = useActiveEventsQuery(false);
 	const categoriesQuery = useCategoriesQuery();
 
 	const nodes = nodesQuery.data ?? [];

@@ -17,7 +17,26 @@ describe("queryKeys", () => {
 		expect(queryKeys.nodes()).toEqual(["nodes"]);
 		expect(queryKeys.links()).toEqual(["links"]);
 		expect(queryKeys.categories()).toEqual(["categories"]);
-		expect(queryKeys.activeEvents()).toEqual(["events", "CONSOLE"]);
+		expect(queryKeys.activeEvents()).toEqual([
+			"events",
+			"CONSOLE",
+			{ includeChildren: false },
+		]);
+		expect(queryKeys.activeEvents({ includeChildren: true })).toEqual([
+			"events",
+			"CONSOLE",
+			{ includeChildren: true },
+		]);
+		expect(queryKeys.activeEvents({ includeChildren: false })).toEqual([
+			"events",
+			"CONSOLE",
+			{ includeChildren: false },
+		]);
+		expect(queryKeys.affectedCIs("evt-1")).toEqual([
+			"events",
+			"affected",
+			"evt-1",
+		]);
 		expect(queryKeys.graphTopologyRoot()).toEqual(["graph-topology"]);
 		expect(queryKeys.graphTopology()).toEqual(["graph-topology", {}]);
 		expect(queryKeys.graphTopology({ location: "Moron" })).toEqual([
