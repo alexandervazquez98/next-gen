@@ -86,11 +86,33 @@ describe('useEventCorrelation', () => {
     const links = [
       { source: 'ci-1', target: 'ci-2', relationship: 'MANAGED_BY' },
     ];
-    
+
     const { result } = renderHook(() => useEventCorrelation(events, links));
-    
+
     // Both should remain roots since MANAGED_BY doesn't trigger correlation
     expect(result.current).toHaveLength(2);
+  });
+
+  // P2 REQ-007 / SCN-009: CONNECTS_TO is now part of the upstream grouping
+  // vocabulary alongside DEPENDS_ON and HOSTED_ON.
+  it('SCN-009: CONNECTS_TO link suppresses consumer ROOT under provider', () => {
+    const events = [
+      makeEvent({ id: 'evt-provider', ci_id: 'provider', severity: 'CRITICAL', message: 'Provider outage' }),
+      makeEvent({ id: 'evt-consumer', ci_id: 'consumer', severity: 'CRITICAL', message: 'Consumer unreachable' }),
+    ];
+    const links = [
+      { source: 'consumer', target: 'provider', relationship: 'CONNECTS_TO' },
+    ];
+
+    const { result } = renderHook(() => useEventCorrelation(events, links));
+
+    const roots = result.current;
+    expect(roots).toHaveLength(1);
+    expect(roots[0].id).toBe('evt-provider');
+    expect(roots[0].relatedEvents).toHaveLength(1);
+    expect(roots[0].relatedEvents[0].id).toBe('evt-consumer');
+    expect(roots[0].relatedEvents[0].isRoot).toBe(false);
+    expect(roots[0].relatedEvents[0].cause).toBe('UPSTREAM_DEPENDENCY_FAILURE');
   });
 
   it('sorts roots by severity (CRITICAL first) then by date', () => {

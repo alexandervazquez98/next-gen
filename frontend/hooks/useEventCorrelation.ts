@@ -86,7 +86,15 @@ const groupedEvents = useMemo(() => {
         // If Provider CI has a Dominant Event, Consumer CI's Dominant Events become children
         links.forEach(link => {
             // If Source (Consumer) depends on Target (Provider)
-            if (link.relationship === 'DEPENDS_ON' || link.relationship === 'HOSTED_ON') {
+            // P2 REQ-007: include CONNECTS_TO so network-link topology can
+            // also suppress consumer ROOT events. The backend
+            // `correlation_type` remains the authoritative "is root"
+            // signal; this client-side hook is a safety-net.
+            if (
+                link.relationship === 'DEPENDS_ON' ||
+                link.relationship === 'HOSTED_ON' ||
+                link.relationship === 'CONNECTS_TO'
+            ) {
                 const providerId = link.target;
                 const consumerId = link.source;
 
