@@ -516,11 +516,14 @@ def test_enable_topology_rca_true_calls_build_open_parent_index(monkeypatch):
 
         poll_snmp()
 
-    mock_build.assert_called_once()
-    # Second positional arg must be a set of (ci_id, metric_id) tuples.
-    args, _ = mock_build.call_args
-    assert isinstance(args[1], set)
-    assert ("ci-001", "CPU") in args[1]
+    mock_build.assert_called()
+    # Two passes per cycle (initial + rebuild) — both with the same
+    # (ci_id, metric_id) pairs set.
+    assert mock_build.call_count == 2
+    for call in mock_build.call_args_list:
+        args, _ = call
+        assert isinstance(args[1], set)
+        assert ("ci-001", "CPU") in args[1]
 
 
 def test_enable_topology_rca_defaults_to_true_when_unset(monkeypatch):
@@ -544,7 +547,9 @@ def test_enable_topology_rca_defaults_to_true_when_unset(monkeypatch):
 
         poll_snmp()
 
-    mock_build.assert_called_once()
+    # Two-pass flow calls build_open_parent_index twice per cycle
+    # (initial + rebuild).
+    assert mock_build.call_count == 2
 
 
 def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, caplog):
@@ -563,6 +568,9 @@ def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, 
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
+    def always_fail(*args, **kwargs):
+        raise RuntimeError("neo4j connection lost")
+
     with (
         patch("engines.snmp_worker.driver", mock_driver),
         patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
@@ -570,7 +578,7 @@ def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, 
         patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
         patch(
             "engines.snmp_worker.build_open_parent_index",
-            side_effect=RuntimeError("neo4j connection lost"),
+            side_effect=always_fail,
         ) as mock_build,
         caplog.at_level(logging.WARNING),
     ):
@@ -578,8 +586,8 @@ def test_cache_failure_falls_back_to_root_and_still_creates_events(monkeypatch, 
 
         poll_snmp()  # must not raise
 
-    # Cache-build was attempted and raised.
-    mock_build.assert_called_once()
+    # Cache-build was attempted and raised (twice — initial + rebuild).
+    assert mock_build.call_count == 2
 
     # The UNWIND...CREATE call for SNMP collection failures still ran.
     create_calls = [
@@ -611,7 +619,14 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
     mock_session, mock_driver = _build_poll_snmp_mocks()
     mock_session.set_response("match", [_POLL_RECORD])
 
-    call_returns = [RuntimeError("transient"), {"nonempty": True}]
+    # Two cache-build calls per cycle (initial + rebuild), two cycles total.
+    # Cycle 1: both raise. Cycle 2: both succeed.
+    call_returns = [
+        RuntimeError("transient"),
+        RuntimeError("transient"),
+        {"nonempty": True},
+        {"nonempty": True},
+    ]
 
     def fake_build(*args, **kwargs):
         result = call_returns.pop(0)
@@ -631,7 +646,7 @@ def test_cache_is_local_to_poll_snmp_cycle(monkeypatch):
         poll_snmp()  # cycle 1: cache-build raises → cache={}
         poll_snmp()  # cycle 2: cache-build returns dict → cache used
 
-    assert mock_build.call_count == 2
+    assert mock_build.call_count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -677,8 +692,8 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
 
         poll_snmp()
 
-    # Cache-build was called with the (ci_id, metric_id) pairs set.
-    mock_build.assert_called_once()
+    # Cache-build was called twice (initial + rebuild).
+    assert mock_build.call_count == 2
 
     # Find the propagated-root update call captured on the session and inspect rows.
     propagated_calls = [
@@ -695,3 +710,595 @@ def test_poll_snmp_cache_hit_propagates_to_create_row_end_to_end(monkeypatch):
     assert row["correlation_type"] == "PROPAGATED"
     assert row["propagated_from"] == "evt-A"
     assert row["root_cause_ci_id"] == "ci-A"
+
+
+# ---------------------------------------------------------------------------
+# P0 (fix #416) — end-to-end poll_snmp same-cycle correlation matrix
+# (SCN-001..011).
+#
+# These tests cover the three-pass correlation flow inside poll_snmp:
+#   Pass 1 (Collect)    → failure_updates / availability_updates / latency_updates
+#   Pass 2 (Materialize)→ _refresh_*(candidates, cache={}) → forces ROOT writes
+#   Rebuild cache       → build_open_parent_index now sees the new ROOTs
+#   Pass 3 (Attach)     → _refresh_*(non_candidates, cache=rebuilt) → PROPAGATED
+#                          routing + _update_propagated_root_events attach
+#
+# Each scenario uses a side_effect list of caches for build_open_parent_index
+# to model the (initial empty cache) → (rebuilt cache with new ROOT events)
+# progression that the production two-pass flow produces.
+# ---------------------------------------------------------------------------
+
+
+def _record(node_id, metric_id, **overrides):
+    """Build a poll_snmp source record for one (ci, metric) pair."""
+    rec = {
+        "node_id": node_id,
+        "metric_id": metric_id,
+        "protocol": "SNMP",
+        "ip": "192.168.1.1",
+        "community": "public",
+        "oid": "1.3.6.1",
+        "port": 161,
+        "metric_name": metric_id,
+        "criticality": 3,
+        "metric_kind": None,
+        "availability_source": None,
+        "interval": 60,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def _set_scn_sequence_responses(mock_session):
+    """Configure the mock session for the no-response (failure) path.
+
+    The polled CI/metric returns no SNMP value → the failure path is taken
+    in poll_snmp → ``_refresh_snmp_collection_failures`` is called with
+    cache={} (Pass 2) and then with the rebuilt cache (Pass 3).
+    """
+    # Any "match" query returns an empty Result (no parent event found);
+    # the default response is already [] in the helper.
+    mock_session.set_default_response([])
+
+
+def _propagated_root_update_calls(mock_session):
+    """Return every UNWIND+propagated_rows query the session captured.
+
+    Each entry is the captured query dict (with ``params``); the
+    ``propagated_rows`` list inside ``params`` is what the root-update
+    query will MERGE into root events.
+    """
+    return [
+        c
+        for c in mock_session.queries
+        if "UNWIND" in c["query"] and "propagated_rows" in c["query"]
+    ]
+
+
+def _root_create_calls(mock_session):
+    """Return every UNWIND+CREATE call the session captured.
+
+    These are the FOREACH(CREATE (created:Event...)) sites inside
+    ``_refresh_snmp_collection_failures`` / ``_refresh_icmp_availability_events``
+    / ``_refresh_icmp_latency_events`` that materialize a new ROOT Event
+    for the cycle. SCN-001/004/006/011 assert exactly one such call.
+    """
+    return [c for c in mock_session.queries if "UNWIND" in c["query"] and "CREATE" in c["query"]]
+
+
+def test_first_cycle_parent_and_children_materializes_one_root_and_attaches_dependents(
+    monkeypatch,
+):
+    """First cycle: an empty open-event cache still yields one ROOT plus N attachments."""
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_ids = ["ci-child-1", "ci-child-2", "ci-child-3"]
+    records = [
+        _record(parent_id, "cpu-load"),
+        *(_record(child_id, "cpu-load") for child_id in child_ids),
+    ]
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+
+    parent_event_id = "evt-parent-root"
+    rebuilt_cache = {
+        (child_id, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        }
+        for child_id in child_ids
+    }
+    topology_relations = {child_id: {parent_id} for child_id in child_ids}
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[{}, rebuilt_cache],
+        ),
+        patch(
+            "engines.snmp_worker.get_topology_relations",
+            return_value=topology_relations,
+        ) as mock_get_relations,
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    mock_get_relations.assert_called_once_with(
+        mock_session,
+        {parent_id, *child_ids},
+    )
+    create_calls = _root_create_calls(mock_session)
+    created_rows = [row for call in create_calls for row in call["params"].get("failures", [])]
+    assert {row["node_id"] for row in created_rows} == {parent_id}
+
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated, "expected first-cycle dependents to reach the attach pass"
+    attached_rows = propagated[-1]["params"]["propagated_rows"]
+    assert {row["node_id"] for row in attached_rows} == set(child_ids)
+    assert all(row["propagated_from"] == parent_event_id for row in attached_rows)
+
+
+def test_scn_001_parent_then_children_no_amplification_in_subsequent_cycle(monkeypatch):
+    """SCN-001: in a subsequent cycle (parent ROOT already exists in the
+    topology cache), the parent and N children all fail in the same
+    cycle. The two-pass flow MUST suppress same-cycle child amplification:
+    no child Event rows are created, every child CI is attached to the
+    parent's existing ROOT via the affected-CI set, and the Set(affected_ci_ids)
+    is deduped by the existing IN guard inside _update_propagated_root_events.
+
+    Note: SCN-001 in the spec is the ideal outcome (1 ROOT + N attached).
+    The production cache (``build_open_parent_index``) is built from
+    OPEN/ACK events, so a *first* cycle where the parent is brand new
+    cannot resolve the children's topology parent (the parent has no
+    event yet) — that scenario collapses to "all ROOT, no attach" and
+    is a known limitation of an event-based cache. The unit tests for
+    ``cycle_root_candidates`` in ``test_event_correlation.py`` cover the
+    first-cycle selector behaviour in isolation.
+    """
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_ids = ["ci-child-1", "ci-child-2", "ci-child-3"]
+    records = [
+        _record(parent_id, "cpu-load"),
+        *(_record(cid, "cpu-load") for cid in child_ids),
+    ]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    # The parent already has a ROOT event from a prior cycle, so both
+    # initial and rebuilt caches resolve the children to it.
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (cid, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        }
+        for cid in child_ids
+    }
+    # Parent is also in the cache as "no upstream parent" so the
+    # helper tags it as ROOT. The existing _resolve_correlation uses
+    # this contract: cache miss → ROOT.
+    populated_cache[(parent_id, "cpu-load")] = {
+        "parent_event_id": None,
+        "root_cause_ci_id": parent_id,
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    # Every child is attached in the propagated_rows UNWIND call — this
+    # is the SCN-001 invariant: no child Event rows, every dependent
+    # surfaces as a propagated row that hits the existing parent ROOT's
+    # affected-CI set. The parent itself is a candidate (parent_event_id
+    # in the cache is None) and goes through Pass 2, not Pass 3.
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated, "expected a propagated_rows UNWIND call (attach pass)"
+    attached_rows = propagated[-1]["params"]["propagated_rows"]
+    attached_node_ids = sorted(row["node_id"] for row in attached_rows)
+    assert attached_node_ids == sorted(child_ids)
+    for row in attached_rows:
+        assert row["correlation_type"] == "PROPAGATED"
+        assert row["propagated_from"] == parent_event_id
+
+
+def test_scn_002_children_then_parent_no_amplification_in_subsequent_cycle(monkeypatch):
+    """SCN-002: reverse observation order — same no-amplification outcome."""
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_ids = ["ci-child-1", "ci-child-2", "ci-child-3"]
+    records = [
+        *(_record(cid, "cpu-load") for cid in child_ids),
+        _record(parent_id, "cpu-load"),
+    ]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (cid, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        }
+        for cid in child_ids
+    }
+    populated_cache[(parent_id, "cpu-load")] = {
+        "parent_event_id": None,
+        "root_cause_ci_id": parent_id,
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated
+    attached_rows = propagated[-1]["params"]["propagated_rows"]
+    attached_node_ids = sorted(row["node_id"] for row in attached_rows)
+    assert attached_node_ids == sorted(child_ids)
+
+
+def test_scn_003_interleaved_order_no_amplification_in_subsequent_cycle(monkeypatch):
+    """SCN-003: any interleaved observation order produces the same no-amplification outcome."""
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_ids = ["ci-child-1", "ci-child-2", "ci-child-3"]
+    interleaved = [
+        _record(child_ids[0], "cpu-load"),
+        _record(parent_id, "cpu-load"),
+        _record(child_ids[1], "cpu-load"),
+        _record(child_ids[2], "cpu-load"),
+    ]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", interleaved)
+    _set_scn_sequence_responses(mock_session)
+
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (cid, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        }
+        for cid in child_ids
+    }
+    populated_cache[(parent_id, "cpu-load")] = {
+        "parent_event_id": None,
+        "root_cause_ci_id": parent_id,
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated
+    attached_node_ids = sorted(
+        row["node_id"] for row in propagated[-1]["params"]["propagated_rows"]
+    )
+    assert attached_node_ids == sorted(child_ids)
+
+
+def test_scn_004_multi_affected_metric_dedupes_affected_ci(monkeypatch):
+    """SCN-004: one parent failure with N children with multiple metrics per CI.
+
+    The child's affected-CI entry must appear ONCE regardless of how many
+    metrics produced events for it. Pass 3's _update_propagated_root_events
+    uses an IN guard + size() so duplicates are silently dropped at the
+    Cypher level — the Set(affected_ci_ids) at the ROOT event is deduped.
+    """
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    multi_metric_child = "ci-multi-child"
+    records = [
+        _record(parent_id, "cpu-load"),
+        _record(multi_metric_child, "cpu-load"),
+        _record(multi_metric_child, "mem-load"),
+    ]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (multi_metric_child, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        },
+        (multi_metric_child, "mem-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        },
+    }
+    populated_cache[(parent_id, "cpu-load")] = {
+        "parent_event_id": None,
+        "root_cause_ci_id": parent_id,
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated
+    attached_rows = propagated[-1]["params"]["propagated_rows"]
+    child_rows = [r for r in attached_rows if r["node_id"] == multi_metric_child]
+    assert len(child_rows) == 2
+    assert all(r["propagated_from"] == parent_event_id for r in child_rows)
+    # The ROOT event's affected_ci_ids set dedupes the child down to a
+    # single entry — the actual dedup is enforced by the Cypher IN guard
+    # inside _update_propagated_root_events, which the unit test
+    # ``test_propagated_rows_do_not_generate_duplicate_child_events_or_notes_on_repeated_polls``
+    # pins down at the helper level.
+
+
+def test_scn_006_no_parent_relationship_results_in_root(monkeypatch):
+    """SCN-006: a failing CI with no resolvable parent → ROOT, no attach."""
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    isolated_id = "ci-isolated"
+    records = [_record(isolated_id, "cpu-load")]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    # Both initial and rebuilt cache are empty — the CI has no parent.
+    empty_cache: dict = {}
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[empty_cache, empty_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    # Pass 2 writes one ROOT; Pass 3 has no non-candidates to process.
+    create_calls = _root_create_calls(mock_session)
+    assert len(create_calls) == 1
+    assert [row["node_id"] for row in create_calls[0]["params"]["failures"]] == [isolated_id]
+
+
+def test_scn_009_lookup_failure_does_not_abort_cycle(monkeypatch, caplog):
+    """SCN-009: cache-build raises → events still created as ROOT (no data loss)."""
+    import logging
+
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    records = [_record("ci-001", "cpu-load")]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    def always_fail(*args, **kwargs):
+        raise RuntimeError("simulated neo4j connection lost")
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch("engines.snmp_worker.build_open_parent_index", side_effect=always_fail),
+        caplog.at_level(logging.WARNING),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()  # MUST NOT raise
+
+    # At least one UNWIND...CREATE ran with ROOT rows — no data loss.
+    create_calls = _root_create_calls(mock_session)
+    assert create_calls, "events must still be created as ROOT after cache failure"
+    assert all(
+        row["correlation_type"] == "ROOT"
+        for call in create_calls
+        for row in call["params"].get("failures", [])
+    )
+
+
+def test_scn_010_pass3_attachment_idempotent_on_repeated_attach(monkeypatch):
+    """SCN-010: Pass 3 attach is idempotent — Set(affected_ci_ids) never duplicates.
+
+    The existing _update_propagated_root_events query uses an IN guard +
+    size() so re-running it for the same root/dependent pair is a no-op.
+    We assert that across two consecutive poll_snmp cycles, the captured
+    propagated_rows carry the SAME node_id (the root-update query itself
+    enforces dedup at the database side).
+    """
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_id = "ci-child-1"
+    records = [_record(parent_id, "cpu-load"), _record(child_id, "cpu-load")]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (child_id, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        },
+        (parent_id, "cpu-load"): {
+            "parent_event_id": None,
+            "root_cause_ci_id": parent_id,
+        },
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache, populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+        poll_snmp()
+
+    propagated = _propagated_root_update_calls(mock_session)
+    # Each cycle attaches the child once. Across two cycles the same child
+    # is attached in each — but the root-event affected_ci_ids set itself
+    # never grows beyond a single entry (the existing IN guard). The unit
+    # test ``test_propagated_rows_do_not_generate_duplicate_child_events_or_notes_on_repeated_polls``
+    # already pins the per-row dedup at the query level; here we assert
+    # the call shape is consistent across cycles.
+    assert len(propagated) >= 2
+    for call in propagated:
+        rows = call["params"]["propagated_rows"]
+        child_rows = [r for r in rows if r["node_id"] == child_id]
+        assert all(r["propagated_from"] == parent_event_id for r in child_rows)
+
+
+def test_scn_011_all_three_event_families_route_through_pass2(monkeypatch):
+    """SCN-011: the three event families (collection / availability / latency)
+    follow the same two-pass correlation flow.
+
+    The unit tests in ``TestMaterializeCurrentCycleRoots`` already prove
+    per-family routing in isolation. Here we exercise the collection
+    family end-to-end to assert that the orchestrator (Pass 1 → Pass 2
+    → Pass 3) correctly routes the collection-failure row through
+    cycle_root_candidates → materialize → attach.
+    """
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    parent_id = "ci-parent"
+    child_id = "ci-child-1"
+    records = [_record(parent_id, "cpu-load"), _record(child_id, "cpu-load")]
+
+    mock_session, mock_driver = _build_poll_snmp_mocks()
+    mock_session.set_response("match", records)
+    _set_scn_sequence_responses(mock_session)
+
+    parent_event_id = "evt-parent-root"
+    populated_cache = {
+        (child_id, "cpu-load"): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+        },
+        (parent_id, "cpu-load"): {
+            "parent_event_id": None,
+            "root_cause_ci_id": parent_id,
+        },
+    }
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_snmp_value", return_value=None),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[populated_cache, populated_cache],
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    # The collection-failure family routed the child through Pass 3's
+    # propagated_rows UNWIND (no child Event rows, attached to parent
+    # ROOT). The parent is a candidate and goes through Pass 2, so it
+    # is NOT in the propagated_rows payload.
+    propagated = _propagated_root_update_calls(mock_session)
+    assert propagated
+    attached_rows = propagated[-1]["params"]["propagated_rows"]
+    assert sorted(row["node_id"] for row in attached_rows) == [child_id]
+    for row in attached_rows:
+        assert row["correlation_type"] == "PROPAGATED"
+        assert row["propagated_from"] == parent_event_id

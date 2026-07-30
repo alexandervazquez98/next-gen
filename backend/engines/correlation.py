@@ -81,9 +81,7 @@ def cycle_root_candidates(
     # ``_resolve_correlation``: degrade to all-ROOT.
     safe_index: dict[tuple[str, str], dict[str, Any]]
     safe_index = topology_index if isinstance(topology_index, dict) else {}
-    safe_cycle_parent_index = (
-        cycle_parent_index if isinstance(cycle_parent_index, dict) else {}
-    )
+    safe_cycle_parent_index = cycle_parent_index if isinstance(cycle_parent_index, dict) else {}
 
     for row in observations:
         node_id = row.get("node_id")
@@ -217,9 +215,7 @@ def materialize_current_cycle_roots(
         event_type = row.get("event_type")
         family = _EVENT_TYPE_FAMILIES.get(event_type)
         if family is None:
-            skipped_unknown.append(
-                (row.get("node_id"), row.get("metric_id"), event_type)
-            )
+            skipped_unknown.append((row.get("node_id"), row.get("metric_id"), event_type))
             continue
         by_family[family].append(row)
 

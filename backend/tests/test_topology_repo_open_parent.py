@@ -393,7 +393,10 @@ def test_build_cycle_parent_index_omits_parent_beyond_depth_three():
 def test_build_cycle_parent_index_omits_unobserved_parent():
     observations = [_obs("ci-child", "cpu-load", "COLLECTION_FAILURE")]
 
-    assert build_cycle_parent_index(
-        observations,
-        {"ci-child": {"ci-parent"}},
-    ) == {}
+    assert (
+        build_cycle_parent_index(
+            observations,
+            {"ci-child": {"ci-parent"}},
+        )
+        == {}
+    )
