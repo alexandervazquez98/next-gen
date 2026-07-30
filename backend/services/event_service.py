@@ -958,7 +958,17 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
-def get_events(status: str | None = None) -> list[dict[str, Any]]:
+def get_events(
+    status: str | None = None,
+    include_children: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the event feed scoped to the requested status.
+
+    P2 REQ-003: when `include_children=False` (default), the query filters
+    out legacy PROPAGATED events so the operator view stops double-counting
+    the child rows P0 already collapsed into the ROOT. Pass
+    `include_children=True` to retain the raw set (audit, AI chat context).
+    """
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -971,11 +981,16 @@ def get_events(status: str | None = None) -> list[dict[str, Any]]:
                 OR ($status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED'])
                 OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
             )
+            AND (
+                $include_children
+                OR coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+            )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
         """,
             status=status,
+            include_children=include_children,
         )
         return [
             _public_event_summary(

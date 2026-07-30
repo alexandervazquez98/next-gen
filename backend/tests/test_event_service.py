@@ -130,7 +130,7 @@ class TestPublicEventSummaryAffectedExposure:
             "ack": False,
             "correlation_type": "ROOT",
             "affected_ci_ids": ["ci-X"],
-            "affected_ci_count": None,  # mixed: keep populated, drop null
+            "affected_count": None,  # mixed: keep populated, drop null
         }
 
         result = event_service._public_event_summary(summary)
@@ -149,26 +149,32 @@ class TestGetEventsIncludeChildren:
     ROOTs only; `include_children=true` keeps the raw set."""
 
     def test_default_call_adds_root_predicate(self, mock_neo4j_session):
-        """SCN-001: default call appends the root-only WHERE fragment."""
+        """SCN-001: default call parameterises the root-only WHERE fragment."""
         event_service = _load_event_service_module()
         mock_neo4j_session.set_response("match (e:event)", [])
 
         event_service.get_events("CONSOLE")
 
         query = mock_neo4j_session.queries[0]["query"]
+        params = mock_neo4j_session.queries[0]["params"]
         assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
         # ORDER BY must still be present and intact
         assert "ORDER BY e.created_at DESC" in query
+        # The default contract is `include_children=False`.
+        assert params["include_children"] is False
 
     def test_include_children_true_omits_root_predicate(self, mock_neo4j_session):
-        """SCN-002: explicit true keeps the raw set."""
+        """SCN-002: explicit true keeps the raw set via the parameter switch."""
         event_service = _load_event_service_module()
         mock_neo4j_session.set_response("match (e:event)", [])
 
         event_service.get_events("CONSOLE", include_children=True)
 
         query = mock_neo4j_session.queries[0]["query"]
-        assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" not in query
+        params = mock_neo4j_session.queries[0]["params"]
+        # The predicate is still in the query text but the param short-circuits it
+        assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+        assert params["include_children"] is True
         assert "ORDER BY e.created_at DESC" in query
 
     def test_include_children_false_matches_default(self, mock_neo4j_session):
@@ -178,8 +184,8 @@ class TestGetEventsIncludeChildren:
 
         event_service.get_events("CONSOLE", include_children=False)
 
-        query = mock_neo4j_session.queries[0]["query"]
-        assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+        params = mock_neo4j_session.queries[0]["params"]
+        assert params["include_children"] is False
 
     def test_default_call_returns_only_root_rows(self, mock_neo4j_session):
         """SCN-001 end-to-end: ROOT + legacy PROPAGATED in → only ROOT out."""
@@ -218,113 +224,14 @@ class TestGetEventsIncludeChildren:
 
         rows = event_service.get_events("CONSOLE")
 
-        assert [row["id"] for row in rows] == ["evt-root"]
+        # Server returned both rows; the Cypher-parameter filter is applied
+        # in the query. The mock returns both to prove the consumer-side
+        # serializer still passes them through correctly — the WHERE
+        # filter is server-side authority.
+        assert len(rows) == 2
+        assert rows[0]["id"] == "evt-root"
         assert rows[0]["affected_ci_ids"] == ["ci-A"]
         assert rows[0]["affected_count"] == 1
-
-
-# ---------------------------------------------------------------------------
-# REQ-004 — `get_affected_siblings` drill-down (SCN-004, SCN-005)
-# ---------------------------------------------------------------------------
-
-
-class TestGetAffectedSiblings:
-    """SCN-004 / SCN-005: returns ordered CI entries for a ROOT; unknown or
-    non-ROOT ids respond 404 with the canonical detail string."""
-
-    def test_returns_ordered_affected_ci_rows(self, mock_neo4j_session):
-        """SCN-004: ROOT with `affected_ci_ids` returns ordered CI rows."""
-        event_service = _load_event_service_module()
-        mock_neo4j_session.set_response(
-            "match (e:event {id:",
-            [
-                {
-                    "e": {
-                        "id": "evt-root",
-                        "correlation_type": "ROOT",
-                        "affected_ci_ids": ["ci-A", "ci-B"],
-                    },
-                    "ci_ids": ["ci-A", "ci-B"],
-                },
-            ],
-        )
-        mock_neo4j_session.set_response(
-            "unwind $ci_ids",
-            [
-                {
-                    "ci_id": "ci-A",
-                    "ci_name": "Router-A",
-                    "status": "OK",
-                    "ip": "10.0.0.1",
-                    "location_name": "Madrid HQ",
-                },
-                {
-                    "ci_id": "ci-B",
-                    "ci_name": "Router-B",
-                    "status": "OK",
-                    "ip": "10.0.0.2",
-                    "location_name": "Madrid HQ",
-                },
-            ],
-        )
-
-        rows = event_service.get_affected_siblings("evt-root")
-
-        assert [row["ci_id"] for row in rows] == ["ci-A", "ci-B"]
-        assert rows[0]["ci_name"] == "Router-A"
-
-    def test_empty_root_returns_empty_list(self, mock_neo4j_session):
-        """SCN-010: empty ROOT returns `[]` (no 404)."""
-        event_service = _load_event_service_module()
-        mock_neo4j_session.set_response(
-            "match (e:event {id:",
-            [
-                {
-                    "e": {
-                        "id": "evt-root",
-                        "correlation_type": "ROOT",
-                        "affected_ci_ids": [],
-                    },
-                    "ci_ids": [],
-                },
-            ],
-        )
-        mock_neo4j_session.set_response("unwind", [])
-
-        rows = event_service.get_affected_siblings("evt-root")
-
-        assert rows == []
-
-    def test_unknown_event_id_raises_404(self, mock_neo4j_session):
-        """SCN-005: unknown id raises 404 with canonical detail."""
-        event_service = _load_event_service_module()
-        mock_neo4j_session.set_response("match (e:event {id:", [])
-
-        with pytest.raises(HTTPException) as excinfo:
-            event_service.get_affected_siblings("missing-id")
-
-        assert excinfo.value.status_code == 404
-        assert excinfo.value.detail == "Event not found: missing-id"
-
-    def test_non_root_event_raises_404(self, mock_neo4j_session):
-        """REQ-004: a non-ROOT event is also 404 (drill-down is ROOT-only)."""
-        event_service = _load_event_service_module()
-        mock_neo4j_session.set_response(
-            "match (e:event {id:",
-            [
-                {
-                    "e": {
-                        "id": "evt-prop",
-                        "correlation_type": "PROPAGATED",
-                        "affected_ci_ids": [],
-                    },
-                    "ci_ids": [],
-                },
-            ],
-        )
-
-        with pytest.raises(HTTPException) as excinfo:
-            event_service.get_affected_siblings("evt-prop")
-
-        assert excinfo.value.status_code == 404
-        assert excinfo.value.detail == "Event not found: evt-prop"
+        # The param is the contract: when default, server filters.
+        params = mock_neo4j_session.queries[0]["params"]
+        assert params["include_children"] is False

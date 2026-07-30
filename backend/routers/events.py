@@ -48,13 +48,25 @@ def _has_ai_permission(permission: AIPermission, current_user: User) -> bool:
 
 
 @router.get("", response_model=list[EventFeedSummary])
-async def get_events(status: str | None = None):
+async def get_events(
+    status: str | None = None,
+    include_children: bool = Query(  # noqa: B008
+        False,
+        description=(
+            "When false (default), only ROOT events are returned. Set to true "
+            "to retain legacy PROPAGATED child rows (audit, AI chat context)."
+        ),
+    ),
+):
     """
     Fetch system events filtered by status.
+
     Args:
-        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
+        status: 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack),
+            or 'CONSOLE' (Open/Ack/Recovered).
+        include_children: default False (root-only feed). See P2 REQ-003.
     """
-    return event_service.get_events(status)
+    return event_service.get_events(status, include_children=include_children)
 
 
 @router.get("/availability-report", response_model=AvailabilityReportResponse)

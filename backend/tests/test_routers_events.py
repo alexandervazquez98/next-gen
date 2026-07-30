@@ -610,3 +610,53 @@ class TestDiagnoseEvent:
             assert call_kwargs[1]["result"] == "success"
 
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/events?include_children
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventsIncludeChildren:
+    """REQ-003 / SCN-001..003: GET /api/events forwards the include_children
+    boolean to event_service and threads the default."""
+
+    def test_default_call_uses_root_only(self):
+        """SCN-001: default GET forwards include_children=False."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with(
+                "CONSOLE", include_children=False
+            )
+
+    def test_explicit_true_forwards_include_children_true(self):
+        """SCN-002: include_children=true flag is forwarded."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get(
+                "/api/events?status=CONSOLE&include_children=true"
+            )
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with(
+                "CONSOLE", include_children=True
+            )
+
+    def test_explicit_false_matches_default(self):
+        """SCN-003: include_children=false is identical to default."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get(
+                "/api/events?status=CONSOLE&include_children=false"
+            )
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with(
+                "CONSOLE", include_children=False
+            )
