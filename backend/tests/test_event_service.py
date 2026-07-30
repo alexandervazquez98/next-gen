@@ -12,13 +12,6 @@ P2 surface stays scoped and easy to audit.
 
 from __future__ import annotations
 
-try:
-    from datetime import UTC, datetime
-except ImportError:  # Python < 3.11 compatibility in CI runner
-    from datetime import datetime
-
-    UTC = UTC
-
 import importlib
 import sys
 import types

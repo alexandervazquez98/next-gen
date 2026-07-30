@@ -760,7 +760,8 @@ def get_availability_report(
             clipped_start = max(created_at, window_start)
             row["active_downtime_seconds"] += max(0.0, (window_end - clipped_start).total_seconds())
 
-        snmp_result = session.run("""
+        snmp_result = session.run(
+            """
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -775,7 +776,8 @@ def get_availability_report(
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS failing_ci,
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS no_response_ci,
                    sum(open_no_response_events) AS no_response_event_count
-            """)
+            """
+        )
         snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
 
     rows: list[dict[str, Any]] = []
@@ -862,7 +864,8 @@ def get_availability_snmp_no_response_drilldown(
 
     driver = get_db()
     with driver.session() as session:
-        summary_record = session.run("""
+        summary_record = session.run(
+            """
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -873,7 +876,8 @@ def get_availability_snmp_no_response_drilldown(
               AND e.failure_family = 'SNMP_NO_RESPONSE'
             RETURN count(DISTINCT ci) AS total_ci_with_no_response,
                    count(e) AS total_events_with_no_response
-            """).single()
+            """
+        ).single()
         if summary_record is not None:
             summary = {
                 "total_ci_with_no_response": int(
@@ -1251,12 +1255,14 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
 
             # Atomic: try to insert, if lock exists and not expired, conflict
             result = db.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO prune_lock (lock_key, owner, acquired_at, expires_at)
                     VALUES ('prune', :owner, :acquired_at, :expires_at)
                     ON CONFLICT (lock_key) DO NOTHING
                     RETURNING id
-                """),
+                """
+                ),
                 {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at},
             )
             row = result.fetchone()
@@ -1281,11 +1287,13 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
             if existing_owner == owner:
                 # We already own it — extend TTL (re-acquire)
                 db.execute(
-                    text("""
+                    text(
+                        """
                         UPDATE prune_lock
                         SET expires_at = :expires_at
                         WHERE lock_key = 'prune' AND owner = :owner
-                    """),
+                    """
+                    ),
                     {"owner": owner, "expires_at": expires_at},
                 )
                 db.commit()
@@ -1402,12 +1410,14 @@ async def event_batch_pruner(
 
     # First: get total count of recoverable events
     with driver.session() as session:
-        result = session.run("""
+        result = session.run(
+            """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             RETURN count(e) as total
-            """).single()
+            """
+        ).single()
         total = _record_value(result, "total") or 0
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}

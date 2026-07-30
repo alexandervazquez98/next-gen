@@ -630,37 +630,27 @@ class TestGetEventsIncludeChildren:
             response = client.get("/api/events?status=CONSOLE")
 
             assert response.status_code == 200
-            mock_service.get_events.assert_called_once_with(
-                "CONSOLE", include_children=False
-            )
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=False)
 
     def test_explicit_true_forwards_include_children_true(self):
         """SCN-002: include_children=true flag is forwarded."""
         with patch("routers.events.event_service") as mock_service:
             mock_service.get_events.return_value = []
 
-            response = client.get(
-                "/api/events?status=CONSOLE&include_children=true"
-            )
+            response = client.get("/api/events?status=CONSOLE&include_children=true")
 
             assert response.status_code == 200
-            mock_service.get_events.assert_called_once_with(
-                "CONSOLE", include_children=True
-            )
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=True)
 
     def test_explicit_false_matches_default(self):
         """SCN-003: include_children=false is identical to default."""
         with patch("routers.events.event_service") as mock_service:
             mock_service.get_events.return_value = []
 
-            response = client.get(
-                "/api/events?status=CONSOLE&include_children=false"
-            )
+            response = client.get("/api/events?status=CONSOLE&include_children=false")
 
             assert response.status_code == 200
-            mock_service.get_events.assert_called_once_with(
-                "CONSOLE", include_children=False
-            )
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=False)
 
 
 # ---------------------------------------------------------------------------
