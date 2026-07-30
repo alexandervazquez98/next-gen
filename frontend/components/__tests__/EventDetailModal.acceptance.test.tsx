@@ -216,6 +216,12 @@ async function renderAndOpenModal(eventOverride?: any, nodeOverride?: any, detai
         if (url === '/links') return [];
         if (url.startsWith('/events?')) return [mockEvent];
         if (url === `/events/${mockEvent.id}`) return mockDetail;
+        if (url === `/events/${mockEvent.id}/affected`) {
+            // P2 REQ-004: ROOT events with `affected_ci_ids` get a flat
+            // CI list back. Default mock returns an empty list to keep
+            // the existing acceptance tests focused on the modal surface.
+            return [];
+        }
         if (url.startsWith('/events/related/')) return [];
         return [];
     });

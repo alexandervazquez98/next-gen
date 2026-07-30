@@ -599,6 +599,72 @@ describe("MonitoringConsole smoke tests", () => {
 		expect(source).not.toContain("className: 'animate-pulse'");
 	});
 
+	it("GIVEN polluted mixed-root+propagated feed WHEN the console renders THEN KPI counts exclude PROPAGATED rows (P2 root-only contract)", async () => {
+		const { default: MonitoringConsole } = await import("../MonitoringConsole");
+
+		mockApiGet.mockImplementation((url: string) => {
+			if (url === "/nodes") return Promise.resolve([]);
+			if (url === "/links") return Promise.resolve([]);
+			if (url === "/categories") return Promise.resolve([]);
+			if (url === "/events?status=CONSOLE") {
+				return Promise.resolve([
+					{
+						id: "evt-root-crit",
+						ci_id: "ci-1",
+						ci_name: "Router-01",
+						metric_id: "m-cpu",
+						metric_name: "CPU",
+						metric_protocol: "SNMP",
+						status: "OPEN",
+						severity: "CRITICAL",
+						message: "CPU overload",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: false,
+						correlation_type: "ROOT",
+						affected_count: 3,
+					},
+					{
+						id: "evt-prop-noise",
+						ci_id: "ci-1",
+						ci_name: "Router-01",
+						metric_id: "m-lat",
+						metric_name: "Latency",
+						metric_protocol: "SNMP",
+						status: "OPEN",
+						severity: "CRITICAL",
+						message: "Propagated noise",
+						created_at: "2026-04-04T20:00:00.000Z",
+						last_seen: "2026-04-04T20:00:00.000Z",
+						ack: false,
+						correlation_type: "PROPAGATED",
+					},
+				]);
+			}
+			return Promise.resolve([]);
+		});
+
+		renderWithQueryClient(<MonitoringConsole />);
+
+		// Both events render in the stream (the grouping engine still shows them).
+		expect(await screen.findByText("CPU overload")).toBeInTheDocument();
+
+		// KPI counts: only the ROOT event counts → 1 critical, 0 warning, 0 ack.
+		const criticalCard = screen.getByText("Critical Events").closest("div");
+		const warningCard = screen.getByText("Warnings").closest("div");
+		const ackCard = screen.getByText("Acknowledged").closest("div");
+		const totalCard = screen.getByText("Total Active").closest("div");
+		expect(criticalCard?.textContent).toContain("1");
+		expect(warningCard?.textContent).toContain("0");
+		expect(ackCard?.textContent).toContain("0");
+		expect(totalCard?.textContent).toContain("1");
+
+		// Sub-label reports the blast radius from the ROOT event only.
+		expect(screen.getByTestId("stat-sublabel-total-active")).toHaveTextContent(
+			"affecting 3 CIs",
+		);
+	});
+
 	it("GIVEN mixed event states WHEN KPI cards are clicked THEN stream auto-filters and sorts by severity then open age", async () => {
 		const { default: MonitoringConsole } = await import("../MonitoringConsole");
 
