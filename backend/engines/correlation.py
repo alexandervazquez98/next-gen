@@ -42,6 +42,7 @@ EVENT_TYPE_THRESHOLD_BREACH = "THRESHOLD_BREACH"
 def cycle_root_candidates(
     observations: list[dict[str, Any]],
     topology_index: dict[tuple[str, str], dict[str, Any]] | None,
+    cycle_parent_index: dict[tuple[str, str], str | None] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Return the (ci_id, metric_id, event_type) tuples that must be ROOT.
 
@@ -59,13 +60,19 @@ def cycle_root_candidates(
             ``None`` when the kill-switch is off or the cache build failed.
             A non-dict value (defensive — mirrors the ``_resolve_correlation``
             contract) is treated as empty so the helper never raises.
+        cycle_parent_index: in-memory mapping from an observed ``(ci, metric)``
+            pair to an upstream CI that is also event-producing in this cycle.
+            Such rows are dependents and are withheld from Pass 2 while their
+            upstream candidate is materialized. Missing keys and ``None``
+            values preserve independent-ROOT behavior. Defaults to empty for
+            backward compatibility.
 
     Returns:
-        Set of ``(ci_id, metric_id, event_type)`` tuples that are missing
-        from ``topology_index`` and therefore must be materialized as ROOT
-        Events before the dependent-attachment pass. Malformed rows (missing
-        ``node_id`` or ``metric_id``) are dropped because they cannot form a
-        valid cache key.
+        Set of ``(ci_id, metric_id, event_type)`` tuples missing from the open
+        parent cache and without an observed in-cycle parent. These tuples must
+        be materialized as ROOT Events before the dependent-attachment pass.
+        Malformed rows (missing ``node_id`` or ``metric_id``) are dropped
+        because they cannot form a valid cache key.
     """
     candidates: set[tuple[str, str, str]] = set()
 
@@ -74,6 +81,7 @@ def cycle_root_candidates(
     # ``_resolve_correlation``: degrade to all-ROOT.
     safe_index: dict[tuple[str, str], dict[str, Any]]
     safe_index = topology_index if isinstance(topology_index, dict) else {}
+    safe_cycle_parent_index = cycle_parent_index if isinstance(cycle_parent_index, dict) else {}
 
     for row in observations:
         node_id = row.get("node_id")
@@ -85,9 +93,15 @@ def cycle_root_candidates(
         # Rows missing node_id or metric_id cannot form a cache key — skip.
         if not node_id or not metric_id:
             continue
-        # Cache hit ⇒ the row will resolve to PROPAGATED via the existing
-        # _refresh_* path; do not include it as a ROOT candidate.
-        if (node_id, metric_id) in safe_index:
+        key = (node_id, metric_id)
+        # Existing open parent hit ⇒ the row resolves as PROPAGATED via the
+        # existing refresh path; do not include it as a ROOT candidate.
+        if key in safe_index:
+            continue
+        # An observed upstream CI will be materialized first in Pass 2. Keep
+        # this row dependent so Pass 3 can attach it to the new ROOT instead of
+        # creating a same-cycle child ROOT.
+        if safe_cycle_parent_index.get(key):
             continue
         candidates.add((node_id, metric_id, event_type))
 
@@ -107,6 +121,7 @@ _EVENT_TYPE_FAMILIES: dict[str, str] = {
 def materialize_current_cycle_roots(
     session: Any,
     db: Any,
+    observations: list[dict[str, Any]],
     candidates: set[tuple[str, str, str]],
     refresh_collection_failures: Callable[..., Any],
     refresh_icmp_availability: Callable[..., Any],
@@ -117,25 +132,31 @@ def materialize_current_cycle_roots(
 
     Pass 2 of the two-pass correlation flow (see design.md AD-3 + AD-7):
 
-    1. Group the candidates by event family (collection / availability /
-       latency). Within a family, call the matching refresh helper exactly
-       once with the full set of family candidates. Each call passes
-       ``cache={}`` — the empty cache forces the helper's
-       ``_resolve_correlation`` to tag every row as ROOT (no PROPAGATED
-       writes, no child Events).
-    2. Share the caller's ``db`` (the SQLAlchemy session opened in
+    1. Filter the cycle's event-producing ``observations`` down to the
+       ones whose ``(node_id, metric_id, event_type)`` triple is in
+       ``candidates`` (the set produced by ``cycle_root_candidates``).
+       We pass the FULL observation dicts to the refresh helpers so the
+       existing UNWIND...CREATE path (severity, message, value, etc.) is
+       unchanged. The function does NOT synthesize minimal rows.
+    2. Group the filtered observations by event family (collection /
+       availability / latency). Within a family, call the matching
+       refresh helper exactly once with the full set of family rows.
+       Each call passes ``cache={}`` — the empty cache forces the
+       helper's ``_resolve_correlation`` to tag every row as ROOT (no
+       PROPAGATED writes, no child Events).
+    3. Share the caller's ``db`` (the SQLAlchemy session opened in
        ``poll_snmp``) so the transaction-scoped ``pg_advisory_xact_lock``
        acquired inside each helper survives Pass 2 → Pass 3 (REQ-007).
-    3. Per-helper try/except: a failure in one family is logged and
+    4. Per-helper try/except: a failure in one family is logged and
        skipped, but the other families still receive their candidates
        (REQ-005, SCN-009). The cycle is never aborted.
-    4. Unknown event types are logged at WARNING and skipped — a stale
+    5. Unknown event types are logged at WARNING and skipped — a stale
        enum value must never crash the cycle.
 
     The function does NOT itself run any Cypher. It only orchestrates the
-    call into the existing helpers which own the FORACH(CREATE) write path
-    (proven dedup, ``poll_collector_id`` fallback, ROOT / PROPAGATED
-    discrimination, recovery semantics).
+    call into the existing helpers which own the FOREACH(CREATE) write
+    path (proven dedup, ``poll_collector_id`` fallback, ROOT /
+    PROPAGATED discrimination, recovery semantics).
 
     Args:
         session: the Neo4j session owned by ``poll_snmp``. Forwarded to
@@ -143,6 +164,11 @@ def materialize_current_cycle_roots(
         db: the SQLAlchemy session owned by ``poll_snmp``. Forwarded as
             ``lock_db`` to every refresh helper so the Event advisory-lock
             triplet contract is preserved across Pass 2 → Pass 3.
+        observations: list of event-producing observation rows from the
+            current cycle. Each row must expose at least ``node_id``,
+            ``metric_id`` and ``event_type``; the rest of the row
+            (severity, message, value, etc.) is forwarded unchanged to
+            the matching ``_refresh_*`` helper.
         candidates: set of ``(ci_id, metric_id, event_type)`` tuples that
             must be materialized as ROOT this cycle. Produced by
             ``cycle_root_candidates``.
@@ -151,32 +177,47 @@ def materialize_current_cycle_roots(
         refresh_icmp_latency: ``_refresh_icmp_latency_events``.
 
     Returns:
-        Number of candidates that were successfully routed to a refresh
-        helper. Failures inside a refresh helper are NOT counted.
+        Number of OBSERVATIONS that were successfully routed to a refresh
+        helper. Failures inside a refresh helper are NOT counted. The
+        return value intentionally matches the number of observation rows
+        forwarded (not the deduplicated candidate set) so the caller's
+        operator log is honest about what hit the database.
     """
-    if not candidates:
+    if not candidates or not observations:
         return 0
 
-    # Group candidates by family. Order within a family is irrelevant;
-    # each helper applies its own dedup.
+    # Filter the full observation dicts to only those that are ROOT
+    # candidates. We forward the original dicts so the existing
+    # UNWIND...CREATE / OPTIONAL MATCH path keeps working with no
+    # change to the helper bodies.
+    candidate_observations: list[dict[str, Any]] = []
+    for row in observations:
+        node_id = row.get("node_id")
+        metric_id = row.get("metric_id")
+        event_type = row.get("event_type")
+        if not (node_id and metric_id and event_type):
+            continue
+        if (node_id, metric_id, event_type) in candidates:
+            candidate_observations.append(row)
+
+    if not candidate_observations:
+        return 0
+
+    # Group candidate observations by family. Order within a family is
+    # irrelevant; each helper applies its own dedup.
     by_family: dict[str, list[dict[str, Any]]] = {
         "collection": [],
         "availability": [],
         "latency": [],
     }
     skipped_unknown: list[tuple[str, str, str]] = []
-    for ci_id, metric_id, event_type in candidates:
+    for row in candidate_observations:
+        event_type = row.get("event_type")
         family = _EVENT_TYPE_FAMILIES.get(event_type)
         if family is None:
-            skipped_unknown.append((ci_id, metric_id, event_type))
+            skipped_unknown.append((row.get("node_id"), row.get("metric_id"), event_type))
             continue
-        by_family[family].append(
-            {
-                "node_id": ci_id,
-                "metric_id": metric_id,
-                "event_type": event_type,
-            }
-        )
+        by_family[family].append(row)
 
     if skipped_unknown:
         logger.warning(

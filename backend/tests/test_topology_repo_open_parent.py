@@ -11,7 +11,7 @@ the Cypher at cache-build time (design C2 fix) — they never appear as keys.
 
 from __future__ import annotations
 
-from repositories.topology_repo import build_open_parent_index
+from repositories.topology_repo import build_cycle_parent_index, build_open_parent_index
 
 
 class _FakeResult:
@@ -338,3 +338,65 @@ def test_current_cycle_parent_candidates_is_pure_no_session_argument():
     # First parameter is the observations list; there is NO Neo4j session.
     assert params[0].name == "observations"
     assert len(params) == 1
+
+
+# ---------------------------------------------------------------------------
+# First-cycle remediation — build_cycle_parent_index
+# ---------------------------------------------------------------------------
+
+
+def test_build_cycle_parent_index_maps_observed_child_to_observed_parent():
+    observations = [
+        _obs("ci-parent", "cpu-load", "COLLECTION_FAILURE"),
+        _obs("ci-child", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+
+    result = build_cycle_parent_index(
+        observations,
+        {"ci-child": {"ci-parent"}},
+    )
+
+    assert result == {("ci-child", "cpu-load"): "ci-parent"}
+
+
+def test_build_cycle_parent_index_walks_through_unobserved_intermediates_to_depth_three():
+    observations = [
+        _obs("ci-root", "ping", "AVAILABILITY"),
+        _obs("ci-child", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+    relations = {
+        "ci-child": {"ci-hop-1"},
+        "ci-hop-1": {"ci-hop-2"},
+        "ci-hop-2": {"ci-root"},
+    }
+
+    result = build_cycle_parent_index(observations, relations)
+
+    assert result == {("ci-child", "cpu-load"): "ci-root"}
+
+
+def test_build_cycle_parent_index_omits_parent_beyond_depth_three():
+    observations = [
+        _obs("ci-root", "cpu-load", "COLLECTION_FAILURE"),
+        _obs("ci-child", "cpu-load", "COLLECTION_FAILURE"),
+    ]
+    relations = {
+        "ci-child": {"ci-hop-1"},
+        "ci-hop-1": {"ci-hop-2"},
+        "ci-hop-2": {"ci-hop-3"},
+        "ci-hop-3": {"ci-root"},
+    }
+
+    assert build_cycle_parent_index(observations, relations) == {}
+
+
+def test_build_cycle_parent_index_omits_unobserved_parent():
+    observations = [_obs("ci-child", "cpu-load", "COLLECTION_FAILURE")]
+
+    assert (
+        build_cycle_parent_index(
+            observations,
+            {"ci-child": {"ci-parent"}},
+        )
+        == {}
+    )

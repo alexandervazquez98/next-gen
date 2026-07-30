@@ -29,7 +29,11 @@ from polling.icmp_measurements import (  # noqa: E402
 )
 from postgres_db import SessionLocal  # noqa: E402
 from repositories.metric_repo import bulk_insert_metrics  # noqa: E402
-from repositories.topology_repo import build_open_parent_index  # noqa: E402
+from repositories.topology_repo import (  # noqa: E402
+    build_cycle_parent_index,
+    build_open_parent_index,
+    get_topology_relations,
+)
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock  # noqa: E402
 from services.neo4j_write_guard import (  # noqa: E402
     is_poll_collector_id_undefined_error,
@@ -551,7 +555,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND existing.event_type = 'AVAILABILITY'
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND existing.availability_source IN ['PING', 'ICMP']
@@ -596,7 +600,7 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (existing:Event {ci_id: row.node_id, metric_id: row.metric_id})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND existing.event_type = 'AVAILABILITY'
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND existing.availability_source IN ['PING', 'ICMP']
@@ -1250,6 +1254,7 @@ def poll_snmp():
             correlation_pairs = {p for p in correlation_pairs if p[0] and p[1]}
 
             cache = {}  # local to this cycle — never module-level
+            cache_build_failed = False
             if polling_settings.enable_topology_rca and correlation_pairs:
                 try:
                     cache = build_open_parent_index(session, correlation_pairs)
@@ -1262,9 +1267,85 @@ def poll_snmp():
                         sorted(correlation_pairs),
                         exc,
                     )
+                    cache_build_failed = True
                     cache = {}
 
-            _refresh_snmp_collection_failures(session, failure_updates, cache=cache, lock_db=db)
+            # ── Two-pass same-cycle correlation (fix #416 P0) ────────────
+            # Pass 2 writes ROOT events for the CIs that have NO parent in
+            # the freshly-built cache. Pass 3 re-resolves the cache (which
+            # now includes the Pass 2 ROOT events) and routes the
+            # dependents through PROPAGATED + affected-CI attach via
+            # ``_update_propagated_root_events``. See design.md (AD-3,
+            # AD-4, AD-7) for the contract.
+            availability_updates = [
+                u for u in latest_updates if u.get("metric_kind") == "availability"
+            ]
+            latency_updates = [
+                u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+            ]
+            # Combine every event-producing row from this cycle so
+            # ``cycle_root_candidates`` sees a uniform (node_id, metric_id,
+            # event_type) shape regardless of the family it came from.
+            all_event_observations: list[dict[str, Any]] = list(failure_updates)
+            for update in latest_updates:
+                if update.get("event_type"):
+                    all_event_observations.append(update)
+
+            from engines.correlation import (
+                cycle_root_candidates,
+                materialize_current_cycle_roots,
+            )
+
+            # Pass 1.5: preload the current-cycle topology and resolve observed
+            # dependents before selecting roots. This closes the first-cycle
+            # gap where the open-event cache is legitimately empty because the
+            # parent ROOT has not been materialized yet.
+            cycle_parent_index: dict[tuple[str, str], str] = {}
+            if (
+                polling_settings.enable_topology_rca
+                and correlation_pairs
+                and not cache_build_failed
+            ):
+                try:
+                    topology_relations = get_topology_relations(
+                        session,
+                        {ci_id for ci_id, _metric_id in correlation_pairs},
+                    )
+                    cycle_parent_index = build_cycle_parent_index(
+                        all_event_observations,
+                        topology_relations,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "topology_rca_cycle_parent_build_failed using open-parent "
+                        "cache only; pairs=%s error=%s",
+                        sorted(correlation_pairs),
+                        exc,
+                    )
+                    cycle_parent_index = {}
+
+            candidates = cycle_root_candidates(
+                all_event_observations,
+                cache,
+                cycle_parent_index,
+            )
+
+            # Pass 2a (before bulk insert): the COLLECTION_FAILURE family
+            # only. The pre-fix code routed collection-failures before
+            # bulk_insert and ICMP availability/latency after — preserving
+            # that order is what the existing
+            # ``test_debounce_threshold_bulk_insert_failure_does_not_write_event``
+            # invariant protects (REQ-007: events are not written if the
+            # durable Timescale insert fails).
+            materialize_current_cycle_roots(
+                session=session,
+                db=db,
+                observations=failure_updates,
+                candidates=candidates,
+                refresh_collection_failures=_refresh_snmp_collection_failures,
+                refresh_icmp_availability=lambda *_args, **_kwargs: None,
+                refresh_icmp_latency=lambda *_args, **_kwargs: None,
+            )
 
             # Perform Bulk Insert at the end of the cycle. Only publish latest
             # values to Neo4j after Timescale persistence succeeds, so the UI
@@ -1298,19 +1379,82 @@ def poll_snmp():
                         status=update["status"],
                         msg=update["message"],
                     )
-                availability_updates = [
-                    u for u in latest_updates if u.get("metric_kind") == "availability"
-                ]
-                _refresh_icmp_availability_events(
-                    session, availability_updates, cache=cache, lock_db=db
+
+            # Pass 2b (after bulk insert): the ICMP availability and
+            # latency families. These are routed after the durable insert
+            # so a Timescale failure does not write dangling Event rows
+            # for ICMP availability/latency. The COLLECTION_FAILURE family
+            # already ran in Pass 2a; we exclude it here.
+            icmp_event_observations = [
+                row
+                for row in all_event_observations
+                if row.get("event_type") in {EVENT_TYPE_AVAILABILITY, EVENT_TYPE_THRESHOLD_BREACH}
+            ]
+            materialize_current_cycle_roots(
+                session=session,
+                db=db,
+                observations=icmp_event_observations,
+                candidates=candidates,
+                refresh_collection_failures=lambda *_args, **_kwargs: None,
+                refresh_icmp_availability=_refresh_icmp_availability_events,
+                refresh_icmp_latency=_refresh_icmp_latency_events,
+            )
+
+            # ── Recovery passes (unchanged from the pre-fix flow) ─────────
+            # The design places them between Pass 2 and Pass 3 so a parent
+            # that recovers in the same cycle cannot accept new dependent
+            # attachments (REQ-006 / SCN-008).
+            _recover_snmp_collection_failures(session, latest_updates)
+            _recover_icmp_availability_events(session, availability_updates)
+            _recover_icmp_latency_events(session, latency_updates)
+
+            # Pass 3: rebuild the cache now that Pass 2's ROOT events are
+            # persisted, then route the NON-candidate rows through the
+            # refresh helpers with the rebuilt cache. The candidates
+            # already have their ROOT events; if we sent them through
+            # Pass 3 they would resolve to themselves and the
+            # ``_update_propagated_root_events`` query would attempt to
+            # attach a CI to its own ROOT. We filter them out so Pass 3
+            # only handles dependents.
+            rebuilt_cache: dict = {}
+            if polling_settings.enable_topology_rca and correlation_pairs:
+                try:
+                    rebuilt_cache = build_open_parent_index(session, correlation_pairs)
+                except Exception as exc:
+                    # W2 (whole-cycle blast radius) for the rebuild: log
+                    # once, fall back to ROOT for every non-candidate
+                    # this cycle. Next cycle rebuilds the cache.
+                    logger.warning(
+                        "topology_rca_cache_rebuild_failed falling back to ROOT "
+                        "for non-candidates this cycle; pairs=%s error=%s",
+                        sorted(correlation_pairs),
+                        exc,
+                    )
+                    rebuilt_cache = {}
+
+            def _is_candidate(row: dict[str, Any]) -> bool:
+                return (
+                    row.get("node_id"),
+                    row.get("metric_id"),
+                    row.get("event_type"),
+                ) in candidates
+
+            non_candidate_failures = [u for u in failure_updates if not _is_candidate(u)]
+            non_candidate_availability = [u for u in availability_updates if not _is_candidate(u)]
+            non_candidate_latency = [u for u in latency_updates if not _is_candidate(u)]
+
+            if non_candidate_failures:
+                _refresh_snmp_collection_failures(
+                    session, non_candidate_failures, cache=rebuilt_cache, lock_db=db
                 )
-                _recover_icmp_availability_events(session, availability_updates)
-                latency_updates = [
-                    u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID
-                ]
-                _refresh_icmp_latency_events(session, latency_updates, cache=cache, lock_db=db)
-                _recover_icmp_latency_events(session, latency_updates)
-                _recover_snmp_collection_failures(session, latest_updates)
+            if non_candidate_availability:
+                _refresh_icmp_availability_events(
+                    session, non_candidate_availability, cache=rebuilt_cache, lock_db=db
+                )
+            if non_candidate_latency:
+                _refresh_icmp_latency_events(
+                    session, non_candidate_latency, cache=rebuilt_cache, lock_db=db
+                )
                 print(
                     f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB."
                 )
