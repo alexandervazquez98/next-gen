@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Event write-time correlation helpers** (PR #417, part of #416):
+  - Adds `backend/engines/correlation.py` with three pure helpers: `cycle_root_candidates`, `materialize_current_cycle_roots`, and `attach_dependents_to_roots`. All side-effect free and Neo4j-free; helpers own no module-level state.
+  - Adds `current_cycle_parent_candidates` to `backend/repositories/topology_repo.py` as the in-memory complement to `build_open_parent_index`; same depth-three `DEPENDS_ON | HOSTED_ON | CONNECTS_TO` vocabulary but no Neo4j I/O.
+  - Adds canonical capability spec `openspec/specs/event-write-time-correlation/spec.md` (REQ-001..007 + SCN-001..011 strict-TDD matrix) under the new `event-write-time-correlation` capability.
+  - Strict-TDD coverage in `backend/tests/test_event_correlation.py::TestCycleRootCandidates` and `backend/tests/test_topology_repo_open_parent.py` covers order-independent selection, cache-hit suppression, non-propagating metrics, lookup failure, and idempotency.
+
+### Fixed
+
+- **Event amplification on parent CI failure** (PRs #417 + #418, fixes #416):
+  - Resolves the production scenario where a single parent CI failure produced N+1 ROOT Events (up to 168x amplification in production). Two chained PRs ship the fix; full integration lands when PR #418 merges after #417.
+  - PR #418 details (already documented in its PR body): `poll_snmp` becomes a three-pass flow — Pass 1 collect → Pass 1.5 `build_cycle_parent_index` (in-memory cycle-local topology) → Pass 2 materialize roots → recovery → Pass 3 rebuilt-cache attach. Idempotent attach via existing `_update_propagated_root_events` so siblings land as `affected_ci_ids` / `affected_ci_count` on the new ROOT without duplicating child Event nodes.
+  - All previous correlation/RCA/lock invariants preserved: #310/#318 depth-three topology, #322/#330 `pg_advisory_xact_lock` + `poll_collector_id`, #405 correlation-topology-policy, and #398 clean-recovered-events semantics.
+  - Verification: REQ-001..007 and SCN-001..011 green; 1760/1760 backend tests pass after excluding 4 pre-existing Docker-dependent `test_writer_advisory_lock.py` failures; smoke and image builds green.
+  - Deferred slices (separate SDD): P1 legacy collector parity (`backend/services/snmp_service.py`), P2 public API fields + monitoring KPI rendering, P3 leased queue writer + topology backfill.
+
 ## [1.14.2] — 2026-07-11
 
 ### Fixed
