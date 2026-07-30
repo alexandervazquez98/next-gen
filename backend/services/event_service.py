@@ -189,10 +189,28 @@ def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "root_cause_ci_id",
         "event_type",
         "source_protocol",
+        # P2 REQ-001/002: expose the ROOT's affected-CI blast radius without
+        # smuggling it through the `propagated` derived flag. Both fields are
+        # dropped on the way back out when they are None/empty (the existing
+        # `value is not None` filter handles that).
+        "affected_ci_ids",
+        "affected_count",
     }
     result = {
         key: value for key, value in summary.items() if key in allowed_keys and value is not None
     }
+    # P2 REQ-001/002: normalize the Neo4j writer key `affected_ci_count` to
+    # the public JSON key `affected_count` so the Pydantic surface stays
+    # consistent with the spec.
+    if "affected_ci_count" in summary and summary["affected_ci_count"] is not None:
+        result["affected_count"] = summary["affected_ci_count"]
+    # P2 REQ-001/010: drop the affected-CI fields when the legacy ROOT has
+    # no dependents. Empty list / zero count collapse to "missing" so the
+    # legacy JSON contract is preserved.
+    if not result.get("affected_ci_ids"):
+        result.pop("affected_ci_ids", None)
+    if not result.get("affected_count"):
+        result.pop("affected_count", None)
     # Add computed propagated flag only when correlation_type is PROPAGATED
     if summary.get("correlation_type") == "PROPAGATED":
         result["propagated"] = True
