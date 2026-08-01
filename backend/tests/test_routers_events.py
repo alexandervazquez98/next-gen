@@ -654,6 +654,67 @@ class TestGetEventsIncludeChildren:
 
 
 # ---------------------------------------------------------------------------
+# REQ-001 / SCN-010: serialize ROOT without affected fields — keys must be
+# absent from the JSON payload, not emitted as `null`. FastAPI re-emits
+# ResponseModel defaults if `response_model_exclude_none` is not set.
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventsResponseExcludeNone:
+    """SCN-010: ROOT without `affected_ci_ids` / `affected_count` should
+    emit those keys as absent in the JSON payload, not as `null`.
+    """
+
+    def test_root_without_affected_omits_keys_from_json(self):
+        """SCN-010: a ROOT with no affected set must NOT include the
+        `affected_ci_ids` or `affected_count` keys in the JSON wire."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = [
+                {
+                    "id": "evt-root-1",
+                    "ci_id": "ci-1",
+                    "status": "OPEN",
+                    "severity": "CRITICAL",
+                    "message": "boom",
+                    "ack": False,
+                    "correlation_type": "ROOT",
+                },
+            ]
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert len(body) == 1
+            assert "affected_ci_ids" not in body[0]
+            assert "affected_count" not in body[0]
+
+    def test_root_with_affected_keeps_keys_in_json(self):
+        """SCN-006: a ROOT with populated affected set keeps both keys."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = [
+                {
+                    "id": "evt-root-2",
+                    "ci_id": "ci-1",
+                    "status": "OPEN",
+                    "severity": "CRITICAL",
+                    "message": "boom",
+                    "ack": False,
+                    "correlation_type": "ROOT",
+                    "affected_ci_ids": ["ci-A", "ci-B"],
+                    "affected_count": 2,
+                },
+            ]
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body[0]["affected_ci_ids"] == ["ci-A", "ci-B"]
+            assert body[0]["affected_count"] == 2
+
+
+# ---------------------------------------------------------------------------
 # Tests: GET /api/events/{event_id}/affected
 # ---------------------------------------------------------------------------
 

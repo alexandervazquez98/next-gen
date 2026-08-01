@@ -48,7 +48,7 @@ def _has_ai_permission(permission: AIPermission, current_user: User) -> bool:
     return permission.value in current_user.permissions
 
 
-@router.get("", response_model=list[EventFeedSummary])
+@router.get("", response_model=list[EventFeedSummary], response_model_exclude_none=True)
 async def get_events(
     status: str | None = None,
     include_children: bool = Query(  # noqa: B008
@@ -66,6 +66,13 @@ async def get_events(
         status: 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack),
             or 'CONSOLE' (Open/Ack/Recovered).
         include_children: default False (root-only feed). See P2 REQ-003.
+
+    P2 REQ-001 / SCN-010: `response_model_exclude_none=True` guarantees that
+    absent `affected_ci_ids` / `affected_count` fields stay absent from the
+    JSON payload. The service-side `_public_event_summary` drops null
+    values, but FastAPI's default response-model serialization rebuilds
+    the schema and would re-emit the schema defaults as `null`; the
+    exclude_none flag preserves the omission contract end-to-end.
     """
     return event_service.get_events(status, include_children=include_children)
 
