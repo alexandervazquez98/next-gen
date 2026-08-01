@@ -180,8 +180,30 @@ class TestGetEventsIncludeChildren:
         params = mock_neo4j_session.queries[0]["params"]
         assert params["include_children"] is False
 
-    def test_default_call_returns_only_root_rows(self, mock_neo4j_session):
-        """SCN-001 end-to-end: ROOT + legacy PROPAGATED in → only ROOT out."""
+    def test_default_call_filters_propagated_legacy_rows(self, mock_neo4j_session):
+        """SCN-001: include_children=False filters out PROPAGATED legacy rows.
+
+        The mock represents the post-filter result: when the seed contains
+        only legacy PROPAGATED rows the server-side WHERE fragment
+        `coalesce(e.correlation_type, 'ROOT') = 'ROOT'` strips them and
+        the consumer receives an empty set. The parameter is the contract.
+        """
+        event_service = _load_event_service_module()
+        mock_neo4j_session.set_response(
+            "match (e:event)",
+            [],
+        )
+
+        rows = event_service.get_events("CONSOLE")
+
+        assert rows == []
+        params = mock_neo4j_session.queries[0]["params"]
+        assert params["include_children"] is False
+
+    def test_include_children_true_keeps_propagated_rows(self, mock_neo4j_session):
+        """SCN-002 companion: include_children=True keeps the raw set
+        (ROOT + PROPAGATED) so the consumer passes both rows through.
+        """
         event_service = _load_event_service_module()
         mock_neo4j_session.set_response(
             "match (e:event)",
@@ -215,19 +237,14 @@ class TestGetEventsIncludeChildren:
             ],
         )
 
-        rows = event_service.get_events("CONSOLE")
+        rows = event_service.get_events("CONSOLE", include_children=True)
 
-        # Server returned both rows; the Cypher-parameter filter is applied
-        # in the query. The mock returns both to prove the consumer-side
-        # serializer still passes them through correctly — the WHERE
-        # filter is server-side authority.
         assert len(rows) == 2
-        assert rows[0]["id"] == "evt-root"
+        assert [row["id"] for row in rows] == ["evt-root", "evt-prop"]
         assert rows[0]["affected_ci_ids"] == ["ci-A"]
         assert rows[0]["affected_count"] == 1
-        # The param is the contract: when default, server filters.
         params = mock_neo4j_session.queries[0]["params"]
-        assert params["include_children"] is False
+        assert params["include_children"] is True
 
 
 # ---------------------------------------------------------------------------
