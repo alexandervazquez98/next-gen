@@ -9,6 +9,7 @@ import { useGraphTopologyQuery } from './useGraphTopologyQuery';
 import { useLinksQuery } from './useLinksQuery';
 import { useNodesQuery } from './useNodesQuery';
 import { useSystemStatusQuery } from './useSystemStatusQuery';
+import { queryKeys } from '../../services/queryKeys';
 
 const { mockApiGet } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
@@ -216,43 +217,71 @@ describe('resource query hooks', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // P2 REQ-006 / SCN-007: include_children Boolean discriminates the cache
+  // P2 REQ-006 / SCN-007: include_children Boolean discriminates the cache.
+  // Two concurrent React Query clients (one per mode) must see their own
+  // rows in the same QueryClient — no cross-contamination.
   // ---------------------------------------------------------------------------
 
-  it('SCN-007: distinct cache keys for include_children=true vs default', async () => {
-    mockApiGet.mockResolvedValue([]);
+  it('SCN-007: two simultaneous useActiveEventsQuery consumers keep separate cache slots', async () => {
+    vi.useRealTimers();
+    const client = createTestQueryClient();
 
-    render(<HookProbe resource="events" />, { wrapper: createQueryWrapper() });
-
-    await act(async () => {
-      await Promise.resolve();
+    mockApiGet.mockImplementation(async (url: string) => {
+      if (url.includes('include_children=true')) {
+        return [
+          { id: 'evt-root' },
+          { id: 'evt-child' },
+        ];
+      }
+      return [{ id: 'evt-root' }];
     });
 
-    // Default hook → include_children=false. The mock URL stays the same
-    // (no `include_children` param) so the Operating Console keeps its
-    // existing wire signature.
-    expect(mockApiGet).toHaveBeenCalledWith(
-      '/events?status=CONSOLE',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    function ConcurrentEventsProbe() {
+      const rootOnly = useActiveEventsQuery(false);
+      const withChildren = useActiveEventsQuery(true);
+      return (
+        <section>
+          <span data-testid="root-data">{JSON.stringify(rootOnly.data ?? [])}</span>
+          <span data-testid="root-status">{String(rootOnly.isLoading)}</span>
+          <span data-testid="with-data">{JSON.stringify(withChildren.data ?? [])}</span>
+          <span data-testid="with-status">{String(withChildren.isLoading)}</span>
+        </section>
+      );
+    }
 
-    // A raw caller (e.g. audit re-ingestion) opts in explicitly.
-    mockApiGet.mockClear();
-    mockApiGet.mockResolvedValue([]);
-    const { fetchActiveEvents } = await import('../../services/queryResources');
-    await act(async () => {
-      await fetchActiveEvents({ include_children: true });
+    render(<ConcurrentEventsProbe />, { wrapper: createQueryWrapper(client) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('root-status')).toHaveTextContent('false');
+      expect(screen.getByTestId('with-status')).toHaveTextContent('false');
     });
 
-    expect(mockApiGet).toHaveBeenCalledWith(
-      '/events?status=CONSOLE&include_children=true',
-      expect.anything(),
+    // Each consumer sees its own data — no cross-contamination.
+    expect(screen.getByTestId('root-data')).toHaveTextContent(
+      JSON.stringify([{ id: 'evt-root' }]),
+    );
+    expect(screen.getByTestId('with-data')).toHaveTextContent(
+      JSON.stringify([{ id: 'evt-root' }, { id: 'evt-child' }]),
     );
 
-    // The two requests must hit DIFFERENT cache keys.
-    const { queryKeys } = await import('../../services/queryKeys');
-    expect(queryKeys.activeEvents({ includeChildren: false })).not.toEqual(
-      queryKeys.activeEvents({ includeChildren: true }),
+    // Both queries fired exactly once — each cache key resolved separately.
+    expect(mockApiGet).toHaveBeenCalledTimes(2);
+    const calledUrls = mockApiGet.mock.calls.map((args) => args[0]);
+    expect(calledUrls).toEqual(
+      expect.arrayContaining([
+        '/events?status=CONSOLE',
+        '/events?status=CONSOLE&include_children=true',
+      ]),
     );
+
+    // The QueryClient cache holds both keys with their independent payloads.
+    const rootKey = queryKeys.activeEvents({ includeChildren: false });
+    const withKey = queryKeys.activeEvents({ includeChildren: true });
+    expect(rootKey).not.toEqual(withKey);
+    expect(client.getQueryData(rootKey)).toEqual([{ id: 'evt-root' }]);
+    expect(client.getQueryData(withKey)).toEqual([
+      { id: 'evt-root' },
+      { id: 'evt-child' },
+    ]);
   });
 });
