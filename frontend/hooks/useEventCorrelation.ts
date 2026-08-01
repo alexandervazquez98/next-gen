@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Event } from '../types';
 
 export type GroupedEvent = Event & {
-    relatedEvents: Event[];
+    relatedEvents: GroupedEvent[];
     isRoot: boolean;
     cause?: string;
 };
