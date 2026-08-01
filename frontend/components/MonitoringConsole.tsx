@@ -15,7 +15,6 @@ import { useEventMutations } from "../hooks/queries/useEventMutations";
 import { useEventDetailQuery } from "../hooks/queries/useEventDetailQuery";
 import { useMonitoringConsoleData } from "../hooks/queries/useMonitoringConsoleData";
 import { useRelatedEventsQuery } from "../hooks/queries/useRelatedEventsQuery";
-import { useAffectedCIsQuery } from "../hooks/queries/useAffectedCIsQuery";
 import { useQueries } from "@tanstack/react-query";
 import { queryKeys } from "../services/queryKeys";
 import { fetchAffectedCIs } from "../services/queryResources";
