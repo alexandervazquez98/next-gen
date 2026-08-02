@@ -247,3 +247,26 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
 | Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
 |------|------------|--------------|----------|-----------|---------------|
 | WU-8 T-025..T-032 | `c69f50d`, `e02c5fe`, `02a7c5d` | `9f13613`, `f5268fd`, `2eeb2e2` | ✓ Ruff clean; AST scan clean; dataclass tuple | 16 | ✓ build_query (Cypher, params), compute_query_hash (determinism, 16-hex), FakeSession seam, discover_orphans (SCN-001/002/004/006/010/011, dedupe, opaque filter, cap, bad cap, invalid scope, cypher injection) |
+
+## WU-9 — CLI wiring
+- Status: done
+- Commits:
+  - `74d046b` test(orphan-cli): add cli wiring scenarios (RED)
+  - `3353176` feat(orphan-cli): wire cli entry point (GREEN)
+- Tests: 7 (2 parse_args + 5 main integration); full openspec suite **116/116 PASS**.
+- Files touched:
+  - `openspec/scripts/tests/test_main.py` (new; CLI integration tests)
+  - `openspec/scripts/cmdb_backfill_orphans.py` (added `argparse` import, `parse_args`, `_audit_payload_for_failure`, `main`)
+- Work Unit Evidence:
+  - Focused command: `backend/.venv/bin/python -m pytest openspec/scripts/tests/test_main.py -v` → **7 passed**.
+  - Runtime harness: CLI smoke test via `python -m openspec.scripts.cmdb_backfill_orphans --help` returns help text and `rc=0`.
+  - Rollback boundary: remove `parse_args`, `_audit_payload_for_failure`, `main`, and `test_main.py`; validators + Neo4j helpers stay intact.
+- Notes:
+  - `main()` validates scope first, then relationship types, then resolves the URI, then validates the output path, then opens the driver. Every failure path emits an audit line keyed by the actual exit code.
+  - The fake session seam in `test_main.py` uses a `_Capture` class that supports both `driver.session()` direct call and `with driver.session() as session` context manager so the production code can pick the right shape.
+
+## TDD Cycle Evidence (WU-9)
+
+| Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
+|------|------------|--------------|----------|-----------|---------------|
+| WU-9 T-033/T-034 | `74d046b` | `3353176` | ✓ Ruff clean; AST scan clean; CI default rels | 7 | ✓ parse_args defaults + custom rels; main success (SCN-005 file output, SCN-007 audit line shape); failure paths (SCN-008 scope, SCN-009 missing URI, missing URI emits audit line) |

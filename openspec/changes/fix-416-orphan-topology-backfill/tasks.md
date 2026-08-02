@@ -90,8 +90,8 @@ Chain strategy: pending
 - [x] T-032 [TEST] SCN-010 cap test: feed 15_000 synthetic IDs, assert `orphan_count == 10000`, `cap_reached=True`, audit line includes `cap_reached=true`. Commit: `test(scripts): enforce 10k orphan cap`.
 
 ### WU-9 — CLI wiring (SCN-005, SCN-007, SCN-008, SCN-009, AD-01)
-- [ ] T-033 [RED] Integration tests for `main(argv)` via `capsys` + monkeypatched `_open_neo4j` → `FakeSession`: SCN-005 (`--output <tmp>/file.json` writes file + empty stdout), SCN-007 (audit line shape on success), SCN-008 (`--scope switch` → exit != 0, no `query_hash`), SCN-009 (missing URI → exit != 0, no credentials logged). Pair with T-034.
-- [ ] T-034 [GREEN] Implement `parse_args` (`argparse`) + `main(argv=None)` orchestrating validators → driver → output → audit; ensure `exit=` reflects actual `sys.exit` code in audit. Commit: `feat(orphan-cli): wire main entrypoint`.
+- [x] T-033 [RED] Integration tests for `main(argv)` via `capsys` + monkeypatched `_open_neo4j` → `FakeSession`: SCN-005 (`--output <tmp>/file.json` writes file + empty stdout), SCN-007 (audit line shape on success), SCN-008 (`--scope switch` → exit != 0, no `query_hash`), SCN-009 (missing URI → exit != 0, no credentials logged). Pair with T-034.
+- [x] T-034 [GREEN] Implement `parse_args` (`argparse`) + `main(argv=None)` orchestrating validators → driver → output → audit; ensure `exit=` reflects actual `sys.exit` code in audit. Commit: `feat(orphan-cli): wire main entrypoint`.
 
 ### WU-10 — Docs + CHANGELOG + final verify (REQ-100, REQ-101, REQ-102, SCN-100, SCN-101)
 - [ ] T-035 [DOCS] Create `openspec/scripts/OPERATOR_RUNBOOK.md` with the 4-step sequence from proposal §Operator runbook; never instruct copying JSON output into repo tree (REQ-100, SCN-100). Commit: `docs(scripts): add orphan discovery runbook`.
