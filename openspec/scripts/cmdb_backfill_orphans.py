@@ -132,11 +132,11 @@ def discover_orphans(session, scope: str, rel_types, cap: int = MAX_ORPHAN_CAP) 
         raise
     seen: dict = {}
     for record in result:
-        if not isinstance(record, dict):
-            row = dict(record) if hasattr(record, "items") else {}
+        if isinstance(record, dict):
+            values = list(record.values())
         else:
-            row = record
-        for value in row.values():
+            values = [record.get("ci_id") if hasattr(record, "get") else None]
+        for value in values:
             if not _is_opaque_ci_id(value):
                 continue
             if value in seen:
