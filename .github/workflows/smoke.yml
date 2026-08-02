@@ -162,7 +162,7 @@ jobs:
       - name: Wait for backend health (timeout ${BACKEND_HEALTH_TIMEOUT_SECONDS}s)
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + ${BACKEND_HEALTH_TIMEOUT_SECONDS} ))
+          deadline=$(( $(date +%s) + BACKEND_HEALTH_TIMEOUT_SECONDS ))
           until curl -sf "http://localhost:${BACKEND_PORT}/" > /dev/null; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::backend did not become healthy within ${BACKEND_HEALTH_TIMEOUT_SECONDS}s"
@@ -185,7 +185,7 @@ jobs:
       - name: Wait for frontend health (timeout ${FRONTEND_HEALTH_TIMEOUT_SECONDS}s)
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + ${FRONTEND_HEALTH_TIMEOUT_SECONDS} ))
+          deadline=$(( $(date +%s) + FRONTEND_HEALTH_TIMEOUT_SECONDS ))
           until curl -sf "http://localhost:${FRONTEND_PORT}/" > /dev/null; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::frontend did not become healthy within ${FRONTEND_HEALTH_TIMEOUT_SECONDS}s"
