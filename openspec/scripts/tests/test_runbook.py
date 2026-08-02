@@ -26,7 +26,7 @@ def test_runbook_exists_and_contains_canonical_steps():
         "Export",
         "NEO4J_URI",
         "cmdb_backfill_orphans",
-        "delete the file",
+        "Delete the JSON file",
     ):
         assert marker in text, f"runbook must mention {marker!r}"
 

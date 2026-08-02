@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CMDB orphan topology backfill CLI (P3a of fix #416)**:
+  - Adds `openspec/scripts/cmdb_backfill_orphans.py`, an offline read-only CLI that discovers Access Points (APs) with no upstream `DEPENDS_ON | HOSTED_ON` edge in the Neo4j topology. Emits a strict JSON envelope of opaque CI IDs plus one stderr audit line; never writes to Neo4j, never enriches the result, and never logs credentials.
+  - Ships `openspec/scripts/OPERATOR_RUNBOOK.md` with the four-step operator sequence (export credentials from the sealed secret store, invoke the script, feed the JSON file to internal CMDB tooling, delete the file after use).
+  - Adds `openspec/scripts/output/` to `.gitignore` so any operator report can never be committed by accident.
+  - Adds canonical capability spec `openspec/specs/cmdb-orphan-detection/spec.md` (REQ-001..010 + SCN-001..012 strict-TDD matrix) and a delta spec under `openspec/changes/fix-416-orphan-topology-backfill/specs/`. Strict-TDD coverage in `openspec/scripts/tests/` covers scope validation, relationship-type allowlist, output envelope, audit line shape, path safety, read-only invariant, credentials handling, fake-session seam, and CLI wiring.
+
 - **Event write-time correlation helpers** (PR #417, part of #416):
   - Adds `backend/engines/correlation.py` with three pure helpers: `cycle_root_candidates`, `materialize_current_cycle_roots`, and `attach_dependents_to_roots`. All side-effect free and Neo4j-free; helpers own no module-level state.
   - Adds `current_cycle_parent_candidates` to `backend/repositories/topology_repo.py` as the in-memory complement to `build_open_parent_index`; same depth-three `DEPENDS_ON | HOSTED_ON | CONNECTS_TO` vocabulary but no Neo4j I/O.
