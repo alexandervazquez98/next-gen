@@ -57,6 +57,7 @@ export default [
         URLSearchParams: "readonly",
         Event: "readonly",
         CustomEvent: "readonly",
+        PromiseRejectionEvent: "readonly",
         HTMLElement: "readonly",
         HTMLDivElement: "readonly",
         HTMLInputElement: "readonly",
