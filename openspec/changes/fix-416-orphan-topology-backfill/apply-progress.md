@@ -218,3 +218,32 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
 | Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
 |------|------------|--------------|----------|-----------|---------------|
 | WU-7 T-021..T-024 | `6742ff6` | `adfe555` | ✓ Ruff clean; AST scan clean | 7 | ✓ argv/env precedence, missing URI, success/failure driver paths, URI password stripping |
+
+## WU-8 — Fake driver + Cypher
+- Status: done
+- Commits:
+  - `c69f50d` test(orphan-cli): specify parameterized orphan query (RED build_query)
+  - `9f13613` feat(orphan-cli): build parameterized orphan query (GREEN build_query)
+  - `f5268fd` feat(orphan-cli): hash query for audit trail (GREEN compute_query_hash)
+  - `e02c5fe` test(orphan-cli): add fake session and discovery seam (RED fake session + discover)
+  - `2eeb2e2` feat(orphan-cli): add fake neo4j seam and orphan discovery (GREEN fake session + discover)
+  - `02a7c5d` test(orphan-cli): cover orphan discovery scenarios (parametrized scenarios)
+- Tests: 16 (4 build_query, 2 compute_query_hash, 1 fake session, 9 discover_orphans scenarios + edge cases); full openspec suite **109/109 PASS**.
+- Files touched:
+  - `openspec/scripts/tests/test_query.py` (new; 218 lines after WU-8)
+  - `openspec/scripts/tests/fake_neo4j.py` (new; `FakeRecord`, `FakeResult`, `FakeSession`)
+  - `openspec/scripts/cmdb_backfill_orphans.py` (added `MAX_ORPHAN_CAP`, `build_query`, `compute_query_hash`, `OrphanDiscoveryError`, `OrphanDiscoveryResult`, `discover_orphans`)
+- Work Unit Evidence:
+  - Focused command: `backend/.venv/bin/python -m pytest openspec/scripts/tests/test_query.py -v` → **16 passed**.
+  - Runtime harness: **N/A** — fake session is the seam; no real Neo4j boundary is permitted by REQ-010.
+  - Rollback boundary: remove `build_query`, `compute_query_hash`, `discover_orphans`, `MAX_ORPHAN_CAP`, `OrphanDiscoveryError`, `OrphanDiscoveryResult`, `fake_neo4j.py`, and `test_query.py`.
+- Notes:
+  - The fake session lives in `openspec/scripts/tests/fake_neo4j.py` (separate from `conftest.py`) to keep the test artifact importable from anywhere; the conftest autouse fixture still gates fixture IDs.
+  - SCN-002 was reframed: the fake session is not aware of wiring, so the test confirms the production code returns whatever rows the query would classify as orphan. The actual exclusion of wired APs is enforced inside the Cypher query (`NOT EXISTS`), which is asserted in `test_build_query_uses_not_exists_and_parameterized_allowlist`.
+  - `_check_read_only_ast` still passes; new string fragments (URI redaction, "open", "create") are avoided.
+
+## TDD Cycle Evidence (WU-8)
+
+| Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
+|------|------------|--------------|----------|-----------|---------------|
+| WU-8 T-025..T-032 | `c69f50d`, `e02c5fe`, `02a7c5d` | `9f13613`, `f5268fd`, `2eeb2e2` | ✓ Ruff clean; AST scan clean; dataclass tuple | 16 | ✓ build_query (Cypher, params), compute_query_hash (determinism, 16-hex), FakeSession seam, discover_orphans (SCN-001/002/004/006/010/011, dedupe, opaque filter, cap, bad cap, invalid scope, cypher injection) |
