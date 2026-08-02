@@ -270,3 +270,33 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
 | Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
 |------|------------|--------------|----------|-----------|---------------|
 | WU-9 T-033/T-034 | `74d046b` | `3353176` | ✓ Ruff clean; AST scan clean; CI default rels | 7 | ✓ parse_args defaults + custom rels; main success (SCN-005 file output, SCN-007 audit line shape); failure paths (SCN-008 scope, SCN-009 missing URI, missing URI emits audit line) |
+
+## WU-10 — Docs + CHANGELOG + final verify
+- Status: done
+- Commits:
+  - `3c5305c` test(scripts): assert runbook and changelog entries (RED)
+  - `f6c3b1b` docs(scripts): add orphan discovery runbook and changelog (GREEN)
+- Tests: 4 (runbook existence + canonical markers, no "copy into repo" instruction, `[Unreleased]` → `### Added` references CLI, no customer-data strings in CHANGELOG); full openspec suite **120/120 PASS**.
+- Files touched:
+  - `openspec/scripts/OPERATOR_RUNBOOK.md` (new; when to use, invocation, output interpretation, privacy)
+  - `CHANGELOG.md` (new `[Unreleased]` → `### Added` entry referencing the CLI)
+  - `openspec/scripts/tests/test_runbook.py` (new; 4 content-shape guard tests)
+- Work Unit Evidence:
+  - Focused command: `backend/.venv/bin/python -m pytest openspec/scripts/tests/test_runbook.py -v` → **4 passed**.
+  - Runtime harness: CLI smoke test via `python -m openspec.scripts.cmdb_backfill_orphans --help` returns the help text and `rc=0`.
+  - Rollback boundary: remove `openspec/scripts/OPERATOR_RUNBOOK.md`, revert the CHANGELOG line, and remove `openspec/scripts/tests/test_runbook.py`.
+- Notes: the runbook uses the marker phrase "Delete the JSON file" so the SCN-100 content-shape test has a deterministic anchor. The CHANGELOG entry mentions the CLI by name and the operator runbook without disclosing any customer data.
+
+## TDD Cycle Evidence (WU-10)
+
+| Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
+|------|------------|--------------|----------|-----------|---------------|
+| WU-10 T-035..T-038 | `3c5305c` | `f6c3b1b` | ✓ Ruff clean; AST scan clean; DELETE marker | 4 | ✓ runbook canonical markers (Export, NEO4J_URI, CLI name, Delete step), no `git add` / `git commit` instructions, CHANGELOG `[Unreleased] → ### Added` shape, no privacy strings (REGION_TAG/REGION_TAG/REGION_TAG/REGION_TAG/REGION_TAG/10.99.99.99) |
+
+## Final Verification (apply boundary)
+
+- `backend/.venv/bin/python -m pytest openspec/scripts/tests/ -v` → **120 passed in 0.38s**
+- `backend/.venv/bin/python -m ruff check --config backend/ruff.toml openspec/scripts/` → **All checks passed!**
+- Privacy sweep: working tree clean, history clean (no REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / 10.99.99.99).
+- CLI smoke: `python -m openspec.scripts.cmdb_backfill_orphans --help` returns the help text and exits 0.
+- Backend regression: full backend suite runs from the main repo, not the worktree, with `openspec` ignored.

@@ -94,10 +94,10 @@ Chain strategy: pending
 - [x] T-034 [GREEN] Implement `parse_args` (`argparse`) + `main(argv=None)` orchestrating validators → driver → output → audit; ensure `exit=` reflects actual `sys.exit` code in audit. Commit: `feat(orphan-cli): wire main entrypoint`.
 
 ### WU-10 — Docs + CHANGELOG + final verify (REQ-100, REQ-101, REQ-102, SCN-100, SCN-101)
-- [ ] T-035 [DOCS] Create `openspec/scripts/OPERATOR_RUNBOOK.md` with the 4-step sequence from proposal §Operator runbook; never instruct copying JSON output into repo tree (REQ-100, SCN-100). Commit: `docs(scripts): add orphan discovery runbook`.
-- [ ] T-036 [DOCS] Append `[Unreleased]` → `### Added` entry to `CHANGELOG.md` referencing `openspec/scripts/cmdb_backfill_orphans.py`; no customer data, no real CI IDs (REQ-101, SCN-101). Commit: `docs(changelog): note orphan discovery cli`.
-- [ ] T-037 [TEST] SCN-100 reads runbook file, asserts 4 steps + no "copy into repo" instruction. SCN-101 reads `CHANGELOG.md`, asserts `[Unreleased]` + `### Added` + CLI path. Commit: `test(scripts): assert runbook and changelog entries`.
-- [ ] T-038 [VERIFY] Run `cd backend && .venv/bin/python -m pytest openspec/scripts/tests/ -v` — all green, no skips, no Neo4j dependency. Commit: `chore(scripts): mark verify checklist complete`.
+- [x] T-035 [DOCS] Create `openspec/scripts/OPERATOR_RUNBOOK.md` with the 4-step sequence from proposal §Operator runbook; never instruct copying JSON output into repo tree (REQ-100, SCN-100). Commit: `docs(scripts): add orphan discovery runbook`.
+- [x] T-036 [DOCS] Append `[Unreleased]` → `### Added` entry to `CHANGELOG.md` referencing `openspec/scripts/cmdb_backfill_orphans.py`; no customer data, no real CI IDs (REQ-101, SCN-101). Commit: `docs(changelog): note orphan discovery cli`.
+- [x] T-037 [TEST] SCN-100 reads runbook file, asserts 4 steps + no "copy into repo" instruction. SCN-101 reads `CHANGELOG.md`, asserts `[Unreleased]` + `### Added` + CLI path. Commit: `test(scripts): assert runbook and changelog entries`.
+- [x] T-038 [VERIFY] Run `cd backend && .venv/bin/python -m pytest openspec/scripts/tests/ -v` — all green, no skips, no Neo4j dependency. Commit: `chore(scripts): mark verify checklist complete`.
 
 ## Final Verification
 - [ ] T-039 Full backend suite: `cd backend && .venv/bin/python -m pytest -q` — no regressions vs. baseline.
