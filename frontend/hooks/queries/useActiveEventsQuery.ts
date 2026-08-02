@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { queryKeys } from '../../services/queryKeys';
-import { fetchActiveEvents } from '../../services/queryResources';
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../services/queryKeys";
+import { fetchActiveEvents } from "../../services/queryResources";
 
 /**
  * P2 REQ-006 / REQ-008: poll the root-only feed by default. The
@@ -10,7 +10,6 @@ import { fetchActiveEvents } from '../../services/queryResources';
 export const useActiveEventsQuery = (include_children: boolean = false) =>
   useQuery({
     queryKey: queryKeys.activeEvents({ includeChildren: include_children }),
-    queryFn: ({ signal }) =>
-      fetchActiveEvents({ include_children, signal }),
+    queryFn: ({ signal }) => fetchActiveEvents({ include_children, signal }),
     refetchInterval: 10000,
   });

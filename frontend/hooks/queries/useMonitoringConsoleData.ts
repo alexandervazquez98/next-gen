@@ -5,52 +5,41 @@ import { useLinksQuery } from "./useLinksQuery";
 import { useNodesQuery } from "./useNodesQuery";
 
 export const useMonitoringConsoleData = () => {
-	const nodesQuery = useNodesQuery();
-	const linksQuery = useLinksQuery();
-	// P2 REQ-005: root-only feed for the KPI cards. The hook signature stays
-	// parametrised so future raw-mode rows can be re-added without changing
-	// the consumer.
-	const eventsQuery = useActiveEventsQuery(false);
-	const categoriesQuery = useCategoriesQuery();
+  const nodesQuery = useNodesQuery();
+  const linksQuery = useLinksQuery();
+  // P2 REQ-005: root-only feed for the KPI cards. The hook signature stays
+  // parametrised so future raw-mode rows can be re-added without changing
+  // the consumer.
+  const eventsQuery = useActiveEventsQuery(false);
+  const categoriesQuery = useCategoriesQuery();
 
-	const nodes = nodesQuery.data ?? [];
-	const categoryNames = useMemo(
-		() =>
-			(categoriesQuery.data ?? [])
-				.map((category) => category.name)
-				.filter(Boolean),
-		[categoriesQuery.data],
-	);
-	const fallbackNames = useMemo(
-		() =>
-			Array.from(
-				new Set(
-					nodes.map((node) => node.category ?? node.type).filter(Boolean),
-				),
-			).sort(),
-		[nodes],
-	);
+  const nodes = nodesQuery.data ?? [];
+  const categoryNames = useMemo(
+    () => (categoriesQuery.data ?? []).map((category) => category.name).filter(Boolean),
+    [categoriesQuery.data],
+  );
+  const fallbackNames = useMemo(
+    () =>
+      Array.from(new Set(nodes.map((node) => node.category ?? node.type).filter(Boolean))).sort(),
+    [nodes],
+  );
 
-	const categories = useMemo(() => {
-		const source = categoryNames.length > 0 ? categoryNames : fallbackNames;
-		return Array.from(new Set(source)).sort();
-	}, [categoryNames, fallbackNames]);
+  const categories = useMemo(() => {
+    const source = categoryNames.length > 0 ? categoryNames : fallbackNames;
+    return Array.from(new Set(source)).sort();
+  }, [categoryNames, fallbackNames]);
 
-	return {
-		nodes,
-		links: linksQuery.data ?? [],
-		events: eventsQuery.data ?? [],
-		categories,
-		isLoading:
-			nodesQuery.isLoading ||
-			linksQuery.isLoading ||
-			eventsQuery.isLoading ||
-			categoriesQuery.isLoading,
-		error:
-			nodesQuery.error ??
-			linksQuery.error ??
-			eventsQuery.error ??
-			categoriesQuery.error ??
-			null,
-	};
+  return {
+    nodes,
+    links: linksQuery.data ?? [],
+    events: eventsQuery.data ?? [],
+    categories,
+    isLoading:
+      nodesQuery.isLoading ||
+      linksQuery.isLoading ||
+      eventsQuery.isLoading ||
+      categoriesQuery.isLoading,
+    error:
+      nodesQuery.error ?? linksQuery.error ?? eventsQuery.error ?? categoriesQuery.error ?? null,
+  };
 };

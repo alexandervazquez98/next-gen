@@ -1108,9 +1108,7 @@ const MonitoringConsole: React.FC = () => {
   // `correlation_type` is authoritative (legacy rows default to ROOT via
   // `coalesce(... , 'ROOT')`); the client-side hook is a safety net for
   // any pre-P0 PROPAGATED rows that leak through.
-  const rootEvents = events.filter(
-    (e) => (e.correlation_type ?? "ROOT") === "ROOT",
-  );
+  const rootEvents = events.filter((e) => (e.correlation_type ?? "ROOT") === "ROOT");
   const rootOpenEvents = rootEvents.filter((e) => e.status === "OPEN");
   const rootAckEvents = rootEvents.filter((e) => e.status === "ACK");
 
@@ -1120,10 +1118,7 @@ const MonitoringConsole: React.FC = () => {
   // Total root events across all statuses (used by the "Total Active" KPI).
   const kpiTotal = rootEvents.length;
   // P2 REQ-005: blast-radius sub-label = sum of `affected_count` over roots.
-  const totalAffectedCIs = rootEvents.reduce(
-    (sum, e) => sum + (e.affected_count ?? 0),
-    0,
-  );
+  const totalAffectedCIs = rootEvents.reduce((sum, e) => sum + (e.affected_count ?? 0), 0);
   // P2 REQ-005: per-root drill-down list. Defined here so the closure
   // captures `rootEvents` (the `useMemo` cannot be re-declared later).
   const drillDownRoots = useMemo(
@@ -1336,11 +1331,7 @@ const MonitoringConsole: React.FC = () => {
                   setStreamFilter("ALL");
                   setDrillDownOpen(true);
                 }}
-                subLabel={
-                  totalAffectedCIs > 0
-                    ? `affecting ${totalAffectedCIs} CIs`
-                    : null
-                }
+                subLabel={totalAffectedCIs > 0 ? `affecting ${totalAffectedCIs} CIs` : null}
               />
             </div>
 
@@ -2465,14 +2456,14 @@ const MonitoringConsole: React.FC = () => {
           );
         })()}
 
-        {/* P2 REQ-005: drill-down modal listing the CIs affected by each ROOT */}
-        {drillDownOpen && (
-          <DrillDownModal
-            roots={drillDownRoots}
-            totalAffectedCIs={totalAffectedCIs}
-            onClose={() => setDrillDownOpen(false)}
-          />
-        )}
+      {/* P2 REQ-005: drill-down modal listing the CIs affected by each ROOT */}
+      {drillDownOpen && (
+        <DrillDownModal
+          roots={drillDownRoots}
+          totalAffectedCIs={totalAffectedCIs}
+          onClose={() => setDrillDownOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -2494,8 +2485,7 @@ const DrillDownModal = ({
   const queries = useQueries({
     queries: roots.map((root) => ({
       queryKey: queryKeys.affectedCIs(root.id),
-      queryFn: ({ signal }: { signal?: AbortSignal }) =>
-        fetchAffectedCIs(root.id, { signal }),
+      queryFn: ({ signal }: { signal?: AbortSignal }) => fetchAffectedCIs(root.id, { signal }),
       enabled: Boolean(root.id),
     })),
   });
@@ -2510,9 +2500,7 @@ const DrillDownModal = ({
       <div className="glass w-full max-w-3xl rounded-2xl border border-white/10 p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-lg font-black text-white uppercase tracking-wider">
-              Affected CIs
-            </h3>
+            <h3 className="text-lg font-black text-white uppercase tracking-wider">Affected CIs</h3>
             <p className="text-xs text-neutral-400 mt-1">
               {totalAffectedCIs > 0
                 ? `affecting ${totalAffectedCIs} CIs across ${roots.length} root events`
@@ -2543,12 +2531,10 @@ const DrillDownModal = ({
                 >
                   <header className="flex items-center justify-between mb-2">
                     <div>
-                      <p className="text-sm font-bold text-white">
-                        {root.ci_name ?? root.ci_id}
-                      </p>
+                      <p className="text-sm font-bold text-white">{root.ci_name ?? root.ci_id}</p>
                       <p className="text-[10px] text-neutral-500 uppercase tracking-widest">
-                        {root.metric_name ?? root.metric_id} · {root.severity} ·
-                        A{sublabelForAffect(root.affected_count)}
+                        {root.metric_name ?? root.metric_id} · {root.severity} · A
+                        {sublabelForAffect(root.affected_count)}
                       </p>
                     </div>
                     <span className="text-[10px] text-neutral-500 font-bold">
@@ -2558,9 +2544,7 @@ const DrillDownModal = ({
                   {query?.isLoading ? (
                     <p className="text-xs text-neutral-500">Loading...</p>
                   ) : query?.error ? (
-                    <p className="text-xs text-red-400">
-                      Error loading affected CIs.
-                    </p>
+                    <p className="text-xs text-red-400">Error loading affected CIs.</p>
                   ) : (
                     <ul className="text-xs text-neutral-200 space-y-1">
                       {(query?.data ?? []).map((ci) => (
@@ -2572,9 +2556,7 @@ const DrillDownModal = ({
                             {ci.ci_name ?? ci.ci_id}
                             {ci.ci_location_name ? ` · ${ci.ci_location_name}` : ""}
                           </span>
-                          <span className="text-[10px] text-neutral-500">
-                            {ci.status ?? "—"}
-                          </span>
+                          <span className="text-[10px] text-neutral-500">{ci.status ?? "—"}</span>
                         </li>
                       ))}
                     </ul>
@@ -2600,17 +2582,7 @@ function sublabelForAffect(affectedCount?: number): string {
  * P2 REQ-005: accepts an optional `subLabel` rendered under the value
  * (used by the Total Active KPI to show the "affecting N CIs" blast radius).
  */
-const StatCard = ({
-  label,
-  value,
-  icon,
-  color,
-  bg,
-  animate,
-  active,
-  onClick,
-  subLabel,
-}: any) => (
+const StatCard = ({ label, value, icon, color, bg, animate, active, onClick, subLabel }: any) => (
   <button
     type="button"
     onClick={onClick}

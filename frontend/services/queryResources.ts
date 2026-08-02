@@ -170,10 +170,7 @@ export interface AffectedCI {
   ci_location_name?: string | null;
 }
 
-export const fetchAffectedCIs = (
-  eventId: string,
-  { signal }: { signal?: AbortSignal } = {},
-) =>
+export const fetchAffectedCIs = (eventId: string, { signal }: { signal?: AbortSignal } = {}) =>
   api.get<AffectedCI[]>(`/events/${encodeURIComponent(eventId)}/affected`, {
     signal,
   });
