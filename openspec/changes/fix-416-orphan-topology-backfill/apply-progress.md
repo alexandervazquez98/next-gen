@@ -286,18 +286,18 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
   - Runtime harness: CLI smoke test via `python -m openspec.scripts.cmdb_backfill_orphans --help` returns the help text and `rc=0`.
   - Rollback boundary: remove `openspec/scripts/OPERATOR_RUNBOOK.md`, revert the CHANGELOG line, and remove `openspec/scripts/tests/test_runbook.py`.
 - Notes: the runbook uses the marker phrase "Delete the JSON file" so the SCN-100 content-shape test has a deterministic anchor. The CHANGELOG entry mentions the CLI by name and the operator runbook without disclosing any customer data.
-- **Privacy redaction fix**: the first version of `test_runbook.py` listed the literal issue-derived strings (REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / 10.99.99.99) as the negatives to assert. The fixture switched to the neutral placeholders (REGION_TAG / 10.99.99.99) that the rest of the change uses, so the working tree and git history stay clean without weakening the assertion.
+- **Privacy redaction fix**: the first version of `test_runbook.py` listed the literal issue-derived strings (the privacy-rejection fixture tokens documented in `tasks.md` T-041) as the negatives to assert. The fixture switched to the neutral placeholders (`REGION_TAG` / `10.99.99.99`) that the rest of the change uses, so the working tree and git history stay clean without weakening the assertion.
 
 ## TDD Cycle Evidence (WU-10)
 
 | Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
 |------|------------|--------------|----------|-----------|---------------|
-| WU-10 T-035..T-038 | `3c5305c` | `f6c3b1b` | ✓ Ruff clean; AST scan clean; DELETE marker | 4 | ✓ runbook canonical markers (Export, NEO4J_URI, CLI name, Delete step), no `git add` / `git commit` instructions, CHANGELOG `[Unreleased] → ### Added` shape, no privacy strings (REGION_TAG/REGION_TAG/REGION_TAG/REGION_TAG/REGION_TAG/10.99.99.99) |
+| WU-10 T-035..T-038 | `3c5305c` | `f6c3b1b` | ✓ Ruff clean; AST scan clean; DELETE marker | 4 | ✓ runbook canonical markers (Export, NEO4J_URI, CLI name, Delete step), no `git add` / `git commit` instructions, CHANGELOG `[Unreleased] → ### Added` shape, no privacy strings (the rejection fixture set documented in `tasks.md` T-041) |
 
 ## Final Verification (apply boundary)
 
 - `backend/.venv/bin/python -m pytest openspec/scripts/tests/ -v` → **120 passed in 0.38s**
 - `backend/.venv/bin/python -m ruff check --config backend/ruff.toml openspec/scripts/` → **All checks passed!**
-- Privacy sweep: working tree clean, history clean (no REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / 10.99.99.99).
+- Privacy sweep: working tree clean, history clean (the rejection fixture set documented in `tasks.md` T-041 is fully replaced by neutral placeholders).
 - CLI smoke: `python -m openspec.scripts.cmdb_backfill_orphans --help` returns the help text and exits 0.
 - Backend regression: full backend suite runs from the main repo, not the worktree, with `openspec` ignored.
