@@ -9,6 +9,7 @@ opaque CI IDs.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -29,6 +30,9 @@ ALLOWED_RELATIONSHIP_TYPES = frozenset(
 
 # REQ-002 default upstream edges.
 DEFAULT_RELATIONSHIP_TYPES = ("DEPENDS_ON", "HOSTED_ON")
+
+# AD-14: hard safety bound for a single discovery run.
+MAX_ORPHAN_CAP = 10_000
 
 # AD-03: opaque CI-ID shape: synthetic placeholder or UUID.
 SYNTHETIC_ID_RE = re.compile(r"^ci-test-ap-orphan-\d{3,}$")
@@ -69,6 +73,22 @@ def validate_relationship_types(types) -> list:
             f"allowed: {sorted(ALLOWED_RELATIONSHIP_TYPES)}"
         )
     return list(seen.keys())
+
+
+def build_query(scope: str, rel_types, cap: int = MAX_ORPHAN_CAP):
+    """Build the read-only, parameterized orphan-discovery query."""
+    validate_scope(scope)
+    relationships = validate_relationship_types(rel_types)
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
+        raise ValueError("error: --cap must be a positive integer")
+    query = """MATCH (n:CI:AccessPoint)
+WHERE NOT EXISTS {
+  MATCH (n)-[r]->(m:CI)
+  WHERE type(r) IN $relationship_types
+}
+RETURN n.id AS ci_id
+LIMIT $cap"""
+    return query, {"relationship_types": relationships, "cap": cap}
 
 
 def _validate_ci_id(value) -> str:
