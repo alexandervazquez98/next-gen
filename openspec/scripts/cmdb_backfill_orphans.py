@@ -8,6 +8,7 @@ opaque CI IDs.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import hashlib
 import json
@@ -431,4 +432,141 @@ def _open_neo4j(uri: str, user: str | None = None, password: str | None = None):
         user if user is not None else os.environ.get("NEO4J_USER", "neo4j"),
         password if password is not None else os.environ.get("NEO4J_PASSWORD", ""),
     )
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    """Parse the CLI arguments with the canonical flag bundle."""
+    parser = argparse.ArgumentParser(
+        prog="cmdb_backfill_orphans",
+        description="Discover orphan APs in Neo4j (read-only, offline).",
+    )
+    parser.add_argument(
+        "--neo4j-uri",
+        dest="neo4j_uri",
+        default=None,
+        help="Bolt URI; falls back to $NEO4J_URI when omitted.",
+    )
+    parser.add_argument(
+        "--scope",
+        dest="scope",
+        default="ap",
+        help="CI scope (ap only).",
+    )
+    parser.add_argument(
+        "--relationship-types",
+        dest="relationship_types",
+        nargs="+",
+        default=list(DEFAULT_RELATIONSHIP_TYPES),
+        help="Upstream relationship allowlist.",
+    )
+    parser.add_argument(
+        "--format",
+        dest="format",
+        default="json",
+        help="Output format (json only).",
+    )
+    parser.add_argument(
+        "--output",
+        dest="output",
+        default=None,
+        help="Output file path or '-' for stdout.",
+    )
+    return parser.parse_args(argv)
+
+
+def _audit_payload_for_failure(exit_code: int, scope: str = "ap"):
+    return {
+        "ts": _now_iso8601_utc(),
+        "query_hash": "0000000000000000",
+        "scope": scope,
+        "rels": list(DEFAULT_RELATIONSHIP_TYPES),
+        "orphan_count": 0,
+        "exit": exit_code,
+        "cap_reached": False,
+    }
+
+
+def main(argv=None) -> int:
+    """CLI entry point. Returns the process exit code (0..4)."""
+    args = parse_args(argv)
+    try:
+        validate_scope(args.scope)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(sys.stderr, **_audit_payload_for_failure(exit_code=2))
+        return 2
+    try:
+        rels = validate_relationship_types(args.relationship_types)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(
+            sys.stderr,
+            **_audit_payload_for_failure(exit_code=2, scope=args.scope),
+        )
+        return 2
+    try:
+        uri = _resolve_neo4j_uri(args.neo4j_uri)
+    except MissingURLError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(
+            sys.stderr,
+            **_audit_payload_for_failure(exit_code=1, scope=args.scope),
+        )
+        return 1
+    try:
+        output_path = resolve_output_path(args.output)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(
+            sys.stderr,
+            **_audit_payload_for_failure(exit_code=2, scope=args.scope),
+        )
+        return 2
+    try:
+        driver = _open_neo4j_driver(
+            uri,
+            os.environ.get("NEO4J_USER", "neo4j"),
+            os.environ.get("NEO4J_PASSWORD", ""),
+        )
+    except Neo4jDriverError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(
+            sys.stderr,
+            **_audit_payload_for_failure(exit_code=3, scope=args.scope),
+        )
+        return 3
+    try:
+        session_cm = driver.session()
+        if hasattr(session_cm, "__enter__"):
+            with session_cm as session:
+                result = discover_orphans(session, args.scope, rels, MAX_ORPHAN_CAP)
+        else:
+            session = session_cm
+            result = discover_orphans(session, args.scope, rels, MAX_ORPHAN_CAP)
+    except OrphanDiscoveryError as exc:
+        sys.stderr.write(f"{exc}\n")
+        emit_audit_line(
+            sys.stderr,
+            **_audit_payload_for_failure(exit_code=4, scope=args.scope),
+        )
+        return 4
+    query, params = build_query(args.scope, rels, MAX_ORPHAN_CAP)
+    query_hash = compute_query_hash(query, params)
+    payload = build_output_payload(
+        scope=args.scope,
+        rels=rels,
+        ci_ids=list(result.ids),
+    )
+    write_output(payload, output_path)
+    emit_audit_line(
+        sys.stderr,
+        ts=payload["as_of"],
+        query_hash=query_hash,
+        scope=args.scope,
+        rels=rels,
+        orphan_count=payload["orphan_count"],
+        exit=0,
+        cap_reached=result.cap_reached,
+    )
+    return 0
 
