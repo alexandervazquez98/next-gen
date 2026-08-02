@@ -74,10 +74,10 @@ Chain strategy: pending
 - [ ] T-020 [TEST] Module-AST test asserting `topology_repo` is never imported (`sys.modules` snapshot + AST `Import`/`ImportFrom` scan). Commit: `test(scripts): guard no-topology_repo-import`.
 
 ### WU-7 — Credentials (REQ-008, AD-15)
-- [ ] T-021 [RED] Tests: `_resolve_neo4j_uri` uses `--neo4j-uri` when given; falls back to `$NEO4J_URI`; raises `ValueError("error: --neo4j-uri (or $NEO4J_URI) required")` when both missing; never echoes value to stdout/stderr. Pair with T-022.
-- [ ] T-022 [GREEN] Implement `_resolve_neo4j_uri(args, env)` returning resolved URI string or raising. Commit: `feat(orphan-cli): resolve neo4j uri from flag or env`.
-- [ ] T-023 [RED] Tests: `_open_neo4j(uri)` does NOT trigger `import neo4j` when module loads (assert via `sys.modules` snapshot); only imports inside the function; connection errors surface without echoing credentials. Pair with T-024.
-- [ ] T-024 [GREEN] Implement `_open_neo4j(uri)` with deferred `from neo4j import GraphDatabase` inside the function body (REQ-008, AD-15). Commit: `feat(orphan-cli): lazy-open neo4j driver`.
+- [x] T-021 [RED] Tests: `_resolve_neo4j_uri` uses `--neo4j-uri` when given; falls back to `$NEO4J_URI`; raises `ValueError("error: --neo4j-uri (or $NEO4J_URI) required")` when both missing; never echoes value to stdout/stderr. Pair with T-022.
+- [x] T-022 [GREEN] Implement `_resolve_neo4j_uri(args, env)` returning resolved URI string or raising. Commit: `feat(orphan-cli): resolve neo4j uri from flag or env`.
+- [x] T-023 [RED] Tests: `_open_neo4j(uri)` does NOT trigger `import neo4j` when module loads (assert via `sys.modules` snapshot); only imports inside the function; connection errors surface without echoing credentials. Pair with T-024.
+- [x] T-024 [GREEN] Implement `_open_neo4j(uri)` with deferred `from neo4j import GraphDatabase` inside the function body (REQ-008, AD-15). Commit: `feat(orphan-cli): lazy-open neo4j driver`.
 
 ### WU-8 — Fake driver + Cypher (SCN-001..012, REQ-009/010, AD-13, AD-14)
 - [ ] T-025 [RED] Tests: `build_query(scope="ap", rels=("DEPENDS_ON","HOSTED_ON"), cap=10000)` produces Cypher with `MATCH (n:CI:AccessPoint)`, `NOT EXISTS { ... type(r) IN $relationship_types }`, `RETURN n.id AS ci_id`, `LIMIT $cap`; params include `relationship_types` + `cap`. Pair with T-026.

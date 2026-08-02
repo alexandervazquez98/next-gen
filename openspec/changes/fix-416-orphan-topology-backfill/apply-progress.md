@@ -197,3 +197,24 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
 - `backend/main.py`
 - `openspec/specs/event-write-time-correlation/*`
 - Anything outside `openspec/scripts/` and `.gitignore`
+
+## WU-7 — Credentials
+- Status: done
+- Commits:
+  - `6742ff6` test(orphan-cli): cover URI and credential redaction (RED)
+  - `adfe555` feat(orphan-cli): resolve Neo4j credentials safely (GREEN)
+- Tests: 7 focused credential tests; full openspec suite **93/93 PASS**.
+- Files touched:
+  - `openspec/scripts/tests/test_credentials.py` (new; URI precedence, missing-URI safety, lazy-driver seam, exception redaction, URI redaction)
+  - `openspec/scripts/cmdb_backfill_orphans.py` (URI resolver, lazy driver factory, compatibility wrapper)
+- Work Unit Evidence:
+  - Focused command: `backend/.venv/bin/python -m pytest openspec/scripts/tests/test_credentials.py -v` → **7 passed**.
+  - Runtime harness: **N/A** — driver factory is mocked; no live Neo4j boundary is permitted by REQ-010.
+  - Rollback boundary: remove `_resolve_neo4j_uri`, `_format_credential_redacted`, driver factory/wrapper, and `test_credentials.py`.
+- Notes: local Python 3.9 compatibility is retained through postponed annotations; `neo4j` remains a function-local import. Driver failures are replaced with URI-redacted generic errors.
+
+## TDD Cycle Evidence (WU-7)
+
+| Task | RED commit | GREEN commit | REFACTOR | RED tests | Triangulation |
+|------|------------|--------------|----------|-----------|---------------|
+| WU-7 T-021..T-024 | `6742ff6` | `adfe555` | ✓ Ruff clean; AST scan clean | 7 | ✓ argv/env precedence, missing URI, success/failure driver paths, URI password stripping |
