@@ -5,13 +5,11 @@ from __future__ import annotations
 import io
 import json
 import re
-import sys
 import uuid
 from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
-
 
 SAMPLE_IDS = [
     "ci-test-ap-orphan-001",

@@ -44,7 +44,6 @@ def validate_scope(scope: str) -> None:
     """
     if scope not in ALLOWED_SCOPES:
         raise ValueError(f"error: invalid --scope {scope}; allowed: ap")
-    return None
 
 
 def validate_relationship_types(types) -> list:
@@ -81,11 +80,12 @@ def _validate_ci_id(value) -> str:
         raise ValueError(f"ci id must be a string: {value!r}")
     if SYNTHETIC_ID_RE.match(value):
         return value
-    if _UUID_SHAPE_RE.match(value):
-        return value.lower()
-    raise ValueError(
-        f"ci id must match synthetic pattern or UUID shape: {value!r}"
-    )
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(
+            f"ci id must match synthetic pattern or UUID shape: {value!r}"
+        ) from exc
 
 
 def _is_opaque_ci_id(value) -> bool:
@@ -102,7 +102,7 @@ def _is_opaque_ci_id(value) -> bool:
 def _now_iso8601_utc() -> str:
     """Return ISO 8601 UTC timestamp with trailing ``Z``."""
     return (
-        datetime.now(timezone.utc)
+        datetime.now(timezone.utc)  # noqa: UP017
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z")
     )
@@ -154,11 +154,10 @@ def write_output(payload: dict, output_path) -> None:
     if output_path is None:
         sys.stdout.write(rendered)
         sys.stdout.flush()
-        return None
+        return
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name(target.name + ".tmp")
     tmp_path.write_text(rendered, encoding="utf-8")
     tmp_path.replace(target)
-    return None
 
