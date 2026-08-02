@@ -162,6 +162,22 @@ class EventFeedSummary(BaseModel):
     propagated_from: str | None = None
     correlation_type: Literal["ROOT", "PROPAGATED"] | None = None
     root_cause_ci_id: str | None = None
+    # P2: additive visible COUNT of affected CIs (mapped from Neo4j
+    # `affected_ci_count`). `affected_ci_ids` is the membership list. Both
+    # fields are dropped from the JSON payload when empty/None to preserve
+    # the legacy contract for pre-P0 ROOT events.
+    affected_ci_ids: list[str] | None = None
+    affected_count: int | None = None
+
+
+class AffectedCI(BaseModel):
+    """Public response shape for `GET /api/events/{id}/affected`."""
+
+    ci_id: str
+    ci_name: str | None = None
+    status: str | None = None
+    ci_hostname: str | None = None
+    ci_location_name: str | None = None
 
 
 class EventDetailEvent(EventFeedSummary):

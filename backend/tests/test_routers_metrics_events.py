@@ -1169,7 +1169,14 @@ class TestEventsList:
         assert "closed_by" not in data[0]
 
     def test_list_events_allows_sparse_legacy_events_and_exposes_discriminators(self):
-        """Response model should not drop event discriminators or reject missing metric_id."""
+        """Response model should not drop event discriminators or reject missing metric_id.
+
+        P2 REQ-001 / SCN-010: the route now uses
+        `response_model_exclude_none=True`, so absent `metric_id` etc.
+        are omitted from the JSON payload rather than emitted as `null`.
+        The discriminator keys (event_type, source_protocol) must still
+        round-trip.
+        """
         payload = [
             {
                 "id": "evt-sparse-icmp",
@@ -1190,10 +1197,13 @@ class TestEventsList:
 
         assert response.status_code == 200
         event = response.json()[0]
-        assert event["metric_id"] is None
-        assert event["metric_name"] is None
-        assert event["metric_protocol"] is None
-        assert event["created_at"] is None
+        # P2 SCN-010: `None` fields are omitted from the JSON payload, not
+        # emitted as `null`. The contract is "absent == None", not "null".
+        assert "metric_id" not in event
+        assert "metric_name" not in event
+        assert "metric_protocol" not in event
+        assert "created_at" not in event
+        # Discriminators must still round-trip.
         assert event["event_type"] == "AVAILABILITY"
         assert event["source_protocol"] == "ICMP"
 

@@ -189,10 +189,28 @@ def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "root_cause_ci_id",
         "event_type",
         "source_protocol",
+        # P2 REQ-001/002: expose the ROOT's affected-CI blast radius without
+        # smuggling it through the `propagated` derived flag. Both fields are
+        # dropped on the way back out when they are None/empty (the existing
+        # `value is not None` filter handles that).
+        "affected_ci_ids",
+        "affected_count",
     }
     result = {
         key: value for key, value in summary.items() if key in allowed_keys and value is not None
     }
+    # P2 REQ-001/002: normalize the Neo4j writer key `affected_ci_count` to
+    # the public JSON key `affected_count` so the Pydantic surface stays
+    # consistent with the spec.
+    if "affected_ci_count" in summary and summary["affected_ci_count"] is not None:
+        result["affected_count"] = summary["affected_ci_count"]
+    # P2 REQ-001/010: drop the affected-CI fields when the legacy ROOT has
+    # no dependents. Empty list / zero count collapse to "missing" so the
+    # legacy JSON contract is preserved.
+    if not result.get("affected_ci_ids"):
+        result.pop("affected_ci_ids", None)
+    if not result.get("affected_count"):
+        result.pop("affected_count", None)
     # Add computed propagated flag only when correlation_type is PROPAGATED
     if summary.get("correlation_type") == "PROPAGATED":
         result["propagated"] = True
@@ -742,7 +760,8 @@ def get_availability_report(
             clipped_start = max(created_at, window_start)
             row["active_downtime_seconds"] += max(0.0, (window_end - clipped_start).total_seconds())
 
-        snmp_result = session.run("""
+        snmp_result = session.run(
+            """
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -757,7 +776,8 @@ def get_availability_report(
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS failing_ci,
                    sum(CASE WHEN open_no_response_events > 0 THEN 1 ELSE 0 END) AS no_response_ci,
                    sum(open_no_response_events) AS no_response_event_count
-            """)
+            """
+        )
         snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
 
     rows: list[dict[str, Any]] = []
@@ -844,7 +864,8 @@ def get_availability_snmp_no_response_drilldown(
 
     driver = get_db()
     with driver.session() as session:
-        summary_record = session.run("""
+        summary_record = session.run(
+            """
             MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
             WHERE toUpper(coalesce(m.protocol, '')) = 'SNMP'
             WITH DISTINCT ci
@@ -855,7 +876,8 @@ def get_availability_snmp_no_response_drilldown(
               AND e.failure_family = 'SNMP_NO_RESPONSE'
             RETURN count(DISTINCT ci) AS total_ci_with_no_response,
                    count(e) AS total_events_with_no_response
-            """).single()
+            """
+        ).single()
         if summary_record is not None:
             summary = {
                 "total_ci_with_no_response": int(
@@ -940,7 +962,77 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
-def get_events(status: str | None = None) -> list[dict[str, Any]]:
+def get_affected_siblings(event_id: str) -> list[dict[str, Any]]:
+    """Return the list of CIs affected by the given ROOT event.
+
+    P2 REQ-004: this is the operator-facing drill-down. The ROOT event is
+    fetched first and validated as a ROOT (legacy PROPAGATED children are
+    not drill-down targets). `affected_ci_ids` is the membership list that
+    P0 writes onto the ROOT; the lookup is an `UNWIND` + `MATCH (:CI)` that
+    preserves the original ordering and returns at least `{ci_id, ci_name,
+    status}`. Empty membership returns `[]` (no 404).
+
+    Unknown or non-ROOT ids raise `HTTPException(404, "Event not found: <id>")`.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        lookup = session.run(
+            """
+            MATCH (e:Event {id: $event_id})
+            RETURN e.correlation_type AS correlation_type,
+                   e.affected_ci_ids AS affected_ci_ids
+            """,
+            event_id=event_id,
+        ).single()
+
+        if not lookup or lookup.get("correlation_type") != "ROOT":
+            _raise_event_not_found(event_id)
+
+        ci_ids = list(lookup.get("affected_ci_ids") or [])
+        if not ci_ids:
+            return []
+
+        result = session.run(
+            """
+            UNWIND $ci_ids AS ci_id
+            MATCH (ci:CI {id: ci_id})
+            RETURN ci.id AS ci_id,
+                   ci.name AS ci_name,
+                   ci.status AS status,
+                   ci.ip AS ci_hostname,
+                   ci.location_name AS ci_location_name
+            """,
+            ci_ids=ci_ids,
+        )
+
+        rows_by_id = {
+            record["ci_id"]: {
+                "ci_id": record["ci_id"],
+                "ci_name": record["ci_name"],
+                "status": record["status"],
+                "ci_hostname": record["ci_hostname"],
+                "ci_location_name": record["ci_location_name"],
+            }
+            for record in result
+        }
+
+        # Preserve the original ordering of `affected_ci_ids` and drop any
+        # ids Neo4j did not resolve (defensive — should not happen in
+        # practice because the writer pins the relationship).
+        return [rows_by_id[ci_id] for ci_id in ci_ids if ci_id in rows_by_id]
+
+
+def get_events(
+    status: str | None = None,
+    include_children: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the event feed scoped to the requested status.
+
+    P2 REQ-003: when `include_children=False` (default), the query filters
+    out legacy PROPAGATED events so the operator view stops double-counting
+    the child rows P0 already collapsed into the ROOT. Pass
+    `include_children=True` to retain the raw set (audit, AI chat context).
+    """
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -953,11 +1045,16 @@ def get_events(status: str | None = None) -> list[dict[str, Any]]:
                 OR ($status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED'])
                 OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
             )
+            AND (
+                $include_children
+                OR coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+            )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
         """,
             status=status,
+            include_children=include_children,
         )
         return [
             _public_event_summary(
@@ -1158,12 +1255,14 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
 
             # Atomic: try to insert, if lock exists and not expired, conflict
             result = db.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO prune_lock (lock_key, owner, acquired_at, expires_at)
                     VALUES ('prune', :owner, :acquired_at, :expires_at)
                     ON CONFLICT (lock_key) DO NOTHING
                     RETURNING id
-                """),
+                """
+                ),
                 {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at},
             )
             row = result.fetchone()
@@ -1188,11 +1287,13 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
             if existing_owner == owner:
                 # We already own it — extend TTL (re-acquire)
                 db.execute(
-                    text("""
+                    text(
+                        """
                         UPDATE prune_lock
                         SET expires_at = :expires_at
                         WHERE lock_key = 'prune' AND owner = :owner
-                    """),
+                    """
+                    ),
                     {"owner": owner, "expires_at": expires_at},
                 )
                 db.commit()
@@ -1309,12 +1410,14 @@ async def event_batch_pruner(
 
     # First: get total count of recoverable events
     with driver.session() as session:
-        result = session.run("""
+        result = session.run(
+            """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             RETURN count(e) as total
-            """).single()
+            """
+        ).single()
         total = _record_value(result, "total") or 0
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
