@@ -151,3 +151,6 @@ context.md
 progress.md
 skills/worktree-manager/
 frontend/test-results/
+
+# OpenSpec/SDD offline tooling output (REQ-009 / SCN-012)
+openspec/scripts/output/
