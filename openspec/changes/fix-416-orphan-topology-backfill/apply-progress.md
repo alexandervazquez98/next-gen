@@ -71,7 +71,7 @@ testpath is unchanged.
   - REQ-003 / REQ-004: `build_output_payload` returns dict with EXACTLY `{as_of, scope, relationship_types, orphan_count, ci_ids}`, ISO 8601 UTC `as_of` with trailing `Z`, `orphan_count == len(ci_ids)`, non-opaque values stripped.
   - REQ-006: `write_output` uses `Path.write_text(...)` + `.tmp` + `Path.replace(target)` atomic write; no `.tmp` leftover, `tmp_path.parent.mkdir(parents=True, exist_ok=True)` for nested dirs.
   - `_validate_ci_id` uses `uuid.UUID(...)` for canonical UUID parsing (per spec direction); `_UUID_SHAPE_RE` regex pre-filters synthetic IDs only.
-  - **PRIVACY NOTE**: commits `131b8bd` (WU-1 scaffold) and `22ec57e` (WU-3 RED) originally used several issue-derived placeholder strings (AP names and a production IP from issue #416) as rejection-test fixtures and regex sanity checks. Per privacy policy, the working tree was sanitized to use neutral uppercase / IPv4-shaped placeholders (`REGION_TAG`, `10.99.99.99`, `REMOTE_SITE`, `UPPERCASE_TOKEN`, `OFFICE_TAG`). The original placeholder values are documented only by their neutral-shape names to keep the issue's identifying strings out of git history; refer to the upstream issue tracker for the original token mapping.
+  - **PRIVACY NOTE**: the WU-1 scaffold and WU-3 RED commits originally used several issue-derived placeholder strings (AP names and a production IP from issue #416) as rejection-test fixtures and regex sanity checks. Per privacy policy, the working tree was sanitized to use neutral uppercase / IPv4-shaped placeholders (`REGION_TAG`, `10.99.99.99`, `REMOTE_SITE`, `UPPERCASE_TOKEN`, `OFFICE_TAG`). The original placeholder values are documented only by their neutral-shape names to keep the issue's identifying strings out of git history; refer to the upstream issue tracker for the original token mapping.
   - **Python version caveat**: project `backend/pyproject.toml` and `ruff.toml` target Python 3.11 (`datetime.UTC` alias). The local `.venv` is 3.9 so `datetime.UTC` is unavailable. Resolved via per-line `# noqa: UP017` on the single `timezone.utc` call site; CI's 3.11 runtime won't trigger UP017 at all.
 
 ## Privacy Sweep
@@ -125,9 +125,15 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
 ## Sizes
 - WU-1: ~116 lines (scaffold + gitignore)
 - WU-2: ~167 lines (validators)
-- WU-3: ~373 lines (output layer + privacy fixup + lint)
+- WU-3: ~373 lines (output layer + lint)
 - WU-4..10: not yet started
 
 ## Recommended for Next Delegation
 - Continue with WU-4 (audit line) using same pattern.
-- Before pushing upstream, squash the WU-1 + WU-3 RED commits (`131b8bd`, `22ec57e`) so the sensitive placeholder strings never reach git history. Recommend orchestrator-driven rebase at PR-prep time.
+- Branch is ready to push: history-cleanup rebase already performed; no further orchestrator-driven history rewrites needed before push.
+
+## History Cleanup Rebase (post-WU-3)
+- Date: 2026-08-02
+- Action: rebased commits `7978a05` (planning), `b624c09` (WU-1 scaffold), and `fe34025` (WU-3 RED) to remove issue-derived placeholder strings (AP names and a production IP from issue #416) that were originally used as rejection-test fixtures. Replaced with neutral placeholders (`REGION_TAG`, `10.99.99.99`, `REMOTE_SITE`, `UPPERCASE_TOKEN`, `OFFICE_TAG`) from the start of each commit. The original fixup commit was dropped (work folded into the originals). Sanitized the planning `tasks.md` T-041 privacy-sweep line, the WU-3 commit message body, and the apply-progress.md PRIVACY NOTE / Privacy Sweep sections to use neutral references only.
+- Result: git history clean. Privacy sweep passes on both working tree and git history.
+- Tests after rebase: 42/42 pass.
