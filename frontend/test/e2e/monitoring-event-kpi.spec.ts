@@ -33,7 +33,9 @@ test.describe("P2 REQ-005 / SCN-008: Monitoring KPI drill-down", () => {
   //   ::KPI root filter + "affecting N CIs" sub-label
   // which runs under jsdom and exercises the same assertions without
   // the docker-compose smoke dependency.
-  test.skip("Total Active card shows root count, sub-label, and drill-down modal", async ({ page }) => {
+  test.skip("Total Active card shows root count, sub-label, and drill-down modal", async ({
+    page,
+  }) => {
     // Stub the root feed with 2 ROOT + 1 PROPAGATED.
     await page.route("**/events?status=CONSOLE*", async (route) => {
       await route.fulfill({
