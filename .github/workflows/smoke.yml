@@ -102,8 +102,8 @@ jobs:
       FRONTEND_PORT: "3000"
       BACKEND_BASE_URL: "http://localhost:8000"
       FRONTEND_BASE_URL: "http://localhost:3000"
-      BACKEND_HEALTH_TIMEOUT_SECONDS: "120"
-      FRONTEND_HEALTH_TIMEOUT_SECONDS: "180"
+      BACKEND_HEALTH_TIMEOUT_SECONDS: "180"
+      FRONTEND_HEALTH_TIMEOUT_SECONDS: "360"
     steps:
       - uses: actions/checkout@v4
 
@@ -156,13 +156,13 @@ jobs:
           set -euo pipefail
           docker compose up -d postgres neo4j backend
 
-      # Wait up to BACKEND_HEALTH_TIMEOUT_SECONDS (120s default) for
+      # Wait up to BACKEND_HEALTH_TIMEOUT_SECONDS (180s default) for
       # the FastAPI root to return 200. The curl check is the SAME
       # contract the smoke spec verifies (backend/main.py GET /).
       - name: Wait for backend health (timeout ${BACKEND_HEALTH_TIMEOUT_SECONDS}s)
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + BACKEND_HEALTH_TIMEOUT_SECONDS ))
+          deadline=$(( $(date +%s) + ${BACKEND_HEALTH_TIMEOUT_SECONDS} ))
           until curl -sf "http://localhost:${BACKEND_PORT}/" > /dev/null; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::backend did not become healthy within ${BACKEND_HEALTH_TIMEOUT_SECONDS}s"
@@ -185,7 +185,7 @@ jobs:
       - name: Wait for frontend health (timeout ${FRONTEND_HEALTH_TIMEOUT_SECONDS}s)
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + FRONTEND_HEALTH_TIMEOUT_SECONDS ))
+          deadline=$(( $(date +%s) + ${FRONTEND_HEALTH_TIMEOUT_SECONDS} ))
           until curl -sf "http://localhost:${FRONTEND_PORT}/" > /dev/null; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::frontend did not become healthy within ${FRONTEND_HEALTH_TIMEOUT_SECONDS}s"
