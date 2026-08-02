@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -78,7 +79,7 @@ def validate_relationship_types(types) -> list:
 def compute_query_hash(query: str, params: dict) -> str:
     """Return a deterministic 16-char hex prefix for the query/params pair."""
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(f"{query}\n{canonical}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{query}\n{canonical}".encode()).hexdigest()
     return digest[:16]
 
 
@@ -96,6 +97,57 @@ WHERE NOT EXISTS {
 RETURN n.id AS ci_id
 LIMIT $cap"""
     return query, {"relationship_types": relationships, "cap": cap}
+
+
+class OrphanDiscoveryError(RuntimeError):
+    """Raised when Neo4j reports a schema-level error during discovery."""
+
+
+@dataclass(frozen=True)
+class OrphanDiscoveryResult:
+    ids: tuple
+    cap_reached: bool
+
+
+def discover_orphans(session, scope: str, rel_types, cap: int = MAX_ORPHAN_CAP) -> OrphanDiscoveryResult:
+    """Execute the orphan query and return deduplicated, cap-limited IDs."""
+    validate_scope(scope)
+    relationships = validate_relationship_types(rel_types)
+    safe_cap = MAX_ORPHAN_CAP if cap is None else cap
+    if not isinstance(safe_cap, int) or isinstance(safe_cap, bool) or safe_cap < 1:
+        raise ValueError("error: --cap must be a positive integer")
+    query, params = build_query(scope, relationships, cap=safe_cap)
+    try:
+        result = _safe_session_run(session, query, **params)
+    except Exception as exc:
+        message = str(exc)
+        match = re.search(
+            r"label\s+([A-Za-z_][A-Za-z0-9_]*)\s+not\s+found",
+            message,
+        )
+        if match:
+            raise OrphanDiscoveryError(
+                f"error: missing label {match.group(1)} in schema"
+            ) from exc
+        raise
+    seen: dict = {}
+    for record in result:
+        if not isinstance(record, dict):
+            row = dict(record) if hasattr(record, "items") else {}
+        else:
+            row = record
+        for value in row.values():
+            if not _is_opaque_ci_id(value):
+                continue
+            if value in seen:
+                continue
+            seen[value] = True
+            if len(seen) >= safe_cap:
+                break
+        if len(seen) >= safe_cap:
+            break
+    cap_reached = len(seen) >= safe_cap and len(seen) == safe_cap
+    return OrphanDiscoveryResult(tuple(seen.keys()), cap_reached=cap_reached)
 
 
 def _validate_ci_id(value) -> str:
