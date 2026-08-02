@@ -75,6 +75,13 @@ def validate_relationship_types(types) -> list:
     return list(seen.keys())
 
 
+def compute_query_hash(query: str, params: dict) -> str:
+    """Return a deterministic 16-char hex prefix for the query/params pair."""
+    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(f"{query}\n{canonical}".encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
 def build_query(scope: str, rel_types, cap: int = MAX_ORPHAN_CAP):
     """Build the read-only, parameterized orphan-discovery query."""
     validate_scope(scope)
