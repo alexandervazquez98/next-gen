@@ -15,7 +15,7 @@ import pytest
 
 class TestEmitAuditLine:
     def test_single_line_with_required_keys_in_order(self):
-        """Emitted line has the 6 required key=value pairs in spec order."""
+        """Emitted line has the 7 key=value pairs in spec order."""
         from openspec.scripts.cmdb_backfill_orphans import emit_audit_line
 
         stream = io.StringIO()
@@ -32,9 +32,15 @@ class TestEmitAuditLine:
         assert line.endswith("\n"), "audit line must end with newline"
         body = line.rstrip("\n")
         keys = [kv.split("=", 1)[0] for kv in body.split(" ")]
-        assert keys == ["ts", "query_hash", "scope", "rels", "orphan_count", "exit"], (
-            f"audit keys must appear in spec order, got {keys!r}"
-        )
+        assert keys == [
+            "ts",
+            "query_hash",
+            "scope",
+            "rels",
+            "orphan_count",
+            "exit",
+            "cap_reached",
+        ], f"audit keys must appear in spec order, got {keys!r}"
 
     def test_query_hash_is_at_least_8_hex_chars(self):
         from openspec.scripts.cmdb_backfill_orphans import emit_audit_line

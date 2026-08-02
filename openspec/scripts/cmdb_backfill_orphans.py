@@ -161,3 +161,40 @@ def write_output(payload: dict, output_path) -> None:
     tmp_path.write_text(rendered, encoding="utf-8")
     tmp_path.replace(target)
 
+
+# REQ-005 / AD-07: order is part of the public contract.
+_AUDIT_KEYS = ("ts", "query_hash", "scope", "rels", "orphan_count", "exit")
+
+
+def emit_audit_line(
+    stream,
+    *,
+    ts: str,
+    query_hash: str,
+    scope: str,
+    rels,
+    orphan_count: int,
+    exit: int,
+    cap_reached: bool = False,
+) -> None:
+    """Emit the single-line audit record to ``stream`` (typically stderr).
+
+    The line is space-joined key=value pairs in the exact spec order:
+    ``ts``, ``query_hash`` (≥ 8 hex chars), ``scope``, ``rels``
+    (comma-joined), ``orphan_count``, ``exit``, ``cap_reached``
+    (literal ``true``/``false``). The function NEVER accepts a CI ID,
+    name, IP, or site — the audit trail is metadata-only.
+    """
+    rels_value = ",".join(rels)
+    parts = [
+        f"ts={ts}",
+        f"query_hash={query_hash}",
+        f"scope={scope}",
+        f"rels={rels_value}",
+        f"orphan_count={orphan_count}",
+        f"exit={exit}",
+    ]
+    parts.append("cap_reached=true" if cap_reached else "cap_reached=false")
+    stream.write(" ".join(parts) + "\n")
+    stream.flush()
+
