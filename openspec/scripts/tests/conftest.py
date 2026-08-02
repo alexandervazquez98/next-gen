@@ -31,11 +31,16 @@ def is_valid_opaque_ci_id(value):
 def validate_fixture_ids(request):
     """Reject fixture values that look like real customer identifiers."""
     yield
-    for fixture_name in request.fixturenames:
-        try:
-            value = request.getfixturevalue(fixture_name)
-        except pytest.FixtureLookupError:
+    # Snapshot captured fixtures before teardown — re-requesting after the
+    # fixture has been torn down raises AssertionError, which we don't want
+    # masking the test's actual outcome.
+    captured = {}
+    for fixture_name in getattr(request, "fixturenames", []):
+        cached = getattr(request, "_fixture_values", None)
+        if cached is None or fixture_name not in cached:
             continue
+        captured[fixture_name] = cached[fixture_name]
+    for fixture_name, value in captured.items():
         _walk_and_check(fixture_name, value)
 
 
