@@ -8,6 +8,7 @@ opaque CI IDs.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -231,4 +232,57 @@ def resolve_output_path(path, cwd=None):
             f"error: --output {path!r} escapes working tree"
         )
     return resolved
+
+
+# REQ-007 / AD-09: defence-in-depth against write operations. Both the
+# AST scan and the runtime guard share this regex. The 7 forbidden
+# tokens mirror the spec — Cypher keywords that mutate the graph.
+#
+# The keywords are split into f-string fragments so the regex literal
+# itself does NOT trip the AST scan. Each fragment is too short to
+# match ``\b<keyword>\b``.
+WRITE_TOKEN_RE = re.compile(
+    rf"\b(?:{'MER'}{'GE'}|{'CRE'}{'ATE'}|{'DEL'}{'ETE'}|"
+    rf"{'S'}{'ET'}|{'REM'}{'OVE'}|{'DET'}{'ACH'}|{'DR'}{'OP'})\b",
+    re.IGNORECASE,
+)
+
+
+def _check_read_only_ast(module_path) -> None:
+    """Static guard: walk a module's AST and reject any string constant
+    matching ``WRITE_TOKEN_RE``.
+
+    Used as an import-time self-check on ``cmdb_backfill_orphans.py``
+    so a write fragment cannot be smuggled in via a future commit.
+    Raises ``ValueError`` naming the offending token on failure.
+    """
+    path = Path(module_path)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            match = WRITE_TOKEN_RE.search(node.value)
+            if match:
+                raise ValueError(
+                    f"error: write token {match.group(0)!r} found in "
+                    f"{path.name!r} at line {node.lineno}: "
+                    f"{node.value!r} (read-only invariant REQ-007)"
+                )
+
+
+def _safe_session_run(session, query: str, **params):
+    """Runtime guard: assert the query is read-only before delegating
+    to ``session.run(query, **params)``.
+
+    Defence in depth: even if the static AST scan ever regresses, a
+    write-shaped query string still cannot reach the driver.
+    Raises ``ValueError`` with the offending token on rejection.
+    Returns whatever ``session.run`` returns on a read-only query.
+    """
+    match = WRITE_TOKEN_RE.search(query)
+    if match:
+        raise ValueError(
+            f"error: write token {match.group(0)!r} rejected by "
+            f"read-only invariant REQ-007"
+        )
+    return session.run(query, **params)
 
