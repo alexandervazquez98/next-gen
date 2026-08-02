@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
 
 class TestEmitAuditLine:
     def test_single_line_with_required_keys_in_order(self):

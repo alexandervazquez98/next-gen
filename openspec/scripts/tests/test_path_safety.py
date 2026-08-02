@@ -9,7 +9,6 @@ any write happens.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -95,16 +94,23 @@ class TestResolveOutputPath:
         """A symlink that resolves outside cwd MUST be rejected."""
         from openspec.scripts.cmdb_backfill_orphans import resolve_output_path
 
-        outside_dir = tmp_path / "outside"
-        outside_dir.mkdir()
+        # Build an outside target that is NOT under tmp_path.
+        outside_dir = tmp_path.parent / "outside_target_for_symlink"
+        outside_dir.mkdir(exist_ok=True)
         monkeypatch.chdir(tmp_path)
+        try:
+            # Create a symlink inside cwd that points outside.
+            link = tmp_path / "escape_link.json"
+            link.symlink_to(outside_dir / "escape.json")
 
-        # Create a symlink inside cwd that points outside.
-        link = tmp_path / "escape_link.json"
-        link.symlink_to(outside_dir / "escape.json")
+            with pytest.raises(ValueError):
+                resolve_output_path(str(link))
+        finally:
+            # Cleanup outside target so test is hermetic.
+            import shutil
 
-        with pytest.raises(ValueError):
-            resolve_output_path(str(link))
+            if outside_dir.exists():
+                shutil.rmtree(outside_dir, ignore_errors=True)
 
     def test_pathlib_input_accepted(self, tmp_path, monkeypatch):
         """`Path` objects are accepted alongside strings."""

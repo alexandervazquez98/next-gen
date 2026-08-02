@@ -223,10 +223,11 @@ def resolve_output_path(path, cwd=None):
         return None
     base = (cwd if cwd is not None else Path.cwd()).resolve()
     p = Path(path)
-    if not p.is_absolute():
-        resolved = (base / p).resolve(strict=False)
-    else:
-        resolved = p.resolve(strict=False)
+    resolved = (
+        (base / p).resolve(strict=False)
+        if not p.is_absolute()
+        else p.resolve(strict=False)
+    )
     if not resolved.is_relative_to(base):
         raise ValueError(
             f"error: --output {path!r} escapes working tree"

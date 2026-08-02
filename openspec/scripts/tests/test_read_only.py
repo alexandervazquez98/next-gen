@@ -16,8 +16,6 @@ defence layers enforce this:
 from __future__ import annotations
 
 import ast
-import importlib
-import inspect
 import textwrap
 from pathlib import Path
 
@@ -40,7 +38,7 @@ class TestStaticAstScan:
 
     def test_module_with_merge_literal_rejected(self, tmp_path):
         """A fixture module containing ``MERGE (n)-[:REL]->(m)`` MUST be flagged."""
-        from openspec.scripts.cmdb_backfill_orphans import WRITE_TOKEN_RE, _check_read_only_ast
+        from openspec.scripts.cmdb_backfill_orphans import _check_read_only_ast
 
         fixture = tmp_path / "fixture_with_merge.py"
         fixture.write_text(
@@ -176,6 +174,10 @@ class TestStaticAstScan:
         # Negative: read-only constructs are NOT flagged.
         assert not WRITE_TOKEN_RE.search("MATCH (n) RETURN n")
         assert not WRITE_TOKEN_RE.search("WHERE NOT EXISTS { MATCH (n)-[r]->(m) }")
+        # ``write`` alone (English word in docstring) MUST NOT be flagged —
+        # the regex is scoped to Cypher write keywords only.
+        assert not WRITE_TOKEN_RE.search("No auto-write, no heuristics")
+        assert not WRITE_TOKEN_RE.search("read-only invariant")
 
 
 class TestSafeSessionRun:
