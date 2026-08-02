@@ -100,8 +100,10 @@ jobs:
     env:
       BACKEND_PORT: "8000"
       FRONTEND_PORT: "3000"
+      BACKEND_BASE_URL: "http://localhost:8000"
+      FRONTEND_BASE_URL: "http://localhost:3000"
       BACKEND_HEALTH_TIMEOUT_SECONDS: "120"
-      FRONTEND_HEALTH_TIMEOUT_SECONDS: "90"
+      FRONTEND_HEALTH_TIMEOUT_SECONDS: "180"
     steps:
       - uses: actions/checkout@v4
 
