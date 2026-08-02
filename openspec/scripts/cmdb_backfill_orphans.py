@@ -198,3 +198,37 @@ def emit_audit_line(
     stream.write(" ".join(parts) + "\n")
     stream.flush()
 
+
+# REQ-006 / AD-02: sentinels that mean "emit to stdout instead of a file".
+_STDOUT_SENTINELS = ("-", "")
+
+
+def resolve_output_path(path, cwd=None):
+    """Validate that ``path`` (or a stdout sentinel) stays inside the cwd.
+
+    Returns ``None`` when the caller should emit JSON to stdout —
+    either because ``path`` is ``None`` or matches one of the POSIX
+    stdout sentinels (``\"-\"`` or ``\"\"``). Otherwise, resolves
+    ``path`` against ``cwd`` (defaults to ``Path.cwd()``) and rejects
+    any path that escapes the cwd via ``..`` traversal, an absolute
+    path outside the cwd, or a symlink whose target lies outside.
+
+    Raises ``ValueError`` with a message shaped
+    ``error: --output <repr> escapes working tree`` when the path is
+    rejected. The validation runs BEFORE any filesystem write so a
+    bad path never leaves a partial file behind.
+    """
+    if path is None or (isinstance(path, str) and path in _STDOUT_SENTINELS):
+        return None
+    base = (cwd if cwd is not None else Path.cwd()).resolve()
+    p = Path(path)
+    if not p.is_absolute():
+        resolved = (base / p).resolve(strict=False)
+    else:
+        resolved = p.resolve(strict=False)
+    if not resolved.is_relative_to(base):
+        raise ValueError(
+            f"error: --output {path!r} escapes working tree"
+        )
+    return resolved
+
