@@ -21,35 +21,92 @@ vi.mock('../../services/api', () => ({
   },
 }));
 
+// Each `*Probe` component below owns exactly one React Query hook so
+// the `react-hooks/rules-of-hooks` rule sees every hook call at the
+// top level of a component (no IIFEs, no conditional dispatches).
+// `HookProbe` is a tiny JSX dispatcher that picks which probe to
+// render based on the `resource` prop; it never calls hooks itself.
+//
+// This replaces the previous single-component IIFE pattern that
+// tripped the lint rule. The semantic surface for tests is
+// unchanged: callers still render `<HookProbe resource="X" />` and
+// observe `data-testid="fetch-status"` for the chosen resource.
+
+function StatusProbe() {
+  const result = useSystemStatusQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function NodesProbe() {
+  const result = useNodesQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function LinksProbe() {
+  const result = useLinksQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function CategoriesProbe() {
+  const result = useCategoriesQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function EventsProbe() {
+  const result = useActiveEventsQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function TopologyProbe() {
+  const result = useGraphTopologyQuery();
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+function DetailProbe({
+  eventId,
+  detailEnabled,
+}: {
+  eventId?: string;
+  detailEnabled?: boolean;
+}) {
+  const result = useEventDetailQuery(eventId, detailEnabled);
+  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+}
+
+type ResourceKind =
+  | 'status'
+  | 'nodes'
+  | 'links'
+  | 'categories'
+  | 'events'
+  | 'topology'
+  | 'detail';
+
 function HookProbe({
   resource,
   eventId,
   detailEnabled,
 }: {
-  resource: 'status' | 'nodes' | 'links' | 'categories' | 'events' | 'topology' | 'detail';
+  resource: ResourceKind;
   eventId?: string;
   detailEnabled?: boolean;
 }) {
-  const result = (() => {
-    switch (resource) {
-      case 'status':
-        return useSystemStatusQuery();
-      case 'nodes':
-        return useNodesQuery();
-      case 'links':
-        return useLinksQuery();
-      case 'categories':
-        return useCategoriesQuery();
-      case 'events':
-        return useActiveEventsQuery();
-      case 'topology':
-        return useGraphTopologyQuery();
-      case 'detail':
-        return useEventDetailQuery(eventId, detailEnabled);
-    }
-  })();
-
-  return <span data-testid="fetch-status">{result.fetchStatus}</span>;
+  switch (resource) {
+    case 'status':
+      return <StatusProbe />;
+    case 'nodes':
+      return <NodesProbe />;
+    case 'links':
+      return <LinksProbe />;
+    case 'categories':
+      return <CategoriesProbe />;
+    case 'events':
+      return <EventsProbe />;
+    case 'topology':
+      return <TopologyProbe />;
+    case 'detail':
+      return <DetailProbe eventId={eventId} detailEnabled={detailEnabled} />;
+  }
 }
 
 function DeferredNodesConsumer({ label }: { label: string }) {
@@ -65,8 +122,15 @@ function DeferredNodesConsumer({ label }: { label: string }) {
 }
 
 function createDeferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
+  // The Promise resolve / reject bindings are captured here so tests
+  // can settle the deferred promise from outside the executor. The
+  // parameter names in the function-type declarations are
+  // intentionally prefixed with `_` so the base eslint
+  // `no-unused-vars` rule (which treats function-type parameter
+  // names as variables) accepts them via the `argsIgnorePattern: "^_"`
+  // option configured in eslint.config.js.
+  let resolve!: (_value: T | PromiseLike<T>) => void;
+  let reject!: (_reason?: unknown) => void;
 
   const promise = new Promise<T>((res, rej) => {
     resolve = res;
