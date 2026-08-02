@@ -286,6 +286,7 @@ None. All 3 WUs landed green; 42/42 tests pass; ruff clean; privacy sweep clean 
   - Runtime harness: CLI smoke test via `python -m openspec.scripts.cmdb_backfill_orphans --help` returns the help text and `rc=0`.
   - Rollback boundary: remove `openspec/scripts/OPERATOR_RUNBOOK.md`, revert the CHANGELOG line, and remove `openspec/scripts/tests/test_runbook.py`.
 - Notes: the runbook uses the marker phrase "Delete the JSON file" so the SCN-100 content-shape test has a deterministic anchor. The CHANGELOG entry mentions the CLI by name and the operator runbook without disclosing any customer data.
+- **Privacy redaction fix**: the first version of `test_runbook.py` listed the literal issue-derived strings (REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / REGION_TAG / 10.99.99.99) as the negatives to assert. The fixture switched to the neutral placeholders (REGION_TAG / 10.99.99.99) that the rest of the change uses, so the working tree and git history stay clean without weakening the assertion.
 
 ## TDD Cycle Evidence (WU-10)
 
