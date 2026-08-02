@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 # AD-01: scope is restricted to APs in this slice.
 ALLOWED_SCOPES = frozenset({"ap"})
@@ -286,4 +288,68 @@ def _safe_session_run(session, query: str, **params):
             f"read-only invariant REQ-007"
         )
     return session.run(query, **params)
+
+
+class MissingURLError(ValueError):
+    """Raised when neither the command-line nor environment URI is configured."""
+
+
+class Neo4jDriverError(RuntimeError):
+    """Raised when the lazy driver factory cannot produce a driver safely."""
+
+
+def _resolve_neo4j_uri(argv_uri: str | None, env: dict | None = None) -> str:
+    """Resolve the command-line URI before consulting the environment."""
+    environment = os.environ if env is None else env
+    uri = argv_uri or environment.get("NEO4J_URI")
+    if not uri:
+        raise MissingURLError("error: --neo4j-uri (or $NEO4J_URI) required")
+    return uri
+
+
+def _format_credential_redacted(uri: str) -> str:
+    """Return a URI with user-info and query passwords safe for diagnostics."""
+    try:
+        parts = urlsplit(uri)
+        if not parts.netloc:
+            return uri
+        hostname = parts.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        port = f":{parts.port}" if parts.port is not None else ""
+        username = f"{parts.username}@" if parts.username else ""
+        query = re.sub(
+            r"(?i)(password|passwd|pwd)=[^&]*",
+            r"\1=<redacted>",
+            parts.query,
+        )
+        return urlunsplit(
+            (parts.scheme, f"{username}{hostname}{port}", parts.path, query, parts.fragment)
+        )
+    except (AttributeError, ValueError):
+        return re.sub(r"(://[^/:@]+):[^@]*@", r"\1@", uri, count=1)
+
+
+def _open_neo4j_driver(uri: str, user: str, password: str):
+    """Open a Neo4j driver with a deferred dependency import."""
+    try:
+        from neo4j import GraphDatabase
+    except ImportError:
+        raise Neo4jDriverError("error: neo4j driver is unavailable") from None
+    try:
+        return GraphDatabase.driver(uri, auth=(user, password))
+    except Exception:
+        safe_uri = _format_credential_redacted(uri)
+        raise Neo4jDriverError(
+            f"error: unable to open Neo4j driver at {safe_uri}"
+        ) from None
+
+
+def _open_neo4j(uri: str, user: str | None = None, password: str | None = None):
+    """Compatibility wrapper used by the CLI and test seam."""
+    return _open_neo4j_driver(
+        uri,
+        user if user is not None else os.environ.get("NEO4J_USER", "neo4j"),
+        password if password is not None else os.environ.get("NEO4J_PASSWORD", ""),
+    )
 
