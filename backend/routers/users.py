@@ -1,4 +1,6 @@
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from models.sql_models import User as PgUser
 from models.user import User, UserCreate, UserPermission, UserResetRequest, UserUpdate
@@ -318,8 +320,8 @@ async def reset_password(
 async def deactivate_user(
     request: Request,
     username: str,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[Session, Depends(get_pg_db)],
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         audit_service.record_denied(
