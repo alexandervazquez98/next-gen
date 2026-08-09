@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
-
 from models.itsm import (
     TICKET_STATUS_ORDER,
     ServiceCatalogCreate,
@@ -17,6 +15,7 @@ from models.itsm import (
     TicketStatus,
     validate_ticket_transition,
 )
+from pydantic import ValidationError
 from services.itsm_bootstrap import run_service_catalog_preflight
 
 
