@@ -5,11 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
-from repositories import user_repo
+from repositories import ticket_folio_repo
 from repositories.user_repo import UserRepository
 from services.user_lock import acquire_user_lock, acquire_user_locks_in_order
-
 
 # ---------------------------------------------------------------------------
 # UserRepository.get_by_username
@@ -68,10 +66,10 @@ def test_deactivate_already_inactive_is_idempotent():
 
 def test_deactivate_does_not_touch_ticket_rows():
     """deactivate MUST NOT write to TicketFolio — historical snapshots stay valid."""
-    from repositories import ticket_folio_repo
-
+    # The ticket repository MUST NOT expose a deactivate method; if a future
+    # change adds one, this test is the tripwire to reconsider.
     with pytest.raises(AttributeError):
-        ticket_folio_repo.TicketFolioRepository.deactivate
+        ticket_folio_repo.TicketFolioRepository.deactivate  # noqa: B018
 
     db = MagicMock()
     row = MagicMock(username="op1", is_active=True)

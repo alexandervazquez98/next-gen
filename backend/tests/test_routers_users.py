@@ -13,7 +13,6 @@ from repositories.user_repo import UserRepository
 from routers import users as users_router
 from services.auth_service import get_current_active_user
 
-
 app = FastAPI()
 app.include_router(users_router.router, prefix="/api")
 client = TestClient(app)

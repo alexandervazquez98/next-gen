@@ -14,8 +14,8 @@ from models.itsm import (
     TicketFolioUpdate,
     validate_ticket_transition,
 )
-from pydantic import ValidationError
 from postgres_db import SessionLocal
+from pydantic import ValidationError
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 from repositories.ticket_folio_repo import TicketFolioRepository
 from repositories.user_repo import UserRepository

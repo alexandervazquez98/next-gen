@@ -372,13 +372,15 @@ def test_create_surfaces_user_lock_timeout_as_409():
     catalog_repo.get_by_id.return_value = _active_catalog()
     ticket_repo = _TicketRepoStub()
 
-    with patch("services.ticket_folio_service.acquire_user_lock", side_effect=RuntimeError("user_lock_timeout")):
-        with pytest.raises(HTTPException) as exc:
-            ticket_service.create_ticket_folio(
-                _good_payload(),
-                repository=ticket_repo,
-                catalog_repository=catalog_repo,
-            )
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock", side_effect=RuntimeError("user_lock_timeout")),
+        pytest.raises(HTTPException) as exc,
+    ):
+        ticket_service.create_ticket_folio(
+            _good_payload(),
+            repository=ticket_repo,
+            catalog_repository=catalog_repo,
+        )
 
     assert exc.value.status_code == 409
     assert "user_lock_timeout" in exc.value.detail

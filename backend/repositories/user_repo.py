@@ -1,9 +1,9 @@
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
-from sqlalchemy.orm import Session
-from sqlalchemy.future import select
 from models.sql_models import User
 from models.user import UserCreate, UserUpdate
+from sqlalchemy.orm import Session
 from utils.security import get_password_hash
 
 
@@ -53,17 +53,17 @@ def update_user(db: Session, username: str, user_update: UserUpdate):
         return None
 
     if user_update.password:
-        setattr(db_user, "hashed_password", get_password_hash(user_update.password))
+        db_user.hashed_password = get_password_hash(user_update.password)
     if user_update.role:
-        setattr(db_user, "role", user_update.role)
+        db_user.role = user_update.role
     if user_update.tier is not None:
-        setattr(db_user, "tier", user_update.tier)
+        db_user.tier = user_update.tier
     if user_update.permissions is not None:
-        setattr(db_user, "permissions", _normalize_permissions(user_update.permissions))
+        db_user.permissions = _normalize_permissions(user_update.permissions)
     if user_update.allowed_locations is not None:
-        setattr(db_user, "allowed_locations", user_update.allowed_locations)
+        db_user.allowed_locations = user_update.allowed_locations
     if user_update.allowed_ci_types is not None:
-        setattr(db_user, "allowed_ci_types", user_update.allowed_ci_types)
+        db_user.allowed_ci_types = user_update.allowed_ci_types
 
     db.commit()
     db.refresh(db_user)

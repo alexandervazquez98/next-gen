@@ -1,15 +1,14 @@
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
-from services.auth_service import get_current_active_user, check_permission
-from utils.security import get_password_hash
-from models.user import User, UserCreate, UserUpdate, UserRole, UserPermission, UserResetRequest
+from models.sql_models import User as PgUser
+from models.user import User, UserCreate, UserPermission, UserResetRequest, UserUpdate
 from postgres_db import get_pg_db
 from repositories import user_repo
 from repositories.user_repo import UserRepository
 from services import audit_service
-from models.sql_models import User as PgUser
+from services.auth_service import check_permission, get_current_active_user
+from sqlalchemy.orm import Session
+from utils.security import get_password_hash
 
 # Standardized user audit constants
 AUDIT_TARGET_TYPE_USER = "user"
@@ -54,21 +53,21 @@ def map_pg_user_to_pydantic(pg_user: PgUser) -> User:
         force_password_change=pg_user.force_password_change
     )
 
-@router.get("/", response_model=List[User])
+@router.get("/", response_model=list[User])
 async def list_users(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db)
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view users")
-    
+
     users = user_repo.get_users(db)
     return [map_pg_user_to_pydantic(u) for u in users]
 
 @router.post("/", response_model=User)
 async def create_user(
     request: Request,
-    user: UserCreate, 
+    user: UserCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db)
 ):
@@ -121,8 +120,8 @@ async def create_user(
 @router.put("/{username}", response_model=User)
 async def update_user(
     request: Request,
-    username: str, 
-    update_data: UserUpdate, 
+    username: str,
+    update_data: UserUpdate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db)
 ):
@@ -178,7 +177,7 @@ async def update_user(
 @router.delete("/{username}")
 async def delete_user(
     request: Request,
-    username: str, 
+    username: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db)
 ):
@@ -231,7 +230,7 @@ async def delete_user(
 @router.post("/{username}/reset")
 async def reset_password(
     request: Request,
-    username: str, 
+    username: str,
     reset_data: UserResetRequest | None = None,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_pg_db)
