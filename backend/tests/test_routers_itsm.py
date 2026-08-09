@@ -252,7 +252,12 @@ class TestItsmTicketRouter:
 
         response = client.post(
             "/api/itsm/tickets",
-            json={"type": "service_request", "title": "Access", "service_catalog_id": "svc-001"},
+            json={
+                "type": "service_request",
+                "title": "Access",
+                "service_catalog_id": "svc-001",
+                "assignee_username": "op1",
+            },
         )
         assert response.status_code == 403
 
@@ -290,6 +295,7 @@ class TestItsmTicketRouter:
                             "type": "service_request",
                             "title": "Access",
                             "service_catalog_id": "svc-001",
+                            "assignee_username": "op1",
                         },
                     )
             elif method == "put":
@@ -344,6 +350,7 @@ class TestItsmTicketRouter:
                     "type": "service_request",
                     "title": "Access",
                     "service_catalog_id": "svc-001",
+                    "assignee_username": "op1",
                 },
             )
             response_update = client.put("/api/itsm/tickets/1", json={"title": "Escalated"})
