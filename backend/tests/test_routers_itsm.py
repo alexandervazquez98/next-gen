@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
 from models.user import User, UserPermission
 from routers import itsm_service_catalog, ticket_folios
 from services.auth_service import get_current_active_user

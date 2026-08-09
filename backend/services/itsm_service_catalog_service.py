@@ -9,8 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException
-from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from pydantic import ValidationError
+
+from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository, ValueStreamLookup
 
 

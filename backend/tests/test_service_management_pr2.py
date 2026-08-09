@@ -4,8 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from pydantic import ValidationError
+
+from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository, ValueStreamLookup
 from services.itsm_bootstrap import _load_service_catalog_migration_statements
 from services.itsm_service_catalog_service import create_service_catalog, update_service_catalog
