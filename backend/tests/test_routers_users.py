@@ -87,8 +87,10 @@ def test_deactivate_returns_204_on_success():
     _override_user([UserPermission.USER_MANAGE])
     _override_db()
 
-    with patch.object(UserRepository, "get_by_username", return_value=_make_db_user()), \
-         patch.object(UserRepository, "deactivate") as mock_deact:
+    with (
+        patch.object(UserRepository, "get_by_username", return_value=_make_db_user()),
+        patch.object(UserRepository, "deactivate") as mock_deact,
+    ):
         mock_deact.return_value = _make_db_user(is_active=False)
         response = client.post("/api/users/op1/deactivate")
 
@@ -111,7 +113,9 @@ def test_deactivate_already_inactive_returns_409():
     _override_user([UserPermission.USER_MANAGE])
     _override_db()
 
-    with patch.object(UserRepository, "get_by_username", return_value=_make_db_user(is_active=False)):
+    with patch.object(
+        UserRepository, "get_by_username", return_value=_make_db_user(is_active=False)
+    ):
         response = client.post("/api/users/op1/deactivate")
 
     assert response.status_code == 409

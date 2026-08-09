@@ -16,8 +16,10 @@ from services.ticket_folio_service import create_ticket_folio
 # primitives stubbed so they don't reach a real PostgreSQL session.
 @pytest.fixture(autouse=True)
 def _stub_pr3_locks():
-    with patch("services.ticket_folio_service.acquire_user_lock"), \
-         patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock"),
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
         user_row = MagicMock()
         user_row.username = "op1"
         user_row.is_active = True

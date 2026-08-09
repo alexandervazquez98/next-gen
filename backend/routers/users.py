@@ -1,4 +1,3 @@
-
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -41,6 +40,7 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+
 # Helper to convert PG Model to Pydantic Model
 def map_pg_user_to_pydantic(pg_user: PgUser) -> User:
     return User(
@@ -52,13 +52,13 @@ def map_pg_user_to_pydantic(pg_user: PgUser) -> User:
         phone=pg_user.phone,
         email=pg_user.email,
         disabled=not pg_user.is_active,
-        force_password_change=pg_user.force_password_change
+        force_password_change=pg_user.force_password_change,
     )
+
 
 @router.get("/", response_model=list[User])
 async def list_users(
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db)
+    current_user: User = Depends(get_current_active_user), db: Session = Depends(get_pg_db)
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to view users")
@@ -66,12 +66,13 @@ async def list_users(
     users = user_repo.get_users(db)
     return [map_pg_user_to_pydantic(u) for u in users]
 
+
 @router.post("/", response_model=User)
 async def create_user(
     request: Request,
     user: UserCreate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db)
+    db: Session = Depends(get_pg_db),
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         audit_service.record_denied(
@@ -99,7 +100,10 @@ async def create_user(
             target_label=user.username,
             reason=AUDIT_REASON_USER_EXISTS,
             source=AUDIT_SOURCE_USERS,
-            context={"changed_fields": ["username"], "required_permission": UserPermission.USER_MANAGE.value},
+            context={
+                "changed_fields": ["username"],
+                "required_permission": UserPermission.USER_MANAGE.value,
+            },
         )
         raise HTTPException(status_code=400, detail="Username already registered")
 
@@ -115,9 +119,13 @@ async def create_user(
         target_label=str(new_user.username),
         reason=AUDIT_REASON_CREATE_SUCCESS,
         source=AUDIT_SOURCE_USERS,
-        context={"changed_fields": ["username", "role", "tier"], "required_permission": UserPermission.USER_MANAGE.value},
+        context={
+            "changed_fields": ["username", "role", "tier"],
+            "required_permission": UserPermission.USER_MANAGE.value,
+        },
     )
     return map_pg_user_to_pydantic(new_user)
+
 
 @router.put("/{username}", response_model=User)
 async def update_user(
@@ -125,7 +133,7 @@ async def update_user(
     username: str,
     update_data: UserUpdate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db)
+    db: Session = Depends(get_pg_db),
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         audit_service.record_denied(
@@ -156,7 +164,10 @@ async def update_user(
             target_label=username,
             reason=AUDIT_REASON_USER_NOT_FOUND,
             source=AUDIT_SOURCE_USERS,
-            context={"changed_fields": changed_fields, "required_permission": UserPermission.USER_MANAGE.value},
+            context={
+                "changed_fields": changed_fields,
+                "required_permission": UserPermission.USER_MANAGE.value,
+            },
         )
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -171,17 +182,21 @@ async def update_user(
         target_label=username,
         reason=AUDIT_REASON_UPDATE_SUCCESS,
         source=AUDIT_SOURCE_USERS,
-        context={"changed_fields": changed_fields, "required_permission": UserPermission.USER_MANAGE.value},
+        context={
+            "changed_fields": changed_fields,
+            "required_permission": UserPermission.USER_MANAGE.value,
+        },
     )
 
     return map_pg_user_to_pydantic(updated_user)
+
 
 @router.delete("/{username}")
 async def delete_user(
     request: Request,
     username: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db)
+    db: Session = Depends(get_pg_db),
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         audit_service.record_denied(
@@ -229,13 +244,14 @@ async def delete_user(
 
     return {"status": "success", "message": f"User {username} deleted"}
 
+
 @router.post("/{username}/reset")
 async def reset_password(
     request: Request,
     username: str,
     reset_data: UserResetRequest | None = None,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_pg_db)
+    db: Session = Depends(get_pg_db),
 ):
     if not check_permission(UserPermission.USER_MANAGE, current_user):
         audit_service.record_denied(

@@ -70,8 +70,10 @@ class TestTicketFolioService:
         ticket_repo.create_with_generated_id.return_value = _sample_ticket_record()
         user_repo = _UserRepoStub(active=True)
 
-        with patch("services.ticket_folio_service.acquire_user_lock"), \
-             patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+        with (
+            patch("services.ticket_folio_service.acquire_user_lock"),
+            patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+        ):
             mock_user_repo_cls.return_value = user_repo
             created = ticket_service.create_ticket_folio(
                 {
@@ -308,8 +310,10 @@ def test_create_acquires_per_user_lock_with_normalized_key():
     ticket_repo.create_with_generated_id.return_value = _sample_ticket_record()
     user_repo = _UserRepoStub(active=True)
 
-    with patch("services.ticket_folio_service.acquire_user_lock") as mock_lock, \
-         patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock") as mock_lock,
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
         mock_user_repo_cls.return_value = user_repo
         ticket_service.create_ticket_folio(
             _good_payload(),
@@ -331,8 +335,10 @@ def test_create_rejects_inactive_assignee_with_400():
     ticket_repo = _TicketRepoStub()
     user_repo = _UserRepoStub(active=False)
 
-    with patch("services.ticket_folio_service.acquire_user_lock"), \
-         patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock"),
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
         mock_user_repo_cls.return_value = user_repo
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
@@ -352,8 +358,10 @@ def test_create_rejects_missing_assignee_with_404():
     ticket_repo = _TicketRepoStub()
     user_repo = _UserRepoStub(exists=False)
 
-    with patch("services.ticket_folio_service.acquire_user_lock"), \
-         patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock"),
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
         mock_user_repo_cls.return_value = user_repo
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
@@ -373,7 +381,10 @@ def test_create_surfaces_user_lock_timeout_as_409():
     ticket_repo = _TicketRepoStub()
 
     with (
-        patch("services.ticket_folio_service.acquire_user_lock", side_effect=RuntimeError("user_lock_timeout")),
+        patch(
+            "services.ticket_folio_service.acquire_user_lock",
+            side_effect=RuntimeError("user_lock_timeout"),
+        ),
         pytest.raises(HTTPException) as exc,
     ):
         ticket_service.create_ticket_folio(

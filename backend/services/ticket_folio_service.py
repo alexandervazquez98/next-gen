@@ -134,14 +134,9 @@ def create_ticket_folio(
                 f"assignee_not_found: user '{payload_model.assignee_username}' does not exist"
             )
         if not getattr(user_row, "is_active", True):
-            _raise_bad_request(
-                "assignee_inactive_at_write: assignee is not active"
-            )
+            _raise_bad_request("assignee_inactive_at_write: assignee is not active")
 
-        display_name = (
-            getattr(user_row, "username", None)
-            or payload_model.assignee_username
-        )
+        display_name = getattr(user_row, "username", None) or payload_model.assignee_username
         payload_model = payload_model.model_copy(
             update={
                 "updated_by": actor,
