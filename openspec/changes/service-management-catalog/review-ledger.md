@@ -11,3 +11,16 @@
 - Verified CRITICAL findings: 3
 - Open CRITICAL findings: 0
 - **JUDGMENT: APPROVED**
+
+## Judgment Day — PR2 authorized repair
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| JD-PR2-001 | judgment-day | `backend/models/itsm.py`, `backend/routers/itsm_service_catalog.py`, `backend/services/itsm_service_catalog_service.py` | CRITICAL | verified | Explicit blank/null description and null/negative SLA updates fail before repository mutation and normalize to deterministic HTTP 400. Focused negative tests assert zero writes. |
+| JD-PR2-002 | judgment-day | `backend/repositories/itsm_service_catalog_repo.py`, `backend/migrations/itsm_service_catalog.cypher` | CRITICAL | verified | Active lookup uses the existing `MetricDictionary` node model; idempotent clean-slate bootstrap seeds active `operate` and `deliver` value streams in the scoped dictionary namespace. Active-only validation remains enforced. |
+
+### Repair verification
+
+- RED: `tests/test_service_management_pr2.py` — 9 passed, 3 failed before the repairs.
+- GREEN/triangulation: PR2, catalog, PR1, router, and startup focused suites — 57 passed, 1 warning.
+- No open CRITICAL findings remain for the two authorized repairs.

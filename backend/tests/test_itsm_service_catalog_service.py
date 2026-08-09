@@ -33,6 +33,8 @@ def _sample_catalog_record() -> dict:
         "service_tier": "Gold",
         "criticality": "High",
         "sla_target_minutes": 60,
+        "description": "Operational platform support",
+        "value_stream": "operate",  # noqa: F601
         "sla_minutes": 60,
         "active": True,
         "created_at": "2026-01-01T00:00:00",
@@ -68,16 +70,25 @@ class TestServiceCatalogService:
         repository = _CatalogRepositoryStub()
         repository.upsert.side_effect = lambda payload: payload.model_dump()
 
+        lookup = MagicMock()
+        lookup.is_active.return_value = True
+
         created = service_catalog_service.create_service_catalog(
             {
                 "id": "svc-legacy",
                 "name": "Platform Core",
                 "service_tier": "Silver",
                 "sla_minutes": 45,
+                "description": "Platform incident support",
+                "value_stream": "operate",  # noqa: F601
                 "service_type": "incident",
+                "sla_target_minutes": 45,
+                "description": "Network incident support",  # noqa: F601
+                "value_stream": "operate",  # noqa: F601
             },
             actor="admin",
             repository=repository,
+            value_stream_lookup=lookup,
         )
 
         assert created["service_id"] == "svc-legacy"
