@@ -214,3 +214,73 @@
 - TRIANGULATE: `cd backend && ../.venv/bin/python -m pytest tests/test_service_management_pr1.py tests/test_itsm_service_catalog_service.py tests/test_itsm_domain_contracts.py tests/test_ticket_folio_service.py tests/test_routers_itsm.py -q` — **63 passed**, 1 deprecation warning.
 - Review ledger `JD-PR1-003` updated from `open` to `fixed` after passing evidence.
 - No commit, push, or PR was created.
+
+## PR2 recovery repair — four verifier blockers
+
+- Scope: repaired only the four requested PR2 catalog compatibility blockers; no commit or push performed.
+- Persisted task checkboxes: no new Work Unit checkbox marked complete. Work Unit 4 remains incomplete beyond this targeted repair; existing unchecked task lines remain unchanged.
+- Files changed: `backend/tests/test_itsm_service_catalog_service.py`, `backend/tests/test_routers_itsm.py`, `backend/tests/test_service_management_pr1.py`, `backend/repositories/itsm_service_catalog_repo.py`, `backend/tests/test_service_management_pr2.py`, and this file.
+
+### TDD Cycle Evidence
+
+| Repair | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| Four PR2 recovery blockers | Required combined suites ran first and failed: focused `2 failed, 29 passed`; broader `5 failed, 65 passed`. | Repaired fixtures/test doubles and update response mapping; focused combined suite `32 passed`. | Broader combined PR1/catalog suite `71 passed, 1 warning`; active dictionary rejection remains production-enforced. | Changes limited to the four blockers plus direct regression evidence. |
+
+### Verification evidence
+
+- RED focused command: **2 failed, 29 passed**.
+- RED broader command: **5 failed, 65 passed**.
+- GREEN focused command: **32 passed**.
+- TRIANGULATE broader command: **71 passed, 1 warning**.
+- Commands used exactly as specified in `verify-report.md`, with Python 3.11 at `backend/../.venv/bin/python`.
+
+### Structured status consumed/produced
+
+- Parent structured status was absent; consumed authoritative OpenSpec recovery status from `verify-report.md`: `change=service-management-catalog`, `artifactStore=openspec`, isolated PR2 worktree, `actionContext.mode=repo-local`, no unsafe edit-root warning.
+- Workload / PR boundary: feature-branch-chain PR2 catalog/value-stream backend repair only; no frontend, XLSX, assignee lifecycle, or unrelated scope touched.
+- `skill_resolution=paths-injected` (`work-unit-commits` loaded from the parent-provided path).
+
+### Remaining tasks
+
+- [ ] Work Unit 3 — backend shared active-user locking and logical deactivation.
+- [ ] Work Unit 4 — catalog governance and value streams (targeted recovery blockers repaired; broader implementation remains incomplete).
+- [ ] Work Unit 5 — compatibility enforcement in single-ticket flows beyond this minimum contract.
+- [ ] Work Unit 6 — atomic XLSX catalog import stack.
+- [ ] Work Unit 7 — atomic XLSX ticket import.
+- [ ] Work Unit 8 — frontend Service Management UI.
+- [ ] Work Unit 9 — end-to-end compatibility checks and release verification.
+
+## Next recommendation
+
+`verify` the repaired PR2 slice; do not archive the overall change because later work units remain unchecked.
+
+## PR2 Judgment Day authorized repair
+
+- Scope: repaired only the two authorized PR2 findings; no commit or push performed.
+- Finding 1: catalog UPDATE now rejects explicit blank/null description and null/negative SLA through the service boundary with deterministic HTTP 400 before `repository.update`; the router accepts raw update mappings so Pydantic update failures are normalized to 400 instead of FastAPI 422.
+- Finding 2: `ValueStreamLookup` now reads active values from the existing `MetricDictionary` Neo4j node model scoped by `dictionary_key='value_stream'`. Clean-slate startup migration statements idempotently create the scoped uniqueness/index surface and seed active `operate` and `deliver` values. The existing startup bootstrap path executes those statements before writes are enabled.
+- Persisted task checkboxes: no Work Unit was marked complete; Work Unit 4 remains unchecked because this was targeted remediation, not completion of the full catalog/import work unit.
+- Files changed: `backend/models/itsm.py`, `backend/repositories/itsm_service_catalog_repo.py`, `backend/routers/itsm_service_catalog.py`, `backend/migrations/itsm_service_catalog.cypher`, `backend/tests/test_service_management_pr2.py`, and this file.
+
+### TDD Cycle Evidence
+
+| Repair | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| Invalid catalog updates | Added tests for blank description, null/negative SLA, deterministic 400, and zero repository writes; focused run failed 2 update cases before implementation. | Added update validators and raw-router payload boundary; focused invalid-update tests passed. | Combined PR2/catalog/PR1/router/startup suite passed 57 tests; repository write assertions remain negative on every invalid case. | Kept create validation unchanged, preserved partial-update semantics, and normalized only update-boundary validation. |
+| Clean-slate active value streams | Added failing bootstrap/lookup test requiring seeded `MetricDictionary` value-stream rows and active lookup behavior. | Switched lookup from nonexistent `DictionaryValue` to `MetricDictionary` and added idempotent migration/bootstrap seeds for `operate` and `deliver`. | Startup migration tests and combined suite passed; active-only filtering remains enforced. | Reused the existing dictionary node label and limited seeds to the value-stream namespace; inactive values are not accepted. |
+
+### Verification evidence — authorized repair
+
+- RED focused command: `cd backend && ../.venv/bin/python -m pytest tests/test_service_management_pr2.py -q` — **9 passed, 3 failed** (expected update/bootstrap failures).
+- GREEN/triangulation command: `cd backend && ../.venv/bin/python -m pytest tests/test_service_management_pr2.py tests/test_itsm_service_catalog_service.py tests/test_service_management_pr1.py tests/test_routers_itsm.py tests/test_itsm_startup_checks.py -q` — **57 passed, 1 warning**.
+- `cd backend && ../.venv/bin/python -m compileall -q models repositories services routers tests/test_service_management_pr2.py` — passed.
+- `git diff --check` — passed.
+- Review ledger updated with both authorized findings as fixed/verified.
+
+### Structured status consumed/produced
+
+- `schemaName=spec-driven`; `changeName=service-management-catalog`; `artifactStore=openspec`; authoritative workspace is isolated PR2 worktree `/Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/service-management-catalog-pr2`.
+- `actionContext.mode=repo-local`; allowed edit root is this worktree; no unsafe edit-root warning.
+- `applyState=ready`; `dependencies.apply=ready`; `nextRecommended=verify`; overall change remains not archive-ready because later work units and completion checklist items are unchecked.
+- `skill_resolution=paths-injected` (`work-unit-commits` loaded from the parent-provided path).

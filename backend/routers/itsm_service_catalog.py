@@ -5,13 +5,16 @@ They only manage Service Catalog state via the ITSM API slice and do
 not mutate or trigger event/folio side effects.
 """
 
+# ruff: noqa: I001
+
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-import services.itsm_service_catalog_service as service_catalog_service
 from fastapi import APIRouter, Depends, HTTPException, Query
-from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
+
+import services.itsm_service_catalog_service as service_catalog_service
+from models.itsm import ServiceCatalogCreate
 from models.user import User, UserPermission
 from services.auth_service import check_permission, get_current_active_user
 
@@ -57,7 +60,7 @@ async def create_service_catalog(
 @router.put("/{service_id}", response_model=dict[str, Any])
 async def update_service_catalog(
     service_id: str,
-    payload: ServiceCatalogUpdate,
+    payload: dict[str, Any],
     current_user: CurrentUserDep,
 ):
     if not check_permission(UserPermission.ITSM_EDIT, current_user):

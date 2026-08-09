@@ -105,7 +105,9 @@ class TestItsmServiceCatalogRouter:
                 "service_id": "svc-new",
                 "name": "Core",
                 "sla_target_minutes": 45,
+                "description": "Core incident support",
                 "service_type": "incident",
+                "value_stream": "operate",
             },
         )
         assert response.status_code == 403
@@ -132,7 +134,9 @@ class TestItsmServiceCatalogRouter:
                 "service_id": "svc-new",
                 "name": "Core",
                 "sla_target_minutes": 45,
+                "description": "Core incident support",
                 "service_type": "incident",
+                "value_stream": "operate",
             }
 
             if method == "get":
@@ -163,7 +167,9 @@ class TestItsmServiceCatalogRouter:
                     "service_id": "svc-new",
                     "name": "Core",
                     "sla_target_minutes": 45,
+                    "description": "Core incident support",
                     "service_type": "incident",
+                    "value_stream": "operate",
                 },
             )
 
