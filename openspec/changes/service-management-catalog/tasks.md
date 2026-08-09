@@ -102,7 +102,7 @@ Dependencies: Work Units 1–2 complete.
 - **Explicit exclusions:** value streams, catalog UI, XLSX import, user locking/lifecycle, and frontend work remain later work units.
 - **Acceptance linkage:** REQ-02 and REQ-03 (minimum backend contract only).
 
-## [ ] PR3 boundary adjustment — cross-store assignee locking + user lifecycle
+## [x] PR3 boundary adjustment — cross-store assignee locking + user lifecycle
 Dependencies: Work Units 1, 2, and PR2 boundary extension complete.
 
 - **Slice scope:** Work Unit 3 only. Adds `assignee_username` (required, exactly one) to `TicketFolioCreate`; resolves the user through the user repository; acquires a PostgreSQL per-user advisory lock (`pg_advisory_xact_lock(hashtext('user:' || lower(username)))`) for the duration of the ticket create transaction; revalidates `is_active=True` while the lock is held; releases on commit, rollback, or bounded timeout. Exposes `POST /api/users/{username}/deactivate` (logical, no destructive delete). Snapshot fields (`assignee_display_name`, `assignee_active_at_assignment`) captured at create time; `assignee_currently_active` recomputed at read time and updated by deactivation flows.
@@ -114,6 +114,8 @@ Dependencies: Work Units 1, 2, and PR2 boundary extension complete.
 
 ## Work Unit 3 — backend: shared active-user locking + logical deactivation contract
 Dependencies: Work Unit 2 complete.
+
+- **Status (PR 3 implementation):** completed in `feat/service-management-catalog-pr3` (commits `f2db573`, `e3d77fa`, `58d4ef9`). RED → GREEN → ruff-fix cycle followed end-to-end. Detailed TDD evidence and verification in `apply-progress.md`.
 
 - **Target areas**:
   - `backend/services/ticket_folio_service.py`
