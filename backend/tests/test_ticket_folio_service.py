@@ -319,7 +319,8 @@ def test_create_acquires_per_user_lock_with_normalized_key():
         )
 
     mock_lock.assert_called_once()
-    assert mock_lock.call_args.args[1] == "op1"
+    # The helper normalizes internally; service hands it the raw username.
+    assert mock_lock.call_args.args[1] == "Op1"
     user_repo.get_by_username.assert_called_once()
     ticket_repo.create_with_generated_id.assert_called_once()
 

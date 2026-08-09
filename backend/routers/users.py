@@ -7,6 +7,7 @@ from utils.security import get_password_hash
 from models.user import User, UserCreate, UserUpdate, UserRole, UserPermission, UserResetRequest
 from postgres_db import get_pg_db
 from repositories import user_repo
+from repositories.user_repo import UserRepository
 from services import audit_service
 from models.sql_models import User as PgUser
 
@@ -21,10 +22,13 @@ AUDIT_EVENT_USER_CREATE = "USER_CREATE"
 AUDIT_EVENT_USER_UPDATE = "USER_UPDATE"
 AUDIT_EVENT_USER_DELETE = "USER_DELETE"
 AUDIT_EVENT_USER_PASSWORD_RESET = "USER_PASSWORD_RESET"
+AUDIT_EVENT_USER_DEACTIVATE = "USER_DEACTIVATE"  # PR 3 WU3 — logical deactivation
 AUDIT_REASON_CREATE_SUCCESS = "user_created"
 AUDIT_REASON_UPDATE_SUCCESS = "user_updated"
 AUDIT_REASON_DELETE_SUCCESS = "user_deleted"
 AUDIT_REASON_RESET_SUCCESS = "password_reset"
+AUDIT_REASON_DEACTIVATE_SUCCESS = "user_deactivated"  # PR 3 WU3
+AUDIT_REASON_ALREADY_INACTIVE = "user_already_inactive"  # PR 3 WU3
 AUDIT_REASON_MISSING_PERMISSION = "missing_permission"
 AUDIT_REASON_USER_EXISTS = "user_already_exists"
 AUDIT_REASON_USER_NOT_FOUND = "user_not_found"
@@ -300,3 +304,84 @@ async def reset_password(
     )
 
     return {"status": "success", "message": f"Password reset for {username}."}
+
+
+# ---------------------------------------------------------------------------
+# PR 3 — WU3: logical user deactivation. POST (not DELETE) to keep the
+# logical intent explicit. Historical ticket snapshots stay valid; the user
+# row is preserved with ``is_active=False``.
+# Permission gate: ``USER_MANAGE``. Returns 204 on success, 404 if the user
+# does not exist, 409 if already inactive.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{username}/deactivate", status_code=204)
+async def deactivate_user(
+    request: Request,
+    username: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_pg_db),
+):
+    if not check_permission(UserPermission.USER_MANAGE, current_user):
+        audit_service.record_denied(
+            db=db,
+            request=request,
+            actor=current_user,
+            required_permission=UserPermission.USER_MANAGE,
+            target_type=AUDIT_TARGET_TYPE_USER,
+            target_id=username,
+            reason=AUDIT_REASON_MISSING_PERMISSION,
+            source=AUDIT_SOURCE_USERS,
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to deactivate users")
+
+    db_user = UserRepository.get_by_username(db, username)
+    if not db_user:
+        audit_service.record_critical_change(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_USER_DEACTIVATE,
+            outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+            target_type=AUDIT_TARGET_TYPE_USER,
+            target_id=username,
+            target_label=username,
+            reason=AUDIT_REASON_USER_NOT_FOUND,
+            source=AUDIT_SOURCE_USERS,
+            context={"required_permission": UserPermission.USER_MANAGE.value},
+        )
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if db_user.is_active is False:
+        audit_service.record_critical_change(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_USER_DEACTIVATE,
+            outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+            target_type=AUDIT_TARGET_TYPE_USER,
+            target_id=username,
+            target_label=username,
+            reason=AUDIT_REASON_ALREADY_INACTIVE,
+            source=AUDIT_SOURCE_USERS,
+            context={"required_permission": UserPermission.USER_MANAGE.value},
+        )
+        raise HTTPException(status_code=409, detail="user_already_inactive")
+
+    UserRepository.deactivate(db, username, actor=current_user.username)
+
+    audit_service.record_critical_change(
+        db=db,
+        request=request,
+        actor=current_user,
+        event_type=AUDIT_EVENT_USER_DEACTIVATE,
+        outcome=AUDIT_OUTCOME_SUCCESS,
+        target_type=AUDIT_TARGET_TYPE_USER,
+        target_id=username,
+        target_label=username,
+        reason=AUDIT_REASON_DEACTIVATE_SUCCESS,
+        source=AUDIT_SOURCE_USERS,
+        context={"required_permission": UserPermission.USER_MANAGE.value},
+    )
+
+    return None

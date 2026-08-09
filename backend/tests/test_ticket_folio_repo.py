@@ -38,12 +38,24 @@ def _wire(repo, row):
     ctx.__exit__.return_value = False
     driver = MagicMock()
     driver.session.return_value = ctx
-    execute_write = MagicMock(return_value=row)
+
+    # ``execute_write`` MUST invoke the transactional callable so the
+    # repository's post-write logic (``record["assignee_currently_active"]``)
+    # actually runs in tests. We expose the synthetic ``tx`` so assertions
+    # can inspect the Cypher and bind params via ``tx.run``.
+    tx_holder: dict = {}
+
+    def _execute_write(callable_, *args, **kwargs):
+        tx = MagicMock()
+        tx.run.return_value.single.return_value = row
+        tx_holder["tx"] = tx
+        return callable_(tx, *args, **kwargs)
+
+    execute_write = MagicMock(side_effect=_execute_write)
     session.execute_write = execute_write
-    run = MagicMock()
-    run.single.return_value = row
-    session.run.return_value = run
+    session.run.return_value.single.return_value = row
     repo._driver = driver
+    execute_write._tx_holder = tx_holder  # type: ignore[attr-defined]
     return execute_write
 
 
@@ -64,17 +76,22 @@ def test_create_persists_assignee_snapshot():
     assert result["assignee_active_at_assignment"] is True
     assert result["assignee_currently_active"] is True
     write.assert_called_once()
-    cypher = write.call_args.args[0]
-    text = getattr(cypher, "text", str(cypher))
-    assert "assignee_username" in text
-    assert "assignee_display_name" in text
-    assert "assignee_active_at_assignment" in text
-    assert write.call_args.kwargs.get("assignee_username") == "op1"
+    # The Cypher + params are passed to tx.run(...) inside the write tx.
+    tx = write._tx_holder["tx"]
+    run = tx.run
+    assert run.call_count == 1
+    cypher = run.call_args.args[0]
+    sql_text = getattr(cypher, "text", str(cypher))
+    assert "assignee_username" in sql_text
+    assert "assignee_display_name" in sql_text
+    assert "assignee_active_at_assignment" in sql_text
+    assert run.call_args.kwargs.get("assignee_username") == "op1"
+    assert run.call_args.kwargs.get("assignee_active_at_assignment") is True
 
 
 def test_get_returns_snapshot_and_recompute():
     repo = TicketFolioRepository()
-    _wire(repo, _record(currently_active=False))
+    _wire(repo, _record(assignee_currently_active=False))
 
     result = repo.get(1)
 

@@ -1,6 +1,6 @@
 """RED tests for PR1 server-generated ticket identity contracts."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -9,6 +9,20 @@ from pydantic import ValidationError
 from repositories.ticket_folio_repo import TicketFolioRepository
 from services.itsm_service_catalog_service import create_service_catalog, update_service_catalog
 from services.ticket_folio_service import create_ticket_folio
+
+
+# PR 3 wires per-user advisory locks + UserRepository lookups into the
+# ticket-create flow. PR1 tests that exercise the happy path need both
+# primitives stubbed so they don't reach a real PostgreSQL session.
+@pytest.fixture(autouse=True)
+def _stub_pr3_locks():
+    with patch("services.ticket_folio_service.acquire_user_lock"), \
+         patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls:
+        user_row = MagicMock()
+        user_row.username = "op1"
+        user_row.is_active = True
+        mock_user_repo_cls.return_value.get_by_username.return_value = user_row
+        yield
 
 
 class ActiveValueStreamLookup:
@@ -23,6 +37,7 @@ def test_create_payload_rejects_client_ticket_id_and_uses_canonical_types():
             type="incident",
             title="Router down",
             description="Core router unreachable",
+            assignee_username="op1",
         )
 
     payload = TicketFolioCreate(
@@ -30,11 +45,12 @@ def test_create_payload_rejects_client_ticket_id_and_uses_canonical_types():
         title="Access request",
         description="Grant access",
         service_catalog_id="svc-request",
+        assignee_username="op1",
     )
     assert payload.type == "service_request"
 
     with pytest.raises(ValidationError, match="service_request"):
-        TicketFolioCreate(type="request", title="Legacy type")
+        TicketFolioCreate(type="request", title="Legacy type", assignee_username="op1")
 
 
 def test_ticket_response_contract_exposes_numeric_generated_id():
@@ -57,7 +73,12 @@ def test_repository_allocates_id_and_creates_ticket_in_one_write_transaction():
 
     repository = TicketFolioRepository(driver=driver)
     created = repository.create_with_generated_id(
-        TicketFolioCreate(type="incident", title="Router down", service_catalog_id="svc-incident")
+        TicketFolioCreate(
+            type="incident",
+            title="Router down",
+            service_catalog_id="svc-incident",
+            assignee_username="op1",
+        )
     )
 
     assert created["ticket_id"] == 17
@@ -97,7 +118,12 @@ def test_repository_rolls_back_ticket_and_sequence_when_relation_sync_fails():
     repository = TicketFolioRepository(driver=driver)
     with pytest.raises(RuntimeError, match="relation synchronization"):
         repository.create_with_generated_id(
-            TicketFolioCreate(type="incident", title="Router down", service_catalog_id="svc-1")
+            TicketFolioCreate(
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-1",
+                assignee_username="op1",
+            )
         )
 
     assert session.state == {"next_value": 0, "tickets": []}
@@ -115,7 +141,10 @@ def test_repository_rejects_missing_catalog_in_write_transaction_without_persist
     with pytest.raises(RuntimeError, match="ServiceCatalog"):
         repository.create_with_generated_id(
             TicketFolioCreate(
-                type="incident", title="Router down", service_catalog_id="svc-deleted"
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-deleted",
+                assignee_username="op1",
             )
         )
 
@@ -137,7 +166,10 @@ def test_repository_rejects_missing_sequence_without_persisting_ticket():
     with pytest.raises(RuntimeError, match="TicketSequence"):
         repository.create_with_generated_id(
             TicketFolioCreate(
-                type="incident", title="Router down", service_catalog_id="svc-incident"
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-incident",
+                assignee_username="op1",
             )
         )
 
@@ -146,11 +178,11 @@ def test_create_service_rejects_omitted_service_catalog_id_before_persistence():
     repository = MagicMock()
 
     with pytest.raises(ValidationError, match="service_catalog_id"):
-        TicketFolioCreate(type="incident", title="Router down")
+        TicketFolioCreate(type="incident", title="Router down", assignee_username="op1")
 
     with pytest.raises(HTTPException):
         create_ticket_folio(
-            {"type": "incident", "title": "Router down"},
+            {"type": "incident", "title": "Router down", "assignee_username": "op1"},
             actor="admin",
             repository=repository,
         )
@@ -168,6 +200,7 @@ def test_create_service_rejects_missing_catalog_without_persistence():
                 "type": "incident",
                 "title": "Router down",
                 "service_catalog_id": "svc-missing",
+                "assignee_username": "op1",
             },
             repository=repository,
             catalog_repository=catalog_repository,
@@ -195,6 +228,7 @@ def test_create_service_accepts_existing_compatible_catalog():
             "type": "incident",
             "title": "Router down",
             "service_catalog_id": "svc-incident",
+            "assignee_username": "op1",
         },
         actor="admin",
         repository=repository,
@@ -244,6 +278,7 @@ def test_catalog_api_then_same_type_ticket_uses_persisted_type_and_active_status
             "type": "incident",
             "title": "Router down",
             "service_catalog_id": catalog["service_id"],
+            "assignee_username": "op1",
         },
         repository=ticket_repository,
         catalog_repository=catalog_repository,
@@ -270,6 +305,7 @@ def test_ticket_rejects_incompatible_persisted_catalog_type():
                 "type": "incident",
                 "title": "Router down",
                 "service_catalog_id": "svc-request",
+                "assignee_username": "op1",
             },
             repository=ticket_repository,
             catalog_repository=catalog_repository,
@@ -293,6 +329,7 @@ def test_ticket_rejects_inactive_persisted_catalog():
                 "type": "incident",
                 "title": "Router down",
                 "service_catalog_id": "svc-inactive",
+                "assignee_username": "op1",
             },
             repository=ticket_repository,
             catalog_repository=catalog_repository,

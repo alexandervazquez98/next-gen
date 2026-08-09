@@ -90,7 +90,7 @@ def test_acquire_user_lock_uses_lowercased_key_and_xact_lock():
     acquire_user_lock(session, "Op1")
 
     assert session.execute.call_count == 1
-    params = session.execute.call_args.kwargs
+    params = session.execute.call_args.args[1]
     assert params.get("key") == "user:op1"
     stmt = session.execute.call_args.args[0]
     assert "pg_advisory_xact_lock" in str(stmt)
@@ -114,7 +114,7 @@ def test_in_order_locks_sorted_deduped_normalized():
 
     assert result == ["alice", "bob", "charlie"]
     keys = [
-        (c.kwargs.get("params") or (c.args[1] if len(c.args) > 1 else {})).get("key", "")
+        (c.args[1] if len(c.args) > 1 else c.kwargs.get("params") or {}).get("key", "")
         for c in session.execute.call_args_list
     ]
     assert keys == ["user:alice", "user:bob", "user:charlie"]

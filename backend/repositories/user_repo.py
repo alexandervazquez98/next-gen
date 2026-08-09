@@ -77,3 +77,29 @@ def delete_user(db: Session, username: str):
         db.commit()
         return True
     return False
+
+
+class UserRepository:
+    """PR 3 — WU3: class-style user lookup + logical deactivation.
+
+    Logical deactivation sets ``is_active=False`` without deleting the row.
+    Historical ticket assignments stay readable; the repository MUST NOT
+    reach across stores to mutate ticket snapshots.
+    """
+
+    @staticmethod
+    def get_by_username(db: Session, username: str):
+        return db.query(User).filter(User.username == username).first()
+
+    @staticmethod
+    def deactivate(db: Session, username: str, actor: str | None = None):
+        db_user = UserRepository.get_by_username(db, username)
+        if db_user is None:
+            return None
+        if getattr(db_user, "is_active", True) is False:
+            # Already inactive — idempotent no-op; never commit on no-op.
+            return db_user
+        db_user.is_active = False
+        db.commit()
+        db.refresh(db_user)
+        return db_user

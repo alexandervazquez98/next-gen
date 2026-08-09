@@ -24,6 +24,9 @@ CREATE (tf:TicketFolio {
   title: $title,
   description: $description,
   service_catalog_id: $service_catalog_id,
+  assignee_username: $assignee_username,
+  assignee_display_name: $assignee_display_name,
+  assignee_active_at_assignment: $assignee_active_at_assignment,
   status: $status,
   archived: $archived,
   closed_reason: $closed_reason,
@@ -39,6 +42,9 @@ RETURN
   tf.title AS title,
   tf.description AS description,
   tf.service_catalog_id AS service_catalog_id,
+  tf.assignee_username AS assignee_username,
+  tf.assignee_display_name AS assignee_display_name,
+  tf.assignee_active_at_assignment AS assignee_active_at_assignment,
   tf.status AS status,
   tf.archived AS archived,
   tf.closed_reason AS closed_reason,
@@ -55,6 +61,9 @@ RETURN
   tf.title AS title,
   tf.description AS description,
   tf.service_catalog_id AS service_catalog_id,
+  tf.assignee_username AS assignee_username,
+  tf.assignee_display_name AS assignee_display_name,
+  tf.assignee_active_at_assignment AS assignee_active_at_assignment,
   tf.status AS status,
   tf.archived AS archived,
   tf.closed_reason AS closed_reason,
@@ -74,6 +83,9 @@ RETURN
   tf.title AS title,
   tf.description AS description,
   tf.service_catalog_id AS service_catalog_id,
+  tf.assignee_username AS assignee_username,
+  tf.assignee_display_name AS assignee_display_name,
+  tf.assignee_active_at_assignment AS assignee_active_at_assignment,
   tf.status AS status,
   tf.archived AS archived,
   tf.closed_reason AS closed_reason,
@@ -95,22 +107,26 @@ class TicketFolioRepository:
     def _record(row: Any) -> dict[str, Any] | None:
         if row is None:
             return None
+
+        def _get(key: str) -> Any:
+            return row.get(key) if hasattr(row, "get") else row[key]
+
         return {
-            "ticket_id": row.get("ticket_id") if hasattr(row, "get") else row["ticket_id"],
-            "type": row.get("type") if hasattr(row, "get") else row["type"],
-            "title": row.get("title") if hasattr(row, "get") else row["title"],
-            "description": row.get("description") if hasattr(row, "get") else row["description"],
-            "service_catalog_id": (
-                row.get("service_catalog_id") if hasattr(row, "get") else row["service_catalog_id"]
-            ),
-            "status": row.get("status") if hasattr(row, "get") else row["status"],
-            "archived": row.get("archived") if hasattr(row, "get") else row["archived"],
-            "closed_reason": (
-                row.get("closed_reason") if hasattr(row, "get") else row["closed_reason"]
-            ),
-            "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
-            "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],
-            "updated_by": row.get("updated_by") if hasattr(row, "get") else row["updated_by"],
+            "ticket_id": _get("ticket_id"),
+            "type": _get("type"),
+            "title": _get("title"),
+            "description": _get("description"),
+            "service_catalog_id": _get("service_catalog_id"),
+            "assignee_username": _get("assignee_username"),
+            "assignee_display_name": _get("assignee_display_name"),
+            "assignee_active_at_assignment": _get("assignee_active_at_assignment"),
+            "assignee_currently_active": _get("assignee_currently_active"),
+            "status": _get("status"),
+            "archived": _get("archived"),
+            "closed_reason": _get("closed_reason"),
+            "created_at": _get("created_at"),
+            "updated_at": _get("updated_at"),
+            "updated_by": _get("updated_by"),
         }
 
     @staticmethod
@@ -140,11 +156,25 @@ class TicketFolioRepository:
             return [self._record(row) for row in result if self._record(row) is not None]
 
     def create_with_generated_id(self, payload: TicketFolioCreate) -> dict[str, Any]:
-        """Allocate, create, and synchronize the service relation atomically."""
+        """Allocate, create, and synchronize the service relation atomically.
+
+        ``payload.assignee_display_name`` and ``payload.assignee_active_at_assignment``
+        are populated by the service layer from the authoritative user row read
+        while holding the per-user PostgreSQL advisory lock. Snapshot fields are
+        required and persisted as-is; ``assignee_currently_active`` is recomputed
+        at read time and not stored here.
+        """
         payload = (
             payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
         )
         now = self._now()
+
+        display_name = getattr(payload, "assignee_display_name", None) or ""
+        # Default to True so the snapshot row records "active at assignment"
+        # when the service layer did not annotate the payload explicitly.
+        active_at_assignment = getattr(payload, "assignee_active_at_assignment", True)
+        if active_at_assignment is None:
+            active_at_assignment = True
 
         def write_transaction(tx):
             row = tx.run(
@@ -153,6 +183,9 @@ class TicketFolioRepository:
                 title=payload.title,
                 description=payload.description,
                 service_catalog_id=payload.service_catalog_id,
+                assignee_username=payload.assignee_username,
+                assignee_display_name=display_name,
+                assignee_active_at_assignment=active_at_assignment,
                 status=payload.status,
                 archived=payload.archived,
                 closed_reason=payload.closed_reason,
@@ -164,7 +197,9 @@ class TicketFolioRepository:
                 raise RuntimeError(
                     "TicketSequence 'ticket_folio' or referenced ServiceCatalog is missing"
                 )
-            return self._record(row) or {}
+            record = self._record(row) or {}
+            record["assignee_currently_active"] = active_at_assignment
+            return record
 
         with self._driver.session() as session:
             return session.execute_write(write_transaction)
