@@ -2,15 +2,26 @@
 
 ## Status
 
-- Slice: PR 1 backend ticket identity/core contract (`feature-branch-chain`, child targets tracker `feat/service-management-catalog`, issue #401)
-- Workload boundary: ~76 production changed lines plus focused tests; intentionally excludes catalog governance, compatibility enforcement beyond existing lookup, assignee locking/lifecycle, XLSX, and frontend work.
-- Structured status consumed: `change=service-management-catalog`, `artifactStore=openspec`, `apply=ready`, `nextRecommended=apply`, `allowedEditRoots` limited to this worktree, 5 tasks pending.
+- Slice: PR 3 planning complete (pre-implementation); PR 1 and PR 2 merged to tracker `feat/service-management-catalog` (issue #401).
+- Chain progress: PR 1 ✅ (#408), PR 2 ✅ (#412), PR 3 🟡 planning, PR 4 ⏳, PR 5 ⏳.
+- This file is the running log across the whole chain. PR 3 pre-implementation artifact landed at `openspec/changes/service-management-catalog/pr3-design.md` (not pushed; implementation deferred to a dedicated session).
 - Action-context warning: native status was supplied by the parent; all operations were executed from the isolated worktree.
 
 ## Completed tasks
 
 - [x] Work Unit 1 — backend ticket domain contracts and clean-slate identity model. Persisted checkbox updated in `tasks.md`.
 - [x] Work Unit 2 — backend sequence allocator and single-ticket generated-ID persistence. Persisted checkbox updated in `tasks.md`.
+- [x] PR 1 (chain slice 1) — backend ID/core contracts. Merged via #408.
+- [x] Work Unit 4 — catalog governance and value streams (PR 2 chain slice). Merged via #412.
+- [x] Work Unit 5 — compatibility enforcement in single-ticket flows (PR 2 chain slice). Merged via #412.
+- [x] PR 2 (chain slice 2) — catalog + value-stream domain. Merged via #412; tracker fast-forwarded to `798eb66`.
+
+## PR 3 planning (pre-implementation)
+
+- [x] PR 3 boundary documented at `openspec/changes/service-management-catalog/pr3-design.md`. Captures: in-scope (WU 3), out-of-scope (WU 6, 7, 8, 9 deferred), code anchors, lock-key derivation decision (`pg_advisory_xact_lock(hashtext('user:' || lower(username)))`), snapshot fields on ticket, deactivate endpoint shape (`POST /api/users/{username}/deactivate`), strict-TDD discipline, no-frontend-in-this-PR guard.
+- [x] Verification gate documented: focused pytest + ruff from `backend/` CWD.
+- [x] Open risks recorded: cross-store reconciliation after partial commit, lock-timeout default (suggested 5s, surface `409 user_lock_timeout`), permission kind (`USER_MANAGE` assumed).
+- [ ] PR 3 implementation — deferred. Do not start without a dedicated session that can hold RED → GREEN → TRIANGULATE → REFACTOR discipline end-to-end.
 
 ## Files changed
 
@@ -43,9 +54,7 @@
 
 ## Remaining tasks
 
-- [ ] Work Unit 3 — backend shared active-user locking and logical deactivation.
-- [ ] Work Unit 4 — catalog governance and value streams.
-- [ ] Work Unit 5 — compatibility enforcement in single-ticket flows.
+- [ ] Work Unit 3 — backend shared active-user locking and logical deactivation. **Next PR to implement.** Planning artifact at `pr3-design.md`.
 - [ ] Work Unit 6 — atomic XLSX catalog import stack.
 - [ ] Work Unit 7 — atomic XLSX ticket import.
 - [ ] Work Unit 8 — frontend Service Management UI.

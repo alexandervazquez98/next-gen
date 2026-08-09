@@ -102,6 +102,16 @@ Dependencies: Work Units 1–2 complete.
 - **Explicit exclusions:** value streams, catalog UI, XLSX import, user locking/lifecycle, and frontend work remain later work units.
 - **Acceptance linkage:** REQ-02 and REQ-03 (minimum backend contract only).
 
+## [ ] PR3 boundary adjustment — cross-store assignee locking + user lifecycle
+Dependencies: Work Units 1, 2, and PR2 boundary extension complete.
+
+- **Slice scope:** Work Unit 3 only. Adds `assignee_username` (required, exactly one) to `TicketFolioCreate`; resolves the user through the user repository; acquires a PostgreSQL per-user advisory lock (`pg_advisory_xact_lock(hashtext('user:' || lower(username)))`) for the duration of the ticket create transaction; revalidates `is_active=True` while the lock is held; releases on commit, rollback, or bounded timeout. Exposes `POST /api/users/{username}/deactivate` (logical, no destructive delete). Snapshot fields (`assignee_display_name`, `assignee_active_at_assignment`) captured at create time; `assignee_currently_active` recomputed at read time and updated by deactivation flows.
+- **Explicit exclusions:** bulk XLSX ticket import (`WU 7` consumes the lock helper but ships with PR 4), frontend assignee selector and ticket form rename (`WU 8` ships with PR 5), end-to-end release verification (`WU 9`).
+- **Acceptance linkage:** REQ-04 (single active assignee on create), REQ-05 (logical deactivation preserves ticket history). REQ-03 (catalog/ticket compatibility) is already covered by the PR2 boundary extension and remains green.
+- **Lock-ordering rule:** when batch operations acquire multiple per-user locks in the same transaction, they acquire in normalized (`lower()`) username order. PR 3 implements the helper; PR 4 (import) consumes it.
+- **Strict TDD:** every behavior change ships with failing RED tests first. Lock helper, validator, and deactivate endpoint each get their own RED → GREEN → TRIANGULATE → REFACTOR cycle in the same work unit. Local verify uses `cd backend && python -m pytest …` and `cd backend && python -m ruff check --config ruff.toml …` from the `backend/` working directory (matching CI).
+- **Slice design doc:** `openspec/changes/service-management-catalog/pr3-design.md`.
+
 ## Work Unit 3 — backend: shared active-user locking + logical deactivation contract
 Dependencies: Work Unit 2 complete.
 
