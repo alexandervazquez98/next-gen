@@ -1034,7 +1034,9 @@ def test_refresh_icmp_latency_events_updates_open_or_ack_events_without_merge_du
     )
 
     query = session.queries[0]["query"]
-    assert "existing.status IN ['OPEN', 'ACK']" in query
+    # fix-423 PR #2 / REQ-PRUNE-004 / AD-4: ICMP-latency filter widened to
+    # include RECOVERED so a DOWN→OK→DOWN cycle re-uses the same ROOT id.
+    assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
     assert "coalesce(existing.correlation_type, 'ROOT') = 'ROOT'" in query
     assert (
         "MERGE (e:Event {ci_id: row.node_id, metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH', status: 'OPEN'})"
