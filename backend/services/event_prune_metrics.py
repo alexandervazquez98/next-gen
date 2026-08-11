@@ -29,6 +29,7 @@ Mirrors the lock metrics pattern in ``services/event_lock.py``:
 ``_EventPruneMetrics`` dataclass + thread-safe singleton +
 ``reset_event_prune_observability_for_tests`` for deterministic test state.
 """
+
 from __future__ import annotations
 
 import threading
@@ -71,9 +72,7 @@ class _EventPruneMetrics:
             return {
                 "recovered_stale_total": self.recovered_stale_total,
                 "pruned_total": self.pruned_total,
-                "last_run_at": (
-                    self.last_run_at.isoformat() if self.last_run_at else None
-                ),
+                "last_run_at": (self.last_run_at.isoformat() if self.last_run_at else None),
                 "last_run_closed_count": self.last_run_closed_count,
             }
 

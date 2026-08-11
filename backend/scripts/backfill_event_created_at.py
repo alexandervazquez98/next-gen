@@ -24,6 +24,7 @@ Live evidence (run before/after on production Neo4j):
         RETURN e.id, e.recovered_at, e.last_seen, e.closed_at, e.created_at
         LIMIT 5;
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,10 +53,7 @@ logger = logging.getLogger(__name__)
 # every row has a ``created_at`` the subquery returns zero rows and the loop
 # exits cleanly.
 
-COUNT_NULL_CYPHER = (
-    "MATCH (e:Event) WHERE e.created_at IS NULL "
-    "RETURN count(e) AS candidate_count"
-)
+COUNT_NULL_CYPHER = "MATCH (e:Event) WHERE e.created_at IS NULL RETURN count(e) AS candidate_count"
 
 UPDATE_BACKFILL_CYPHER = (
     "MATCH (e:Event) WHERE e.created_at IS NULL "

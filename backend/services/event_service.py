@@ -1440,8 +1440,7 @@ async def event_batch_pruner(
         cursor_params: dict[str, Any] = {"limit": batch_size}
         if last_cursor is not None:
             cursor_filter = (
-                "AND (e.created_at > $last_cursor "
-                "OR (e.created_at IS NULL AND e.id > $last_id))"
+                "AND (e.created_at > $last_cursor OR (e.created_at IS NULL AND e.id > $last_id))"
             )
             cursor_params["last_cursor"] = last_cursor
             cursor_params["last_id"] = last_id

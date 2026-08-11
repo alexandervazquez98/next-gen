@@ -17,6 +17,7 @@ Tests cover:
   ``last_run_at``, ``last_run_closed_count`` — every key REQ-OBS-PRUNE-003
   declares.
 """
+
 from __future__ import annotations
 
 
@@ -104,9 +105,7 @@ class TestEventPruneMetricsSnapshot:
         module.reset_event_prune_observability_for_tests()
 
         module.record_pruned(closed_count=10)
-        assert (
-            module.get_event_prune_observability_snapshot()["last_run_closed_count"] == 10
-        )
+        assert module.get_event_prune_observability_snapshot()["last_run_closed_count"] == 10
 
         module.record_pruned(closed_count=3)
         snapshot = module.get_event_prune_observability_snapshot()

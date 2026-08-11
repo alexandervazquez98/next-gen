@@ -17,6 +17,7 @@ Tests are intentionally split into two halves:
   importable without a real Neo4j, must advertise the live-evidence Cypher, and
   must reject invalid arguments).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -98,7 +99,9 @@ class TestBackfillEventCreatedAt:
         assert report["updated"] == 0
         # Dry-run MUST NOT issue a SET clause.
         mutating_queries = [
-            q for q in session.queries if "SET" in q["query"].upper() and "MATCH" in q["query"].upper()
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "MATCH" in q["query"].upper()
         ]
         assert mutating_queries == [], (
             f"Dry-run must not mutate; got SET-bearing queries: "
@@ -126,7 +129,9 @@ class TestBackfillEventCreatedAt:
         assert report["updated"] == 500
         assert report["candidates"] == 500  # last batch hit 0; loop ran twice
         update_queries = [
-            q for q in session.queries if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
         ]
         assert len(update_queries) == 2, (
             f"Expected two bounded UPDATEs (500 + 0); got {len(update_queries)}"
@@ -177,7 +182,9 @@ class TestBackfillEventCreatedAt:
         assert report["candidates"] == 0
         # Exactly one UPDATE was issued (the 0-row probe that terminates the loop).
         update_queries = [
-            q for q in session.queries if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
         ]
         assert len(update_queries) == 1
 
@@ -188,40 +195,34 @@ class TestBackfillEventCreatedAt:
         session = _FakeNeo4jSession()
         session.set_sequence([[]])
 
-        script.backfill_event_created_at(
-            session, batch_size=100, sleep_seconds=0, dry_run=False
-        )
+        script.backfill_event_created_at(session, batch_size=100, sleep_seconds=0, dry_run=False)
 
         update_queries = [
-            q for q in session.queries if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
         ]
         assert update_queries, "expected at least one bounded UPDATE"
         rendered = update_queries[0]["query"].upper()
         # Every backfill row must derive its timestamp from one of the existing
         # fields, falling back to ``datetime()`` when none are set.
         assert "COALESCE(" in rendered, (
-            "Backfill SET must use COALESCE so re-runs preserve enrichment. "
-            f"Got SQL: {rendered!r}"
+            f"Backfill SET must use COALESCE so re-runs preserve enrichment. Got SQL: {rendered!r}"
         )
         for fallback in ("RECOVERED_AT", "LAST_SEEN", "CLOSED_AT", "DATETIME()"):
             assert fallback in rendered, (
-                f"COALESCE fallback chain missing {fallback!r}. "
-                f"Got SQL: {rendered!r}"
+                f"COALESCE fallback chain missing {fallback!r}. Got SQL: {rendered!r}"
             )
 
     def test_invalid_batch_size_rejected(self):
         script = _load_script()
         with pytest.raises(ValueError, match="batch_size must be positive"):
-            script.backfill_event_created_at(
-                MagicMock(), batch_size=0, sleep_seconds=0
-            )
+            script.backfill_event_created_at(MagicMock(), batch_size=0, sleep_seconds=0)
 
     def test_invalid_sleep_seconds_rejected(self):
         script = _load_script()
         with pytest.raises(ValueError, match="sleep_seconds must be non-negative"):
-            script.backfill_event_created_at(
-                MagicMock(), batch_size=100, sleep_seconds=-0.1
-            )
+            script.backfill_event_created_at(MagicMock(), batch_size=100, sleep_seconds=-0.1)
 
 
 class TestBackfillScriptHelp:

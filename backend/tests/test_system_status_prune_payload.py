@@ -9,6 +9,7 @@ Mirrors the existing ``test_build_system_status_payload_includes_event_lock_snap
 tests in ``backend/tests/test_system_status.py``; uses the same monkeypatch
 pattern so no live database is required.
 """
+
 from __future__ import annotations
 
 import logging
@@ -100,9 +101,7 @@ class TestCollectorPrunePayload:
         assert status["collector"]["status"] == "RUNNING"
         assert "Failed to build event prune observability snapshot" in caplog.text
 
-    def test_collector_prune_namespace_is_initialized_to_zero_for_fresh_process(
-        self, monkeypatch
-    ):
+    def test_collector_prune_namespace_is_initialized_to_zero_for_fresh_process(self, monkeypatch):
         """Fresh process exposes the four declared keys at zero before any tick."""
         from services import event_prune_metrics
 

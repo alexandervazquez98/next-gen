@@ -406,9 +406,7 @@ class TestEventBatchPrunerSafetyGuards:
 
             _run_async(consume())
 
-            close_queries = [
-                q for q in session.queries if "RETURN e.id AS closed_id" in q["query"]
-            ]
+            close_queries = [q for q in session.queries if "RETURN e.id AS closed_id" in q["query"]]
             assert close_queries, "Expected commented recovered event to be closed"
             assert close_queries[0]["params"]["eid"] == "evt-commented"
             assert progress_list[-1]["processed"] == 1
