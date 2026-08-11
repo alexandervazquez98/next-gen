@@ -78,3 +78,48 @@ The system MUST document operational invariants for advisory-lock coordination: 
 - GIVEN an Event writer waits for the shared advisory lock
 - WHEN observability is enabled
 - THEN the system MUST NOT introduce fail-open, fail-closed, or timeout behavior in this capability
+
+## ADDED Requirements
+
+### Requirement: Recovered Stale Gauge
+
+The system MUST maintain an `events_recovered_stale_total` gauge counting RECOVERED Event rows older than `stale_after_seconds` without closure. The default `stale_after_seconds` MUST be 3600 seconds. `GET /api/system/status` MUST expose the value at `collector.prune.recovered_stale`.
+
+#### Scenario: Stale recovered rows are surfaced
+
+- GIVEN RECOVERED rows exceed the configured stale age and remain unclosed
+- WHEN system status is requested
+- THEN collector.prune.recovered_stale reports the current stale-row gauge
+
+#### Scenario: Fresh rows are excluded
+
+- GIVEN RECOVERED rows are younger than stale_after_seconds
+- WHEN the prune observability snapshot is evaluated
+- THEN those rows do not increase events_recovered_stale_total
+
+### Requirement: Pruned Batch Counter
+
+The system MUST maintain an `events_pruned_total` counter that increments once for each scheduler tick whose prune operation closes at least one row. `GET /api/system/status` MUST expose the value at `collector.prune.pruned`.
+
+#### Scenario: Successful batch increments once
+
+- GIVEN a scheduler tick closes one or more RECOVERED rows
+- WHEN the tick completes
+- THEN events_pruned_total increases by exactly one and collector.prune.pruned exposes it
+
+#### Scenario: Empty batch does not increment
+
+- GIVEN a scheduler tick closes no rows
+- WHEN the tick completes
+- THEN events_pruned_total remains unchanged
+
+### Requirement: Prune Observability Snapshot
+
+`get_event_prune_observability_snapshot()` MUST return the prune observability dataclass shape containing `events_recovered_stale_total` and `events_pruned_total`. It MUST be available as a sibling of `get_event_lock_observability_snapshot` and be used to populate system status.
+
+#### Scenario: Snapshot exposes both metrics
+
+- GIVEN prune metrics have recorded stale rows and completed batches
+- WHEN get_event_prune_observability_snapshot() is called
+- THEN the returned dataclass contains both named values with their current totals
+
