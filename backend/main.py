@@ -42,6 +42,16 @@ _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS = 900
 _SYSTEM_STATUS_HISTORY_STALE_THRESHOLD_SECONDS = 1800
 
 
+# Auto-prune scheduler knobs (fix-423 PR #2, AD-2 / REQ-PRUNE-003).
+# Mirrors the _SYSTEM_STATUS_* module-level globals so the registration
+# function can read a stable snapshot without re-parsing env vars on every
+# tick. Defaults match design.md §Observability: enabled, 1h interval.
+_EVENT_PRUNE_ENABLED = True
+_EVENT_PRUNE_INTERVAL_SECONDS = 3600
+_EVENT_PRUNE_BATCH_SIZE = 500
+_EVENT_PRUNE_STALE_AFTER_SECONDS = 3600
+
+
 def _parse_system_status_bool(value: str) -> bool | None:
     if value.strip().lower() in ("1", "true", "yes", "on", "enabled", "enable"):
         return True
@@ -105,6 +115,48 @@ def _reload_system_status_env_settings() -> None:
     )
 
 
+def _reload_event_prune_env_settings() -> None:
+    """Load auto-prune scheduler knobs from environment with safe defaults.
+
+    fix-423 PR #2 (AD-2 / REQ-PRUNE-003). Mirrors the
+    ``_reload_system_status_env_settings`` pattern — invalid bool/int
+    values fall back to safe defaults rather than crashing the API
+    process. ``EVENT_PRUNE_ENABLED`` follows the same
+    ``_parse_system_status_bool`` idiom; invalid input logs a warning
+    and defaults to True so the scheduler stays active by default.
+    """
+    global _EVENT_PRUNE_ENABLED
+    global _EVENT_PRUNE_INTERVAL_SECONDS
+    global _EVENT_PRUNE_BATCH_SIZE
+    global _EVENT_PRUNE_STALE_AFTER_SECONDS
+
+    enabled_raw = os.getenv("EVENT_PRUNE_ENABLED", "true")
+    parsed_enabled = _parse_system_status_bool(enabled_raw)
+    if parsed_enabled is None:
+        logger.warning(
+            "Invalid value for EVENT_PRUNE_ENABLED=%r, using default true",
+            enabled_raw,
+        )
+        parsed_enabled = True
+    _EVENT_PRUNE_ENABLED = parsed_enabled
+
+    _EVENT_PRUNE_INTERVAL_SECONDS = _parse_system_status_int(
+        "EVENT_PRUNE_INTERVAL_SECONDS",
+        default_value=3600,
+        minimum=60,
+    )
+    _EVENT_PRUNE_BATCH_SIZE = _parse_system_status_int(
+        "EVENT_PRUNE_BATCH_SIZE",
+        default_value=500,
+        minimum=1,
+    )
+    _EVENT_PRUNE_STALE_AFTER_SECONDS = _parse_system_status_int(
+        "EVENT_PRUNE_STALE_AFTER_SECONDS",
+        default_value=3600,
+        minimum=60,
+    )
+
+
 def _should_start_embedded_mqtt_subscriber() -> bool:
     """Return whether the API process should own a in-process MQTT subscriber."""
     return get_mqtt_runtime_settings().run_subscriber_in_process
@@ -139,6 +191,10 @@ backup_scheduler = AsyncIOScheduler()
 
 # Initialize system-status snapshot settings from environment now and again during startup.
 _reload_system_status_env_settings()
+
+
+# Initialize auto-prune scheduler knobs from environment (fix-423 PR #2).
+_reload_event_prune_env_settings()
 
 
 def schedule_daily_backup() -> None:
@@ -384,6 +440,7 @@ async def startup_event():
 
     # Ensure Defaults
     _reload_system_status_env_settings()
+    _reload_event_prune_env_settings()
 
     # Seed Admin
     try:
@@ -445,6 +502,15 @@ async def startup_event():
             _register_system_status_snapshot_job()
         except Exception as e:
             logger.error("Failed to schedule system status snapshot job: %s", e)
+
+    # Auto-prune recovered events on the same scheduler (fix-423 PR #2,
+    # REQ-PRUNE-003 / AD-2). Honors ``_EVENT_PRUNE_ENABLED`` (kill-switch);
+    # uses ``coalesce=True, max_instances=1, replace_existing=True`` to
+    # match the system_status_snapshot job above.
+    try:
+        _register_event_prune_job()
+    except Exception as e:
+        logger.error("Failed to schedule auto-prune job: %s", e)
 
     backup_scheduler.start()
     logger.info("Backup scheduler started")
@@ -910,6 +976,43 @@ def _register_system_status_snapshot_job() -> bool:
     logger.info(
         "Scheduled system status snapshot job every %ss",
         _SYSTEM_STATUS_HISTORY_MIN_INTERVAL_SECONDS,
+    )
+    return True
+
+
+def _register_event_prune_job() -> bool:
+    """Register the auto-prune recovered-events job on ``backup_scheduler``.
+
+    fix-423 PR #2 (REQ-PRUNE-003, AD-2). Honors ``_EVENT_PRUNE_ENABLED``
+    as a kill-switch (REQ-PRUNE-003 scenario 'Kill-switch skips execution');
+    when disabled, returns False without touching the scheduler so the
+    operator can flip the env var back without a redeploy.
+
+    Knobs match ``_register_system_status_snapshot_job``:
+
+    * ``coalesce=True`` — overlapping ticks coalesce into one.
+    * ``max_instances=1`` — never run two prune jobs concurrently.
+    * ``replace_existing=True`` — re-registering is a no-op, never an
+      APScheduler duplicate-job error.
+    """
+    if not _EVENT_PRUNE_ENABLED:
+        logger.info("Event prune auto-scheduler is disabled")
+        return False
+
+    from services.event_service import run_prune_recovered_events_sync
+
+    backup_scheduler.add_job(
+        run_prune_recovered_events_sync,
+        trigger=IntervalTrigger(seconds=_EVENT_PRUNE_INTERVAL_SECONDS),
+        id="run_prune_recovered_events",
+        name="Event Prune Recovered Events",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled event prune recovered events job every %ss",
+        _EVENT_PRUNE_INTERVAL_SECONDS,
     )
     return True
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from database import get_db
 from fastapi import HTTPException
 from services.snmp_service import run_diagnostic
+
+logger = logging.getLogger(__name__)
 
 
 def _serialize_value(value: Any) -> Any:
@@ -1232,6 +1235,62 @@ def prune_recovered_events(user: str) -> dict[str, Any]:
         "message": f"Cleaned up {closed_count} events",
         "count": closed_count,
     }
+
+
+# ---------------------------------------------------------------------------
+# Auto-prune scheduler entrypoint (fix-423 PR #2, AD-2/AD-5/AD-8)
+# ---------------------------------------------------------------------------
+#
+# REQ-PRUNE-003 + REQ-OBS-PRUNE-002: this is the function that the
+# ``backup_scheduler`` IntervalTrigger job invokes on every tick. It
+# acquires the distributed ``prune_lock`` (Postgres row), runs the existing
+# ``prune_recovered_events`` Cypher update, records the per-batch counter
+# in ``event_prune_metrics``, and releases the lock.
+#
+# Behaviour:
+# * If the lock is held (operator running the manual SSE prune), we log a
+#   WARN and return 0 — APScheduler is not an HTTP caller, so there is no
+#   409 to surface. The scheduler will try again on the next tick.
+# * If ``prune_recovered_events`` raises, the lock is still released (try
+#   / finally) so a transient Neo4j hiccup doesn't leave the lock held
+#   until TTL expiry.
+
+
+def run_prune_recovered_events_sync(user: str = "system-prune") -> int:
+    """Sync scheduler entrypoint for the auto-prune job.
+
+    Parameters
+    ----------
+    user:
+        Audit-trail user recorded in ``closed_by``. Defaults to
+        ``"system-prune"`` so it is obvious in event history that the
+        closure was scheduler-driven rather than operator-driven.
+
+    Returns
+    -------
+    int
+        Number of RECOVERED events closed by this tick. ``0`` when the
+        lock was contended (AD-8) or when no candidates exist.
+    """
+    # Import locally so module load doesn't require the prune-metrics
+    # singleton to be importable in every test path that imports
+    # ``event_service``.
+    from services.event_prune_metrics import record_pruned
+
+    if not acquire_prune_lock(owner="scheduler", ttl_seconds=300):
+        logger.warning(
+            "event_prune_skipped_lock_held",
+            extra={"event_prune_owner": "scheduler"},
+        )
+        return 0
+
+    try:
+        result = prune_recovered_events(user)
+        closed_count = int(result.get("count", 0) or 0)
+        record_pruned(closed_count=closed_count)
+        return closed_count
+    finally:
+        release_prune_lock(owner="scheduler")
 
 
 # ---------------------------------------------------------------------------
