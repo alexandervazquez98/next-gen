@@ -739,7 +739,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -747,7 +747,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
                     id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                     event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                     message: row.message, source_protocol: row.source_protocol,
-                    last_seen: datetime(), ack: false,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type,
                     propagated_from: row.propagated_from,
                     root_cause_ci_id: row.root_cause_ci_id,
@@ -779,7 +779,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -787,7 +787,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
                     id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                     event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                     message: row.message, source_protocol: row.source_protocol,
-                    last_seen: datetime(), ack: false,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type,
                     propagated_from: row.propagated_from,
                     root_cause_ci_id: row.root_cause_ci_id
