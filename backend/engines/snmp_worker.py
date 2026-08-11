@@ -96,7 +96,7 @@ def verify_connection():
             print("Connected to Neo4j!")
             return
         except Exception:
-            print(f"Waiting for Neo4j... ({i+1}/{max_retries})")
+            print(f"Waiting for Neo4j... ({i + 1}/{max_retries})")
             time.sleep(2)
     raise Exception("Could not connect to Neo4j after multiple retries")
 
