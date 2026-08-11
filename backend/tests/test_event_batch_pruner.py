@@ -466,6 +466,76 @@ class TestEventBatchPrunerSafetyGuards:
             _restore_get_db(original_driver, original_get_db, event_service)
 
 
+class TestEventBatchPrunerNullCursorProgress:
+    """RED -> GREEN: cursor pagination must make forward progress on NULL-bearing rows.
+
+    Pre-#279 legacy rows have ``created_at IS NULL``. The pre-fix cursor was
+    ``AND e.created_at > $last_cursor`` which evaluates to NULL (filter excludes
+    every subsequent row) once a NULL row was processed. The composite cursor
+    uses ``(e.created_at, e.id)`` with ``ORDER BY ... NULLS LAST`` and a
+    NULL-safe WHERE tiebreak so iter 2+ keeps moving.
+    """
+
+    def test_event_batch_pruner_null_cursor_progress(self, mock_driver):
+        """Iter 2 issues a NULL-safe comparison so a NULL-bearing fixture still advances."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        # batch_size=1 ensures iter 1 returns a full page so iter 2 is issued.
+        session.set_response("return count(e) as total", [{"total": 2}])
+        # Iter 1 returns one NULL-row, iter 2 returns one timestamped row.
+        ts = "2026-01-01T00:00:00Z"
+        session.set_sequence_response(
+            "return e.id as event_id, e.status",
+            [
+                [{"event_id": "evt-1", "status": "RECOVERED", "created_at": None}],
+                [{"event_id": "evt-2", "status": "RECOVERED", "created_at": ts}],
+            ],
+        )
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            progress_list = []
+
+            async def consume():
+                async for p in event_service.event_batch_pruner(
+                    user="system", batch_size=1, batch_delay_ms=0
+                ):
+                    progress_list.append(p)
+
+            _run_async(consume())
+
+            # iter 1 processed the NULL row (the cursor advance sets
+            # last_id="evt-1"); the contract we lock here is that iter 2's
+            # page query uses a NULL-safe comparison (carries the prior id AND
+            # the WHERE clause survives a NULL cursor).
+            page_queries = [
+                q
+                for q in session.queries
+                if "ORDER BY" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            ]
+            assert len(page_queries) >= 2, (
+                f"Expected at least two page queries (one per batch), got {len(page_queries)}"
+            )
+
+            second_query = page_queries[1]
+            # The composite cursor MUST carry the prior row's id as the tiebreak
+            # so the next batch can advance past a NULL row.
+            assert second_query["params"].get("last_id") == "evt-1", (
+                f"Iter 2 cursor must carry the prior row's id as the tiebreak; "
+                f"got params={second_query['params']!r}"
+            )
+            # Iter 2's cursor MUST include a NULL-safe clause so it can keep
+            # moving on a NULL-bearing fixture (the broken cursor used
+            # `e.created_at > $last_cursor` which is NULL when last_cursor is NULL).
+            assert "IS NULL" in second_query["query"].upper(), (
+                f"Iter 2 cursor filter must include a NULL-safe clause so a "
+                f"NULL-bearing fixture keeps moving; got query={second_query['query']!r}"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
 class TestEventBatchPrunerProgressShape:
     """RED → GREEN → TRIANGULATE: Test progress dict shape per chunk."""
 

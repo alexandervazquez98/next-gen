@@ -1352,11 +1352,14 @@ async def event_batch_pruner(
     batch_timeout_s: int | None = None,
     _idempotency_cache: dict[str, float] | None = None,
     last_cursor: str | None = None,
+    last_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     Async generator that yields progress after each chunk.
 
-    Uses cursor-based pagination (stable to inserts) with per-chunk transactions.
+    Uses a composite ``(created_at, id)`` cursor with NULL-safe tiebreak so it
+    makes forward progress on legacy NULL-``created_at`` rows (70%+ of
+    production rows pre-#279). Per-chunk transactions preserve atomicity.
     Idempotency is ensured via a request-scoped in-memory cache with TTL.
     Handles per-chunk timeout.
 
@@ -1429,10 +1432,26 @@ async def event_batch_pruner(
     while total_processed < total:
         batch += 1
         processed_in_chunk = 0
-        # Cursor-based pagination: resume from last processed event's created_at
+        # Composite (created_at, id) cursor with NULL-safe tiebreak — see
+        # openspec/changes/fix-423-recovered-event-accumulation/design.md AD-1.
+        # Legacy NULL `created_at` rows (pre-#279) would otherwise stop iter 2+
+        # because `NULL > <anything>` evaluates to NULL.
         cursor_filter = ""
+        cursor_params: dict[str, Any] = {"limit": batch_size}
         if last_cursor is not None:
-            cursor_filter = "AND e.created_at > $last_cursor"
+            cursor_filter = (
+                "AND (e.created_at > $last_cursor "
+                "OR (e.created_at IS NULL AND e.id > $last_id))"
+            )
+            cursor_params["last_cursor"] = last_cursor
+            cursor_params["last_id"] = last_id
+        elif last_id is not None:
+            # Cursor is at the tail of a NULL-bearing pass: only rows whose
+            # created_at is still NULL AND whose id is strictly greater are
+            # eligible. We deliberately avoid `> NULL` since that returns NULL
+            # (which excludes every row in Cypher).
+            cursor_filter = "AND (e.created_at IS NULL AND e.id > $last_id)"
+            cursor_params["last_id"] = last_id
 
         with driver.session() as session:
             try:
@@ -1443,21 +1462,22 @@ async def event_batch_pruner(
                       AND (e.ack IS NULL OR e.ack = false)
                       {cursor_filter}
                     RETURN e.id as event_id, e.status, e.created_at as created_at
-                    ORDER BY e.created_at ASC
+                    ORDER BY e.created_at ASC NULLS LAST, e.id ASC
                     LIMIT $limit
                     """,
-                    limit=batch_size,
-                    last_cursor=last_cursor if last_cursor else None,
+                    **cursor_params,
                 )
 
                 event_ids: set[str] = set()
                 last_processed_cursor = None
+                last_processed_id = None
                 for record in result:
                     event_id = record.get("event_id")
                     created_at = record.get("created_at")
                     if event_id and not _cache_has(event_id):
                         event_ids.add(event_id)
                         last_processed_cursor = created_at
+                        last_processed_id = event_id
 
                 # Close each event in its own transaction for safety
                 for event_id in event_ids:
@@ -1487,9 +1507,12 @@ async def event_batch_pruner(
 
                 total_processed += processed_in_chunk
 
-                # Update cursor for next batch
-                if last_processed_cursor is not None:
+                # Update cursor for next batch. The composite cursor needs both
+                # the row's `created_at` (None when NULL) and its `id` so the
+                # next iteration can place the boundary deterministically.
+                if last_processed_id is not None:
                     last_cursor = last_processed_cursor
+                    last_id = last_processed_id
 
                 yield {
                     "total": total,
