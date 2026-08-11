@@ -845,6 +845,22 @@ def _build_system_status_payload() -> dict:
         logger.warning("Failed to build event lock observability snapshot: %s", exc)
         event_lock_snapshot = {"alert_state": "UNKNOWN", "snapshot_error": True}
 
+    # REQ-OBS-PRUNE-003: surface prune observability sibling to the lock
+    # observability snapshot. Wired into ``collector.prune`` so the dashboard
+    # can poll events_recovered_stale / events_pruned every 3 s without a
+    # Cypher round-trip (the scheduler refreshes them per-tick).
+    from services.event_prune_metrics import get_event_prune_observability_snapshot
+
+    try:
+        prune_snapshot = get_event_prune_observability_snapshot()
+    except Exception as exc:
+        logger.warning("Failed to build event prune observability snapshot: %s", exc)
+        prune_snapshot = {"snapshot_error": True}
+    if isinstance(collector, dict):
+        collector = {**collector, "prune": prune_snapshot}
+    else:
+        collector = {"prune": prune_snapshot}
+
     if neo4j_status == "CONNECTED":
         time_sync = _build_time_sync_status()
     else:

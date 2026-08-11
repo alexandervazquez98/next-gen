@@ -542,7 +542,10 @@ def test_build_system_status_payload_skips_time_sync_probe_when_neo4j_is_disconn
 
     assert status["neo4j"] == "DISCONNECTED"
     assert status["postgres"] == "CONNECTED"
-    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["collector"]["status"] == "RUNNING"
+    assert status["collector"]["stats"] == {}
+    # PR #1 of fix-423 wires EventPruneMetrics into collector.prune.
+    assert "prune" in status["collector"]
     assert status["time_sync"]["status"] == "UNKNOWN"
     assert status["time_sync"]["error"] == "neo4j_disconnected"
 
@@ -587,7 +590,10 @@ def test_build_system_status_payload_includes_time_sync_without_changing_service
     assert status["time_sync"]["skew_ms"] == 500.0
     assert status["neo4j"] == "CONNECTED"
     assert status["postgres"] == "CONNECTED"
-    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["collector"]["status"] == "RUNNING"
+    assert status["collector"]["stats"] == {}
+    # PR #1 of fix-423 wires EventPruneMetrics into collector.prune.
+    assert "prune" in status["collector"]
     assert status["event_lock"] == {"alert_state": "OK"}
 
 
@@ -634,7 +640,10 @@ def test_build_system_status_payload_isolates_connected_neo4j_time_query_timeout
 
     assert status["neo4j"] == "CONNECTED"
     assert status["postgres"] == "CONNECTED"
-    assert status["collector"] == {"status": "RUNNING", "stats": {}}
+    assert status["collector"]["status"] == "RUNNING"
+    assert status["collector"]["stats"] == {}
+    # PR #1 of fix-423 wires EventPruneMetrics into collector.prune.
+    assert "prune" in status["collector"]
     assert status["event_lock"] == {"alert_state": "OK"}
     assert status["time_sync"]["status"] == "UNKNOWN"
     assert status["time_sync"]["error"] == "neo4j_time_query_timeout"
