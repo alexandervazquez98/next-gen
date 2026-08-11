@@ -26,8 +26,9 @@ class TestRegisterEventPruneJobKillSwitch:
         from main import _register_event_prune_job
 
         fake_scheduler = MagicMock()
-        with patch("main.backup_scheduler", fake_scheduler), patch(
-            "main._EVENT_PRUNE_ENABLED", False
+        with (
+            patch("main.backup_scheduler", fake_scheduler),
+            patch("main._EVENT_PRUNE_ENABLED", False),
         ):
             result = _register_event_prune_job()
 
@@ -38,9 +39,11 @@ class TestRegisterEventPruneJobKillSwitch:
         from main import _register_event_prune_job
 
         fake_scheduler = MagicMock()
-        with patch("main.backup_scheduler", fake_scheduler), patch(
-            "main._EVENT_PRUNE_ENABLED", True
-        ), patch("main._EVENT_PRUNE_INTERVAL_SECONDS", 900):
+        with (
+            patch("main.backup_scheduler", fake_scheduler),
+            patch("main._EVENT_PRUNE_ENABLED", True),
+            patch("main._EVENT_PRUNE_INTERVAL_SECONDS", 900),
+        ):
             result = _register_event_prune_job()
 
         assert result is True
@@ -61,9 +64,11 @@ class TestRegisterEventPruneJobHooks:
         from main import _register_event_prune_job
 
         fake_scheduler = MagicMock()
-        with patch("main.backup_scheduler", fake_scheduler), patch(
-            "main._EVENT_PRUNE_ENABLED", True
-        ), patch("main._EVENT_PRUNE_INTERVAL_SECONDS", 3600):
+        with (
+            patch("main.backup_scheduler", fake_scheduler),
+            patch("main._EVENT_PRUNE_ENABLED", True),
+            patch("main._EVENT_PRUNE_INTERVAL_SECONDS", 3600),
+        ):
             _register_event_prune_job()
 
         callback = fake_scheduler.add_job.call_args[0][0]
@@ -112,9 +117,11 @@ class TestRunPruneRecoveredEventsSync:
         fake_lock.release_prune_lock.return_value = True
         fake_prune = MagicMock(return_value={"message": "ok", "count": 7})
 
-        with patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock), patch.object(
-            event_service, "release_prune_lock", fake_lock.release_prune_lock
-        ), patch.object(event_service, "prune_recovered_events", fake_prune):
+        with (
+            patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock),
+            patch.object(event_service, "release_prune_lock", fake_lock.release_prune_lock),
+            patch.object(event_service, "prune_recovered_events", fake_prune),
+        ):
             count = event_service.run_prune_recovered_events_sync()
 
         assert count == 7
@@ -141,9 +148,11 @@ class TestRunPruneRecoveredEventsSync:
         fake_lock.release_prune_lock.return_value = False
         fake_prune = MagicMock(return_value={"message": "should not run", "count": 99})
 
-        with patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock), patch.object(
-            event_service, "release_prune_lock", fake_lock.release_prune_lock
-        ), patch.object(event_service, "prune_recovered_events", fake_prune):
+        with (
+            patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock),
+            patch.object(event_service, "release_prune_lock", fake_lock.release_prune_lock),
+            patch.object(event_service, "prune_recovered_events", fake_prune),
+        ):
             count = event_service.run_prune_recovered_events_sync()
 
         assert count == 0
@@ -161,10 +170,11 @@ class TestRunPruneRecoveredEventsSync:
         fake_lock.release_prune_lock.return_value = True
         fake_prune = MagicMock(side_effect=RuntimeError("neo4j exploded"))
 
-        with patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock), patch.object(
-            event_service, "release_prune_lock", fake_lock.release_prune_lock
-        ), patch.object(event_service, "prune_recovered_events", fake_prune), contextlib.suppress(
-            RuntimeError
+        with (
+            patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock),
+            patch.object(event_service, "release_prune_lock", fake_lock.release_prune_lock),
+            patch.object(event_service, "prune_recovered_events", fake_prune),
+            contextlib.suppress(RuntimeError),
         ):
             event_service.run_prune_recovered_events_sync()
 
@@ -178,9 +188,11 @@ class TestRunPruneRecoveredEventsSync:
         fake_lock.release_prune_lock.return_value = True
         fake_prune = MagicMock(return_value={"count": 0})
 
-        with patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock), patch.object(
-            event_service, "release_prune_lock", fake_lock.release_prune_lock
-        ), patch.object(event_service, "prune_recovered_events", fake_prune):
+        with (
+            patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock),
+            patch.object(event_service, "release_prune_lock", fake_lock.release_prune_lock),
+            patch.object(event_service, "prune_recovered_events", fake_prune),
+        ):
             event_service.run_prune_recovered_events_sync()
 
         owner_arg = fake_lock.acquire_prune_lock.call_args.kwargs.get("owner")
@@ -200,9 +212,11 @@ class TestRunPruneRecoveredEventsSync:
         fake_lock.release_prune_lock.return_value = True
         fake_prune = MagicMock(return_value={"count": 0})
 
-        with patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock), patch.object(
-            event_service, "release_prune_lock", fake_lock.release_prune_lock
-        ), patch.object(event_service, "prune_recovered_events", fake_prune):
+        with (
+            patch.object(event_service, "acquire_prune_lock", fake_lock.acquire_prune_lock),
+            patch.object(event_service, "release_prune_lock", fake_lock.release_prune_lock),
+            patch.object(event_service, "prune_recovered_events", fake_prune),
+        ):
             event_service.run_prune_recovered_events_sync()
 
         from services.event_prune_metrics import get_event_prune_observability_snapshot

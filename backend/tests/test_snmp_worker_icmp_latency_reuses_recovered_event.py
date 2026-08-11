@@ -52,7 +52,7 @@ class TestICMPLatencyFilterWidened:
         source = _read_snmp_worker_source()
         primary_block = _extract_block(
             source,
-            start_marker="primary_query = \"\"\"\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n            WHERE existing.status IN",
+            start_marker='primary_query = """\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: \'THRESHOLD_BREACH\'})\n            WHERE existing.status IN',
             end_marker="WITH row, n, m, head(collect(existing)) AS existing\n            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |",
         )
 
@@ -62,10 +62,7 @@ class TestICMPLatencyFilterWidened:
             r"existing\.status\s+IN\s+\[(?P<list>[^\]]+)\]",
             primary_block,
         )
-        assert match, (
-            "Could not locate `existing.status IN [...]` in ICMP-latency "
-            "primary query"
-        )
+        assert match, "Could not locate `existing.status IN [...]` in ICMP-latency primary query"
         status_list = match.group("list")
         for required_status in ("'OPEN'", "'ACK'", "'RECOVERED'"):
             assert required_status in status_list, (
@@ -77,7 +74,7 @@ class TestICMPLatencyFilterWidened:
         source = _read_snmp_worker_source()
         fallback_block = _extract_block(
             source,
-            start_marker="fallback_query = \"\"\"\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n            WHERE existing.status IN",
+            start_marker='fallback_query = """\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: \'THRESHOLD_BREACH\'})\n            WHERE existing.status IN',
             end_marker="WITH row, n, m, head(collect(existing)) AS existing\n            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |",
         )
 
@@ -104,7 +101,7 @@ class TestICMPLatencyCreateCarriesCreatedAt:
         source = _read_snmp_worker_source()
         primary_block = _extract_block(
             source,
-            start_marker="primary_query = \"\"\"\n            UNWIND $breaches AS row\n",
+            start_marker='primary_query = """\n            UNWIND $breaches AS row\n',
             end_marker="MERGE (created)-[:TRIGGERED_BY]->(m)\n            )",
         )
 
@@ -122,7 +119,7 @@ class TestICMPLatencyCreateCarriesCreatedAt:
         source = _read_snmp_worker_source()
         fallback_block = _extract_block(
             source,
-            start_marker="fallback_query = \"\"\"\n            UNWIND $breaches AS row\n",
+            start_marker='fallback_query = """\n            UNWIND $breaches AS row\n',
             end_marker="MERGE (created)-[:TRIGGERED_BY]->(m)\n            )",
         )
 
@@ -164,13 +161,13 @@ class TestICMPLatencyCycleReusesRoot:
         # Pull both primary and fallback blocks; either must satisfy.
         primary_block = _extract_block(
             source,
-            start_marker="primary_query = \"\"\"\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n            WHERE existing.status IN",
-            end_marker="MERGE (existing)-[:TRIGGERED_BY]->(m)\n            )\n        \"\"\"",
+            start_marker='primary_query = """\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: \'THRESHOLD_BREACH\'})\n            WHERE existing.status IN',
+            end_marker='MERGE (existing)-[:TRIGGERED_BY]->(m)\n            )\n        """',
         )
         fallback_block = _extract_block(
             source,
-            start_marker="fallback_query = \"\"\"\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n            WHERE existing.status IN",
-            end_marker="MERGE (existing)-[:TRIGGERED_BY]->(m)\n            )\n        \"\"\"",
+            start_marker='fallback_query = """\n            UNWIND $breaches AS row\n            MATCH (n:CI {id: row.node_id})\n            MATCH (m:MetricDef {id: row.metric_id})\n            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: \'THRESHOLD_BREACH\'})\n            WHERE existing.status IN',
+            end_marker='MERGE (existing)-[:TRIGGERED_BY]->(m)\n            )\n        """',
         )
 
         for label, block in (("primary", primary_block), ("fallback", fallback_block)):

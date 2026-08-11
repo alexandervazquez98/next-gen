@@ -175,31 +175,23 @@ class TestRecoveryWriterPredicatesContainRecovered:
         # Split by ``primary_query = """\n            UNWIND`` and
         # ``fallback_query = """\n            UNWIND`` markers so we know
         # which block is which.
-        primary_marker = "primary_query = \"\"\"\n            UNWIND"
-        fallback_marker = "fallback_query = \"\"\"\n            UNWIND"
+        primary_marker = 'primary_query = """\n            UNWIND'
+        fallback_marker = 'fallback_query = """\n            UNWIND'
 
         # Find ICMP-availability section by anchoring on ``event_type = 'AVAILABILITY'``.
         avail_sections = re.split(
             r"(?=primary_query = \"\"\"\s*\n\s*UNWIND \$availability_events)",
             source,
         )
-        assert len(avail_sections) >= 2, (
-            "ICMP-availability primary_query block not found"
-        )
+        assert len(avail_sections) >= 2, "ICMP-availability primary_query block not found"
         primary_section = avail_sections[1]
         fallback_sections = primary_section.split(fallback_marker, 1)
-        assert len(fallback_sections) >= 2, (
-            "ICMP-availability fallback_query block not found"
-        )
+        assert len(fallback_sections) >= 2, "ICMP-availability fallback_query block not found"
         primary_block = fallback_sections[0]
         fallback_block = fallback_sections[1].split(primary_marker, 1)[0]
 
-        primary_match = re.search(
-            r"existing\.status IN \[(?P<list>[^\]]+)\]", primary_block
-        )
-        fallback_match = re.search(
-            r"existing\.status IN \[(?P<list>[^\]]+)\]", fallback_block
-        )
+        primary_match = re.search(r"existing\.status IN \[(?P<list>[^\]]+)\]", primary_block)
+        fallback_match = re.search(r"existing\.status IN \[(?P<list>[^\]]+)\]", fallback_block)
         assert primary_match, "ICMP-availability primary status IN list not found"
         assert fallback_match, "ICMP-availability fallback status IN list not found"
         assert primary_match.group("list") == fallback_match.group("list"), (
