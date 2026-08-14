@@ -236,6 +236,113 @@ def get_event_batch_settings() -> EventBatchSettings:
 
 
 # ---------------------------------------------------------------------------
+# Event Prune Auto-Scheduler Settings (fix-423 PR #2)
+# ---------------------------------------------------------------------------
+
+
+# Default values for EventPruneSettings — mirror design.md §Observability
+# (REQ-PRUNE-003, REQ-OBS-PRUNE-001).
+EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS = 3600
+EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS = 3600
+EVENT_PRUNE_DEFAULT_BATCH_SIZE = 500
+EVENT_PRUNE_MIN_INTERVAL_SECONDS = 60
+EVENT_PRUNE_MIN_STALE_AFTER_SECONDS = 60
+EVENT_PRUNE_MIN_BATCH_SIZE = 1
+
+
+class EventPruneSettings(BaseModel):
+    """Runtime settings for the auto-prune scheduler on ``backup_scheduler``.
+
+    Driven by environment variables; the scheduler registration code in
+    ``backend/main.py:_register_event_prune_job`` reads these on startup.
+
+    Fields
+    ------
+    enabled:
+        Kill-switch. Defaults to True. ``EVENT_PRUNE_ENABLED=false`` skips
+        registration entirely (mirrors ``SYSTEM_STATUS_SNAPSHOTS_ENABLED``).
+    interval_seconds:
+        How often the APScheduler ``IntervalTrigger`` fires. Default 1h.
+        Min 60s to avoid hammering Neo4j.
+    batch_size:
+        Max RECOVERED rows to close per tick. Default borrows from
+        :class:`EventBatchSettings` (``EVENT_BATCH_SIZE``, default 500).
+        ``EVENT_PRUNE_BATCH_SIZE`` overrides.
+    stale_after_seconds:
+        Age threshold for ``events_recovered_stale_total`` (REQ-OBS-PRUNE-001).
+        Default 1h; ``EVENT_PRUNE_STALE_AFTER_SECONDS`` overrides.
+    """
+
+    enabled: bool = True
+    interval_seconds: int = Field(
+        default=EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS,
+        ge=EVENT_PRUNE_MIN_INTERVAL_SECONDS,
+    )
+    batch_size: int = Field(
+        default=EVENT_PRUNE_DEFAULT_BATCH_SIZE,
+        ge=EVENT_PRUNE_MIN_BATCH_SIZE,
+    )
+    stale_after_seconds: int = Field(
+        default=EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS,
+        ge=EVENT_PRUNE_MIN_STALE_AFTER_SECONDS,
+    )
+
+    @classmethod
+    def from_env(cls) -> EventPruneSettings:
+        """Load auto-prune scheduler settings from environment variables.
+
+        Invalid values fall back to defaults without raising — mirrors
+        ``_parse_system_status_int`` / ``_parse_system_status_bool`` in
+        ``main.py:45-71``. An invalid bool falls back to True (safe default).
+        """
+
+        def _int(name: str, default: int) -> int:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            try:
+                value = int(raw.strip())
+            except ValueError:
+                return default
+            return value if value > 0 else default
+
+        enabled_raw = os.getenv("EVENT_PRUNE_ENABLED")
+        if enabled_raw is None:
+            enabled = True
+        else:
+            normalized = enabled_raw.strip().lower()
+            # Invalid values (anything not in the truthy set and not in the
+            # explicit falsy set) fall back to True — mirrors
+            # ``_parse_system_status_bool`` in main.py:45-50 which returns
+            # None on invalid input and main.py then defaults to True with a
+            # warning log. This keeps the scheduler safe by default.
+            if normalized in {"1", "true", "yes", "on"}:
+                enabled = True
+            elif normalized in {"0", "false", "no", "off"}:
+                enabled = False
+            else:
+                enabled = True
+
+        # Borrow batch-size default from EventBatchSettings so the two
+        # knobs stay aligned by default.
+        try:
+            default_batch_size = EventBatchSettings().batch_size
+        except Exception:
+            default_batch_size = EVENT_PRUNE_DEFAULT_BATCH_SIZE
+
+        return cls(
+            enabled=enabled,
+            interval_seconds=_int(
+                "EVENT_PRUNE_INTERVAL_SECONDS", EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS
+            ),
+            batch_size=_int("EVENT_PRUNE_BATCH_SIZE", default_batch_size),
+            stale_after_seconds=_int(
+                "EVENT_PRUNE_STALE_AFTER_SECONDS", EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # MQTT Settings
 # ---------------------------------------------------------------------------
 
