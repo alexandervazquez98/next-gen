@@ -3,21 +3,27 @@ set -eu
 
 usage() {
     cat <<'USAGE'
-Usage: sh scripts/safe-rebuild.sh [--dry-run] [--skip-neo4j] [--neo4j-offline]
+Usage: sh scripts/safe-rebuild.sh [--dry-run] [--skip-neo4j] [--neo4j-offline] [--run-event-backfill]
 
 Safely bootstraps backup storage, creates a pre-rebuild backup, rebuilds images,
 and restarts services without deleting Docker volumes.
 
 Options:
-  --dry-run        Print the deploy flow without creating directories or changing containers.
-  --skip-neo4j     Pass through to pre-rebuild-backup.sh to skip the Neo4j backup.
-  --neo4j-offline  Pass through to pre-rebuild-backup.sh to run a Neo4j offline dump.
+  --dry-run              Print the deploy flow without creating directories or changing containers.
+  --skip-neo4j           Pass through to pre-rebuild-backup.sh to skip the Neo4j backup.
+  --neo4j-offline        Pass through to pre-rebuild-backup.sh to run a Neo4j offline dump.
+  --run-event-backfill   Run the one-shot Event.created_at backfill in the backend
+                         container after the post-deploy migrations. Idempotent;
+                         only mutates rows whose created_at is NULL. Pass this once
+                         after the first deploy that lands fix-423 (PR #1) so the
+                         auto-prune scheduler cursor can paginate past legacy rows.
 USAGE
 }
 
 dry_run=0
 skip_neo4j=0
 offline_neo4j=0
+run_event_backfill=0
 frontend_lockfile_hash=
 
 while [ "$#" -gt 0 ]; do
@@ -30,6 +36,9 @@ while [ "$#" -gt 0 ]; do
             ;;
         --neo4j-offline)
             offline_neo4j=1
+            ;;
+        --run-event-backfill)
+            run_event_backfill=1
             ;;
         -h|--help)
             usage
@@ -263,6 +272,13 @@ run docker compose exec -T backend python scripts/migrate_icmp_sidecar_metrics.p
 
 printf 'Applying ICMP availability source migration...\n'
 run docker compose exec -T backend python scripts/migrate_icmp_availability_source.py
+
+if [ "$run_event_backfill" -eq 1 ]; then
+    printf 'Applying Event.created_at backfill (fix-423, one-shot idempotent)...\n'
+    run docker compose exec -T backend python -m backend.scripts.backfill_event_created_at --batch-size "${EVENT_PRUNE_BATCH_SIZE:-500}" --sleep-seconds 0.5
+else
+    printf 'SKIP: --run-event-backfill not passed. If this is the first deploy after fix-423 lands, re-run with --run-event-backfill to populate Event.created_at on legacy NULL rows.\n'
+fi
 
 printf '\nSafe rebuild flow completed. Current service status:\n'
 run docker compose ps
