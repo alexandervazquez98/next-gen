@@ -162,9 +162,7 @@ class _BlockingDriver:
 
     def session(self):
         if _BlockingDriver._session is None:
-            _BlockingDriver._session = _BlockingSession(
-                block_seconds=_BlockingDriver.block_seconds
-            )
+            _BlockingDriver._session = _BlockingSession(block_seconds=_BlockingDriver.block_seconds)
             _BlockingDriver._session.set_total(_BlockingDriver.count_total)
         return _BlockingDriver._session
 
@@ -212,9 +210,7 @@ def test_event_batch_pruner_first_chunk_does_not_block_event_loop(patched_event_
     ``AsyncSession`` refactor the body uses ``async with ...`` and the
     deadline is met.
     """
-    agen = patched_event_service.event_batch_pruner(
-        user="system", batch_delay_ms=0
-    )
+    agen = patched_event_service.event_batch_pruner(user="system", batch_delay_ms=0)
 
     async def _drive():
         try:
