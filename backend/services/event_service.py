@@ -1217,16 +1217,19 @@ def add_event_comment(event_id: str, user: str, message: str) -> dict[str, str]:
 def prune_recovered_events(user: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
-        result = session.run(
-            """
+        result = (
+            session.run(
+                """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             RETURN count(e) as closed_count
         """,
-            user=user,
-        ).single() or {"closed_count": 0}
+                user=user,
+            ).single()
+            or {"closed_count": 0}
+        )
     closed_count = _record_value(result, "closed_count") or 0
     return {
         "message": f"Cleaned up {closed_count} events",
