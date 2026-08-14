@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.4] — 2026-08-14
+
+### Added
+
+- **Event prune & recovery lifecycle (fix #423, issue #423)** — closes the loop on `RECOVERED` events that have been accumulating since the introduction of the event feed:
+  - **Auto-prune scheduler.** `EventPruneSettings` (`backend/config.py`) with env vars `EVENT_PRUNE_{ENABLED,INTERVAL_SECONDS,BATCH_SIZE,STALE_AFTER_SECONDS}` (defaults `true` / `3600` / `500` / `3600`). `run_prune_recovered_events_sync` is registered on the existing `backup_scheduler` APScheduler instance via `IntervalTrigger` with `coalesce=True, max_instances=1, replace_existing=True`, behind the `EVENT_PRUNE_ENABLED` kill-switch parsed via `_parse_system_status_bool`. The job acquires the existing `prune_lock` advisory lock so manual `POST /api/events/prune` and the scheduler tick never write concurrently (second caller gets `HTTP 409`).
+  - **One-shot backfill script.** `backend/scripts/backfill_event_created_at.py` (argparse, `--batch-size`, `--sleep-seconds`, `--dry-run`) sets `Event.created_at = COALESCE(recovered_at, last_seen, closed_at, datetime())` on rows where `created_at IS NULL`. Idempotent; safe to re-run. Ships the legacy null-timestamp protection PR #279 never extended to RECOVERED events (19,076 rows in production at the time of fix).
+  - **Observability gauges.** `backend/services/event_prune_metrics.py` exposes `events_recovered_stale_total` (gauge, RECOVERED age > `stale_after_seconds`) and `events_pruned_total` (counter, per-batch). Wired into `_build_system_status_payload` and surfaced under `collector.prune` in `GET /api/system/status`. New `get_event_prune_observability_snapshot()` mirrors the existing `event_lock` observability pattern.
+  - **NEW canonical capability spec** `openspec/specs/event-prune-recovery-lifecycle/spec.md` (REQ-PRUNE-001..005 + scenarios), **MODIFIED** `openspec/specs/event-writer-coordination-observability/spec.md` (REQ-OBS-PRUNE-001..003 added).
+  - **Deploy script conditional.** `scripts/safe-rebuild.sh` gains the `--run-event-backfill` flag and runs the one-shot backfill inside the backend container after the post-deploy migrations. Idempotent; default off so subsequent deploys do not re-run the no-op.
+  - **Operator runbook.** `docs/event-prune-runbook.md` covers enablement order, observability (`collector.prune.*`), emergency disable (`EVENT_PRUNE_ENABLED=false` + container recreate), and per-file rollback. `docs/itsm/event-flow.md` updated to reference the runbook.
+
+### Fixed
+
+- **ICMP-latency recovery writer reuses RECOVERED events** (`backend/engines/snmp_worker.py:742,782,786`). The OPTIONAL MATCH predicate now includes `RECOVERED` in the eligible status set, so a DOWN→OK→DOWN cycle reuses the existing ROOT id instead of creating a fresh ROOT on every oscillation. The CREATE payloads at `:746,786` now also emit `created_at: datetime()`, closing the active source of new NULL `created_at` rows the cursor must survive (the other five writers already do this; design.md AD-4 evidence note).
+- **Event-batch-pruner cursor is NULL-safe** (`backend/services/event_service.py:event_batch_pruner`). Replaces the single-column `WHERE e.created_at > $last_cursor` with a composite `(created_at, id)` cursor and NULL-aware tiebreak. The streaming SSE endpoint now makes forward progress on a fixture containing NULL-`created_at` rows instead of exiting after the first batch.
+- **Lock contract regression** test in `backend/tests/test_snmp_worker_recovery_writer_predicates.py` parses the five other recovery-writer predicate sites (`:405,451,558,603,742`) and asserts each one retains `RECOVERED` in its `IN [...]` set. Prevents future PRs from silently narrowing the eligible state set.
+
+### Documentation
+
+- `docs/event-prune-runbook.md` created with operational enablement order, observability key, emergency disable, and rollback.
+- `docs/itsm/event-flow.md` updated in the "Cierre y auditoria" section to describe auto-prune behavior and link to the runbook.
+- `.env.example` documents the four new `EVENT_PRUNE_*` env vars; `docker-compose.yml` wires them into the `backend` service.
+
 ## [1.14.3] — 2026-08-02
 
 ### Added
