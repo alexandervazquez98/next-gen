@@ -133,9 +133,9 @@ class TestBackfillEventCreatedAt:
             for q in session.queries
             if "SET" in q["query"].upper() and "LIMIT" in q["query"].upper()
         ]
-        assert len(update_queries) == 2, (
-            f"Expected two bounded UPDATEs (500 + 0); got {len(update_queries)}"
-        )
+        assert (
+            len(update_queries) == 2
+        ), f"Expected two bounded UPDATEs (500 + 0); got {len(update_queries)}"
 
     def test_re_run_after_completion_is_idempotent(self, monkeypatch):
         script = _load_script()
@@ -206,13 +206,13 @@ class TestBackfillEventCreatedAt:
         rendered = update_queries[0]["query"].upper()
         # Every backfill row must derive its timestamp from one of the existing
         # fields, falling back to ``datetime()`` when none are set.
-        assert "COALESCE(" in rendered, (
-            f"Backfill SET must use COALESCE so re-runs preserve enrichment. Got SQL: {rendered!r}"
-        )
+        assert (
+            "COALESCE(" in rendered
+        ), f"Backfill SET must use COALESCE so re-runs preserve enrichment. Got SQL: {rendered!r}"
         for fallback in ("RECOVERED_AT", "LAST_SEEN", "CLOSED_AT", "DATETIME()"):
-            assert fallback in rendered, (
-                f"COALESCE fallback chain missing {fallback!r}. Got SQL: {rendered!r}"
-            )
+            assert (
+                fallback in rendered
+            ), f"COALESCE fallback chain missing {fallback!r}. Got SQL: {rendered!r}"
 
     def test_invalid_batch_size_rejected(self):
         script = _load_script()

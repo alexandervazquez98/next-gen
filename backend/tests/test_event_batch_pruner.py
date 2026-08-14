@@ -512,9 +512,9 @@ class TestEventBatchPrunerNullCursorProgress:
                 for q in session.queries
                 if "ORDER BY" in q["query"].upper() and "LIMIT" in q["query"].upper()
             ]
-            assert len(page_queries) >= 2, (
-                f"Expected at least two page queries (one per batch), got {len(page_queries)}"
-            )
+            assert (
+                len(page_queries) >= 2
+            ), f"Expected at least two page queries (one per batch), got {len(page_queries)}"
 
             second_query = page_queries[1]
             # The composite cursor MUST carry the prior row's id as the tiebreak
