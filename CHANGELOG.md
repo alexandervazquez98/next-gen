@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.5] — 2026-08-14
+
+### Fixed
+
+- **SSE bulk-close endpoint no longer stalls the FastAPI event loop** (PR #427, hotfix on top of v1.14.4): `event_batch_pruner` in `backend/services/event_service.py` was declared `async def` but used **synchronous** Neo4j calls (`driver.session()`, `session.run()`, `session.begin_transaction()`) inside the async generator body. Inside the FastAPI request handler for `GET /api/events/bulk/stream-progress`, those sync calls parked the asyncio event loop and prevented the first SSE event from being flushed to the client. The Monitoring Console's "Clean recovered" button (`usePruneRecovered` hook) would stay stuck on "Cleaning (X/Y)..." because the browser never received the first `data: {json}` frame. The refactor converts every Neo4j call to `AsyncSession` / `await` equivalents (`async with driver.session() as session:`, `await session.run(...)`, `async for record in result:`, `async with session.begin_transaction() as tx:`, `await tx.run(...)`, `await tx.commit()`). A new pin test `test_event_batch_pruner_first_chunk_does_not_block_event_loop` in `backend/tests/test_event_batch_pruner_async.py` simulates the bug pre-fix (mock driver blocks the event loop for 5 s with `time.sleep`) and asserts the first `__anext__()` returns without blocking the loop. All 33 tests in the `test_event_batch_pruner*` + `test_event_prune_scheduler` + `test_event_service` chains pass. The `MockNeo4jSession` / `MockNeo4jResult` / `MockNeo4jTransaction` mocks were updated to be async-aware (`async def run`, `async def __aenter__/__aexit__`, `async def execute_write`) so the existing 9 test scenarios in `test_event_batch_pruner.py` continue to lock the contract (cursor logic, idempotency cache, batch termination, error path) without modifications to the test scenarios themselves. The `run_prune_recovered_events_sync` scheduler entrypoint required **zero** changes — it already wraps the async generator correctly via `asyncio.create_task` in the scheduler; the 10 scheduler tests (`test_event_prune_scheduler.py`) pass as-is. Public API of `event_batch_pruner` (signature, `AsyncIterator[dict[str, Any]]` return type, yield dict shape) is preserved.
+
 ## [1.14.4] — 2026-08-14
 
 ### Added
