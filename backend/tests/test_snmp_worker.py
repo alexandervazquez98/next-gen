@@ -742,9 +742,9 @@ class TestICMPDebounce:
             for q in mock_session.queries
             if "set n.status" in q["query"].lower() and q["params"].get("status") == "CRITICAL"
         ]
-        assert len(critical_calls) >= 1, (
-            f"Expected at least 1 CRITICAL call, got {len(critical_calls)}: {mock_session.queries}"
-        )
+        assert (
+            len(critical_calls) >= 1
+        ), f"Expected at least 1 CRITICAL call, got {len(critical_calls)}: {mock_session.queries}"
         mock_bulk_insert.assert_called()
         saved_rows = mock_bulk_insert.call_args.args[1]
         assert any(
@@ -875,9 +875,9 @@ class TestICMPDebounce:
             for q in mock_session.queries
             if "set n.status" in q["query"].lower() and q["params"].get("status") == "OK"
         ]
-        assert len(ok_calls) == 1, (
-            f"Expected 1 OK call, got {len(ok_calls)}: {mock_session.queries}"
-        )
+        assert (
+            len(ok_calls) == 1
+        ), f"Expected 1 OK call, got {len(ok_calls)}: {mock_session.queries}"
         recovery_queries = [
             q
             for q in mock_session.queries
@@ -1097,9 +1097,9 @@ def test_refresh_icmp_latency_events_acquires_pg_advisory_lock_before_neo4j_writ
         )
 
     # Lock helper MUST be called with the writer's open PG session and the triplet.
-    assert mock_lock.call_count == 1, (
-        f"expected acquire_event_triplet_lock called once, got {mock_lock.call_count}"
-    )
+    assert (
+        mock_lock.call_count == 1
+    ), f"expected acquire_event_triplet_lock called once, got {mock_lock.call_count}"
     lock_args = mock_lock.call_args_list[0].args
     lock_kwargs = mock_lock.call_args_list[0].kwargs
     assert lock_args[0] is lock_db, "lock helper must receive the writer's open PG session"
@@ -1112,9 +1112,9 @@ def test_refresh_icmp_latency_events_acquires_pg_advisory_lock_before_neo4j_writ
     assert call_order, "no calls recorded"
     assert call_order[0] == "lock", f"expected lock acquisition first, got order={call_order}"
     assert "neo4j" in call_order
-    assert call_order.index("lock") < call_order.index("neo4j"), (
-        f"lock must precede neo4j write; got order={call_order}"
-    )
+    assert call_order.index("lock") < call_order.index(
+        "neo4j"
+    ), f"lock must precede neo4j write; got order={call_order}"
 
 
 def test_refresh_snmp_collection_failures_passes_context_and_keeps_sorted_lock_order():
