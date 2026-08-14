@@ -1470,17 +1470,24 @@ async def event_batch_pruner(
     batch = 0
     total_processed = 0
 
-    # First: get total count of recoverable events
-    with driver.session() as session:
-        result = session.run(
+    # First: get total count of recoverable events.
+    # Sync -> Async refactor (fix-sse-pruner-streaming-blocking): the
+    # generator runs under the FastAPI event loop; sync Neo4j calls parked
+    # the loop and starved the SSE endpoint. Every ``driver.session()``,
+    # ``session.run(...)`` and ``begin_transaction()`` below now uses the
+    # 5.16 AsyncDriver surface so the consumer receives the first chunk
+    # in well under the 1s SSE first-byte budget.
+    async with driver.session() as session:
+        count_result = await session.run(
             """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
             RETURN count(e) as total
             """
-        ).single()
-        total = _record_value(result, "total") or 0
+        )
+        count_record = await count_result.single()
+        total = _record_value(count_record, "total") or 0
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
 
@@ -1511,9 +1518,9 @@ async def event_batch_pruner(
             cursor_filter = "AND (e.created_at IS NULL AND e.id > $last_id)"
             cursor_params["last_id"] = last_id
 
-        with driver.session() as session:
+        async with driver.session() as session:
             try:
-                result = session.run(
+                page_cursor = await session.run(
                     f"""
                     MATCH (e:Event)
                     WHERE e.status = 'RECOVERED'
@@ -1529,7 +1536,7 @@ async def event_batch_pruner(
                 event_ids: set[str] = set()
                 last_processed_cursor = None
                 last_processed_id = None
-                for record in result:
+                async for record in page_cursor:
                     event_id = record.get("event_id")
                     created_at = record.get("created_at")
                     if event_id and not _cache_has(event_id):
@@ -1544,8 +1551,8 @@ async def event_batch_pruner(
                     if not _cache_check_and_add(event_id):
                         continue
                     try:
-                        with session.begin_transaction() as tx:
-                            close_result = tx.run(
+                        async with session.begin_transaction() as tx:
+                            close_cursor = await tx.run(
                                 """
                                 MATCH (e:Event {id: $eid})
                                 WHERE e.status = 'RECOVERED'
@@ -1555,8 +1562,9 @@ async def event_batch_pruner(
                                 """,
                                 eid=event_id,
                                 user=user,
-                            ).single()
-                            tx.commit()
+                            )
+                            close_result = await close_cursor.single()
+                            await tx.commit()
                         if close_result:
                             processed_in_chunk += 1
                     except Exception:
