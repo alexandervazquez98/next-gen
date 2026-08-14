@@ -40,7 +40,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Stubs — must match conftest.py pattern so event_service imports cleanly
 # ---------------------------------------------------------------------------
