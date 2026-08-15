@@ -1495,17 +1495,20 @@ async def event_batch_pruner(
         """Count RECOVERED + not-ack-eligible events. Sync, runs in a thread."""
         d = get_db()
         with d.session() as s:
-            return _record_value(
-                s.run(
-                    """
+            return (
+                _record_value(
+                    s.run(
+                        """
                     MATCH (e:Event)
                     WHERE e.status = 'RECOVERED'
                       AND (e.ack IS NULL OR e.ack = false)
                     RETURN count(e) as total
                     """
-                ).single(),
-                "total",
-            ) or 0
+                    ).single(),
+                    "total",
+                )
+                or 0
+            )
 
     def _fetch_page(cursor_filter: str, cursor_params: dict[str, Any]) -> list[dict[str, Any]]:
         """Read one page of candidates. Sync, runs in a thread."""
