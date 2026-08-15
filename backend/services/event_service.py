@@ -1466,21 +1466,85 @@ async def event_batch_pruner(
             _cache_add(event_id)
             return True
 
-    driver = get_db()
+    # ``get_db()`` is invoked inside each sync helper below so the call
+    # happens inside the worker thread (matters for tests that swap the
+    # driver via monkeypatch — the thread will see the swapped driver).
     batch = 0
     total_processed = 0
 
-    # First: get total count of recoverable events
-    with driver.session() as session:
-        result = session.run(
-            """
-            MATCH (e:Event)
-            WHERE e.status = 'RECOVERED'
-              AND (e.ack IS NULL OR e.ack = false)
-            RETURN count(e) as total
-            """
-        ).single()
-        total = _record_value(result, "total") or 0
+    # First: get total count of recoverable events.
+    #
+    # fix-sse-bulk-prune-streaming-v2: v1.14.5 attempted to convert
+    # ``event_batch_pruner`` to the neo4j 5.16 AsyncDriver API directly
+    # (``async with driver.session()``, ``await session.run(...)``,
+    # ``async for record in result:``). That broke at runtime because
+    # ``get_db()`` returns the SYNC driver — the v1.14.5 deploy hit
+    # ``TypeError: 'Session' object does not support the asynchronous
+    # context manager protocol`` on the first iteration of the SSE
+    # endpoint and was rolled back.
+    #
+    # The actually-correct fix: keep the sync driver (no architecture
+    # change across the rest of the codebase) and run every blocking
+    # Neo4j call inside ``asyncio.to_thread`` so the event loop is
+    # freed for the SSE stream to flush the first ``data: {json}``
+    # frame well before the 1s first-byte budget. The cache helpers
+    # (``_cache_has``, ``_cache_check_and_add``) stay synchronous because
+    # they only operate on in-process mutable state.
+
+    def _fetch_total_count() -> int:
+        """Count RECOVERED + not-ack-eligible events. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            return _record_value(
+                s.run(
+                    """
+                    MATCH (e:Event)
+                    WHERE e.status = 'RECOVERED'
+                      AND (e.ack IS NULL OR e.ack = false)
+                    RETURN count(e) as total
+                    """
+                ).single(),
+                "total",
+            ) or 0
+
+    def _fetch_page(cursor_filter: str, cursor_params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read one page of candidates. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            result = s.run(
+                f"""
+                MATCH (e:Event)
+                WHERE e.status = 'RECOVERED'
+                  AND (e.ack IS NULL OR e.ack = false)
+                  {cursor_filter}
+                RETURN e.id as event_id, e.status, e.created_at as created_at
+                ORDER BY e.created_at ASC NULLS LAST, e.id ASC
+                LIMIT $limit
+                """,
+                **cursor_params,
+            )
+            return [dict(record) for record in result]
+
+    def _close_one(event_id: str) -> bool:
+        """Close one event in its own transaction. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            with s.begin_transaction() as tx:
+                r = tx.run(
+                    """
+                    MATCH (e:Event {id: $eid})
+                    WHERE e.status = 'RECOVERED'
+                      AND (e.ack IS NULL OR e.ack = false)
+                    SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+                    RETURN e.id AS closed_id
+                    """,
+                    eid=event_id,
+                    user=user,
+                ).single()
+                tx.commit()
+            return bool(r)
+
+    total = await asyncio.to_thread(_fetch_total_count)
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
 
@@ -1511,91 +1575,66 @@ async def event_batch_pruner(
             cursor_filter = "AND (e.created_at IS NULL AND e.id > $last_id)"
             cursor_params["last_id"] = last_id
 
-        with driver.session() as session:
-            try:
-                result = session.run(
-                    f"""
-                    MATCH (e:Event)
-                    WHERE e.status = 'RECOVERED'
-                      AND (e.ack IS NULL OR e.ack = false)
-                      {cursor_filter}
-                    RETURN e.id as event_id, e.status, e.created_at as created_at
-                    ORDER BY e.created_at ASC NULLS LAST, e.id ASC
-                    LIMIT $limit
-                    """,
-                    **cursor_params,
-                )
+        try:
+            page = await asyncio.to_thread(_fetch_page, cursor_filter, cursor_params)
 
-                event_ids: set[str] = set()
-                last_processed_cursor = None
-                last_processed_id = None
-                for record in result:
-                    event_id = record.get("event_id")
-                    created_at = record.get("created_at")
-                    if event_id and not _cache_has(event_id):
-                        event_ids.add(event_id)
-                        last_processed_cursor = created_at
-                        last_processed_id = event_id
+            event_ids: set[str] = set()
+            last_processed_cursor = None
+            last_processed_id = None
+            for record in page:
+                event_id = record.get("event_id")
+                created_at = record.get("created_at")
+                if event_id and not _cache_has(event_id):
+                    event_ids.add(event_id)
+                    last_processed_cursor = created_at
+                    last_processed_id = event_id
 
-                # Close each event in its own transaction for safety
-                for event_id in event_ids:
-                    # WARNING #7 fix: use atomic check-and-add to prevent race between
-                    # _cache_has check and _cache_add call across concurrent operations
-                    if not _cache_check_and_add(event_id):
-                        continue
-                    try:
-                        with session.begin_transaction() as tx:
-                            close_result = tx.run(
-                                """
-                                MATCH (e:Event {id: $eid})
-                                WHERE e.status = 'RECOVERED'
-                                  AND (e.ack IS NULL OR e.ack = false)
-                                SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
-                                RETURN e.id AS closed_id
-                                """,
-                                eid=event_id,
-                                user=user,
-                            ).single()
-                            tx.commit()
-                        if close_result:
-                            processed_in_chunk += 1
-                    except Exception:
-                        # Chunk timeout or other error — log and continue
-                        continue
+            # Close each event in its own transaction for safety
+            for event_id in event_ids:
+                # WARNING #7 fix: use atomic check-and-add to prevent race between
+                # _cache_has check and _cache_add call across concurrent operations
+                if not _cache_check_and_add(event_id):
+                    continue
+                try:
+                    if await asyncio.to_thread(_close_one, event_id):
+                        processed_in_chunk += 1
+                except Exception:
+                    # Chunk timeout or other error — log and continue
+                    continue
 
-                total_processed += processed_in_chunk
+            total_processed += processed_in_chunk
 
-                # Update cursor for next batch. The composite cursor needs both
-                # the row's `created_at` (None when NULL) and its `id` so the
-                # next iteration can place the boundary deterministically.
-                if last_processed_id is not None:
-                    last_cursor = last_processed_cursor
-                    last_id = last_processed_id
+            # Update cursor for next batch. The composite cursor needs both
+            # the row's `created_at` (None when NULL) and its `id` so the
+            # next iteration can place the boundary deterministically.
+            if last_processed_id is not None:
+                last_cursor = last_processed_cursor
+                last_id = last_processed_id
 
-                yield {
-                    "total": total,
-                    "processed": total_processed,
-                    "remaining": max(0, total - total_processed),
-                    "batch": batch,
-                }
+            yield {
+                "total": total,
+                "processed": total_processed,
+                "remaining": max(0, total - total_processed),
+                "batch": batch,
+            }
 
-                # If the selected page was smaller than batch_size, there are no later
-                # eligible rows. Use selected count instead of closed count because an
-                # event can become ACKed/commented after selection and be skipped by
-                # the guarded close recheck without meaning pagination is exhausted.
-                if len(event_ids) < batch_size:
-                    break
+            # If the selected page was smaller than batch_size, there are no later
+            # eligible rows. Use selected count instead of closed count because an
+            # event can become ACKed/commented after selection and be skipped by
+            # the guarded close recheck without meaning pagination is exhausted.
+            if len(event_ids) < batch_size:
+                break
 
-            except Exception as e:
-                # Timeout or error on this chunk — yield error but continue
-                yield {
-                    "total": total,
-                    "processed": total_processed,
-                    "remaining": max(0, total - total_processed),
-                    "batch": batch,
-                    "error": str(e),
-                }
-                # Don't increment total_processed — chunk will be retried if not idempotent
+        except Exception as e:
+            # Timeout or error on this chunk — yield error but continue
+            yield {
+                "total": total,
+                "processed": total_processed,
+                "remaining": max(0, total - total_processed),
+                "batch": batch,
+                "error": str(e),
+            }
+            # Don't increment total_processed — chunk will be retried if not idempotent
 
         # Delay between chunks (with small jitter to avoid thundering herd)
         if batch_delay_ms > 0:
