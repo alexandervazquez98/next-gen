@@ -60,33 +60,10 @@ class MockNeo4jRecord:
 
 
 class MockNeo4jResult:
-    """Async-aware result cursor.
-
-    Sync -> Async refactor (fix-sse-pruner-streaming-blocking): production
-    code now ``await result.single()`` and ``async for record in result:``;
-    the cursor exposes the async surface while keeping sync fallbacks so
-    any incidental non-async test path still works.
-    """
-
     def __init__(self, records):
         self._records = records or []
         self._index = 0
 
-    def __aiter__(self):
-        return self._aiter_impl()
-
-    async def _aiter_impl(self):
-        for record in self._records:
-            yield MockNeo4jRecord(record) if isinstance(record, dict) else record
-
-    async def single(self):
-        if self._records:
-            first = self._records[0]
-            return MockNeo4jRecord(first) if isinstance(first, dict) else first
-        return None
-
-    # Backward-compat sync fallbacks (unused by event_batch_pruner anymore
-    # but kept available in case other tests in this file rely on them).
     def __iter__(self):
         self._index = 0
         return self
@@ -98,16 +75,14 @@ class MockNeo4jResult:
         self._index += 1
         return MockNeo4jRecord(record) if isinstance(record, dict) else record
 
+    def single(self):
+        if self._records:
+            first = self._records[0]
+            return MockNeo4jRecord(first) if isinstance(first, dict) else first
+        return None
+
 
 class MockNeo4jSession:
-    """Async-aware session mock.
-
-    Sync -> Async refactor (fix-sse-pruner-streaming-blocking): production
-    code now uses ``async with driver.session() as session:`` and
-    ``await session.run(...)``; the session exposes the async surface while
-    keeping sync fallbacks so non-event_batch_pruner callers don't break.
-    """
-
     def __init__(self):
         self.queries = []
         self._response_map = {}
@@ -124,7 +99,8 @@ class MockNeo4jSession:
     def set_close_results(self, record_batches):
         self._close_results = list(record_batches)
 
-    def _dispatch(self, query: str, params: dict) -> MockNeo4jResult:
+    def run(self, query: str, **params):
+        self.queries.append({"query": query, "params": params})
         query_lower = query.lower()
         if "return e.id as closed_id" in query_lower:
             if self._close_results is not None:
@@ -142,54 +118,32 @@ class MockNeo4jSession:
                 return MockNeo4jResult(records)
         return MockNeo4jResult(self._default_response)
 
-    async def run(self, query: str, **params):
-        """Async run — matches the AsyncSession API used in production."""
-        self.queries.append({"query": query, "params": params})
-        return self._dispatch(query, params)
-
     def begin_transaction(self):
         return MockNeo4jTransaction(self)
 
-    # Async context manager — what production uses post-refactor
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    # Sync fallback kept for non-event_batch_pruner test consumers.
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
-        return False
+        pass
 
 
 class MockNeo4jTransaction:
-    """Async-aware transaction mock."""
-
     def __init__(self, session):
         self._session = session
         self.committed = False
 
-    async def run(self, query: str, **params):
-        return await self._session.run(query, **params)
+    def run(self, query: str, **params):
+        return self._session.run(query, **params)
 
-    async def commit(self):
+    def commit(self):
         self.committed = True
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    # Sync fallback for non-event_batch_pruner consumers.
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
-        return False
+        pass
 
 
 class MockDriver:
