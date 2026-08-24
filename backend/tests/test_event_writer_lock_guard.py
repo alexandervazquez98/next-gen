@@ -65,6 +65,8 @@ APPROVED_LOCK_PATHS = {
             "_refresh_snmp_collection_failures",
             "_refresh_icmp_availability_events",
             "_refresh_icmp_latency_events",
+            "_refresh_icmp_jitter_events",
+            "_refresh_icmp_packet_loss_events",
         ),
         approved_callers=("poll_snmp",),
         session_lifetime="poll_snmp owns SessionLocal db until finally: db.close() after Event writes",
