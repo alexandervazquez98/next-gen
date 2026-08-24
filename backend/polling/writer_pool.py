@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import UUID
-
-from sqlalchemy import text
 
 from config import get_icmp_settings
 from models.timescale_models import MetricValue
@@ -25,10 +24,11 @@ from polling.icmp_measurements import (
     latency_threshold_metadata,
     packet_loss_threshold_metadata,
 )
+from sqlalchemy import text
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _get(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> Any:

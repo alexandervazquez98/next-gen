@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,7 +9,7 @@ class FakeSettings:
 
 
 def _row(*, key="idem-1", numeric=42.0, status="OK", last_error_code=None):
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
     return SimpleNamespace(
         result_id=uuid4(),
         task_id=uuid4(),
@@ -256,9 +256,6 @@ def test_writer_emits_packet_loss_warning_event_at_warning_threshold(monkeypatch
 
     # Force packet_loss to land in the WARNING band via the envelope builder:
     # we craft a synthetic envelope whose packet_loss derivation yields 25%.
-    envelope_factory = None
-    real_packet_loss = writer_pool._icmp_packet_loss_event_envelope
-
     def patched(envelope, db=None):
         # Override packet_loss derivation by short-circuiting: if numeric > 0,
         # we want to test the WARNING band, so we substitute 25.0 manually.
@@ -429,12 +426,12 @@ def test_writer_retries_as_neo4j_pending_after_timescale_receipt_success(monkeyp
     monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("neo4j down")))
     monkeypatch.setattr(writer_pool.pg_queue, "retry_result", lambda db, rid, **kw: retried.append((rid, kw)))
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a", now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a", now=datetime(2026, 1, 1, tzinfo=UTC))
 
     assert stats["retried"] == 1
     assert retried[0][0] == row.result_id
     assert retried[0][1]["error_code"] == "neo4j_pending"
-    assert retried[0][1]["next_eligible_at"] == datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=30)
+    assert retried[0][1]["next_eligible_at"] == datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=30)
 
 
 def test_persist_samples_and_receipts_rolls_back_receipt_failure():
@@ -465,7 +462,7 @@ def test_persist_samples_and_receipts_rolls_back_receipt_failure():
         writer_pool.persist_samples_and_receipts(
             db,
             [row],
-            [{"node_id": "ci-1", "metric_id": "cpu", "value": 1.0, "time": datetime(2026, 1, 1, tzinfo=timezone.utc)}],
+            [{"node_id": "ci-1", "metric_id": "cpu", "value": 1.0, "time": datetime(2026, 1, 1, tzinfo=UTC)}],
         )
     except RuntimeError as exc:
         assert "receipt insert failed" in str(exc)
