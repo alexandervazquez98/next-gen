@@ -4,8 +4,14 @@ from polling.icmp_measurements import (
     ICMP_PACKET_LOSS_METRIC_ID,
     PingMeasurement,
     build_icmp_sidecar_samples,
+    evaluate_jitter_status,
+    evaluate_latency_status,
+    evaluate_packet_loss_status,
     is_icmp_availability_metric,
     is_icmp_telemetry_metric,
+    jitter_threshold_metadata,
+    latency_threshold_metadata,
+    packet_loss_threshold_metadata,
     parse_ping_latency_ms,
 )
 
@@ -54,3 +60,100 @@ def test_icmp_metric_kind_helpers_deny_sidecars_even_with_bad_availability_metad
     assert is_icmp_telemetry_metric("icmp_jitter_ms", {"metric_kind": "availability"}) is True
     assert is_icmp_telemetry_metric("packet_loss_pct", {"metric_kind": "availability"}) is True
     assert is_icmp_telemetry_metric("PING-CHECK", {"metric_kind": "availability"}) is False
+
+
+def test_evaluate_latency_status_returns_critical_when_value_is_none():
+    assert (
+        evaluate_latency_status(
+            None, warning_ms=100.0, critical_ms=500.0
+        )
+        == "CRITICAL"
+    )
+
+
+def test_evaluate_jitter_status_warn_critical_and_none_critical():
+    assert (
+        evaluate_jitter_status(None, warning_ms=50.0, critical_ms=150.0) == "CRITICAL"
+    )
+    assert (
+        evaluate_jitter_status(49.9, warning_ms=50.0, critical_ms=150.0) == "OK"
+    )
+    assert (
+        evaluate_jitter_status(50.0, warning_ms=50.0, critical_ms=150.0) == "WARNING"
+    )
+    assert (
+        evaluate_jitter_status(149.9, warning_ms=50.0, critical_ms=150.0) == "WARNING"
+    )
+    assert (
+        evaluate_jitter_status(150.0, warning_ms=50.0, critical_ms=150.0) == "CRITICAL"
+    )
+
+
+def test_evaluate_packet_loss_status_warn_critical_and_none_critical():
+    assert (
+        evaluate_packet_loss_status(
+            None, warning_pct=10.0, critical_pct=50.0
+        )
+        == "CRITICAL"
+    )
+    assert (
+        evaluate_packet_loss_status(
+            9.9, warning_pct=10.0, critical_pct=50.0
+        )
+        == "OK"
+    )
+    assert (
+        evaluate_packet_loss_status(
+            10.0, warning_pct=10.0, critical_pct=50.0
+        )
+        == "WARNING"
+    )
+    assert (
+        evaluate_packet_loss_status(
+            49.9, warning_pct=10.0, critical_pct=50.0
+        )
+        == "WARNING"
+    )
+    assert (
+        evaluate_packet_loss_status(
+            50.0, warning_pct=10.0, critical_pct=50.0
+        )
+        == "CRITICAL"
+    )
+    # CI-down path: 100% packet loss must always be CRITICAL.
+    assert (
+        evaluate_packet_loss_status(
+            100.0, warning_pct=10.0, critical_pct=50.0
+        )
+        == "CRITICAL"
+    )
+
+
+def test_jitter_and_packet_loss_threshold_metadata_have_telemetry_kind():
+    jitter_meta = jitter_threshold_metadata(warning_ms=50.0, critical_ms=150.0)
+    assert jitter_meta["metric_kind"] == "telemetry"
+    assert jitter_meta["operator"] == ">="
+    assert jitter_meta["name"] == "ICMP Jitter"
+    assert jitter_meta["criticality"] == 2
+
+    packet_loss_meta = packet_loss_threshold_metadata(
+        warning_pct=10.0, critical_pct=50.0
+    )
+    assert packet_loss_meta["metric_kind"] == "telemetry"
+    assert packet_loss_meta["operator"] == ">="
+    assert packet_loss_meta["name"] == "ICMP Packet Loss"
+    assert packet_loss_meta["criticality"] == 3
+
+    # Telemetry metadata keeps latency/jitter/packet_loss denied by the
+    # availability helper even when metadata is missing or wrong.
+    assert is_icmp_availability_metric(ICMP_JITTER_METRIC_ID, jitter_meta) is False
+    assert (
+        is_icmp_availability_metric(ICMP_PACKET_LOSS_METRIC_ID, packet_loss_meta) is False
+    )
+
+    # Latency metadata must keep its current criticality=3 contract so the
+    # existing ``test_event_writer_derives_icmp_latency_warning_and_critical_threshold_rows``
+    # invariant still passes.
+    latency_meta = latency_threshold_metadata(warning_ms=100.0, critical_ms=500.0)
+    assert latency_meta["metric_kind"] == "telemetry"
+    assert latency_meta["criticality"] == 3

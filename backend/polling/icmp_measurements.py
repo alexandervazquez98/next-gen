@@ -113,14 +113,77 @@ def latency_threshold_metadata(*, warning_ms: float, critical_ms: float) -> dict
     }
 
 
+def jitter_threshold_metadata(*, warning_ms: float, critical_ms: float) -> dict[str, Any]:
+    """Build MetricDef-compatible threshold metadata for ICMP jitter."""
+    return {
+        "warning": float(warning_ms),
+        "critical": float(critical_ms),
+        "operator": ">=",
+        "criticality": 2,
+        "metric_kind": "telemetry",
+        "name": "ICMP Jitter",
+    }
+
+
+def packet_loss_threshold_metadata(*, warning_pct: float, critical_pct: float) -> dict[str, Any]:
+    """Build MetricDef-compatible threshold metadata for ICMP packet loss."""
+    return {
+        "warning": float(warning_pct),
+        "critical": float(critical_pct),
+        "operator": ">=",
+        "criticality": 3,
+        "metric_kind": "telemetry",
+        "name": "ICMP Packet Loss",
+    }
+
+
 def evaluate_latency_status(latency_ms: float | None, *, warning_ms: float, critical_ms: float) -> str:
-    """Evaluate ICMP latency against warning/critical thresholds."""
+    """Evaluate ICMP latency against warning/critical thresholds.
+
+    Missing data fails closed to CRITICAL — operators must investigate why a
+    CI stopped reporting latency instead of seeing a silent OK that masks a
+    degraded sidecar.
+    """
     if latency_ms is None:
-        return "OK"
+        return "CRITICAL"
     latency = float(latency_ms)
     if latency >= float(critical_ms):
         return "CRITICAL"
     if latency >= float(warning_ms):
+        return "WARNING"
+    return "OK"
+
+
+def evaluate_jitter_status(jitter_ms: float | None, *, warning_ms: float, critical_ms: float) -> str:
+    """Evaluate ICMP jitter against warning/critical thresholds.
+
+    Missing data fails closed to CRITICAL — mirrors ``evaluate_latency_status``
+    so every sidecar metric treats absent samples the same way.
+    """
+    if jitter_ms is None:
+        return "CRITICAL"
+    jitter = float(jitter_ms)
+    if jitter >= float(critical_ms):
+        return "CRITICAL"
+    if jitter >= float(warning_ms):
+        return "WARNING"
+    return "OK"
+
+
+def evaluate_packet_loss_status(
+    packet_loss_pct: float | None, *, warning_pct: float, critical_pct: float
+) -> str:
+    """Evaluate ICMP packet loss against warning/critical thresholds.
+
+    Missing data fails closed to CRITICAL — a CI with no packet-loss sample is
+    as actionable as a CI with 100% loss.
+    """
+    if packet_loss_pct is None:
+        return "CRITICAL"
+    pct = float(packet_loss_pct)
+    if pct >= float(critical_pct):
+        return "CRITICAL"
+    if pct >= float(warning_pct):
         return "WARNING"
     return "OK"
 
