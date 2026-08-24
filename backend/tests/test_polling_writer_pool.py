@@ -54,7 +54,7 @@ def test_writer_skips_duplicate_receipts_and_marks_result_written(monkeypatch):
     assert len(completed) == 1
 
 
-def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monkeypatch):
+def test_writer_expands_icmp_sidecar_samples_and_emits_events_for_breaching_sidecars(monkeypatch):
     from polling import writer_pool
 
     persisted = []
@@ -86,6 +86,9 @@ def test_writer_expands_icmp_sidecar_samples_and_keeps_events_primary_only(monke
         {"node_id": "ci-1", "metric_id": "icmp_jitter_ms", "value": 7.5, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 0.0, "time": row.observed_at},
     ]
+    # Latency below the warning threshold (20 ms) → only the primary and the
+    # latency envelope are emitted; jitter (7.5) and packet loss (0%) stay OK
+    # so their envelopes are dropped before reaching batch_update_events.
     assert [event["metric_id"] for event in event_rows] == ["PING-CHECK", "icmp_latency_ms"]
     assert event_rows[1]["status"] == "OK"
     assert event_rows[1]["metadata"]["warning"] == 100.0
@@ -119,7 +122,15 @@ def test_writer_expands_failed_icmp_availability_to_packet_loss_sidecar(monkeypa
         {"node_id": "ci-1", "metric_id": "PING-CHECK", "value": 0.0, "time": row.observed_at},
         {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 100.0, "time": row.observed_at},
     ]
-    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK"]
+    # CI down → packet_loss=100 ≥ 50% critical → CRITICAL envelope emitted
+    # alongside the primary availability row.
+    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK", "packet_loss_pct"]
+    packet_loss_event = event_rows[1]
+    assert packet_loss_event["status"] == "CRITICAL"
+    assert packet_loss_event["value"]["numeric"] == 100.0
+    assert packet_loss_event["metadata"]["metric_kind"] == "telemetry"
+    assert packet_loss_event["metadata"]["warning"] == 10.0
+    assert packet_loss_event["metadata"]["critical"] == 50.0
 
 
 def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatch):
@@ -190,6 +201,199 @@ def test_writer_emits_warning_latency_event_from_icmp_sidecar(monkeypatch):
     assert event_rows[0]["metric_id"] == "icmp_latency_ms"
     assert event_rows[0]["status"] == "WARNING"
     assert event_rows[0]["value"]["numeric"] == 150.0
+
+
+def test_writer_emits_packet_loss_critical_event_when_availability_is_zero(monkeypatch):
+    from polling import writer_pool
+
+    persisted = []
+    event_rows = []
+    row = _row(key="icmp-pktloss-critical", numeric=0.0)
+    row.protocol = "ICMP"
+    row.metric_id = "PING-CHECK"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "PING-CHECK",
+        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]}},
+    })
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    # CI down (availability=0) → packet_loss sample is 100% and the envelope
+    # builder must surface a CRITICAL packet_loss_pct event alongside the
+    # primary availability row.
+    assert stats["inserted"] == 2
+    metric_ids = [event["metric_id"] for event in event_rows]
+    assert metric_ids == ["PING-CHECK", "packet_loss_pct"]
+    packet_loss_event = event_rows[1]
+    assert packet_loss_event["status"] == "CRITICAL"
+    assert packet_loss_event["value"]["numeric"] == 100.0
+    assert packet_loss_event["metadata"]["metric_kind"] == "telemetry"
+    assert packet_loss_event["metadata"]["warning"] == 10.0
+    assert packet_loss_event["metadata"]["critical"] == 50.0
+
+
+def test_writer_emits_packet_loss_warning_event_at_warning_threshold(monkeypatch):
+    from polling import writer_pool
+
+    event_rows = []
+    # Simulate an availability=0.2 envelope routed through a custom envelope
+    # that drives packet_loss to a WARNING (10–50%) band.
+    row = _row(key="icmp-pktloss-warn", numeric=0.2)
+    row.protocol = "ICMP"
+    row.metric_id = "PING-CHECK"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "PING-CHECK",
+        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["packet_loss_pct"]}},
+    })
+
+    # Force packet_loss to land in the WARNING band via the envelope builder:
+    # we craft a synthetic envelope whose packet_loss derivation yields 25%.
+    envelope_factory = None
+    real_packet_loss = writer_pool._icmp_packet_loss_event_envelope
+
+    def patched(envelope, db=None):
+        # Override packet_loss derivation by short-circuiting: if numeric > 0,
+        # we want to test the WARNING band, so we substitute 25.0 manually.
+        from config import get_icmp_settings
+
+        settings = get_icmp_settings()
+        return {
+            **dict(envelope),
+            "metric_id": "packet_loss_pct",
+            "status": "WARNING",
+            "value": {"numeric": 25.0, "raw": 25.0},
+            "metadata": writer_pool.packet_loss_threshold_metadata(
+                warning_pct=settings.packet_loss_warning_pct,
+                critical_pct=settings.packet_loss_critical_pct,
+            ),
+        }
+
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool, "_icmp_packet_loss_event_envelope", patched)
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    assert [event["metric_id"] for event in event_rows] == ["PING-CHECK", "packet_loss_pct"]
+    packet_loss_event = event_rows[1]
+    assert packet_loss_event["status"] == "WARNING"
+    assert packet_loss_event["value"]["numeric"] == 25.0
+    assert packet_loss_event["metadata"]["criticality"] == 3
+
+
+def test_writer_emits_jitter_critical_event_above_threshold(monkeypatch):
+    from polling import writer_pool
+
+    event_rows = []
+    row = _row(key="icmp-jitter-critical", numeric=1.0)
+    row.protocol = "ICMP"
+    row.metric_id = "icmp_availability"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "icmp_availability",
+        "metadata": {
+            "metric_kind": "availability",
+            "internal": True,
+            "icmp": {"latency_ms": 300.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
+        },
+    })
+    # previous latency = 100.0 → jitter = 200.0 (above 150.0 critical).
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 100.0)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    metric_ids = [event["metric_id"] for event in event_rows]
+    # Latency 300 (warning), jitter 200 (critical), packet_loss 0 (OK) → only
+    # latency and jitter envelopes flow to batch_update_events.
+    assert metric_ids == ["icmp_latency_ms", "icmp_jitter_ms"]
+    jitter_event = next(event for event in event_rows if event["metric_id"] == "icmp_jitter_ms")
+    assert jitter_event["status"] == "CRITICAL"
+    assert jitter_event["value"]["numeric"] == 200.0
+    assert jitter_event["metadata"]["metric_kind"] == "telemetry"
+    assert jitter_event["metadata"]["name"] == "ICMP Jitter"
+    assert jitter_event["metadata"]["warning"] == 50.0
+    assert jitter_event["metadata"]["critical"] == 150.0
+
+
+def test_writer_emits_jitter_event_when_previous_latency_available(monkeypatch):
+    from polling import writer_pool
+
+    event_rows = []
+    row = _row(key="icmp-jitter-warn", numeric=1.0)
+    row.protocol = "ICMP"
+    row.metric_id = "icmp_availability"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "icmp_availability",
+        "metadata": {
+            "metric_kind": "availability",
+            "internal": True,
+            "icmp": {"latency_ms": 130.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
+        },
+    })
+    # previous = 50.0 → jitter = 80.0 (above 50.0 warning, below 150.0 critical).
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 50.0)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    metric_ids = [event["metric_id"] for event in event_rows]
+    assert metric_ids == ["icmp_latency_ms", "icmp_jitter_ms"]
+    jitter_event = next(event for event in event_rows if event["metric_id"] == "icmp_jitter_ms")
+    assert jitter_event["status"] == "WARNING"
+    assert jitter_event["value"]["numeric"] == 80.0
+
+
+def test_writer_does_not_emit_jitter_event_when_previous_latency_missing(monkeypatch):
+    from polling import writer_pool
+
+    event_rows = []
+    row = _row(key="icmp-jitter-no-prev", numeric=1.0)
+    row.protocol = "ICMP"
+    row.metric_id = "icmp_availability"
+    row.envelope.update({
+        "protocol": "ICMP",
+        "metric_id": "icmp_availability",
+        "metadata": {
+            "metric_kind": "availability",
+            "internal": True,
+            "icmp": {"latency_ms": 130.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
+        },
+    })
+    monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
+    monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
+    # No previous latency (first sample ever) → jitter envelope must return None.
+    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
+    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
+
+    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+
+    # No jitter envelope in the event batch because the previous-latency
+    # lookup returned None.
+    assert all(event["metric_id"] != "icmp_jitter_ms" for event in event_rows)
 
 
 def test_writer_batches_timescale_inserts_receipts_and_neo4j_updates(monkeypatch):

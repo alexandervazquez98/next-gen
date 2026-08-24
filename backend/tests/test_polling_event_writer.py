@@ -188,6 +188,77 @@ def test_event_writer_derives_icmp_latency_warning_and_critical_threshold_rows()
     assert rows[4]["recover_non_collection_event"] is False
 
 
+def test_event_writer_derives_icmp_jitter_warning_and_critical_threshold_rows():
+    from polling.event_writer import build_event_rows
+
+    base = {
+        **_event_row(49.9),
+        "protocol": "ICMP",
+        "metric_id": "icmp_jitter_ms",
+        "metadata": {
+            "name": "ICMP Jitter",
+            "warning": 50,
+            "critical": 150,
+            "operator": ">=",
+            "metric_kind": "telemetry",
+            "criticality": 2,
+        },
+    }
+
+    rows = build_event_rows(
+        [
+            base,
+            {**base, "value": {"numeric": 50.0, "raw": 50.0}},
+            {**base, "value": {"numeric": 149.9, "raw": 149.9}},
+            {**base, "value": {"numeric": 150.0, "raw": 150.0}},
+        ]
+    )
+
+    assert rows[0]["is_breach"] is False
+    assert rows[0]["recover_non_collection_event"] is True
+    assert rows[1]["severity"] == "WARNING"
+    assert rows[1]["event_type"] == "THRESHOLD_BREACH"
+    assert rows[2]["severity"] == "WARNING"
+    assert rows[3]["severity"] == "CRITICAL"
+
+
+def test_event_writer_derives_icmp_packet_loss_warning_and_critical_threshold_rows():
+    from polling.event_writer import build_event_rows
+
+    base = {
+        **_event_row(9.9),
+        "protocol": "ICMP",
+        "metric_id": "packet_loss_pct",
+        "metadata": {
+            "name": "ICMP Packet Loss",
+            "warning": 10,
+            "critical": 50,
+            "operator": ">=",
+            "metric_kind": "telemetry",
+            "criticality": 3,
+        },
+    }
+
+    rows = build_event_rows(
+        [
+            base,
+            {**base, "value": {"numeric": 10.0, "raw": 10.0}},
+            {**base, "value": {"numeric": 49.9, "raw": 49.9}},
+            {**base, "value": {"numeric": 50.0, "raw": 50.0}},
+            {**base, "value": {"numeric": 100.0, "raw": 100.0}},
+        ]
+    )
+
+    assert rows[0]["is_breach"] is False
+    assert rows[0]["recover_non_collection_event"] is True
+    assert rows[1]["severity"] == "WARNING"
+    assert rows[1]["event_type"] == "THRESHOLD_BREACH"
+    assert rows[2]["severity"] == "WARNING"
+    assert rows[3]["severity"] == "CRITICAL"
+    # CI-down path: 100% packet loss must always surface as CRITICAL.
+    assert rows[4]["severity"] == "CRITICAL"
+
+
 def test_event_writer_uses_unwind_for_latest_breach_and_recovery_updates():
     from polling.event_writer import batch_update_events
 

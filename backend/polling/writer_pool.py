@@ -18,8 +18,12 @@ from polling.icmp_measurements import (
     ICMP_JITTER_METRIC_ID,
     ICMP_LATENCY_METRIC_ID,
     ICMP_PACKET_LOSS_METRIC_ID,
+    evaluate_jitter_status,
     evaluate_latency_status,
+    evaluate_packet_loss_status,
+    jitter_threshold_metadata,
     latency_threshold_metadata,
+    packet_loss_threshold_metadata,
 )
 
 
@@ -127,7 +131,9 @@ def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
     return samples
 
 
-def _icmp_latency_event_envelope(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
+def _icmp_latency_event_envelope(
+    envelope: Mapping[str, Any], db: Any | None = None
+) -> dict[str, Any] | None:
     icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
     if "latency_ms" not in icmp:
         return None
@@ -147,6 +153,87 @@ def _icmp_latency_event_envelope(envelope: Mapping[str, Any]) -> dict[str, Any] 
         "metric_id": ICMP_LATENCY_METRIC_ID,
         "status": status,
         "value": {"numeric": latency, "raw": latency},
+        "metadata": metadata,
+    }
+
+
+def _icmp_jitter_event_envelope(
+    envelope: Mapping[str, Any], db: Any | None = None
+) -> dict[str, Any] | None:
+    """Build a jitter event envelope from a sidecar ICMP envelope.
+
+    Jitter cannot be computed without both the current latency sample AND a
+    previous latency sample from the timeseries DB. Returning ``None`` when
+    either is missing is the design choice: the CI-down path (availability=0,
+    packet_loss=100) is owned by ``_icmp_packet_loss_event_envelope``, so we
+    do NOT synthesize a sentinel jitter value here. The first-ever sample on
+    a CI also returns ``None`` because there is no baseline.
+    """
+    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    if "latency_ms" not in icmp:
+        return None
+    latency = float(icmp["latency_ms"])
+    observed = _timestamp(envelope["observed_at"])
+    previous = previous_metric_value(db, envelope["ci_id"], ICMP_LATENCY_METRIC_ID, observed)
+    if previous is None:
+        return None
+    jitter = abs(latency - previous)
+    settings = get_icmp_settings()
+    metadata = jitter_threshold_metadata(
+        warning_ms=settings.jitter_warning_ms,
+        critical_ms=settings.jitter_critical_ms,
+    )
+    status = evaluate_jitter_status(
+        jitter,
+        warning_ms=settings.jitter_warning_ms,
+        critical_ms=settings.jitter_critical_ms,
+    )
+    if status == "OK":
+        return None
+    return {
+        **dict(envelope),
+        "metric_id": ICMP_JITTER_METRIC_ID,
+        "status": status,
+        "value": {"numeric": jitter, "raw": jitter},
+        "metadata": metadata,
+    }
+
+
+def _icmp_packet_loss_event_envelope(
+    envelope: Mapping[str, Any], db: Any | None = None
+) -> dict[str, Any] | None:
+    """Build a packet-loss event envelope from a sidecar ICMP envelope.
+
+    Packet loss is derived from the availability numeric (0 → 100%, >0 → 0%).
+    When the CI is down the value is 100% — always CRITICAL given the default
+    critical threshold. Healthy CIs return ``None`` so the event stream only
+    carries actionable packet-loss observations.
+    """
+    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    sidecar_ids = set(icmp.get("sidecar_metric_ids") or [])
+    if ICMP_PACKET_LOSS_METRIC_ID not in sidecar_ids:
+        return None
+    numeric = _numeric(envelope)
+    if numeric is None:
+        return None
+    packet_loss = 0.0 if numeric > 0 else 100.0
+    settings = get_icmp_settings()
+    metadata = packet_loss_threshold_metadata(
+        warning_pct=settings.packet_loss_warning_pct,
+        critical_pct=settings.packet_loss_critical_pct,
+    )
+    status = evaluate_packet_loss_status(
+        packet_loss,
+        warning_pct=settings.packet_loss_warning_pct,
+        critical_pct=settings.packet_loss_critical_pct,
+    )
+    if status == "OK":
+        return None
+    return {
+        **dict(envelope),
+        "metric_id": ICMP_PACKET_LOSS_METRIC_ID,
+        "status": status,
+        "value": {"numeric": packet_loss, "raw": packet_loss},
         "metadata": metadata,
     }
 
@@ -284,9 +371,14 @@ def run_writer_once(
     for item in new_payloads + pending_payloads:
         if not _is_internal_icmp_availability(item["envelope"]):
             event_payloads.append(item)
-        latency_envelope = _icmp_latency_event_envelope(item["envelope"])
-        if latency_envelope is not None:
-            event_payloads.append({**item, "envelope": latency_envelope})
+        for envelope_factory in (
+            _icmp_latency_event_envelope,
+            _icmp_jitter_event_envelope,
+            _icmp_packet_loss_event_envelope,
+        ):
+            derived = envelope_factory(item["envelope"], timescale_db)
+            if derived is not None:
+                event_payloads.append({**item, "envelope": derived})
     try:
         # #322 / design §3 — pass the leased timescale_db as lock_db so
         # the advisory lock acquired before each Event UNWIND is held by
