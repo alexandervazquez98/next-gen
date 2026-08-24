@@ -1509,10 +1509,7 @@ def test_refresh_icmp_packet_loss_events_acquires_pg_advisory_lock_before_neo4j_
     assert lock_args[1] == "ci-001"
     assert lock_args[2] == "packet_loss_pct"
     assert lock_args[3] == "THRESHOLD_BREACH"
-    assert (
-        mock_lock.call_args_list[0].kwargs["writer_context"]
-        == "snmp_worker_icmp_packet_loss"
-    )
+    assert mock_lock.call_args_list[0].kwargs["writer_context"] == "snmp_worker_icmp_packet_loss"
     assert call_order[0] == "lock"
     assert call_order.index("lock") < call_order.index("neo4j")
 

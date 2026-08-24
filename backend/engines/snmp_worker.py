@@ -1730,12 +1730,8 @@ def poll_snmp():
             # ROOT candidates are silently dropped above. Route those
             # candidates through their dedicated refresh helpers with the
             # same cache={} contract.
-            jitter_candidates = {
-                c for c in candidates if c[1] == ICMP_JITTER_METRIC_ID
-            }
-            packet_loss_candidates = {
-                c for c in candidates if c[1] == ICMP_PACKET_LOSS_METRIC_ID
-            }
+            jitter_candidates = {c for c in candidates if c[1] == ICMP_JITTER_METRIC_ID}
+            packet_loss_candidates = {c for c in candidates if c[1] == ICMP_PACKET_LOSS_METRIC_ID}
             if jitter_candidates:
                 jitter_root_rows = [
                     u
@@ -1744,9 +1740,7 @@ def poll_snmp():
                     in jitter_candidates
                 ]
                 if jitter_root_rows:
-                    _refresh_icmp_jitter_events(
-                        session, jitter_root_rows, cache={}, lock_db=db
-                    )
+                    _refresh_icmp_jitter_events(session, jitter_root_rows, cache={}, lock_db=db)
             if packet_loss_candidates:
                 packet_loss_root_rows = [
                     u
@@ -1802,9 +1796,7 @@ def poll_snmp():
             non_candidate_availability = [u for u in availability_updates if not _is_candidate(u)]
             non_candidate_latency = [u for u in latency_updates if not _is_candidate(u)]
             non_candidate_jitter = [u for u in jitter_updates if not _is_candidate(u)]
-            non_candidate_packet_loss = [
-                u for u in packet_loss_updates if not _is_candidate(u)
-            ]
+            non_candidate_packet_loss = [u for u in packet_loss_updates if not _is_candidate(u)]
 
             if non_candidate_failures:
                 _refresh_snmp_collection_failures(

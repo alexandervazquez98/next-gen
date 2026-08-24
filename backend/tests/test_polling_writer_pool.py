@@ -44,13 +44,32 @@ def test_writer_skips_duplicate_receipts_and_marks_result_written(monkeypatch):
     completed = []
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [_row()])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: True)
-    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid))
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: (_ for _ in ()).throw(AssertionError("duplicate inserted")))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda *a, **k: (_ for _ in ()).throw(AssertionError("duplicate updated")))
+    monkeypatch.setattr(
+        writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid)
+    )
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("duplicate inserted")),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("duplicate updated")),
+    )
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
-    assert stats == {"claimed": 1, "inserted": 0, "duplicates": 1, "written": 1, "retried": 0, "dead_lettered": 0}
+    assert stats == {
+        "claimed": 1,
+        "inserted": 0,
+        "duplicates": 1,
+        "written": 1,
+        "retried": 0,
+        "dead_lettered": 0,
+    }
     assert len(completed) == 1
 
 
@@ -62,22 +81,39 @@ def test_writer_expands_icmp_sidecar_samples_and_emits_events_for_breaching_side
     row = _row(key="icmp-1", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "PING-CHECK"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "PING-CHECK",
-        "metadata": {
-            "metric_kind": "availability",
-            "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "PING-CHECK",
+            "metadata": {
+                "metric_kind": "availability",
+                "icmp": {
+                    "latency_ms": 20.0,
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"],
+                },
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5)
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5
+    )
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert stats["inserted"] == 4
     assert persisted[0][1] == [
@@ -103,24 +139,50 @@ def test_writer_expands_failed_icmp_availability_to_packet_loss_sidecar(monkeypa
     row = _row(key="icmp-failed", numeric=0.0)
     row.protocol = "ICMP"
     row.metric_id = "PING-CHECK"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "PING-CHECK",
-        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]}},
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "PING-CHECK",
+            "metadata": {
+                "metric_kind": "availability",
+                "icmp": {
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]
+                },
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: (_ for _ in ()).throw(AssertionError("latency lookup not expected")))
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool,
+        "previous_metric_value",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("latency lookup not expected")),
+    )
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert stats["inserted"] == 2
     assert persisted[0][1] == [
         {"node_id": "ci-1", "metric_id": "PING-CHECK", "value": 0.0, "time": row.observed_at},
-        {"node_id": "ci-1", "metric_id": "packet_loss_pct", "value": 100.0, "time": row.observed_at},
+        {
+            "node_id": "ci-1",
+            "metric_id": "packet_loss_pct",
+            "value": 100.0,
+            "time": row.observed_at,
+        },
     ]
     # CI down → packet_loss=100 ≥ 50% critical → CRITICAL envelope emitted
     # alongside the primary availability row.
@@ -142,23 +204,42 @@ def test_writer_persists_only_sidecars_for_internal_icmp_availability(monkeypatc
     row = _row(key="icmp-internal", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "icmp_availability"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "icmp_availability",
-        "metadata": {
-            "metric_kind": "availability",
-            "internal": True,
-            "icmp": {"latency_ms": 20.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "icmp_availability",
+            "metadata": {
+                "metric_kind": "availability",
+                "internal": True,
+                "icmp": {
+                    "latency_ms": 20.0,
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"],
+                },
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5)
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
-    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid))
+    monkeypatch.setattr(
+        writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 12.5
+    )
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
+    monkeypatch.setattr(
+        writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid)
+    )
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert stats["inserted"] == 3
     assert persisted[0][1] == [
@@ -179,23 +260,37 @@ def test_writer_emits_warning_latency_event_from_icmp_sidecar(monkeypatch):
     row = _row(key="icmp-warning", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "icmp_availability"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "icmp_availability",
-        "metadata": {
-            "metric_kind": "availability",
-            "internal": True,
-            "icmp": {"latency_ms": 150.0, "sidecar_metric_ids": ["icmp_latency_ms"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "icmp_availability",
+            "metadata": {
+                "metric_kind": "availability",
+                "internal": True,
+                "icmp": {"latency_ms": 150.0, "sidecar_metric_ids": ["icmp_latency_ms"]},
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: None)
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: None
+    )
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert stats["inserted"] == 1
     assert event_rows[0]["metric_id"] == "icmp_latency_ms"
@@ -211,19 +306,36 @@ def test_writer_emits_packet_loss_critical_event_when_availability_is_zero(monke
     row = _row(key="icmp-pktloss-critical", numeric=0.0)
     row.protocol = "ICMP"
     row.metric_id = "PING-CHECK"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "PING-CHECK",
-        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]}},
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "PING-CHECK",
+            "metadata": {
+                "metric_kind": "availability",
+                "icmp": {
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]
+                },
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     # CI down (availability=0) → packet_loss sample is 100% and the envelope
     # builder must surface a CRITICAL packet_loss_pct event alongside the
@@ -248,11 +360,16 @@ def test_writer_emits_packet_loss_warning_event_at_warning_threshold(monkeypatch
     row = _row(key="icmp-pktloss-warn", numeric=0.2)
     row.protocol = "ICMP"
     row.metric_id = "PING-CHECK"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "PING-CHECK",
-        "metadata": {"metric_kind": "availability", "icmp": {"sidecar_metric_ids": ["packet_loss_pct"]}},
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "PING-CHECK",
+            "metadata": {
+                "metric_kind": "availability",
+                "icmp": {"sidecar_metric_ids": ["packet_loss_pct"]},
+            },
+        }
+    )
 
     # Force packet_loss to land in the WARNING band via the envelope builder:
     # we craft a synthetic envelope whose packet_loss derivation yields 25%.
@@ -278,10 +395,16 @@ def test_writer_emits_packet_loss_warning_event_at_warning_threshold(monkeypatch
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
     monkeypatch.setattr(writer_pool, "_icmp_packet_loss_event_envelope", patched)
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert [event["metric_id"] for event in event_rows] == ["PING-CHECK", "packet_loss_pct"]
     packet_loss_event = event_rows[1]
@@ -297,24 +420,37 @@ def test_writer_emits_jitter_critical_event_above_threshold(monkeypatch):
     row = _row(key="icmp-jitter-critical", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "icmp_availability"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "icmp_availability",
-        "metadata": {
-            "metric_kind": "availability",
-            "internal": True,
-            "icmp": {"latency_ms": 300.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "icmp_availability",
+            "metadata": {
+                "metric_kind": "availability",
+                "internal": True,
+                "icmp": {
+                    "latency_ms": 300.0,
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"],
+                },
+            },
+        }
+    )
     # previous latency = 100.0 → jitter = 200.0 (above 150.0 critical).
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 100.0)
+    monkeypatch.setattr(
+        writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 100.0
+    )
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     metric_ids = [event["metric_id"] for event in event_rows]
     # Latency 300 (warning), jitter 200 (critical), packet_loss 0 (OK) → only
@@ -336,24 +472,37 @@ def test_writer_emits_jitter_event_when_previous_latency_available(monkeypatch):
     row = _row(key="icmp-jitter-warn", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "icmp_availability"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "icmp_availability",
-        "metadata": {
-            "metric_kind": "availability",
-            "internal": True,
-            "icmp": {"latency_ms": 130.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "icmp_availability",
+            "metadata": {
+                "metric_kind": "availability",
+                "internal": True,
+                "icmp": {
+                    "latency_ms": 130.0,
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"],
+                },
+            },
+        }
+    )
     # previous = 50.0 → jitter = 80.0 (above 50.0 warning, below 150.0 critical).
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 50.0)
+    monkeypatch.setattr(
+        writer_pool, "previous_metric_value", lambda db, node_id, metric_id, before: 50.0
+    )
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     metric_ids = [event["metric_id"] for event in event_rows]
     assert metric_ids == ["icmp_latency_ms", "icmp_jitter_ms"]
@@ -369,24 +518,35 @@ def test_writer_does_not_emit_jitter_event_when_previous_latency_missing(monkeyp
     row = _row(key="icmp-jitter-no-prev", numeric=1.0)
     row.protocol = "ICMP"
     row.metric_id = "icmp_availability"
-    row.envelope.update({
-        "protocol": "ICMP",
-        "metric_id": "icmp_availability",
-        "metadata": {
-            "metric_kind": "availability",
-            "internal": True,
-            "icmp": {"latency_ms": 130.0, "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"]},
-        },
-    })
+    row.envelope.update(
+        {
+            "protocol": "ICMP",
+            "metric_id": "icmp_availability",
+            "metadata": {
+                "metric_kind": "availability",
+                "internal": True,
+                "icmp": {
+                    "latency_ms": 130.0,
+                    "sidecar_metric_ids": ["icmp_latency_ms", "icmp_jitter_ms", "packet_loss_pct"],
+                },
+            },
+        }
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     # No previous latency (first sample ever) → jitter envelope must return None.
     monkeypatch.setattr(writer_pool, "previous_metric_value", lambda *a, **k: None)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
     monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: None)
 
-    writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     # No jitter envelope in the event batch because the previous-latency
     # lookup returned None.
@@ -402,14 +562,28 @@ def test_writer_batches_timescale_inserts_receipts_and_neo4j_updates(monkeypatch
     row = _row(numeric=17.0)
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
-    monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda db, rows, samples: persisted.append((list(rows), list(samples))))
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda driver, rows, **kwargs: event_rows.extend(rows))
-    monkeypatch.setattr(writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid))
+    monkeypatch.setattr(
+        writer_pool,
+        "persist_samples_and_receipts",
+        lambda db, rows, samples: persisted.append((list(rows), list(samples))),
+    )
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda driver, rows, **kwargs: event_rows.extend(rows),
+    )
+    monkeypatch.setattr(
+        writer_pool.pg_queue, "complete_result", lambda db, rid: completed.append(rid)
+    )
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a")
+    stats = writer_pool.run_writer_once(
+        object(), object(), object(), settings=FakeSettings(), worker_id="writer-a"
+    )
 
     assert stats["inserted"] == 1
-    assert persisted[0][1] == [{"node_id": "ci-1", "metric_id": "cpu", "value": 17.0, "time": row.observed_at}]
+    assert persisted[0][1] == [
+        {"node_id": "ci-1", "metric_id": "cpu", "value": 17.0, "time": row.observed_at}
+    ]
     assert persisted[0][0][0]["idempotency_key"] == "idem-1"
     assert event_rows[0]["idempotency_key"] == "idem-1"
     assert completed == [row.result_id]
@@ -423,15 +597,30 @@ def test_writer_retries_as_neo4j_pending_after_timescale_receipt_success(monkeyp
     monkeypatch.setattr(writer_pool.pg_queue, "claim_results", lambda *a, **k: [row])
     monkeypatch.setattr(writer_pool, "receipt_exists", lambda db, key: False)
     monkeypatch.setattr(writer_pool, "persist_samples_and_receipts", lambda *a, **k: None)
-    monkeypatch.setattr(writer_pool.event_writer, "batch_update_events", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("neo4j down")))
-    monkeypatch.setattr(writer_pool.pg_queue, "retry_result", lambda db, rid, **kw: retried.append((rid, kw)))
+    monkeypatch.setattr(
+        writer_pool.event_writer,
+        "batch_update_events",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("neo4j down")),
+    )
+    monkeypatch.setattr(
+        writer_pool.pg_queue, "retry_result", lambda db, rid, **kw: retried.append((rid, kw))
+    )
 
-    stats = writer_pool.run_writer_once(object(), object(), object(), settings=FakeSettings(), worker_id="writer-a", now=datetime(2026, 1, 1, tzinfo=UTC))
+    stats = writer_pool.run_writer_once(
+        object(),
+        object(),
+        object(),
+        settings=FakeSettings(),
+        worker_id="writer-a",
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
     assert stats["retried"] == 1
     assert retried[0][0] == row.result_id
     assert retried[0][1]["error_code"] == "neo4j_pending"
-    assert retried[0][1]["next_eligible_at"] == datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=30)
+    assert retried[0][1]["next_eligible_at"] == datetime(2026, 1, 1, tzinfo=UTC) + timedelta(
+        seconds=30
+    )
 
 
 def test_persist_samples_and_receipts_rolls_back_receipt_failure():
@@ -456,13 +645,25 @@ def test_persist_samples_and_receipts_rolls_back_receipt_failure():
             self.rolled_back = True
 
     db = FakeTelemetryDb()
-    row = {"idempotency_key": "idem-rollback", "result_id": uuid4(), "cycle_id": uuid4(), "envelope": _row(key="idem-rollback").envelope}
+    row = {
+        "idempotency_key": "idem-rollback",
+        "result_id": uuid4(),
+        "cycle_id": uuid4(),
+        "envelope": _row(key="idem-rollback").envelope,
+    }
 
     try:
         writer_pool.persist_samples_and_receipts(
             db,
             [row],
-            [{"node_id": "ci-1", "metric_id": "cpu", "value": 1.0, "time": datetime(2026, 1, 1, tzinfo=UTC)}],
+            [
+                {
+                    "node_id": "ci-1",
+                    "metric_id": "cpu",
+                    "value": 1.0,
+                    "time": datetime(2026, 1, 1, tzinfo=UTC),
+                }
+            ],
         )
     except RuntimeError as exc:
         assert "receipt insert failed" in str(exc)

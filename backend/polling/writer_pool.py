@@ -94,11 +94,13 @@ def _sample(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def previous_metric_value(db, node_id: str, metric_id: str, before: datetime) -> float | None:
     result = db.execute(
-        text("""
+        text(
+            """
             SELECT value FROM metric_values
             WHERE node_id = :node_id AND metric_id = :metric_id AND time < :before
             ORDER BY time DESC LIMIT 1
-        """),
+        """
+        ),
         {"node_id": node_id, "metric_id": metric_id, "before": before},
     )
     row = result.first() if hasattr(result, "first") else None
@@ -109,7 +111,7 @@ def previous_metric_value(db, node_id: str, metric_id: str, before: datetime) ->
 
 
 def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
-    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    icmp = (envelope.get("metadata") or {}).get("icmp") or {}
     sidecar_ids = set(icmp.get("sidecar_metric_ids") or [])
     if not sidecar_ids:
         return []
@@ -118,23 +120,44 @@ def _sidecar_samples(db, envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
     numeric = _numeric(envelope)
     if ICMP_LATENCY_METRIC_ID in sidecar_ids and "latency_ms" in icmp:
         latency = float(icmp["latency_ms"])
-        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_LATENCY_METRIC_ID, "value": latency, "time": observed})
+        samples.append(
+            {
+                "node_id": envelope["ci_id"],
+                "metric_id": ICMP_LATENCY_METRIC_ID,
+                "value": latency,
+                "time": observed,
+            }
+        )
         previous = previous_metric_value(db, envelope["ci_id"], ICMP_LATENCY_METRIC_ID, observed)
     else:
         latency = None
         previous = None
     if ICMP_JITTER_METRIC_ID in sidecar_ids and latency is not None and previous is not None:
-        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_JITTER_METRIC_ID, "value": abs(latency - previous), "time": observed})
+        samples.append(
+            {
+                "node_id": envelope["ci_id"],
+                "metric_id": ICMP_JITTER_METRIC_ID,
+                "value": abs(latency - previous),
+                "time": observed,
+            }
+        )
     if ICMP_PACKET_LOSS_METRIC_ID in sidecar_ids and numeric is not None:
         packet_loss = 0.0 if numeric > 0 else 100.0
-        samples.append({"node_id": envelope["ci_id"], "metric_id": ICMP_PACKET_LOSS_METRIC_ID, "value": packet_loss, "time": observed})
+        samples.append(
+            {
+                "node_id": envelope["ci_id"],
+                "metric_id": ICMP_PACKET_LOSS_METRIC_ID,
+                "value": packet_loss,
+                "time": observed,
+            }
+        )
     return samples
 
 
 def _icmp_latency_event_envelope(
     envelope: Mapping[str, Any], db: Any | None = None
 ) -> dict[str, Any] | None:
-    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    icmp = (envelope.get("metadata") or {}).get("icmp") or {}
     if "latency_ms" not in icmp:
         return None
     latency = float(icmp["latency_ms"])
@@ -169,7 +192,7 @@ def _icmp_jitter_event_envelope(
     do NOT synthesize a sentinel jitter value here. The first-ever sample on
     a CI also returns ``None`` because there is no baseline.
     """
-    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    icmp = (envelope.get("metadata") or {}).get("icmp") or {}
     if "latency_ms" not in icmp:
         return None
     latency = float(icmp["latency_ms"])
@@ -209,7 +232,7 @@ def _icmp_packet_loss_event_envelope(
     critical threshold. Healthy CIs return ``None`` so the event stream only
     carries actionable packet-loss observations.
     """
-    icmp = ((envelope.get("metadata") or {}).get("icmp") or {})
+    icmp = (envelope.get("metadata") or {}).get("icmp") or {}
     sidecar_ids = set(icmp.get("sidecar_metric_ids") or [])
     if ICMP_PACKET_LOSS_METRIC_ID not in sidecar_ids:
         return None
@@ -240,7 +263,9 @@ def _icmp_packet_loss_event_envelope(
 
 def receipt_exists(db, idempotency_key: str) -> bool:
     result = db.execute(
-        text("SELECT 1 FROM metric_sample_receipts WHERE idempotency_key = :idempotency_key LIMIT 1"),
+        text(
+            "SELECT 1 FROM metric_sample_receipts WHERE idempotency_key = :idempotency_key LIMIT 1"
+        ),
         {"idempotency_key": idempotency_key},
     )
     return result.first() is not None if hasattr(result, "first") else bool(list(result))
@@ -250,23 +275,27 @@ def _receipt_payload(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     payload = []
     for row in rows:
         envelope = row["envelope"]
-        payload.append({
-            "idempotency_key": row["idempotency_key"],
-            "result_id": _value(row["result_id"]),
-            "cycle_id": _value(row["cycle_id"]),
-            "ci_id": envelope["ci_id"],
-            "metric_id": envelope["metric_id"],
-            "protocol": _value(envelope.get("protocol")),
-            "source": envelope.get("source"),
-            "observed_at": envelope["observed_at"],
-            "value_status": _value(envelope.get("status", "OK")),
-        })
+        payload.append(
+            {
+                "idempotency_key": row["idempotency_key"],
+                "result_id": _value(row["result_id"]),
+                "cycle_id": _value(row["cycle_id"]),
+                "ci_id": envelope["ci_id"],
+                "metric_id": envelope["metric_id"],
+                "protocol": _value(envelope.get("protocol")),
+                "source": envelope.get("source"),
+                "observed_at": envelope["observed_at"],
+                "value_status": _value(envelope.get("status", "OK")),
+            }
+        )
     return payload
 
 
 def _insert_receipt_payload(db, payload: list[dict[str, Any]]) -> None:
     if payload:
-        db.execute(text("""
+        db.execute(
+            text(
+                """
             INSERT INTO metric_sample_receipts (
                 idempotency_key, result_id, cycle_id, ci_id, metric_id, protocol,
                 source, observed_at, value_status
@@ -274,10 +303,15 @@ def _insert_receipt_payload(db, payload: list[dict[str, Any]]) -> None:
                 :idempotency_key, :result_id, :cycle_id, :ci_id, :metric_id, :protocol,
                 :source, :observed_at, :value_status
             ) ON CONFLICT (idempotency_key) DO NOTHING
-        """), payload)
+        """
+            ),
+            payload,
+        )
 
 
-def persist_samples_and_receipts(db, rows: Iterable[Mapping[str, Any]], samples: Iterable[Mapping[str, Any]]) -> None:
+def persist_samples_and_receipts(
+    db, rows: Iterable[Mapping[str, Any]], samples: Iterable[Mapping[str, Any]]
+) -> None:
     """Persist samples and idempotency receipts in one telemetry DB transaction."""
     sample_objects = [
         MetricValue(
@@ -327,7 +361,14 @@ def run_writer_once(
     now: datetime | None = None,
 ) -> dict[str, int]:
     """Claim one result batch and persist samples/events idempotently."""
-    stats = {"claimed": 0, "inserted": 0, "duplicates": 0, "written": 0, "retried": 0, "dead_lettered": 0}
+    stats = {
+        "claimed": 0,
+        "inserted": 0,
+        "duplicates": 0,
+        "written": 0,
+        "retried": 0,
+        "dead_lettered": 0,
+    }
     if not _enabled(settings):
         return stats
     rows = pg_queue.claim_results(
@@ -342,7 +383,9 @@ def run_writer_once(
         return stats
 
     payloads = [_result_payload(row) for row in rows]
-    duplicate_payloads = [item for item in payloads if receipt_exists(timescale_db, item["idempotency_key"])]
+    duplicate_payloads = [
+        item for item in payloads if receipt_exists(timescale_db, item["idempotency_key"])
+    ]
     new_payloads = [item for item in payloads if item not in duplicate_payloads]
     pending_payloads = [item for item in duplicate_payloads if item["neo4j_pending"]]
     completed_duplicates = [item for item in duplicate_payloads if not item["neo4j_pending"]]
@@ -363,7 +406,13 @@ def run_writer_once(
     except Exception as exc:
         retry_at = (now or _utc_now()) + timedelta(seconds=30)
         for item in new_payloads:
-            pg_queue.retry_result(queue_db, item["result_id"], next_eligible_at=retry_at, error_code="timescale_error", error_message=str(exc))
+            pg_queue.retry_result(
+                queue_db,
+                item["result_id"],
+                next_eligible_at=retry_at,
+                error_code="timescale_error",
+                error_message=str(exc),
+            )
             stats["retried"] += 1
         return stats
 
@@ -399,7 +448,13 @@ def run_writer_once(
             if item["result_id"] in retried_result_ids:
                 continue
             retried_result_ids.add(item["result_id"])
-            pg_queue.retry_result(queue_db, item["result_id"], next_eligible_at=retry_at, error_code="neo4j_pending", error_message=str(exc))
+            pg_queue.retry_result(
+                queue_db,
+                item["result_id"],
+                next_eligible_at=retry_at,
+                error_code="neo4j_pending",
+                error_message=str(exc),
+            )
             stats["retried"] += 1
         return stats
 

@@ -10,7 +10,11 @@ ICMP_AVAILABILITY_METRIC_ID = "icmp_availability"
 ICMP_LATENCY_METRIC_ID = "icmp_latency_ms"
 ICMP_JITTER_METRIC_ID = "icmp_jitter_ms"
 ICMP_PACKET_LOSS_METRIC_ID = "packet_loss_pct"
-ICMP_SIDECAR_METRIC_IDS = [ICMP_LATENCY_METRIC_ID, ICMP_JITTER_METRIC_ID, ICMP_PACKET_LOSS_METRIC_ID]
+ICMP_SIDECAR_METRIC_IDS = [
+    ICMP_LATENCY_METRIC_ID,
+    ICMP_JITTER_METRIC_ID,
+    ICMP_PACKET_LOSS_METRIC_ID,
+]
 
 
 @dataclass(frozen=True)
@@ -27,7 +31,9 @@ class PingMeasurement:
 
 _TIME_RE = re.compile(r"time\s*[=<]\s*(?P<value>\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
 _AVERAGE_RE = re.compile(r"Average\s*=\s*(?P<value>\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
-_RTT_RE = re.compile(r"(?:round-trip|rtt)[^=]*=\s*\d+(?:\.\d+)?/(?P<avg>\d+(?:\.\d+)?)/", re.IGNORECASE)
+_RTT_RE = re.compile(
+    r"(?:round-trip|rtt)[^=]*=\s*\d+(?:\.\d+)?/(?P<avg>\d+(?:\.\d+)?)/", re.IGNORECASE
+)
 
 
 def parse_ping_latency_ms(output: str | None) -> float | None:
@@ -76,17 +82,21 @@ def build_icmp_sidecar_samples(
         if observed_at is not None:
             samples[0]["time"] = observed_at
         return samples
-    samples: list[dict[str, Any]] = [{
-        "node_id": node_id,
-        "metric_id": ICMP_LATENCY_METRIC_ID,
-        "value": float(measurement.latency_ms),
-    }]
-    if previous_latency_ms is not None:
-        samples.append({
+    samples: list[dict[str, Any]] = [
+        {
             "node_id": node_id,
-            "metric_id": ICMP_JITTER_METRIC_ID,
-            "value": abs(float(measurement.latency_ms) - float(previous_latency_ms)),
-        })
+            "metric_id": ICMP_LATENCY_METRIC_ID,
+            "value": float(measurement.latency_ms),
+        }
+    ]
+    if previous_latency_ms is not None:
+        samples.append(
+            {
+                "node_id": node_id,
+                "metric_id": ICMP_JITTER_METRIC_ID,
+                "value": abs(float(measurement.latency_ms) - float(previous_latency_ms)),
+            }
+        )
     samples.append(packet_loss_sample)
     if observed_at is not None:
         for sample in samples:
@@ -137,7 +147,9 @@ def packet_loss_threshold_metadata(*, warning_pct: float, critical_pct: float) -
     }
 
 
-def evaluate_latency_status(latency_ms: float | None, *, warning_ms: float, critical_ms: float) -> str:
+def evaluate_latency_status(
+    latency_ms: float | None, *, warning_ms: float, critical_ms: float
+) -> str:
     """Evaluate ICMP latency against warning/critical thresholds.
 
     Missing data fails closed to CRITICAL — operators must investigate why a
@@ -154,7 +166,9 @@ def evaluate_latency_status(latency_ms: float | None, *, warning_ms: float, crit
     return "OK"
 
 
-def evaluate_jitter_status(jitter_ms: float | None, *, warning_ms: float, critical_ms: float) -> str:
+def evaluate_jitter_status(
+    jitter_ms: float | None, *, warning_ms: float, critical_ms: float
+) -> str:
     """Evaluate ICMP jitter against warning/critical thresholds.
 
     Missing data fails closed to CRITICAL — mirrors ``evaluate_latency_status``
@@ -191,7 +205,9 @@ def evaluate_packet_loss_status(
 def is_icmp_telemetry_metric(metric_id: str, metadata: dict[str, Any] | None = None) -> bool:
     """Return true for ICMP sidecar telemetry metrics that are derived, not polled."""
     value = str(metric_id or "")
-    return value in ICMP_SIDECAR_METRIC_IDS or bool(metadata and metadata.get("metric_kind") == "telemetry")
+    return value in ICMP_SIDECAR_METRIC_IDS or bool(
+        metadata and metadata.get("metric_kind") == "telemetry"
+    )
 
 
 def is_icmp_availability_metric(metric_id: str, metadata: dict[str, Any] | None = None) -> bool:
@@ -205,4 +221,6 @@ def is_icmp_availability_metric(metric_id: str, metadata: dict[str, Any] | None 
     if metadata and metadata.get("metric_kind") == "availability":
         return True
     value = str(metric_id or "")
-    return value == ICMP_AVAILABILITY_METRIC_ID or value == "PING-CHECK" or value.startswith("PING-")
+    return (
+        value == ICMP_AVAILABILITY_METRIC_ID or value == "PING-CHECK" or value.startswith("PING-")
+    )
