@@ -567,11 +567,29 @@ class ICMPSettings(BaseModel):
     debounce_count: int = Field(default=3, ge=1)
     latency_warning_ms: float = Field(default=100.0, ge=0)
     latency_critical_ms: float = Field(default=500.0, gt=0)
+    jitter_warning_ms: float = Field(default=50.0, ge=0)
+    jitter_critical_ms: float = Field(default=150.0, gt=0)
+    packet_loss_warning_pct: float = Field(default=10.0, ge=0, le=100)
+    packet_loss_critical_pct: float = Field(default=50.0, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_latency_thresholds(self) -> ICMPSettings:
         if self.latency_warning_ms >= self.latency_critical_ms:
             raise ValueError("ICMP_LATENCY_WARNING_MS must be less than ICMP_LATENCY_CRITICAL_MS")
+        return self
+
+    @model_validator(mode="after")
+    def validate_jitter_thresholds(self) -> ICMPSettings:
+        if self.jitter_warning_ms >= self.jitter_critical_ms:
+            raise ValueError("ICMP_JITTER_WARNING_MS must be less than ICMP_JITTER_CRITICAL_MS")
+        return self
+
+    @model_validator(mode="after")
+    def validate_packet_loss_thresholds(self) -> ICMPSettings:
+        if self.packet_loss_warning_pct >= self.packet_loss_critical_pct:
+            raise ValueError(
+                "ICMP_PACKET_LOSS_WARNING_PCT must be less than ICMP_PACKET_LOSS_CRITICAL_PCT"
+            )
         return self
 
     @classmethod
@@ -583,6 +601,10 @@ class ICMPSettings(BaseModel):
             debounce_count=int(os.getenv("ICMP_DEBOUNCE_COUNT", "3")),
             latency_warning_ms=float(os.getenv("ICMP_LATENCY_WARNING_MS", "100")),
             latency_critical_ms=float(os.getenv("ICMP_LATENCY_CRITICAL_MS", "500")),
+            jitter_warning_ms=float(os.getenv("ICMP_JITTER_WARNING_MS", "50")),
+            jitter_critical_ms=float(os.getenv("ICMP_JITTER_CRITICAL_MS", "150")),
+            packet_loss_warning_pct=float(os.getenv("ICMP_PACKET_LOSS_WARNING_PCT", "10")),
+            packet_loss_critical_pct=float(os.getenv("ICMP_PACKET_LOSS_CRITICAL_PCT", "50")),
         )
 
 
