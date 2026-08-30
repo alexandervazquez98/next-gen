@@ -277,3 +277,59 @@ class TicketFolioRepository:
         """
         with self._driver.session() as session:
             session.run(query, ticket_id=ticket_id, service_catalog_id=service_catalog_id)
+
+    # ------------------------------------------------------------------
+    # PR 4 — WU 7 atomic bulk ticket import. Every row commits in one
+    # Neo4j write transaction; the caller MUST hold per-user locks for
+    # the entire batch (sorted/deduped by normalized username).
+    # ------------------------------------------------------------------
+
+    def bulk_create_with_generated_ids(
+        self,
+        payloads: list[TicketFolioCreate],
+        *,
+        actor: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Atomically allocate an ID for and create every ticket in the batch."""
+
+        if not payloads:
+            return []
+
+        now = self._now()
+        normalized = [
+            payload if isinstance(payload, TicketFolioCreate) else TicketFolioCreate(**payload)
+            for payload in payloads
+        ]
+
+        def write_transaction(tx):
+            created: list[dict[str, Any]] = []
+            for payload_model in normalized:
+                display_name = getattr(payload_model, "assignee_display_name", None) or payload_model.assignee_username
+                active_at_assignment = getattr(payload_model, "assignee_active_at_assignment", True) or True
+                row = tx.run(
+                    _CREATE_TICKET_FOLIO_QUERY,
+                    type=payload_model.type,
+                    title=payload_model.title,
+                    description=payload_model.description,
+                    service_catalog_id=payload_model.service_catalog_id,
+                    assignee_username=payload_model.assignee_username,
+                    assignee_display_name=display_name,
+                    assignee_active_at_assignment=active_at_assignment,
+                    status=payload_model.status,
+                    archived=payload_model.archived,
+                    closed_reason=payload_model.closed_reason,
+                    created_at=payload_model.created_at or now,
+                    updated_at=now,
+                    updated_by=actor,
+                ).single()
+                if row is None:
+                    raise RuntimeError(
+                        "bulk_create_with_generated_ids failed: missing TicketSequence or referenced ServiceCatalog"
+                    )
+                record = self._record(row) or {}
+                record["assignee_currently_active"] = active_at_assignment
+                created.append(record)
+            return created
+
+        with self._driver.session() as session:
+            return session.execute_write(write_transaction)

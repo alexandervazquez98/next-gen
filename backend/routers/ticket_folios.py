@@ -10,11 +10,17 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import services.ticket_folio_service as ticket_folio_service
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from models.itsm import TicketFolioCreate, TicketFolioResponse, TicketFolioUpdate
 from models.user import User, UserPermission
 from pydantic import BaseModel
+from postgres_db import SessionLocal
+from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
+from repositories.ticket_folio_repo import TicketFolioRepository
+from repositories.user_repo import UserRepository
 from services.auth_service import check_permission, get_current_active_user
+from services.itsm_imports import ticket_import
 
 
 class TicketTransitionRequest(BaseModel):
@@ -98,3 +104,59 @@ async def transition_ticket_folio(
         closed_reason=payload.closed_reason,
         actor=current_user.username,
     )
+
+
+# ---------------------------------------------------------------------------
+# PR 4 — WU 7 atomic XLSX ticket import with reference sheets.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/template")
+async def get_ticket_template(
+    current_user: CurrentUserDep,
+) -> Response:
+    if not check_permission(UserPermission.ITSM_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view tickets")
+    workbook_bytes = ticket_import.build_ticket_template_workbook(
+        catalog_repository=ServiceCatalogRepository(),
+        user_repository=UserRepository(),
+    )
+    return Response(
+        content=workbook_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=ticket_import_template.xlsx"},
+    )
+
+
+@router.post("/import")
+async def import_ticket_workbook(
+    file: UploadFile = File(...),
+    current_user: CurrentUserDep = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
+    if not check_permission(UserPermission.ITSM_EDIT, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to import tickets")
+    payload = await file.read()
+    pg_session = SessionLocal()
+    try:
+        return ticket_import.import_ticket_workbook(
+            payload,
+            actor=current_user.username,
+            ticket_repository=TicketFolioRepository(),
+            catalog_repository=ServiceCatalogRepository(),
+            user_repository=UserRepository(),
+            pg_session=pg_session,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface structured errors to the client
+        pg_session.close()
+        from services.itsm_imports.errors import ImportValidationError
+
+        if isinstance(exc, ImportValidationError):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=exc.to_payload())
+        raise
+    finally:
+        try:
+            pg_session.close()
+        except Exception:  # noqa: BLE001
+            pass

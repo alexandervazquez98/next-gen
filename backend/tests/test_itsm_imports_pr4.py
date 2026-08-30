@@ -51,9 +51,8 @@ class _StubUserRepository:
     def __init__(self, users: Iterable[str], *, active: Iterable[str] | None = None) -> None:
         active_set = set(active if active is not None else users)
         self._rows = {name: MagicMock(username=name, is_active=(name in active_set)) for name in users}
-        self.get_by_username = MagicMock(side_effect=self._get)
 
-    def _get(self, username: str):
+    def get_by_username(self, _db, username: str):
         return self._rows.get(username)
 
 

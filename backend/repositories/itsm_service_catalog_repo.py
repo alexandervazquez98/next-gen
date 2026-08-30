@@ -247,6 +247,58 @@ class ServiceCatalogRepository:
             ).single()
         return self._record(row)
 
+    # ------------------------------------------------------------------
+    # PR 4 — WU 6 atomic bulk import. Every row commits in one Neo4j
+    # write transaction; a single failure aborts the batch.
+    # ------------------------------------------------------------------
+
+    def bulk_create(
+        self, payloads: list[dict[str, Any]], *, actor: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Atomically create every catalog row in one Neo4j write transaction."""
+
+        if not payloads:
+            return []
+
+        now = self._now()
+        normalized = [
+            (
+                payload if isinstance(payload, ServiceCatalogCreate)
+                else ServiceCatalogCreate(**payload)
+            )
+            for payload in payloads
+        ]
+
+        def write_transaction(tx):
+            created: list[dict[str, Any]] = []
+            for payload_model in normalized:
+                row = tx.run(
+                    _CREATE_SERVICE_CATALOG_QUERY,
+                    service_id=payload_model.service_id,
+                    name=payload_model.name,
+                    owner_team=payload_model.owner_team,
+                    category=payload_model.category,
+                    tier=payload_model.tier,
+                    criticality=payload_model.criticality,
+                    sla_target_minutes=payload_model.sla_target_minutes,
+                    service_type=payload_model.service_type,
+                    active=payload_model.active,
+                    created_at=payload_model.created_at or now,
+                    updated_at=now,
+                    updated_by=actor,
+                ).single()
+                if row is None:
+                    raise RuntimeError(
+                        f"bulk_create failed to persist catalog row '{payload_model.service_id}'"
+                    )
+                record = self._record(row)
+                if record is not None:
+                    created.append(record)
+            return created
+
+        with self._driver.session() as session:
+            return session.execute_write(write_transaction)
+
     def update(self, service_id: str, payload: ServiceCatalogUpdate) -> dict[str, Any] | None:
         payload = (
             payload
