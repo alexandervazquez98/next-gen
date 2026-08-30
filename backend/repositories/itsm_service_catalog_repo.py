@@ -263,7 +263,8 @@ class ServiceCatalogRepository:
         now = self._now()
         normalized = [
             (
-                payload if isinstance(payload, ServiceCatalogCreate)
+                payload
+                if isinstance(payload, ServiceCatalogCreate)
                 else ServiceCatalogCreate(**payload)
             )
             for payload in payloads

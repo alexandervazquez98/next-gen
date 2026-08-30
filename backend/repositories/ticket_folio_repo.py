@@ -304,8 +304,13 @@ class TicketFolioRepository:
         def write_transaction(tx):
             created: list[dict[str, Any]] = []
             for payload_model in normalized:
-                display_name = getattr(payload_model, "assignee_display_name", None) or payload_model.assignee_username
-                active_at_assignment = getattr(payload_model, "assignee_active_at_assignment", True) or True
+                display_name = (
+                    getattr(payload_model, "assignee_display_name", None)
+                    or payload_model.assignee_username
+                )
+                active_at_assignment = (
+                    getattr(payload_model, "assignee_active_at_assignment", True) or True
+                )
                 row = tx.run(
                     _CREATE_TICKET_FOLIO_QUERY,
                     type=payload_model.type,
