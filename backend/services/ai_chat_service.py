@@ -55,6 +55,67 @@ MAX_BATCH_AVAILABILITY_CHECKS = 5
 _SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 
 
+def _estimate_tokens(text: str) -> int:
+    """Approximate token count for chat text.
+
+    Uses a conservative ``len(text) // 4`` rule of thumb. This is
+    intentionally NOT a real BPE tokenizer: tiktoken is OpenAI-specific and
+    misleads on Qwen / local models. The approximation is good enough for
+    sliding-window compaction against an input context window.
+    """
+    return len(text) // 4
+
+
+def _compact_history(
+    messages: list[dict[str, str]], settings: LMStudioSettings
+) -> list[dict[str, str]]:
+    """Drop oldest non-system messages until estimated tokens fit the budget.
+
+    The first message with ``role == "system"`` is RESERVED: it is never
+    trimmed and does not count toward the compaction budget that drives
+    eviction. The system prompt is bounded separately by
+    ``MAX_SYSTEM_PROMPT_CHARS``.
+
+    Setting ``compaction_threshold >= 1.0`` disables compaction entirely
+    (operator kill switch).
+
+    Returns a NEW list; the input is not mutated.
+    """
+    if not messages:
+        return []
+    if settings.compaction_threshold >= 1.0:
+        return list(messages)
+
+    has_system = messages[0].get("role") == "system"
+    system_msg = messages[0] if has_system else None
+    rest = list(messages[1:] if has_system else messages)
+
+    budget = int(settings.context_limit_tokens * settings.compaction_threshold)
+
+    total = sum(_estimate_tokens(str(m.get("content", ""))) for m in rest)
+    dropped = 0
+    while total > budget and len(rest) > 1:
+        removed = rest.pop(0)
+        total -= _estimate_tokens(str(removed.get("content", "")))
+        dropped += 1
+
+    if dropped > 0:
+        logger.info(
+            "Compacted AI chat history: dropped %d oldest non-system messages "
+            "(context_limit_tokens=%d, compaction_threshold=%.2f, budget_tokens=%d)",
+            dropped,
+            settings.context_limit_tokens,
+            settings.compaction_threshold,
+            budget,
+        )
+
+    result: list[dict[str, str]] = []
+    if system_msg is not None:
+        result.append(system_msg)
+    result.extend(rest)
+    return result
+
+
 class LMStudioError(Exception):
     """LM Studio returned an unusable response or could not be reached."""
 
@@ -184,6 +245,8 @@ def build_lm_studio_payload(
     messages = [{"role": "system", "content": load_system_prompt()}]
     messages.extend(history or [])
     messages.append({"role": "user", "content": user_content})
+
+    messages = _compact_history(messages, settings)
 
     return {
         "model": settings.model,
