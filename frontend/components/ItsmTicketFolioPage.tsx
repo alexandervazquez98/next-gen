@@ -1,12 +1,21 @@
-import React, { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import {
   createTicketFolio,
+  downloadTicketTemplate,
+  extractErrorMessage,
+  extractImportError,
+  importTicketWorkbook,
+  listActiveUsers,
+  listServiceCatalog,
   listTicketFolios,
   transitionTicketFolio,
   updateTicketFolio,
 } from "../services/itsm";
 import type {
+  ActiveUser,
+  ImportValidationFailure,
+  ServiceCatalogResponse,
   TicketFolioCreatePayload,
   TicketFolioResponse,
   TicketFolioStatus,
@@ -15,38 +24,49 @@ import type {
 import TicketStatusStepper from "./TicketStatusStepper";
 
 type TicketFormState = {
-  ticket_id: string;
   type: TicketFolioType;
   title: string;
   description: string;
   service_catalog_id: string;
+  assignee_username: string;
 };
 
 const emptyForm: TicketFormState = {
-  ticket_id: "",
-  type: "request",
+  type: "incident",
   title: "",
   description: "",
   service_catalog_id: "",
+  assignee_username: "",
 };
 
 const toCreatePayload = (state: TicketFormState): TicketFolioCreatePayload => ({
-  ticket_id: state.ticket_id.trim(),
   type: state.type,
   title: state.title.trim(),
-  description: state.description.trim() || null,
-  service_catalog_id: state.service_catalog_id.trim() || null,
+  description: state.description.trim() ? state.description.trim() : null,
+  service_catalog_id: state.service_catalog_id.trim(),
+  assignee_username: state.assignee_username.trim(),
 });
 
 const statusLabel = (status: TicketFolioStatus) => status.replace("_", " ");
 
 const ItsmTicketFolioPage: React.FC = () => {
   const [tickets, setTickets] = useState<TicketFolioResponse[]>([]);
+  const [catalog, setCatalog] = useState<ServiceCatalogResponse[]>([]);
+  const [assignees, setAssignees] = useState<ActiveUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
   const [formState, setFormState] = useState<TicketFormState>(emptyForm);
+  const [importError, setImportError] = useState<ImportValidationFailure | null>(null);
+  const [importInfo, setImportInfo] = useState<string | null>(null);
+
+  const activeCatalog = useMemo(() => catalog.filter((c) => c.active), [catalog]);
+
+  const compatibleServices = useMemo(
+    () => activeCatalog.filter((c) => c.service_type === formState.type),
+    [activeCatalog, formState.type],
+  );
 
   const loadTickets = async () => {
     setLoading(true);
@@ -55,33 +75,67 @@ const ItsmTicketFolioPage: React.FC = () => {
       const items = await listTicketFolios({});
       setTickets(items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load ITSM tickets.");
+      setError(extractErrorMessage(err, "Unable to load tickets."));
     } finally {
       setLoading(false);
     }
   };
 
+  const loadCatalogAndAssignees = async () => {
+    try {
+      const [catalogItems, userItems] = await Promise.all([
+        listServiceCatalog(),
+        listActiveUsers(),
+      ]);
+      setCatalog(catalogItems);
+      setAssignees(userItems);
+    } catch (err) {
+      setError(extractErrorMessage(err, "Unable to load service catalog or users."));
+    }
+  };
+
   useEffect(() => {
     void loadTickets();
+    void loadCatalogAndAssignees();
   }, []);
 
-  const onChange = (field: keyof TicketFormState, value: string) => {
-    setFormState((prev) => ({ ...prev, [field]: value }));
+  const onChange = <K extends keyof TicketFormState>(field: K, value: TicketFormState[K]) => {
+    setFormState((prev) => {
+      const next = { ...prev, [field]: value };
+      // Reset incompatible service selection when ticket type changes.
+      if (field === "type" && prev.service_catalog_id) {
+        const stillCompatible = catalog.some(
+          (c) => c.service_id === prev.service_catalog_id && c.service_type === value,
+        );
+        if (!stillCompatible) next.service_catalog_id = "";
+      }
+      return next;
+    });
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!formState.ticket_id.trim() || !formState.title.trim()) {
-      setError("Ticket ID and Title are required.");
+    setError(null);
+
+    if (!formState.title.trim()) {
+      setError("Title is required.");
+      return;
+    }
+    if (!formState.service_catalog_id) {
+      setError("Service is required.");
+      return;
+    }
+    if (!formState.assignee_username) {
+      setError("Assignee is required.");
       return;
     }
 
     try {
-      if (selectedTicketId) {
+      if (selectedTicketId !== null) {
         await updateTicketFolio(selectedTicketId, {
           title: formState.title.trim(),
           description: formState.description.trim() || null,
-          service_catalog_id: formState.service_catalog_id.trim() || null,
+          service_catalog_id: formState.service_catalog_id.trim(),
         });
       } else {
         await createTicketFolio(toCreatePayload(formState));
@@ -91,23 +145,24 @@ const ItsmTicketFolioPage: React.FC = () => {
       setSelectedTicketId(null);
       setShowForm(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save ticket folio.");
+      const message = extractErrorMessage(err, "Could not save ticket folio.");
+      setError(message);
     }
   };
 
   const onStartEdit = (ticket: TicketFolioResponse) => {
     setSelectedTicketId(ticket.ticket_id);
     setFormState({
-      ticket_id: ticket.ticket_id,
       type: ticket.type,
       title: ticket.title,
       description: ticket.description ?? "",
       service_catalog_id: ticket.service_catalog_id ?? "",
+      assignee_username: ticket.assignee_username ?? "",
     });
     setShowForm(true);
   };
 
-  const onTransition = async (ticketId: string, nextStatus: TicketFolioStatus) => {
+  const onTransition = async (ticketId: number, nextStatus: TicketFolioStatus) => {
     const closedReason =
       nextStatus === "closed" ? window.prompt("Close reason")?.trim() : undefined;
     if (nextStatus === "closed" && !closedReason) {
@@ -119,7 +174,39 @@ const ItsmTicketFolioPage: React.FC = () => {
       await transitionTicketFolio(ticketId, nextStatus, closedReason);
       await loadTickets();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not transition ticket folio.");
+      setError(extractErrorMessage(err, "Could not transition ticket folio."));
+    }
+  };
+
+  const onDownloadTemplate = async () => {
+    setError(null);
+    setImportError(null);
+    setImportInfo(null);
+    try {
+      await downloadTicketTemplate();
+    } catch (err) {
+      setError(extractErrorMessage(err, "Could not download the import template."));
+    }
+  };
+
+  const onImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // allow re-upload of the same file
+    if (!file) return;
+    setImportError(null);
+    setImportInfo(null);
+    setError(null);
+    try {
+      await importTicketWorkbook(file);
+      setImportInfo("Tickets imported successfully.");
+      await loadTickets();
+    } catch (err) {
+      const structured = extractImportError(err);
+      if (structured) {
+        setImportError(structured);
+      } else {
+        setError(extractErrorMessage(err, "Could not import tickets."));
+      }
     }
   };
 
@@ -128,23 +215,43 @@ const ItsmTicketFolioPage: React.FC = () => {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tighter uppercase">
-            ITSM Tickets
+            Service Management
           </h1>
           <p className="text-xs font-black text-neutral-400 uppercase tracking-wider">
-            Manage request and incident folios independently from event workflows.
+            Manage incident and service request folios independently from event workflows.
           </p>
         </div>
-        <button
-          type="button"
-          className="px-4 py-2 rounded-lg font-bold bg-brand-600 hover:bg-brand-500 text-white text-sm"
-          onClick={() => {
-            setSelectedTicketId(null);
-            setFormState(emptyForm);
-            setShowForm(true);
-          }}
-        >
-          New Ticket
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg font-bold bg-white/10 hover:bg-white/20 text-white text-sm"
+            onClick={onDownloadTemplate}
+            aria-label="Download import template"
+          >
+            Download Template
+          </button>
+          <label className="px-4 py-2 rounded-lg font-bold bg-white/10 hover:bg-white/20 text-white text-sm cursor-pointer">
+            Import Workbook
+            <input
+              type="file"
+              accept=".xlsx"
+              className="hidden"
+              aria-label="Import workbook"
+              onChange={onImportFile}
+            />
+          </label>
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg font-bold bg-brand-600 hover:bg-brand-500 text-white text-sm"
+            onClick={() => {
+              setSelectedTicketId(null);
+              setFormState(emptyForm);
+              setShowForm(true);
+            }}
+          >
+            New Ticket
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -156,23 +263,52 @@ const ItsmTicketFolioPage: React.FC = () => {
         </div>
       )}
 
+      {importInfo && (
+        <div
+          role="status"
+          className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 p-3 text-sm"
+        >
+          {importInfo}
+        </div>
+      )}
+
+      {importError && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm space-y-2"
+        >
+          <p className="text-red-300 font-bold">{importError.message}</p>
+          <table className="w-full text-left text-xs">
+            <thead className="text-red-200">
+              <tr>
+                <th className="p-1">Row</th>
+                <th className="p-1">Field</th>
+                <th className="p-1">Code</th>
+                <th className="p-1">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {importError.errors.map((err, idx) => (
+                <tr key={`${err.row}-${err.field}-${idx}`} className="border-t border-red-500/20">
+                  <td className="p-1">
+                    Row {err.row ?? "?"} — {err.field}
+                  </td>
+                  <td className="p-1 text-red-200">{err.field}</td>
+                  <td className="p-1 text-red-200">{err.code}</td>
+                  <td className="p-1 text-red-200">{err.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {showForm && (
         <form className="grid gap-3 glass rounded-xl border border-white/5 p-4" onSubmit={onSubmit}>
           <h2 className="text-sm font-black uppercase text-neutral-300">
-            {selectedTicketId ? `Edit Ticket ${selectedTicketId}` : "Create Ticket Folio"}
+            {selectedTicketId !== null ? `Edit Ticket ${selectedTicketId}` : "Create Ticket Folio"}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="text-xs text-neutral-300" htmlFor="ticket_id">
-              Ticket ID
-              <input
-                id="ticket_id"
-                aria-label="Ticket ID"
-                className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                value={formState.ticket_id}
-                onChange={(event) => onChange("ticket_id", event.target.value)}
-                disabled={Boolean(selectedTicketId)}
-              />
-            </label>
             <label className="text-xs text-neutral-300" htmlFor="type">
               Type
               <select
@@ -181,13 +317,31 @@ const ItsmTicketFolioPage: React.FC = () => {
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
                 value={formState.type}
                 onChange={(event) => onChange("type", event.target.value as TicketFolioType)}
-                disabled={Boolean(selectedTicketId)}
+                disabled={selectedTicketId !== null}
               >
-                <option value="request">request</option>
                 <option value="incident">incident</option>
+                <option value="service_request">service_request</option>
               </select>
             </label>
-            <label className="text-xs text-neutral-300" htmlFor="title">
+            <label className="text-xs text-neutral-300" htmlFor="service_catalog_id">
+              Service
+              <select
+                id="service_catalog_id"
+                aria-label="Service"
+                className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
+                value={formState.service_catalog_id}
+                onChange={(event) => onChange("service_catalog_id", event.target.value)}
+                disabled={selectedTicketId !== null}
+              >
+                <option value="">Select a compatible service…</option>
+                {compatibleServices.map((svc) => (
+                  <option key={svc.service_id} value={svc.service_id}>
+                    {svc.service_id} — {svc.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-neutral-300 sm:col-span-2" htmlFor="title">
               Title
               <input
                 id="title"
@@ -197,15 +351,24 @@ const ItsmTicketFolioPage: React.FC = () => {
                 onChange={(event) => onChange("title", event.target.value)}
               />
             </label>
-            <label className="text-xs text-neutral-300" htmlFor="service_catalog_id">
-              Service Catalog ID
-              <input
-                id="service_catalog_id"
-                aria-label="Service Catalog ID"
+            <label className="text-xs text-neutral-300 sm:col-span-2" htmlFor="assignee_username">
+              Assignee
+              <select
+                id="assignee_username"
+                aria-label="Assignee"
                 className="mt-1 w-full bg-black/40 border border-white/10 p-2 rounded text-white"
-                value={formState.service_catalog_id}
-                onChange={(event) => onChange("service_catalog_id", event.target.value)}
-              />
+                value={formState.assignee_username}
+                onChange={(event) => onChange("assignee_username", event.target.value)}
+                aria-required="true"
+                disabled={selectedTicketId !== null}
+              >
+                <option value="">Select an active assignee…</option>
+                {assignees.map((user) => (
+                  <option key={user.username} value={user.username}>
+                    {user.username}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-xs text-neutral-300 sm:col-span-2" htmlFor="description">
               Description
@@ -242,7 +405,7 @@ const ItsmTicketFolioPage: React.FC = () => {
 
       <section className="flex-1 overflow-auto rounded-xl border border-white/5 glass">
         {loading ? (
-          <div className="p-4 text-sm text-neutral-400">Loading ITSM tickets...</div>
+          <div className="p-4 text-sm text-neutral-400">Loading tickets...</div>
         ) : tickets.length === 0 ? (
           <div className="p-4 text-sm text-neutral-400">No ticket folios found.</div>
         ) : (
@@ -252,6 +415,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                 <th className="p-3">Ticket</th>
                 <th className="p-3">Type</th>
                 <th className="p-3">Service</th>
+                <th className="p-3">Assignee</th>
                 <th className="p-3">Status</th>
                 <th className="p-3">Next Step</th>
                 <th className="p-3">Actions</th>
@@ -262,16 +426,22 @@ const ItsmTicketFolioPage: React.FC = () => {
                 <tr key={ticket.ticket_id} className="border-t border-white/5">
                   <td className="p-3">
                     <div className="font-bold text-white">{ticket.title}</div>
-                    <div className="text-xs text-neutral-500">{ticket.ticket_id}</div>
+                    <div className="text-xs text-neutral-500">#{ticket.ticket_id}</div>
                   </td>
                   <td className="p-3 text-neutral-300">{ticket.type}</td>
                   <td className="p-3 text-neutral-300">
                     {ticket.service_catalog_id || "Unassigned"}
                   </td>
+                  <td className="p-3 text-neutral-300">
+                    {ticket.assignee_username || "—"}
+                    {ticket.assignee_currently_active === false && (
+                      <span className="ml-2 text-[10px] uppercase text-amber-300">(inactive)</span>
+                    )}
+                  </td>
                   <td className="p-3 text-neutral-300">{statusLabel(ticket.status)}</td>
                   <td className="p-3">
                     <TicketStatusStepper
-                      ticketId={ticket.ticket_id}
+                      ticketId={String(ticket.ticket_id)}
                       status={ticket.status}
                       onTransition={(nextStatus) => onTransition(ticket.ticket_id, nextStatus)}
                     />

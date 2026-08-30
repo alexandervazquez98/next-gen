@@ -118,15 +118,20 @@ describe("ITSM service catalog API wrapper", () => {
 
   it("lists ticket folios from /api/itsm/tickets", async () => {
     const ticket = {
-      ticket_id: "TK-001",
-      type: "request",
+      ticket_id: 1,
+      type: "service_request",
       title: "Access request",
       description: null,
       service_catalog_id: "svc-auth",
+      assignee_username: "alice",
+      assignee_display_name: "alice",
+      assignee_active_at_assignment: true,
+      assignee_currently_active: true,
       status: "open",
+      archived: false,
       closed_reason: null,
-      created_at: "2025-01-01T00:00:00Z",
-      updated_at: "2025-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
       updated_by: "admin",
     };
 
@@ -135,9 +140,10 @@ describe("ITSM service catalog API wrapper", () => {
     const result = await listTicketFolios({ status: "open", service_catalog_id: "svc-auth" });
 
     expect(result).toEqual([ticket]);
-    expect(mocks.mockGet).toHaveBeenCalledWith("/itsm/tickets", {
-      params: { status: "open", service_catalog_id: "svc-auth" },
-    });
+    expect(mocks.mockGet).toHaveBeenCalledWith(
+      "/itsm/tickets?status=open&service_catalog_id=svc-auth",
+      {},
+    );
   });
 
   it("creates and updates ticket folios through /api/itsm/tickets", async () => {

@@ -142,6 +142,14 @@ jobs:
           # Override BACKUP_DIR to a workspace-local path (avoid the default
           # .docker/backups, which is fine but we make it explicit for CI).
           grep -q '^BACKUP_DIR=' .env || echo "BACKUP_DIR=.docker/backups" >> .env
+          # PR 5 E2E journey (frontend/test/e2e/service-management-pr5.spec.ts)
+          # logs in as admin/admin against the freshly seeded smoke stack.
+          # Without this, backend/seed_admin.py generates a random password
+          # (printed to logs but inaccessible to Playwright), so the journey
+          # would 404 on /auth/login. Inject a deterministic smoke-only
+          # credential so the admin user is seeded with a known password.
+          grep -q '^ADMIN_DEFAULT_USERNAME=' .env || echo "ADMIN_DEFAULT_USERNAME=admin" >> .env
+          grep -q '^ADMIN_DEFAULT_PASSWORD=' .env || echo "ADMIN_DEFAULT_PASSWORD=admin" >> .env
           echo "--- .env (sanitized, lines 1-20) ---"
           sed -e 's/=.*/=<redacted>/' .env | head -20
 

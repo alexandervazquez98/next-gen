@@ -2,7 +2,8 @@
 
 This service layer validates lifecycle transitions and ensures compatibility
 constraints (status progressions, archive semantics, and catalog reference
-checks) before persistence.
+checks) before persistence. PR 3 WU3 wires per-user PostgreSQL advisory
+locks and assignee snapshot fields into the create flow.
 """
 
 from __future__ import annotations
@@ -13,9 +14,12 @@ from models.itsm import (
     TicketFolioUpdate,
     validate_ticket_transition,
 )
+from postgres_db import SessionLocal
 from pydantic import ValidationError
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 from repositories.ticket_folio_repo import TicketFolioRepository
+from repositories.user_repo import UserRepository
+from services.user_lock import acquire_user_lock
 
 
 def _to_ticket_create(payload) -> TicketFolioCreate:
@@ -96,6 +100,8 @@ def create_ticket_folio(
     actor: str | None = None,
     repository: TicketFolioRepository | None = None,
     catalog_repository: ServiceCatalogRepository | None = None,
+    user_repository: UserRepository | None = None,
+    pg_session=None,
 ):
     repository = repository or TicketFolioRepository()
 
@@ -108,11 +114,44 @@ def create_ticket_folio(
         payload_model.service_catalog_id, payload_model.type, catalog_repository=catalog_repository
     )
 
-    payload_model = payload_model.model_copy(update={"updated_by": actor})
+    # PR 3 WU3 — acquire a per-user PostgreSQL advisory lock for the duration
+    # of the Neo4j write. The lock key is normalized via the helper so
+    # ``Op1`` and ``op1`` share the same lock. Any timeout or unexpected
+    # failure surfaces as a deterministic 409 ``user_lock_timeout``.
+    owned_session = pg_session is None
+    session = pg_session if pg_session is not None else SessionLocal()
+    user_repository = user_repository or UserRepository()
     try:
-        created = repository.create_with_generated_id(payload_model)
-    except RuntimeError as exc:
-        _raise_conflict(str(exc))
+        try:
+            acquire_user_lock(session, payload_model.assignee_username)
+        except RuntimeError as exc:
+            if "user_lock_timeout" in str(exc):
+                _raise_conflict("user_lock_timeout: could not acquire per-user lock")
+            raise
+        user_row = user_repository.get_by_username(session, payload_model.assignee_username)
+        if user_row is None:
+            _raise_not_found(
+                f"assignee_not_found: user '{payload_model.assignee_username}' does not exist"
+            )
+        if not getattr(user_row, "is_active", True):
+            _raise_bad_request("assignee_inactive_at_write: assignee is not active")
+
+        display_name = getattr(user_row, "username", None) or payload_model.assignee_username
+        payload_model = payload_model.model_copy(
+            update={
+                "updated_by": actor,
+                "assignee_display_name": display_name,
+                "assignee_active_at_assignment": True,
+            }
+        )
+
+        try:
+            created = repository.create_with_generated_id(payload_model)
+        except RuntimeError as exc:
+            _raise_conflict(str(exc))
+    finally:
+        if owned_session:
+            session.close()
 
     # Creation and relation synchronization are committed by the repository as one
     # Neo4j transaction; a relation failure therefore rolls back the ticket and ID.
