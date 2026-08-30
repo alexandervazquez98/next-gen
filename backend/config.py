@@ -632,6 +632,8 @@ class LMStudioSettings(BaseModel):
     model: str = "local-model"
     timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     max_tokens: int = Field(default=800, gt=0, le=4096)
+    context_limit_tokens: int = Field(default=32768, gt=0, le=1_000_000)
+    compaction_threshold: float = Field(default=0.80, gt=0.0, le=1.0)
 
     @classmethod
     def from_env(cls) -> LMStudioSettings:
@@ -653,6 +655,18 @@ class LMStudioSettings(BaseModel):
                     minimum=1.0,
                     maximum=4096.0,
                 )
+            ),
+            context_limit_tokens=_env_int_bounded(
+                "LM_STUDIO_CONTEXT_LIMIT_TOKENS",
+                32768,
+                minimum=1,
+                maximum=1_000_000,
+            ),
+            compaction_threshold=_env_float_bounded(
+                "LM_STUDIO_COMPACTION_THRESHOLD",
+                0.80,
+                minimum=0.000001,
+                maximum=1.0,
             ),
         )
 

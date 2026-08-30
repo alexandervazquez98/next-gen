@@ -266,6 +266,203 @@ def test_payload_replays_bounded_history_before_current_question():
     assert payload["messages"][-1]["content"].startswith("User question:\nWhat now?")
 
 
+# ---------------------------------------------------------------------------
+# Context-window compaction (issue #415)
+# ---------------------------------------------------------------------------
+
+
+def _long_content(marker: str, length: int = 800) -> str:
+    """Return a long, marker-bearing string used to assert drop order."""
+    body = "x" * (length - len(marker))
+    return f"{marker}{body}"
+
+
+def test_compactor_trims_oldest_non_system_messages_when_over_threshold():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    # context_limit_tokens=200, threshold=0.5 -> budget=100 tokens (~400 chars).
+    # Each history message is 800 chars (~200 tokens). Four history turns
+    # already exceed the budget by ~4x, forcing eviction.
+    settings = LMStudioSettings(
+        enabled=True,
+        model="local-model",
+        context_limit_tokens=200,
+        compaction_threshold=0.5,
+    )
+    history = [
+        {"role": "user", "content": _long_content("turn-1-")},
+        {"role": "assistant", "content": _long_content("turn-2-")},
+        {"role": "user", "content": _long_content("turn-3-")},
+        {"role": "assistant", "content": _long_content("turn-4-")},
+    ]
+    messages = [{"role": "system", "content": "SYSTEM_PROMPT_MARKER"}] + history + [
+        {"role": "user", "content": "current question"}
+    ]
+
+    compacted = ai_chat_service._compact_history(list(messages), settings)
+
+    # System message preserved byte-identical and at index 0.
+    assert compacted[0] == {"role": "system", "content": "SYSTEM_PROMPT_MARKER"}
+
+    # The current question must remain (most-recent user turn is kept).
+    roles = [m["role"] for m in compacted]
+    assert roles[-1] == "user"
+    assert compacted[-1]["content"] == "current question"
+
+    # At least one of the oldest history turns must have been dropped.
+    dropped_markers = {"turn-1-", "turn-2-", "turn-3-", "turn-4-"}
+    surviving_markers = {m["content"][:7] for m in compacted[1:-1]}
+    assert dropped_markers - surviving_markers, (
+        "expected at least one history marker to be evicted"
+    )
+
+    # Total estimated non-system tokens must fit the budget.
+    budget = int(settings.context_limit_tokens * settings.compaction_threshold)
+    total = sum(
+        ai_chat_service._estimate_tokens(m["content"]) for m in compacted[1:]
+    )
+    assert total <= budget, f"total={total} budget={budget}"
+
+
+def test_compactor_is_noop_when_under_threshold():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    # Default settings: 32768 tokens * 0.8 budget. Two short history turns
+    # (~tens of chars) are far below the budget.
+    settings = LMStudioSettings(enabled=True, model="local-model")
+    messages = [
+        {"role": "system", "content": "SYSTEM"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "world"},
+        {"role": "user", "content": "current?"},
+    ]
+
+    compacted = ai_chat_service._compact_history(list(messages), settings)
+
+    # Content-equal: the compactor must not mutate or drop messages here.
+    assert compacted == messages
+
+
+def test_compactor_threshold_one_is_kill_switch():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    # Even with a tiny absolute limit, threshold=1.0 must disable compaction.
+    settings = LMStudioSettings(
+        enabled=True,
+        model="local-model",
+        context_limit_tokens=10,  # absurdly small
+        compaction_threshold=1.0,
+    )
+    messages = [
+        {"role": "system", "content": "SYSTEM"},
+        {"role": "user", "content": _long_content("turn-1-", 400)},
+        {"role": "assistant", "content": _long_content("turn-2-", 400)},
+        {"role": "user", "content": _long_content("turn-3-", 400)},
+    ]
+
+    compacted = ai_chat_service._compact_history(list(messages), settings)
+
+    # Kill switch: the entire input list is returned unchanged.
+    assert compacted == messages
+
+
+def test_compactor_reserves_system_message_byte_identical():
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    system_payload = {
+        "role": "system",
+        "content": "SENTINEL_SYSTEM_PROMPT_v1\nwith-newlines\nand-binary\x00bytes",
+    }
+    settings = LMStudioSettings(
+        enabled=True,
+        model="local-model",
+        context_limit_tokens=40,
+        compaction_threshold=0.5,
+    )
+    messages = [
+        system_payload,
+        {"role": "user", "content": "x" * 400},
+        {"role": "assistant", "content": "y" * 400},
+        {"role": "user", "content": "z" * 400},
+        {"role": "assistant", "content": "w" * 400},
+        {"role": "user", "content": "current question"},
+    ]
+
+    compacted = ai_chat_service._compact_history(list(messages), settings)
+
+    # Byte-identical: same dict object content, not just equal by string.
+    assert compacted[0] == system_payload
+    assert compacted[0]["content"] == system_payload["content"]
+    assert len(compacted[0]["content"]) == len(system_payload["content"])
+
+
+def test_ai_chat_router_compacts_history_when_env_limit_low(monkeypatch):
+    """End-to-end: a low LM_STUDIO_CONTEXT_LIMIT_TOKENS trims the captured
+    payload's history before it reaches the upstream LM Studio call."""
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    # 512 tokens * 0.5 threshold = 256 tokens (~1024 chars). The seed row
+    # contributes ~2000 + ~2000 chars (~1000 tokens), forcing eviction.
+    monkeypatch.setenv("LM_STUDIO_CONTEXT_LIMIT_TOKENS", "512")
+    monkeypatch.setenv("LM_STUDIO_COMPACTION_THRESHOLD", "0.5")
+
+    previous_row = type(
+        "Row",
+        (),
+        {
+            "username": "operator",
+            "user_message": "u" * 2000,
+            "assistant_response": "a" * 2000,
+            "harness_result": None,
+        },
+    )()
+    client, _db = _make_client(db=_FakeHistoryDb([previous_row]))
+
+    captured_payloads = []
+
+    def fake_completion(payload, settings):
+        captured_payloads.append(payload)
+        return {"content": "ok", "model": settings.model}
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=fake_completion,
+    ):
+        response = client.post(
+            "/api/ai/chat",
+            json={"query": "follow-up question"},
+        )
+
+    assert response.status_code == 200
+    assert captured_payloads, "expected the LM Studio call to be captured"
+
+    messages = captured_payloads[0]["messages"]
+    # Sanity: the system + current-question turn must survive.
+    assert messages[0]["role"] == "system"
+    assert messages[-1]["role"] == "user"
+    assert "follow-up question" in messages[-1]["content"]
+
+    # Without compaction, the captured messages would be:
+    #   [system, user-history("u"*2000), assistant-history("a"*2000), current-user]
+    # i.e. 4 entries. Compaction must reduce that count.
+    assert len(messages) < 4, (
+        f"expected compaction to drop history entries; "
+        f"got {len(messages)} messages (system+history+current)"
+    )
+
+    # The OLDEST history entry (the user turn) must be evicted first —
+    # sliding-window preserves the most recent conversational context.
+    surviving_contents = "".join(m["content"] for m in messages[1:-1])
+    assert "u" * 2000 not in surviving_contents, (
+        "oldest user turn should be evicted before newer assistant turn"
+    )
+
+
 def test_complete_chat_falls_back_when_model_returns_empty_event_list(monkeypatch):
     monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
     monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
