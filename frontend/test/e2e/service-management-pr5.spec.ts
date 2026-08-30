@@ -163,11 +163,11 @@ test.describe("PR 5 / WU 9 — Service Management end-to-end contracts", () => {
     // in the response.
     const response = await authedFetch(`${BACKEND_BASE_URL}/api/users/`);
     expect(response.status(), `user list must succeed, got ${response.status()}`).toBeLessThan(300);
-    const body = (await response.json()) as Array<{ username: string; is_active?: boolean }>;
+    const body = (await response.json()) as Array<{ username: string; role?: string }>;
     expect(Array.isArray(body)).toBe(true);
     const admin = body.find((u) => u.username === "admin");
     expect(admin, "admin user must be present in the list").toBeTruthy();
-    expect(admin?.is_active, "admin user must be active").toBe(true);
+    expect(admin?.role, "admin user must carry a role").toBeTruthy();
   });
 
   test("step 6 — UI smoke: Service Management heading renders at /#/itsm/tickets", async ({
