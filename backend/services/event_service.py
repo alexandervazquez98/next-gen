@@ -1403,7 +1403,6 @@ from collections.abc import AsyncIterator  # noqa: E402
 
 from config import get_event_batch_settings  # noqa: E402
 
-
 # Maximum number of consecutive chunk fetch failures tolerated before the
 # generator re-raises instead of looping forever. The previous catch-all
 # ``except Exception`` swallowed every failure and re-entered the loop with
