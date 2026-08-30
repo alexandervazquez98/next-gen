@@ -7,8 +7,8 @@ Tests are kept lean so the production implementation can fit inside the
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Iterable
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,7 +19,6 @@ from services.itsm_imports.errors import (
     IMPORT_VALIDATION_FAILED,
     ImportValidationError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared stubs

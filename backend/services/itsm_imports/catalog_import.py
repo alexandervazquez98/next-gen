@@ -11,10 +11,10 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any, Protocol
 
+from models.itsm import ServiceCatalogCreate
 from openpyxl import Workbook
 from pydantic import ValidationError
 
-from models.itsm import ServiceCatalogCreate
 from .errors import ImportValidationError
 from .workbook import (
     DEFAULT_MAX_SIZE_BYTES,
@@ -24,7 +24,6 @@ from .workbook import (
     read_data_rows,
     read_header_row,
 )
-
 
 CATALOG_SHEET = "Catalog Import"
 CATALOG_REF_SHEET = "Ref - Value Streams"

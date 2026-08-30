@@ -10,11 +10,11 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any, Protocol
 
+from models.itsm import TicketFolioCreate
 from openpyxl import Workbook
 from pydantic import ValidationError
-
-from models.itsm import TicketFolioCreate
 from services.user_lock import acquire_user_locks_in_order
+
 from .errors import ImportValidationError
 from .workbook import (
     DEFAULT_MAX_SIZE_BYTES,
@@ -24,7 +24,6 @@ from .workbook import (
     read_data_rows,
     read_header_row,
 )
-
 
 TICKET_SHEET = "Ticket Import"
 TICKET_REF_INCIDENT = "Ref - Incident Services"

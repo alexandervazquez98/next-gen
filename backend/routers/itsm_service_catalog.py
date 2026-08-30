@@ -10,10 +10,11 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import services.itsm_service_catalog_service as service_catalog_service
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from models.user import User, UserPermission
+from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 from services.auth_service import check_permission, get_current_active_user
 from services.itsm_imports import catalog_import
 from services.itsm_imports.value_stream_lookup import MetricDictionaryValueStreamLookup
@@ -108,7 +109,7 @@ async def get_catalog_template(
 
 @router.post("/import")
 async def import_catalog_workbook(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     current_user: CurrentUserDep = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
@@ -122,9 +123,8 @@ async def import_catalog_workbook(
             value_stream_lookup=MetricDictionaryValueStreamLookup(),
         )
     except Exception as exc:  # noqa: BLE001 — surface structured errors to the client
-        from fastapi import HTTPException
         from services.itsm_imports.errors import ImportValidationError
 
         if isinstance(exc, ImportValidationError):
-            raise HTTPException(status_code=400, detail=exc.to_payload())
+            raise HTTPException(status_code=400, detail=exc.to_payload()) from exc
         raise

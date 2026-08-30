@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 IMPORT_VALIDATION_FAILED = "validation_failed"
 IMPORT_ERROR_CAP = 200
 

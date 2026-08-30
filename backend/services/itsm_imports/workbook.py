@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Iterable
 
 from openpyxl import Workbook, load_workbook
 
-from .errors import IMPORT_ERROR_CAP, ImportValidationError, RowFieldError
-
+from .errors import ImportValidationError
 
 DEFAULT_MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -29,7 +28,7 @@ def open_workbook(payload: bytes) -> Workbook:
     try:
         return load_workbook(BytesIO(payload), read_only=True, data_only=True)
     except Exception:  # noqa: BLE001 — openpyxl raises a wide exception set
-        raise _error("workbook", "invalid_workbook", "Workbook is not a valid .xlsx file")
+        raise _error("workbook", "invalid_workbook", "Workbook is not a valid .xlsx file") from None
 
 
 def read_header_row(workbook: Workbook, sheet_name: str) -> list[str]:

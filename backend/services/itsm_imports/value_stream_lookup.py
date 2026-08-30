@@ -7,7 +7,7 @@ in its own module avoids leaking the dictionary surface into the import path.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any
 
 from database import get_db
 
