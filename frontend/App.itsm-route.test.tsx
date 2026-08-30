@@ -66,10 +66,10 @@ vi.mock("./components/LoginPage", () => ({
   default: () => <div>Login Page</div>,
 }));
 vi.mock("./components/ItsmServiceCatalogPage", () => ({
-  default: () => <div>ITSM Service Catalog Page</div>,
+  default: () => <div>Service Catalog Page</div>,
 }));
 vi.mock("./components/ItsmTicketFolioPage", () => ({
-  default: () => <div>ITSM Ticket Folio Page</div>,
+  default: () => <div>Service Management Page</div>,
 }));
 
 const renderApp = (initialPath = "/itsm/service-catalog") => {
@@ -89,16 +89,16 @@ describe("App routing", () => {
     authMock.hasPermission = vi.fn(() => true);
   });
 
-  it("renders dedicated ITSM service catalog route", () => {
+  it("renders dedicated Service Catalog route", () => {
     renderApp("/itsm/service-catalog");
 
-    expect(screen.getByText("ITSM Service Catalog Page")).toBeInTheDocument();
+    expect(screen.getByText("Service Catalog Page")).toBeInTheDocument();
   });
 
-  it("renders dedicated ITSM ticket folio route", () => {
+  it("renders dedicated Service Management route", () => {
     renderApp("/itsm/tickets");
 
-    expect(screen.getByText("ITSM Ticket Folio Page")).toBeInTheDocument();
+    expect(screen.getByText("Service Management Page")).toBeInTheDocument();
   });
 
   it("keeps existing inventory route intact", () => {

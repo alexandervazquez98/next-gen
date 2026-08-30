@@ -31,6 +31,9 @@ class TestServiceCatalogDomainContract:
             sla_target_minutes=45,
             owner_team="NetOps",
             criticality="High",
+            description="WAN platform support",
+            value_stream="operate",
+            service_type="incident",
         )
 
         assert payload.service_id == "svc-net-01"
@@ -47,6 +50,9 @@ class TestServiceCatalogDomainContract:
             category="CORE",
             service_tier="Silver",
             sla_minutes=60,
+            description="Legacy service support",
+            value_stream="operate",
+            service_type="service_request",
         )
 
         assert payload.service_id == "svc-legacy-01"
@@ -84,21 +90,45 @@ class TestServiceCatalogDomainContract:
 class TestTicketFolioTypeAndLifecycle:
     """Contract expectations for Ticket/Folio type and linear lifecycle order."""
 
-    def test_ticket_folio_type_is_limited_to_request_and_incident(self):
-        for ticket_type in (TicketFolioType.REQUEST, TicketFolioType.INCIDENT):
+    def test_ticket_folio_type_is_limited_to_incident_and_service_request(self):
+        for ticket_type in (TicketFolioType.SERVICE_REQUEST, TicketFolioType.INCIDENT):
             payload = TicketFolioCreate(
                 type=ticket_type,
                 title="Reset password",
                 description="Request access reset",
-                ticket_id="T-001",
+                service_catalog_id="svc-request",
+                assignee_username="op1",
             )
             assert payload.type == ticket_type
 
         with pytest.raises(ValidationError):
+            TicketFolioCreate(type="request", title="Legacy request", assignee_username="op1")
+
+        with pytest.raises(ValidationError):
+            TicketFolioCreate(type="change", title="Change request", assignee_username="op1")
+
+        with pytest.raises(ValidationError, match="ticket_id"):
             TicketFolioCreate(
-                type="change",  # invalid
-                title="Change request",
-                ticket_id="T-002",
+                type="incident",
+                title="Client supplied ID",
+                ticket_id=2,
+                assignee_username="op1",
+            )
+
+    def test_ticket_folio_assignee_username_is_required_and_non_blank(self):
+        with pytest.raises(ValidationError):
+            TicketFolioCreate(
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-net-01",
+            )
+
+        with pytest.raises(ValidationError, match="assignee_username"):
+            TicketFolioCreate(
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-net-01",
+                assignee_username="   ",
             )
 
     def test_ticket_transition_only_allows_linear_progression(self):

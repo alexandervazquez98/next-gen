@@ -16,6 +16,24 @@
 // - Event snapshot fields on Event nodes are intentionally left untouched.
 
 // -----------------------------------------------------------------------------
+// Managed value-stream dictionary bootstrap
+// -----------------------------------------------------------------------------
+// Value streams use the existing MetricDictionary node model, scoped by
+// dictionary_key. These idempotent seeds make a clean-slate deployment usable
+// without weakening active-value validation.
+CREATE CONSTRAINT value_stream_dictionary_value IF NOT EXISTS
+FOR (value:MetricDictionary) REQUIRE (value.dictionary_key, value.value) IS UNIQUE;
+
+CREATE INDEX metric_dictionary_key IF NOT EXISTS
+FOR (value:MetricDictionary) ON (value.dictionary_key);
+
+MERGE (operate:MetricDictionary {dictionary_key: 'value_stream', value: 'operate'})
+ON CREATE SET operate.label = 'Operate', operate.active = true;
+
+MERGE (deliver:MetricDictionary {dictionary_key: 'value_stream', value: 'deliver'})
+ON CREATE SET deliver.label = 'Deliver', deliver.active = true;
+
+// -----------------------------------------------------------------------------
 // ServiceCatalog constraints and indexes
 // -----------------------------------------------------------------------------
 
@@ -34,6 +52,12 @@ FOR (sc:ServiceCatalog) ON (sc.id);
 
 CREATE CONSTRAINT ticket_folio_ticket_id IF NOT EXISTS
 FOR (tf:TicketFolio) REQUIRE tf.ticket_id IS UNIQUE;
+
+CREATE CONSTRAINT ticket_sequence_name IF NOT EXISTS
+FOR (seq:TicketSequence) REQUIRE seq.name IS UNIQUE;
+
+MERGE (seq:TicketSequence {name: 'ticket_folio'})
+ON CREATE SET seq.next_value = 0;
 
 CREATE INDEX ticket_folio_status IF NOT EXISTS
 FOR (tf:TicketFolio) ON (tf.status);

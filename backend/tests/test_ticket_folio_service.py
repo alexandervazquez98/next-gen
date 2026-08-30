@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import services.ticket_folio_service as ticket_service
@@ -19,14 +19,35 @@ class _TicketRepoStub:
         self.get = MagicMock(return_value=None)
         self.list = MagicMock()
         self.upsert = MagicMock()
+        self.create_with_generated_id = MagicMock()
         self.update = MagicMock()
         self.sync_service_relationship = MagicMock()
 
 
+class _UserRepoStub:
+    def __init__(self, *, active=True, exists=True):
+        if exists:
+            user = MagicMock()
+            user.username = "op1"
+            user.is_active = active
+            self._row = user
+        else:
+            self._row = None
+        self.get_by_username = MagicMock(return_value=self._row)
+
+
+def _active_catalog():
+    return {
+        "service_id": "svc-001",
+        "service_type": "service_request",
+        "active": True,
+    }
+
+
 def _sample_ticket_record(status: str = "open") -> dict:
     return {
-        "ticket_id": "TK-001",
-        "type": "request",
+        "ticket_id": 1,
+        "type": "service_request",
         "title": "Request access",
         "description": "Please grant access",
         "service_catalog_id": "svc-001",
@@ -44,91 +65,76 @@ class TestTicketFolioService:
 
     def test_create_ticket_defaults_to_open_and_resolves_catalog_id(self):
         catalog_repo = _CatalogRepoStub()
-        catalog_repo.get_by_id.return_value = {"service_id": "svc-001"}
+        catalog_repo.get_by_id.return_value = _active_catalog()
         ticket_repo = _TicketRepoStub()
-        ticket_repo.upsert.return_value = _sample_ticket_record()
+        ticket_repo.create_with_generated_id.return_value = _sample_ticket_record()
+        user_repo = _UserRepoStub(active=True)
 
-        created = ticket_service.create_ticket_folio(
-            {
-                "ticket_id": "TK-001",
-                "type": "request",
-                "title": "Request access",
-                "description": "Please grant access",
-                "service_catalog_id": "svc-001",
-            },
-            actor="admin",
-            repository=ticket_repo,
-            catalog_repository=catalog_repo,
-        )
-
-        assert created["ticket_id"] == "TK-001"
-        assert created["status"] == "open"
-        assert created["service_catalog_id"] == "svc-001"
-        assert ticket_repo.sync_service_relationship.call_count == 1
-
-    def test_create_ticket_rejects_duplicate_without_mutating_closed_ticket(self):
-        catalog_repo = _CatalogRepoStub()
-        ticket_repo = _TicketRepoStub()
-        ticket_repo.get.return_value = {
-            **_sample_ticket_record("closed"),
-            "archived": True,
-            "closed_reason": "Completed",
-        }
-
-        with pytest.raises(HTTPException) as exc:
-            ticket_service.create_ticket_folio(
+        with (
+            patch("services.ticket_folio_service.acquire_user_lock"),
+            patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+        ):
+            mock_user_repo_cls.return_value = user_repo
+            created = ticket_service.create_ticket_folio(
                 {
-                    "ticket_id": "TK-001",
-                    "type": "request",
-                    "title": "Retry request",
+                    "type": "service_request",
+                    "title": "Request access",
+                    "description": "Please grant access",
+                    "service_catalog_id": "svc-001",
+                    "assignee_username": "op1",
                 },
                 actor="admin",
                 repository=ticket_repo,
                 catalog_repository=catalog_repo,
             )
 
-        assert exc.value.status_code == 409
-        assert "already exists" in exc.value.detail.lower()
-        ticket_repo.upsert.assert_not_called()
+        assert created["ticket_id"] == 1
+        assert created["status"] == "open"
+        ticket_repo.create_with_generated_id.assert_called_once()
         ticket_repo.sync_service_relationship.assert_not_called()
+
+    def test_create_ticket_rejects_client_supplied_id(self):
+        ticket_repo = _TicketRepoStub()
+        with pytest.raises(HTTPException) as exc:
+            ticket_service.create_ticket_folio(
+                {
+                    "ticket_id": 1,
+                    "type": "incident",
+                    "title": "Router down",
+                    "assignee_username": "op1",
+                },
+                repository=ticket_repo,
+            )
+        assert exc.value.status_code == 400
+        ticket_repo.create_with_generated_id.assert_not_called()
 
     def test_create_ticket_rejects_blank_title(self):
-        catalog_repo = _CatalogRepoStub()
         ticket_repo = _TicketRepoStub()
-
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
                 {
-                    "ticket_id": "TK-blank",
-                    "type": "request",
+                    "type": "incident",
                     "title": "   ",
+                    "assignee_username": "op1",
                 },
                 repository=ticket_repo,
-                catalog_repository=catalog_repo,
             )
-
         assert exc.value.status_code == 400
-        assert "title" in exc.value.detail.lower()
-        ticket_repo.upsert.assert_not_called()
+        ticket_repo.create_with_generated_id.assert_not_called()
 
     def test_create_ticket_rejects_invalid_type(self):
-        catalog_repo = _CatalogRepoStub()
         ticket_repo = _TicketRepoStub()
-
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
                 {
-                    "ticket_id": "TK-002",
-                    "type": "change",
-                    "title": "Change request",
+                    "type": "request",
+                    "title": "Legacy request",
+                    "assignee_username": "op1",
                 },
                 repository=ticket_repo,
-                catalog_repository=catalog_repo,
             )
-
         assert exc.value.status_code == 400
-        ticket_repo.upsert.assert_not_called()
-        ticket_repo.sync_service_relationship.assert_not_called()
+        ticket_repo.create_with_generated_id.assert_not_called()
 
     def test_create_ticket_requires_existing_catalog_when_catalog_id_provided(self):
         catalog_repo = _CatalogRepoStub()
@@ -138,18 +144,17 @@ class TestTicketFolioService:
         with pytest.raises(HTTPException) as exc:
             ticket_service.create_ticket_folio(
                 {
-                    "ticket_id": "TK-003",
                     "type": "incident",
                     "title": "Production alarm",
                     "service_catalog_id": "svc-missing",
+                    "assignee_username": "op1",
                 },
                 repository=ticket_repo,
                 catalog_repository=catalog_repo,
             )
 
         assert exc.value.status_code == 404
-        assert "service_catalog" in exc.value.detail.lower()
-        ticket_repo.upsert.assert_not_called()
+        ticket_repo.create_with_generated_id.assert_not_called()
 
     def test_transition_rejects_skip_and_regression(self):
         catalog_repo = _CatalogRepoStub()
@@ -213,27 +218,22 @@ class TestTicketFolioService:
         assert updated["closed_reason"] == "Incident resolved and verified"
         assert ticket_repo.update.called
 
-    def test_update_ticket_allows_clearing_optional_fields_and_syncs_relation(self):
+    def test_update_ticket_rejects_clearing_required_service_catalog_id(self):
         catalog_repo = _CatalogRepoStub()
         ticket_repo = _TicketRepoStub()
         ticket_repo.get.return_value = _sample_ticket_record("open")
-        ticket_repo.update.return_value = {
-            **_sample_ticket_record("open"),
-            "description": None,
-            "service_catalog_id": None,
-        }
 
-        ticket_service.update_ticket_folio(
-            "TK-001",
-            {"description": None, "service_catalog_id": None},
-            repository=ticket_repo,
-            catalog_repository=catalog_repo,
-        )
+        with pytest.raises(HTTPException) as exc:
+            ticket_service.update_ticket_folio(
+                "TK-001",
+                {"service_catalog_id": None},
+                repository=ticket_repo,
+                catalog_repository=catalog_repo,
+            )
 
-        update_payload = ticket_repo.update.call_args.args[1]
-        assert "description" in update_payload.model_fields_set
-        assert "service_catalog_id" in update_payload.model_fields_set
-        ticket_repo.sync_service_relationship.assert_called_once_with("TK-001", None)
+        assert exc.value.status_code == 400
+        ticket_repo.update.assert_not_called()
+        ticket_repo.sync_service_relationship.assert_not_called()
 
     def test_closed_ticket_rejects_direct_updates(self):
         catalog_repo = _CatalogRepoStub()
@@ -287,3 +287,112 @@ class TestTicketFolioService:
         assert exc.value.status_code == 409
         assert "transition" in exc.value.detail.lower()
         ticket_repo.update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PR 3 — WU3: per-user lock + assignee lifecycle (RED until GREEN lands).
+# ---------------------------------------------------------------------------
+
+
+def _good_payload():
+    return {
+        "type": "service_request",
+        "title": "Request access",
+        "service_catalog_id": "svc-001",
+        "assignee_username": "Op1",
+    }
+
+
+def test_create_acquires_per_user_lock_with_normalized_key():
+    catalog_repo = _CatalogRepoStub()
+    catalog_repo.get_by_id.return_value = _active_catalog()
+    ticket_repo = _TicketRepoStub()
+    ticket_repo.create_with_generated_id.return_value = _sample_ticket_record()
+    user_repo = _UserRepoStub(active=True)
+
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock") as mock_lock,
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
+        mock_user_repo_cls.return_value = user_repo
+        ticket_service.create_ticket_folio(
+            _good_payload(),
+            actor="admin",
+            repository=ticket_repo,
+            catalog_repository=catalog_repo,
+        )
+
+    mock_lock.assert_called_once()
+    # The helper normalizes internally; service hands it the raw username.
+    assert mock_lock.call_args.args[1] == "Op1"
+    user_repo.get_by_username.assert_called_once()
+    ticket_repo.create_with_generated_id.assert_called_once()
+
+
+def test_create_rejects_inactive_assignee_with_400():
+    catalog_repo = _CatalogRepoStub()
+    catalog_repo.get_by_id.return_value = _active_catalog()
+    ticket_repo = _TicketRepoStub()
+    user_repo = _UserRepoStub(active=False)
+
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock"),
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
+        mock_user_repo_cls.return_value = user_repo
+        with pytest.raises(HTTPException) as exc:
+            ticket_service.create_ticket_folio(
+                _good_payload(),
+                repository=ticket_repo,
+                catalog_repository=catalog_repo,
+            )
+
+    assert exc.value.status_code == 400
+    assert "assignee_inactive_at_write" in exc.value.detail
+    ticket_repo.create_with_generated_id.assert_not_called()
+
+
+def test_create_rejects_missing_assignee_with_404():
+    catalog_repo = _CatalogRepoStub()
+    catalog_repo.get_by_id.return_value = _active_catalog()
+    ticket_repo = _TicketRepoStub()
+    user_repo = _UserRepoStub(exists=False)
+
+    with (
+        patch("services.ticket_folio_service.acquire_user_lock"),
+        patch("services.ticket_folio_service.UserRepository") as mock_user_repo_cls,
+    ):
+        mock_user_repo_cls.return_value = user_repo
+        with pytest.raises(HTTPException) as exc:
+            ticket_service.create_ticket_folio(
+                _good_payload(),
+                repository=ticket_repo,
+                catalog_repository=catalog_repo,
+            )
+
+    assert exc.value.status_code == 404
+    assert "assignee_not_found" in exc.value.detail
+    ticket_repo.create_with_generated_id.assert_not_called()
+
+
+def test_create_surfaces_user_lock_timeout_as_409():
+    catalog_repo = _CatalogRepoStub()
+    catalog_repo.get_by_id.return_value = _active_catalog()
+    ticket_repo = _TicketRepoStub()
+
+    with (
+        patch(
+            "services.ticket_folio_service.acquire_user_lock",
+            side_effect=RuntimeError("user_lock_timeout"),
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        ticket_service.create_ticket_folio(
+            _good_payload(),
+            repository=ticket_repo,
+            catalog_repository=catalog_repo,
+        )
+
+    assert exc.value.status_code == 409
+    assert "user_lock_timeout" in exc.value.detail
+    ticket_repo.create_with_generated_id.assert_not_called()

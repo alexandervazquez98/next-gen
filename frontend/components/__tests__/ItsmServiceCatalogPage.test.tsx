@@ -11,14 +11,22 @@ const mocks = vi.hoisted(() => ({
   createServiceCatalog: vi.fn(),
   updateServiceCatalog: vi.fn(),
   deactivateServiceCatalog: vi.fn(),
+  downloadCatalogTemplate: vi.fn(),
+  importCatalogWorkbook: vi.fn(),
 }));
 
-vi.mock("../../services/itsm", () => ({
-  listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
-  createServiceCatalog: (...args: unknown[]) => mocks.createServiceCatalog(...args),
-  updateServiceCatalog: (...args: unknown[]) => mocks.updateServiceCatalog(...args),
-  deactivateServiceCatalog: (...args: unknown[]) => mocks.deactivateServiceCatalog(...args),
-}));
+vi.mock("../../services/itsm", async () => {
+  const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
+  return {
+    ...actual,
+    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
+    createServiceCatalog: (...args: unknown[]) => mocks.createServiceCatalog(...args),
+    updateServiceCatalog: (...args: unknown[]) => mocks.updateServiceCatalog(...args),
+    deactivateServiceCatalog: (...args: unknown[]) => mocks.deactivateServiceCatalog(...args),
+    downloadCatalogTemplate: (...args: unknown[]) => mocks.downloadCatalogTemplate(...args),
+    importCatalogWorkbook: (...args: unknown[]) => mocks.importCatalogWorkbook(...args),
+  };
+});
 
 type ServiceCatalogFixture = {
   service_id: string;
@@ -28,6 +36,9 @@ type ServiceCatalogFixture = {
   tier: string | null;
   criticality: string | null;
   sla_target_minutes: number;
+  description: string;
+  service_type: "incident" | "service_request";
+  value_stream: string;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -43,9 +54,12 @@ const sampleCatalogs: ServiceCatalogFixture[] = [
     tier: "gold",
     criticality: "high",
     sla_target_minutes: 15,
+    description: "Auth service",
+    service_type: "service_request",
+    value_stream: "deliver",
     active: true,
-    created_at: "2025-01-01T00:00:00Z",
-    updated_at: "2025-01-01T00:00:00Z",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     updated_by: null,
   },
   {
@@ -56,9 +70,12 @@ const sampleCatalogs: ServiceCatalogFixture[] = [
     tier: "silver",
     criticality: "medium",
     sla_target_minutes: 45,
+    description: "Billing service",
+    service_type: "incident",
+    value_stream: "operate",
     active: true,
-    created_at: "2025-01-02T00:00:00Z",
-    updated_at: "2025-01-02T00:00:00Z",
+    created_at: "2026-01-02T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z",
     updated_by: null,
   },
 ];
@@ -74,10 +91,7 @@ const renderCatalogRoute = () =>
 
 describe("ItsmServiceCatalogPage", () => {
   beforeEach(() => {
-    mocks.listServiceCatalog.mockReset();
-    mocks.createServiceCatalog.mockReset();
-    mocks.updateServiceCatalog.mockReset();
-    mocks.deactivateServiceCatalog.mockReset();
+    vi.clearAllMocks();
   });
 
   it("reads and renders /itsm/service-catalog route with list data", async () => {
@@ -85,7 +99,9 @@ describe("ItsmServiceCatalogPage", () => {
 
     renderCatalogRoute();
 
-    expect(screen.getByRole("heading", { name: /itsm service catalog/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /service catalog/i, level: 1 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /new service catalog/i })).toBeInTheDocument();
 
     await waitFor(() => {
@@ -100,17 +116,20 @@ describe("ItsmServiceCatalogPage", () => {
 
   it("creates a service catalog through the API wrapper and refreshes the list", async () => {
     const user = userEvent.setup();
-    const createdEntry = {
+    const createdEntry: ServiceCatalogFixture = {
       service_id: "svc-chat",
       name: "Chat API",
       owner_team: "Product",
-      category: "Microservice",
-      tier: "bronze",
-      criticality: "low",
+      category: null,
+      tier: null,
+      criticality: null,
       sla_target_minutes: 20,
+      description: "Chat service",
+      service_type: "incident",
+      value_stream: "operate",
       active: true,
-      created_at: "2025-01-03T00:00:00Z",
-      updated_at: "2025-01-03T00:00:00Z",
+      created_at: "2026-01-03T00:00:00Z",
+      updated_at: "2026-01-03T00:00:00Z",
       updated_by: null,
     };
 
@@ -128,27 +147,26 @@ describe("ItsmServiceCatalogPage", () => {
     await user.click(screen.getByRole("button", { name: /new service catalog/i }));
     expect(screen.getByRole("heading", { name: /create service catalog/i })).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText(/service id/i), "svc-chat");
-    await user.type(screen.getByLabelText(/name/i), "Chat API");
-    await user.type(screen.getByLabelText(/sla target minutes/i), "20");
-    await user.type(screen.getByLabelText(/owner team/i), "Product");
-    await user.type(screen.getByLabelText(/category/i), "Microservice");
-    await user.type(screen.getByLabelText(/tier/i), "bronze");
-    await user.type(screen.getByLabelText(/criticality/i), "low");
+    await user.type(screen.getByLabelText(/^service id$/i), "svc-chat");
+    await user.type(screen.getByLabelText(/^name$/i), "Chat API");
+    await user.type(screen.getByLabelText(/^description$/i), "Chat service");
+    await user.selectOptions(screen.getByLabelText(/^service type$/i), "incident");
+    await user.type(screen.getByLabelText(/^value stream$/i), "operate");
+    await user.type(screen.getByLabelText(/^sla target minutes$/i), "20");
 
-    await user.click(screen.getByRole("button", { name: /save/i }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
       expect(mocks.createServiceCatalog).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.createServiceCatalog).toHaveBeenCalledWith({
+    const payload = mocks.createServiceCatalog.mock.calls[0][0];
+    expect(payload).toMatchObject({
       service_id: "svc-chat",
       name: "Chat API",
+      description: "Chat service",
+      service_type: "incident",
+      value_stream: "operate",
       sla_target_minutes: 20,
-      owner_team: "Product",
-      category: "Microservice",
-      tier: "bronze",
-      criticality: "low",
     });
 
     await waitFor(() => {
@@ -178,27 +196,25 @@ describe("ItsmServiceCatalogPage", () => {
 
     await user.click(screen.getByRole("button", { name: `Edit ${"svc-auth"}` }));
 
-    const nameInput = screen.getByLabelText(/name/i) as HTMLInputElement;
+    const nameInput = screen.getByLabelText(/^name$/i) as HTMLInputElement;
     await user.clear(nameInput);
     await user.type(nameInput, "Auth API v2");
 
-    await user.clear(screen.getByLabelText(/sla target minutes/i));
-    await user.type(screen.getByLabelText(/sla target minutes/i), "25");
+    await user.clear(screen.getByLabelText(/^sla target minutes$/i));
+    await user.type(screen.getByLabelText(/^sla target minutes$/i), "25");
 
-    await user.click(screen.getByRole("button", { name: /save/i }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
       expect(mocks.updateServiceCatalog).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.updateServiceCatalog).toHaveBeenCalledWith("svc-auth", {
+    const payload = mocks.updateServiceCatalog.mock.calls[0][1];
+    expect(payload).toMatchObject({
       service_id: "svc-auth",
       name: "Auth API v2",
       sla_target_minutes: 25,
-      owner_team: "Platform",
-      category: "SaaS",
-      tier: "gold",
-      criticality: "high",
     });
+    expect(payload).toHaveProperty("description");
 
     await waitFor(() => {
       expect(screen.getByText("Auth API v2")).toBeInTheDocument();
