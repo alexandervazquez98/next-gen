@@ -69,9 +69,8 @@ def parse_catalog_workbook(
 ) -> list[dict]:
     """Parse a catalog workbook into normalized row DTOs.
 
-    Returns the list of normalized rows on success.
-    Raises ``ImportValidationError`` if any header or row fails validation —
-    the caller MUST treat that as zero-writes.
+    Raises ``ImportValidationError`` on any validation failure — the caller
+    MUST treat that as zero-writes.
     """
 
     guard_xlsx_payload(payload, max_size_bytes=max_size_bytes)

@@ -192,7 +192,7 @@ Dependencies: Work Unit 4 complete.
 - **REFACTOR evidence**:
   - Normalize error constructors and payload contract helper shared by ticket create/import.
 
-## Work Unit 6 — backend: atomic XLSX catalog import stack (template, parser, validator, transaction)
+## [x] Work Unit 6 — backend: atomic XLSX catalog import stack (template, parser, validator, transaction)
 Dependencies: Work Unit 4 and Work Unit 5 complete.
 
 - **Target areas**:
@@ -219,7 +219,7 @@ Dependencies: Work Unit 4 and Work Unit 5 complete.
 - **REFACTOR evidence**:
   - Extract shared workbook helpers usable by ticket import package.
 
-## Work Unit 7 — backend: atomic XLSX ticket import with reference sheets + lock-aware full-batch behavior
+## [x] Work Unit 7 — backend: atomic XLSX ticket import with reference sheets + lock-aware full-batch behavior
 Dependencies: Work Unit 3, Work Unit 5, and Work Unit 6 complete.
 
 - **Target areas**:

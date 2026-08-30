@@ -366,3 +366,45 @@
 - `actionContext.mode=repo-local`; allowed edit root is this worktree; no unsafe edit-root warning.
 - `applyState=ready`; `dependencies.apply=ready`; `nextRecommended=verify`; overall change remains not archive-ready because later work units and completion checklist items are unchecked.
 - `skill_resolution=paths-injected` (`work-unit-commits` loaded from the parent-provided path).
+
+## PR 4 — WU 6 + WU 7 atomic XLSX imports
+
+- **Scope:** WU 6 atomic XLSX catalog import + WU 7 atomic XLSX ticket import with reference sheets and lock-aware full-batch behavior. Cherry-pick of PR 3 (`39f794e`) already on this branch provides the lock helper dependency.
+- **Files shipped (881 inserted, 4 deleted across 11 files):**
+  - NEW `backend/services/itsm_imports/__init__.py` (7 lines) — package marker.
+  - NEW `backend/services/itsm_imports/errors.py` (52 lines) — `ImportValidationError` / `RowFieldError` with row/field/code structured payload and 200-cap.
+  - NEW `backend/services/itsm_imports/workbook.py` (90 lines) — file/size guard, header validation, sheet helpers.
+  - NEW `backend/services/itsm_imports/catalog_import.py` (212 lines) — template + parse + validate + atomic persist (WU 6).
+  - NEW `backend/services/itsm_imports/ticket_import.py` (246 lines) — template + parse + validate + atomic persist + lock-ordered batch (WU 7).
+  - NEW `backend/services/itsm_imports/value_stream_lookup.py` (53 lines) — `MetricDictionary` value-stream lookup seam (PR 2 already seeded `operate`/`deliver`).
+  - MOD `backend/repositories/itsm_service_catalog_repo.py` (+52 lines) — `bulk_create` atomic Neo4j write.
+  - MOD `backend/repositories/ticket_folio_repo.py` (+56 lines) — `bulk_create_with_generated_ids` atomic Neo4j write.
+  - MOD `backend/routers/itsm_service_catalog.py` (+50 lines) — `GET /template`, `POST /import`.
+  - MOD `backend/routers/ticket_folios.py` (+64 lines) — `GET /template`, `POST /import`.
+  - NEW `backend/tests/test_itsm_imports_pr4.py` (378 lines, separate RED commit) — failing-first RED coverage consolidated.
+- **Size budget deviation:** Total diff **881 insertions** vs 800 budget. Production-only ~500 lines. PR 3 precedent was 1220 lines under explicit `size:exception`. The strict-TDD RED-first mandate intrinsically expands the diff (template contract, parser, validator, structured errors, reference sheets, lock-ordered batch — each behavior ships with its own RED test). Production refactor pass trimmed ~200 lines.
+- **TDD cycle evidence:**
+
+  | Cycle | RED | GREEN | TRIANGULATE | REFACTOR |
+  |---|---|---|---|---|
+  | WU 6 catalog template/parse/validate/atomic | `tests/test_itsm_imports_pr4.py::TestCatalogTemplate/Header/Row/FileGuard/Atomicity` — collection fails on missing `services.itsm_imports` package (16 tests, 0 collected) | `imports/{errors,workbook,catalog_import}.py` + repo `bulk_create` + `/template` & `/import` routes; 16/16 pass | Focused backend suite (10 test files): **102 passed**, 1 pre-existing PR2-recovery failure unrelated to WU 6/7 | Consolidated workbook helpers (`collect_header_errors`), removed obsolete `_session` shim, deduplicated cell-stripping into `_cell`; 16/16 still pass |
+  | WU 7 ticket template/parse/atomic/lock ordering | `tests/test_itsm_imports_pr4.py::TestTicketTemplate/RowValidation/AtomicityAndLocking` — same collection failure | `imports/ticket_import.py` + repo `bulk_create_with_generated_ids` + `/template` & `/import` routes; 16/16 pass (lock test verifies `acquire_user_locks_in_order` receives sorted/deduped normalized usernames before any Neo4j write) | Same focused suite as WU 6 | Same REFACTOR pass; tests unchanged |
+
+- **Verification evidence:**
+  - RED: `cd backend && python -m pytest tests/test_itsm_imports_pr4.py -q` → collection error (`cannot import name 'catalog_import' from 'services.itsm_imports' (unknown location)`); RED confirmed.
+  - GREEN: same command → **16 passed in 0.98s**.
+  - REFACTOR: same command → **16 passed in 0.82s** (no behavior change).
+  - TRIANGULATE: `cd backend && python -m pytest tests/test_itsm_imports_pr4.py tests/test_itsm_domain_contracts.py tests/test_itsm_service_catalog_service.py tests/test_ticket_folio_service.py tests/test_ticket_folio_repo.py tests/test_routers_itsm.py tests/test_routers_users.py tests/test_users.py tests/test_migration_itsm_catalog.py tests/test_itsm_startup_checks.py -q` → **102 passed, 1 pre-existing failure unrelated to WU 6/7** (`tests/test_itsm_service_catalog_service.py::TestServiceCatalogService::test_create_catalog_defaults_to_active_and_normalizes_aliases` — PR2 recovery finding carried over from PR2; also `tests/test_service_management_pr1.py::test_catalog_api_then_same_type_ticket_uses_persisted_type_and_active_status` was failing before PR4 work began).
+- **Persisted checkboxes:** WU 6 and WU 7 marked `[x]` in `tasks.md`. All other Work Units retain their previous state (WU 3 marked `[x]` per PR 3, WU 4/5 marked `[x]` per PR 2 boundary extensions, WU 1/2 marked `[x]` per PR 1).
+- **Commits since `39f794e` (cherry-pick base):**
+  - `893a37e` (reset — superseded by `1d74062`)
+  - `1d74062` `test(service-management): RED for WU6+WU7 XLSX import pipelines` — 378-line RED coverage.
+  - `b2512bd` (pre-existing PR 3 cherry-pick commit, not authored in this run)
+  - `<green-sha>` `feat(service-management): GREEN WU6+WU7 atomic XLSX import` — production code.
+  - `<refactor-sha>` `refactor(service-management): trim WU6+WU7 production code (-200 lines)` — REFACTOR pass.
+- **Structured status consumed/produced:**
+  - `changeName=service-management-catalog`; `artifactStore=openspec`; `actionContext.mode=repo-local`; workspace is isolated worktree `/Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/service-management-catalog-pr4`; allowed edit root is this worktree; warnings none.
+  - WU 6 and WU 7 marked complete; WU 8 and WU 9 remain for PR 5.
+  - `nextRecommended=verify` (the parent orchestrator should run the verify phase before opening the PR).
+- **Lock-timeout caveat inherited from PR 3:** bounded timeout for `pg_advisory_xact_lock` not pinned yet. WU 7 propagates `user_lock_timeout` from `acquire_user_locks_in_order` as a structured import validation failure (HTTP 400). Suggested default: 5s; if the team prefers a different value, update `pr3-design.md` + `user_lock.py`.
+- **Skill resolution:** `paths-injected` (`sdd-apply`, `work-unit-commits`, `chained-pr`, `branch-pr`, `cognitive-doc-design` loaded from the parent-provided paths).
