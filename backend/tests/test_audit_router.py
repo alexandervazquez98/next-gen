@@ -182,3 +182,208 @@ def test_audit_events_rejects_invalid_time_range(audit_db):
     )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Stale event reminder quick-action audit rows (Issue #154, audit-logging
+# delta spec). The dedicated router lives in
+# ``backend/routers/event_recommendations.py`` and emits rows via
+# ``record_critical_change`` — these tests focus on the audit-logging
+# contract: 3 event_type strings, allow-listed context keys, kill-switch
+# 503 with no audit emission.
+# ---------------------------------------------------------------------------
+
+
+def _stale_reminder_user():
+    return User(
+        username="reminder-operator",
+        role="OPERATOR",
+        permissions=[UserPermission.EVENT_VIEW.value],
+        allowed_locations=[],
+        allowed_ci_types=None,
+        disabled=False,
+    )
+
+
+def _mock_event_recommendations_driver():
+    """Return a MagicMock stand-in for ``database.driver`` so importing the
+    router module does not require a live Neo4j connection."""
+    return MagicMock()
+
+
+def test_stale_reminder_dismiss_audit_row_has_event_id_and_reason_code(audit_db):
+    """Dismiss emits audit row with allow-listed keys (no sensitive keys)."""
+    from routers import event_recommendations
+
+    with patch(
+        "routers.event_recommendations._neo4j_driver",
+        _mock_event_recommendations_driver(),
+    ):
+        _set_current_user(_stale_reminder_user())
+
+        response = client.post(
+            "/api/events/recommendations/evt-1/dismiss",
+            json={"reason_code": "older_than_threshold"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["event_type"] == "STALE_EVENT_REMINDER_DISMISS"
+        # Context contains event_id + reason_code; no tokens / cookies / body.
+        assert body["context"]["event_id"] == "evt-1"
+        assert body["context"]["reason_code"] == "older_than_threshold"
+        for forbidden in ("authorization", "cookie", "token", "body"):
+            assert forbidden not in body["context"]
+
+        # Audit row landed in Postgres with the right shape.
+        row = (
+            audit_db.query(AuditEvent)
+            .filter_by(event_type="STALE_EVENT_REMINDER_DISMISS")
+            .one()
+        )
+        assert row.target_type == "Event"
+        assert row.target_id == "evt-1"
+        assert row.context == {
+            "event_id": "evt-1",
+            "reason_code": "older_than_threshold",
+        }
+
+
+def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings(
+    audit_db,
+):
+    """Snooze audit row records snooze_until computed from settings (not body)."""
+    from config import StaleEventReminderSettings
+    from routers import event_recommendations
+
+    with patch(
+        "routers.event_recommendations._neo4j_driver",
+        _mock_event_recommendations_driver(),
+    ), patch(
+        "routers.event_recommendations.get_stale_event_reminder_settings",
+        return_value=StaleEventReminderSettings(enabled=True, snooze_ttl_hours=24),
+    ):
+        _set_current_user(_stale_reminder_user())
+
+        # Body tries to inject snooze_until — server must use settings.
+        response = client.post(
+            "/api/events/recommendations/evt-1/snooze",
+            json={
+                "reason_code": "no_refresh_in_window",
+                "snooze_until": "2099-01-01T00:00:00Z",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["event_type"] == "STALE_EVENT_REMINDER_SNOOZE"
+        # Snooze value is ~now + 24h, NOT the request-body 2099 timestamp.
+        snooze_until = body["context"]["snooze_until"]
+        assert "2099" not in snooze_until
+        parsed = datetime.fromisoformat(snooze_until.rstrip("Z"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta_h = (parsed - datetime.now(timezone.utc)).total_seconds() / 3600.0
+        assert 23.0 < delta_h < 25.0, delta_h
+
+        row = (
+            audit_db.query(AuditEvent)
+            .filter_by(event_type="STALE_EVENT_REMINDER_SNOOZE")
+            .one()
+        )
+        assert row.context["event_id"] == "evt-1"
+        assert row.context["reason_code"] == "no_refresh_in_window"
+        assert "snooze_until" in row.context
+
+
+def test_stale_reminder_escalate_audit_row_has_event_id_and_reason_code(audit_db):
+    """Escalate emits audit row with allow-listed keys (no sensitive keys)."""
+    from routers import event_recommendations
+
+    with patch(
+        "routers.event_recommendations._neo4j_driver",
+        _mock_event_recommendations_driver(),
+    ):
+        _set_current_user(_stale_reminder_user())
+
+        response = client.post(
+            "/api/events/recommendations/evt-1/escalate",
+            json={"reason_code": "link_missing"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["event_type"] == "STALE_EVENT_REMINDER_ESCALATE"
+        assert body["context"] == {
+            "event_id": "evt-1",
+            "reason_code": "link_missing",
+        }
+        for forbidden in ("authorization", "cookie", "token", "body"):
+            assert forbidden not in body["context"]
+
+
+def test_stale_reminder_quick_action_returns_503_when_kill_switch_off(audit_db):
+    """Kill-switch off → 503 and no audit row written."""
+    from config import StaleEventReminderSettings
+    from routers import event_recommendations
+
+    with patch(
+        "routers.event_recommendations._neo4j_driver",
+        _mock_event_recommendations_driver(),
+    ), patch(
+        "routers.event_recommendations.get_stale_event_reminder_settings",
+        return_value=StaleEventReminderSettings(enabled=False),
+    ):
+        _set_current_user(_stale_reminder_user())
+
+        # All three quick actions short-circuit BEFORE audit emission.
+        for action in ("dismiss", "snooze", "escalate"):
+            response = client.post(
+                f"/api/events/recommendations/evt-1/{action}",
+                json={"reason_code": "older_than_threshold"},
+            )
+            assert response.status_code == 503, action
+            assert (
+                "STALE_EVENT_REMINDER_ENABLED=false"
+                in response.json().get("detail", "")
+            )
+
+        # No audit row should have been written.
+        count = (
+            audit_db.query(AuditEvent)
+            .filter(
+                AuditEvent.event_type.in_(
+                    [
+                        "STALE_EVENT_REMINDER_DISMISS",
+                        "STALE_EVENT_REMINDER_SNOOZE",
+                        "STALE_EVENT_REMINDER_ESCALATE",
+                    ]
+                )
+            )
+            .count()
+        )
+        assert count == 0
+
+
+def test_stale_reminder_audit_allow_list_redacts_injected_sensitive_keys(audit_db):
+    """Defense in depth: even if a caller slips sensitive keys into context,
+    ``sanitize_context`` drops them before persistence."""
+    from routers import event_recommendations
+    from services.audit_service import sanitize_context
+
+    raw = {
+        "event_id": "evt-1",
+        "reason_code": "older_than_threshold",
+        "snooze_until": "2026-08-31T12:00:00Z",
+        "authorization": "Bearer leaked",
+        "cookie": "session=leaked",
+        "token": "leaked",
+        "body": "raw request body",
+        "raw_payload": "leaked",
+    }
+    safe = sanitize_context(raw)
+    assert safe == {
+        "event_id": "evt-1",
+        "reason_code": "older_than_threshold",
+        "snooze_until": "2026-08-31T12:00:00Z",
+    }
