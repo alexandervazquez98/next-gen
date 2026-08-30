@@ -45,12 +45,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Router + Isolation (WU4)
 
-- [ ] 3.1 RED — `test_mqtt_mapping_service.py`: `source_topic`, >256-char strings, `body`/`raw_body` stripped/truncated.
-- [ ] 3.2 GREEN — `routers/mqtt.py` 5 mutation endpoints: thread `Depends(get_pg_db)` + `Request` into service calls as kw-only kwargs.
-- [ ] 3.3 GREEN — Stub `record_critical_change` to raise — mutation returns repo result / raises `HTTPException`. Spec: *Mutation succeeds when emission fails*.
+- [x] 3.1 RED — `test_mqtt_mapping_service.py`: `source_topic`, >256-char strings, `body`/`raw_body` stripped/truncated.
+- [x] 3.2 GREEN — `routers/mqtt.py` 5 mutation endpoints: thread `Depends(get_pg_db)` + `Request` into service calls as kw-only kwargs.
+- [x] 3.3 GREEN — Stub `record_critical_change` to raise — mutation returns repo result / raises `HTTPException`. Spec: *Mutation succeeds when emission fails*.
 
 ## Phase 4: Final Verification
 
-- [ ] 4.1 `cd backend && python -m pytest tests/test_mqtt_mapping_service.py tests/test_audit_service.py tests/test_mqtt_router.py -v` all green.
-- [ ] 4.2 `cd backend && ruff check . && mypy services/audit_service.py services/mqtt_mapping_service.py routers/mqtt.py` clean.
-- [ ] 4.3 FastAPI TestClient: `GET /api/audit/events?target_type=mqtt_mapping&target_id=<id>` returns history ordered by `created_at`. Spec: *Mapping events are queryable by target filter*.
+- [x] 4.1 `cd backend && python -m pytest tests/test_mqtt_mapping_service.py tests/test_audit_service.py tests/test_mqtt_router.py -v` all green.
+- [x] 4.2 `cd backend && ruff check . && mypy services/audit_service.py services/mqtt_mapping_service.py routers/mqtt.py` clean.
+- [x] 4.3 FastAPI TestClient: `GET /api/audit/events?target_type=mqtt_mapping&target_id=<id>` returns history ordered by `created_at`. Spec: *Mapping events are queryable by target filter*.

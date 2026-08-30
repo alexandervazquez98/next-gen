@@ -182,3 +182,55 @@ def test_audit_events_rejects_invalid_time_range(audit_db):
     )
 
     assert response.status_code == 422
+
+
+def test_audit_events_filter_by_target_id_returns_only_that_mapping(audit_db):
+    """Issue #386 — a mapping's audit history must be retrievable by target_id."""
+    # `created_at` is stored as naive UTC by audit_service, so build it that way here.
+    now = datetime(2026, 6, 7, 12, 0)
+    _add_event(
+        audit_db,
+        event_type="MQTT_MAPPING_CREATE",
+        outcome="SUCCESS",
+        actor_username="operator",
+        target_type="mqtt_mapping",
+        target_id="map-1",
+        created_at=now - timedelta(minutes=2),
+    )
+    _add_event(
+        audit_db,
+        event_type="MQTT_MAPPING_APPROVE",
+        outcome="SUCCESS",
+        actor_username="operator",
+        target_type="mqtt_mapping",
+        target_id="map-1",
+        created_at=now - timedelta(minutes=1),
+    )
+    _add_event(
+        audit_db,
+        event_type="MQTT_MAPPING_CREATE",
+        outcome="SUCCESS",
+        actor_username="operator",
+        target_type="mqtt_mapping",
+        target_id="map-2",
+        created_at=now,
+    )
+    _set_current_user(_user(permissions=[UserPermission.AUDIT_VIEW]))
+
+    response = client.get(
+        "/api/audit/events",
+        params={
+            "target_type": "mqtt_mapping",
+            "target_id": "map-1",
+            "sort": "created_at_asc",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert [item["event_type"] for item in payload["items"]] == [
+        "MQTT_MAPPING_CREATE",
+        "MQTT_MAPPING_APPROVE",
+    ]
+    assert {item["target_id"] for item in payload["items"]} == {"map-1"}

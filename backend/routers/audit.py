@@ -38,6 +38,7 @@ async def list_audit_events(
     event_type: str | None = Query(None, description="Exact audit event type"),
     outcome: AuditOutcome | None = Query(None, description="Audit event outcome"),
     target_type: str | None = Query(None, description="Exact audit target type"),
+    target_id: str | None = Query(None, description="Exact audit target id"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     sort: AuditSort = Query("created_at_desc"),
@@ -67,6 +68,8 @@ async def list_audit_events(
         query = query.filter(AuditEvent.outcome == outcome)
     if target_type:
         query = query.filter(AuditEvent.target_type == target_type)
+    if target_id:
+        query = query.filter(AuditEvent.target_id == target_id)
 
     total = query.count()
     if sort == "created_at_asc":

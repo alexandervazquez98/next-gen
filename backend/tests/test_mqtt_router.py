@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from models.user import User, UserPermission
+from postgres_db import get_pg_db
 from routers import mqtt
 from services.mqtt_raw_reading_service import MqttRawReadingService
+
+
+class _FakeSession:
+    """Stands in for the Postgres audit session injected by `get_pg_db`."""
 
 
 class _StatusService:
@@ -70,6 +75,10 @@ class _MappingService:
     def __init__(self):
         self.created = None
         self.thresholds = None
+        self.audit_kwargs = {}
+
+    def _capture(self, action, db=None, request=None):
+        self.audit_kwargs[action] = {"db": db, "request": request}
 
     def list_mappings(self, current_user, status_filter=None):
         return [
@@ -84,7 +93,8 @@ class _MappingService:
             }
         ]
 
-    def create_mapping(self, payload, current_user):
+    def create_mapping(self, payload, current_user, *, db=None, request=None):
+        self._capture("create", db, request)
         self.created = payload
         return {
             "id": "map-1",
@@ -96,19 +106,23 @@ class _MappingService:
             "status": "DRAFT",
         }
 
-    def update_mapping(self, mapping_id, payload, current_user):
+    def update_mapping(self, mapping_id, payload, current_user, *, db=None, request=None):
+        self._capture("update", db, request)
         return {"id": mapping_id, "status": "DRAFT"}
 
-    def approve_mapping(self, mapping_id, current_user):
+    def approve_mapping(self, mapping_id, current_user, *, db=None, request=None):
+        self._capture("approve", db, request)
         return {"id": mapping_id, "status": "APPROVED"}
 
-    def revoke_mapping(self, mapping_id, current_user):
+    def revoke_mapping(self, mapping_id, current_user, *, db=None, request=None):
+        self._capture("revoke", db, request)
         return {"id": mapping_id, "status": "REVOKED"}
 
     def get_thresholds(self, mapping_id, current_user):
         return {"operator": ">=", "warning": 70, "critical": 90}
 
-    def update_thresholds(self, mapping_id, thresholds, current_user):
+    def update_thresholds(self, mapping_id, thresholds, current_user, *, db=None, request=None):
+        self._capture("thresholds", db, request)
         self.thresholds = thresholds
         return {
             "id": mapping_id,
@@ -123,7 +137,7 @@ def _user(permissions=None):
     return User(username="operator", role="OPERATOR", permissions=permissions or [])
 
 
-def _client(user=None, mapping_service=None, status_service=None):
+def _client(user=None, mapping_service=None, status_service=None, db=None):
     app = FastAPI()
     app.include_router(mqtt.router, prefix="/api")
     app.dependency_overrides[mqtt._current_user] = lambda: user or _user(
@@ -131,6 +145,7 @@ def _client(user=None, mapping_service=None, status_service=None):
     )
     app.dependency_overrides[mqtt._raw_service] = lambda: _RawService()
     app.dependency_overrides[mqtt._mapping_service] = lambda: mapping_service or _MappingService()
+    app.dependency_overrides[get_pg_db] = lambda: db if db is not None else _FakeSession()
     if status_service is not None:
         app.dependency_overrides[mqtt._runtime_status_service] = lambda: status_service
     return TestClient(app)
@@ -242,3 +257,38 @@ def test_status_endpoint_exposes_bridge_counters():
     assert payload["unmapped_skips_total"] == 2
     assert payload["failed_writes_total"] == 1
     assert payload["service_name"] == "mqtt-subscriber"
+
+
+def test_mapping_mutations_thread_audit_session_and_request_into_service():
+    """Issue #386 — the service can only audit if the router hands it db + request."""
+    mapping_service = _MappingService()
+    client = _client(mapping_service=mapping_service)
+
+    client.post(
+        "/api/mqtt/mappings",
+        json={
+            "source_device_id": "rtu-1",
+            "source_metric_id": "rtu-1/temp",
+            "source_metric_name": "temp",
+            "target_ci_id": "ci-1",
+            "target_metric_def_id": "temperature",
+        },
+    )
+    client.put("/api/mqtt/mappings/map-1", json={"source_metric_name": "temperature"})
+    client.post("/api/mqtt/mappings/map-1/approve")
+    client.post("/api/mqtt/mappings/map-1/revoke")
+    client.put(
+        "/api/mqtt/mappings/map-1/thresholds",
+        json={"operator": ">=", "warning": 75, "critical": 95},
+    )
+
+    assert set(mapping_service.audit_kwargs) == {
+        "create",
+        "update",
+        "approve",
+        "revoke",
+        "thresholds",
+    }
+    for action, captured in mapping_service.audit_kwargs.items():
+        assert isinstance(captured["db"], _FakeSession), f"{action} did not receive an audit session"
+        assert isinstance(captured["request"], Request), f"{action} did not receive the request"
