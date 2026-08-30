@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 ServiceCatalogId = str
-TicketId = str
+TicketId = int
 
 
 TICKET_STATUS_ORDER = (
@@ -40,8 +40,8 @@ class TicketStatus:
 
 
 class TicketFolioType:
-    REQUEST = "request"
     INCIDENT = "incident"
+    SERVICE_REQUEST = "service_request"
 
 
 class ServiceCatalogCreate(BaseModel):
@@ -58,7 +58,10 @@ class ServiceCatalogCreate(BaseModel):
     category: str | None = None
     tier: str | None = None
     criticality: str | None = None
-    sla_target_minutes: int = Field(ge=0)
+    sla_target_minutes: int = Field(..., ge=0)
+    description: str
+    service_type: str
+    value_stream: str
     active: bool = True
     updated_by: str | None = None
 
@@ -81,13 +84,27 @@ class ServiceCatalogCreate(BaseModel):
     def _validate_name(cls, value: str) -> str:
         if not str(value).strip():
             raise ValueError("name cannot be empty")
-        return value
+        return value.strip()
+
+    @field_validator("description", "value_stream")
+    @classmethod
+    def _validate_required_text(cls, value: str, info) -> str:
+        if not str(value).strip():
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return value.strip()
 
     @field_validator("sla_target_minutes")
     @classmethod
     def _validate_sla_target_minutes(cls, value: int) -> int:
         if value < 0:
             raise ValueError("sla_target_minutes must be >= 0")
+        return value
+
+    @field_validator("service_type")
+    @classmethod
+    def _validate_service_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("service_type must be either 'incident' or 'service_request'")
         return value
 
     @field_validator("sla_minutes")
@@ -134,9 +151,6 @@ class ServiceCatalogCreate(BaseModel):
                     "sla_target_minutes and sla_minutes must match when both are provided."
                 )
 
-        if values.get("sla_target_minutes") is None:
-            values["sla_target_minutes"] = 0
-
         return values
 
     @model_validator(mode="after")
@@ -164,6 +178,9 @@ class ServiceCatalogUpdate(BaseModel):
     tier: str | None = None
     criticality: str | None = None
     sla_target_minutes: int | None = None
+    description: str | None = None
+    service_type: str | None = None
+    value_stream: str | None = None
     active: bool | None = None
     updated_by: str | None = None
 
@@ -172,22 +189,25 @@ class ServiceCatalogUpdate(BaseModel):
     service_tier: str | None = None
     sla_minutes: int | None = None
 
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, value: str | None) -> str:
+        if value is None or not value.strip():
+            raise ValueError("description cannot be empty")
+        return value.strip()
+
     @field_validator("sla_target_minutes")
     @classmethod
-    def _validate_sla_target_minutes(cls, value: int | None) -> int | None:
-        if value is None:
-            return value
-        if value < 0:
-            raise ValueError("sla_target_minutes must be >= 0")
+    def _validate_sla_target_minutes(cls, value: int | None) -> int:
+        if value is None or value < 0:
+            raise ValueError("sla_target_minutes must be non-null and >= 0")
         return value
 
     @field_validator("sla_minutes")
     @classmethod
-    def _validate_legacy_sla_minutes(cls, value: int | None) -> int | None:
-        if value is None:
-            return value
-        if value < 0:
-            raise ValueError("sla_minutes must be >= 0")
+    def _validate_legacy_sla_minutes(cls, value: int | None) -> int:
+        if value is None or value < 0:
+            raise ValueError("sla_minutes must be non-null and >= 0")
         return value
 
     @model_validator(mode="before")
@@ -230,6 +250,13 @@ class ServiceCatalogUpdate(BaseModel):
             self.sla_minutes = self.sla_target_minutes
         return self
 
+    @field_validator("service_type")
+    @classmethod
+    def _validate_service_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("service_type must be either 'incident' or 'service_request'")
+        return value
+
 
 class ServiceCatalogResponse(ServiceCatalogCreate):
     """Response contract for ServiceCatalog domain reads."""
@@ -238,13 +265,20 @@ class ServiceCatalogResponse(ServiceCatalogCreate):
 
 
 class TicketFolioCreate(BaseModel):
-    """Input contract for creating a ticket/folio."""
+    """Input contract for creating a ticket; the server allocates its ID."""
 
-    ticket_id: str
+    model_config = {"extra": "forbid"}
+
     type: str
     title: str
     description: str | None = None
-    service_catalog_id: str | None = None
+    service_catalog_id: str
+    assignee_username: str  # PR 3 WU3 — required, exactly one
+    # PR 3 WU3 — snapshot fields populated by the service after the user
+    # lookup while holding the per-user advisory lock. They are NOT part of
+    # the wire contract; the service sets them via ``model_copy``.
+    assignee_display_name: str | None = None
+    assignee_active_at_assignment: bool | None = None
     status: str = TicketStatus.OPEN
     archived: bool = False
     closed_reason: str | None = None
@@ -255,8 +289,8 @@ class TicketFolioCreate(BaseModel):
     @field_validator("type")
     @classmethod
     def _validate_type(cls, value: str) -> str:
-        if value not in (TicketFolioType.REQUEST, TicketFolioType.INCIDENT):
-            raise ValueError("type must be either 'request' or 'incident'")
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("type must be either 'incident' or 'service_request'")
         return value
 
     @field_validator("title")
@@ -265,6 +299,14 @@ class TicketFolioCreate(BaseModel):
         if not str(value).strip():
             raise ValueError("title cannot be empty")
         return value
+
+    @field_validator("assignee_username")
+    @classmethod
+    def _validate_assignee(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("assignee_username cannot be empty")
+        return normalized
 
     @field_validator("status")
     @classmethod
@@ -277,9 +319,34 @@ class TicketFolioCreate(BaseModel):
     def _normalize_defaults(self):
         if self.status != TicketStatus.OPEN:
             raise ValueError("New folios must start as 'open'")
-        if self.ticket_id is None or not str(self.ticket_id).strip():
-            raise ValueError("ticket_id is required")
         return self
+
+
+class TicketFolioResponse(BaseModel):
+    """Response contract exposing the server-generated numeric ticket ID."""
+
+    ticket_id: int
+    type: str
+    title: str
+    description: str | None = None
+    service_catalog_id: str | None = None
+    assignee_username: str | None = None  # PR 3 WU3 — snapshot at create time
+    assignee_display_name: str | None = None  # PR 3 WU3 — snapshot at create time
+    assignee_active_at_assignment: bool | None = None  # PR 3 WU3 — True at create time
+    assignee_currently_active: bool | None = None  # PR 3 WU3 — read-time recompute
+    status: str = TicketStatus.OPEN
+    archived: bool = False
+    closed_reason: str | None = None
+    updated_by: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("type")
+    @classmethod
+    def _validate_type(cls, value: str) -> str:
+        if value not in (TicketFolioType.INCIDENT, TicketFolioType.SERVICE_REQUEST):
+            raise ValueError("type must be either 'incident' or 'service_request'")
+        return value
 
 
 class TicketFolioUpdate(BaseModel):

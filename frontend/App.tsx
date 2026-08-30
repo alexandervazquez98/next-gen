@@ -138,8 +138,8 @@ const MainLayout: React.FC = () => {
           <NavItem to="/network" icon="hub" label="Network Topology" />
           {(hasPermission("ITSM_VIEW") || hasPermission("ADMIN")) && (
             <>
-              <NavItem to="/itsm/service-catalog" icon="support_agent" label="ITSM Catalog" />
-              <NavItem to="/itsm/tickets" icon="confirmation_number" label="ITSM Tickets" />
+              <NavItem to="/itsm/service-catalog" icon="support_agent" label="Service Catalog" />
+              <NavItem to="/itsm/tickets" icon="confirmation_number" label="Service Management" />
             </>
           )}
 

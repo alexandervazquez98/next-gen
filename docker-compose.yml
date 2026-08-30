@@ -85,6 +85,14 @@ services:
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
       - DISABLE_BACKEND_COLLECTOR=true
       - COOKIE_DOMAIN=${COOKIE_DOMAIN}
+      # PR 5 E2E journey (frontend/test/e2e/service-management-pr5.spec.ts)
+      # logs in as admin/admin against the freshly seeded smoke stack.
+      # Without these, backend/seed_admin.py generates a random password
+      # (printed to logs but inaccessible to Playwright) on each startup,
+      # so the journey would 404 on /auth/login. Smoke workflow materializes
+      # .env from .env.example with admin/admin so this round-trips.
+      - ADMIN_DEFAULT_USERNAME=${ADMIN_DEFAULT_USERNAME:-admin}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin}
       - LM_STUDIO_ENABLED=${LM_STUDIO_ENABLED:-false}
       - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}

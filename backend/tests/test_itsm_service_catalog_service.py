@@ -33,6 +33,8 @@ def _sample_catalog_record() -> dict:
         "service_tier": "Gold",
         "criticality": "High",
         "sla_target_minutes": 60,
+        "description": "Operational platform support",
+        "value_stream": "operate",  # noqa: F601
         "sla_minutes": 60,
         "active": True,
         "created_at": "2026-01-01T00:00:00",
@@ -68,15 +70,25 @@ class TestServiceCatalogService:
         repository = _CatalogRepositoryStub()
         repository.upsert.side_effect = lambda payload: payload.model_dump()
 
+        lookup = MagicMock()
+        lookup.is_active.return_value = True
+
         created = service_catalog_service.create_service_catalog(
             {
                 "id": "svc-legacy",
                 "name": "Platform Core",
                 "service_tier": "Silver",
                 "sla_minutes": 45,
+                "description": "Platform incident support",
+                "value_stream": "operate",  # noqa: F601
+                "service_type": "incident",
+                "sla_target_minutes": 45,
+                "description": "Network incident support",  # noqa: F601
+                "value_stream": "operate",  # noqa: F601
             },
             actor="admin",
             repository=repository,
+            value_stream_lookup=lookup,
         )
 
         assert created["service_id"] == "svc-legacy"
@@ -188,4 +200,35 @@ class TestServiceCatalogService:
 
         assert exc.value.status_code == 400
         assert "service_id" in exc.value.detail.lower()
+        repository.update.assert_not_called()
+
+    def test_update_catalog_accepts_unchanged_service_type_with_mutable_fields(self):
+        repository = _CatalogRepositoryStub()
+        repository.get_by_id.return_value = {**_sample_catalog_record(), "service_type": "incident"}
+        repository.update.return_value = {**_sample_catalog_record(), "name": "Updated"}
+
+        result = service_catalog_service.update_service_catalog(
+            "svc-001",
+            {"service_type": "incident", "name": "Updated"},
+            repository=repository,
+        )
+
+        assert result["name"] == "Updated"
+        update_payload = repository.update.call_args.args[1]
+        assert update_payload.service_type is None
+        assert update_payload.name == "Updated"
+
+    def test_update_catalog_rejects_changed_service_type_with_controlled_error(self):
+        repository = _CatalogRepositoryStub()
+        repository.get_by_id.return_value = {**_sample_catalog_record(), "service_type": "incident"}
+
+        with pytest.raises(HTTPException) as exc:
+            service_catalog_service.update_service_catalog(
+                "svc-001",
+                {"service_type": "service_request", "name": "Updated"},
+                repository=repository,
+            )
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "service_type is immutable after catalog creation"
         repository.update.assert_not_called()
