@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.16.0] — 2026-08-30
 
 ### Added
 
@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Catalog and ticket import UX with structured error rendering and template download.
     - User deactivate button in the user manager with confirm + idempotent 404/409 handling.
   - **E2E contract** (`frontend/test/e2e/service-management-pr5.spec.ts`): bearer-auth round-trip against `/api/itsm/service-catalog`, `/api/itsm/tickets`, `/api/users/`, and a 4xx assertion on the XLSX import parser. Backend integration tests cover the full write-path.
+
+### Documentation
+
+- **Hashtext triplet collision rate investigation (#336, PR #438)** — research-only, no production code change. Ships `backend/scripts/research_hashtext_collisions.py` (faithful Python port of PostgreSQL's `hashtext()` Jekins lookup3 hashlittle2 with PG init constants + synthetic CI/metric/event-type generator + collision analyzer + JSON/markdown report renderer) and `docs/research-hashtext-collisions.md` (full methodology, results, bucket distribution, recommendation). 12 new tests including a live-PG cross-check gated by `pytest.mark.integration` + `DATABASE_URL`. Verdict at the lock-key cardinality observed in production (≤1k triplets) sits well below the 5% collision threshold — no follow-up required.
+
+## [Unreleased]
 
 ## [1.15.0] — 2026-08-29
 
