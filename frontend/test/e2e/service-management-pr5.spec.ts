@@ -130,7 +130,7 @@ test.describe("PR 5 / WU 9 — Service Management end-to-end contracts", () => {
   });
 
   test("step 3 — User list endpoint accepts the admin bearer token and includes admin", async () => {
-    const response = await authedFetch(`${BACKEND_BASE_URL}/api/users`);
+    const response = await authedFetch(`${BACKEND_BASE_URL}/api/users/`);
     expect(response.status(), `user list must succeed, got ${response.status()}`).toBeLessThan(300);
     const body = (await response.json()) as Array<{ username: string }>;
     expect(Array.isArray(body)).toBe(true);
