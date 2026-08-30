@@ -73,6 +73,7 @@ La UI solo conserva `node.metadata` como fallback transitorio de rollout. No es 
 - El cierre normal exige causa raiz y nota descriptiva.
 - El cierre forzado deja marca explicita en el timeline.
 - `RECOVERED` sin ack ni comentarios puede limpiarse en lote con `/api/events/prune`.
+- Desde fix-423 (issue #423), un scheduler APScheduler en el backend cierra automaticamente los `RECOVERED` despues de `EVENT_PRUNE_STALE_AFTER_SECONDS` (default 1h), con kill-switch `EVENT_PRUNE_ENABLED`. El operador sigue pudiendo forzar cierres manuales, pero ya no depende de ejecutar `/api/events/prune` para acotar la lista. Ver [docs/event-prune-runbook.md](../event-prune-runbook.md) para el operador.
 
 ## Puntos de integracion futura
 
@@ -101,3 +102,4 @@ Una entrega de esta capability NO esta completa si falta alguno de estos artefac
 - `README.md`
 - `docs/domain/business-model.md`
 - `../reference/modelo_entidad_relacion.md`
+- `../event-prune-runbook.md` (fix-423, auto-prune de `RECOVERED`)

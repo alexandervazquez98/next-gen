@@ -101,6 +101,11 @@ services:
       - AI_PROMPTS_DIR=/data/ai
       - ICMP_LATENCY_WARNING_MS=${ICMP_LATENCY_WARNING_MS:-100}
       - ICMP_LATENCY_CRITICAL_MS=${ICMP_LATENCY_CRITICAL_MS:-500}
+      # Event prune / recovery lifecycle (fix-423)
+      - EVENT_PRUNE_ENABLED=${EVENT_PRUNE_ENABLED:-true}
+      - EVENT_PRUNE_INTERVAL_SECONDS=${EVENT_PRUNE_INTERVAL_SECONDS:-3600}
+      - EVENT_PRUNE_BATCH_SIZE=${EVENT_PRUNE_BATCH_SIZE:-500}
+      - EVENT_PRUNE_STALE_AFTER_SECONDS=${EVENT_PRUNE_STALE_AFTER_SECONDS:-3600}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

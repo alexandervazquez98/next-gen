@@ -236,6 +236,113 @@ def get_event_batch_settings() -> EventBatchSettings:
 
 
 # ---------------------------------------------------------------------------
+# Event Prune Auto-Scheduler Settings (fix-423 PR #2)
+# ---------------------------------------------------------------------------
+
+
+# Default values for EventPruneSettings — mirror design.md §Observability
+# (REQ-PRUNE-003, REQ-OBS-PRUNE-001).
+EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS = 3600
+EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS = 3600
+EVENT_PRUNE_DEFAULT_BATCH_SIZE = 500
+EVENT_PRUNE_MIN_INTERVAL_SECONDS = 60
+EVENT_PRUNE_MIN_STALE_AFTER_SECONDS = 60
+EVENT_PRUNE_MIN_BATCH_SIZE = 1
+
+
+class EventPruneSettings(BaseModel):
+    """Runtime settings for the auto-prune scheduler on ``backup_scheduler``.
+
+    Driven by environment variables; the scheduler registration code in
+    ``backend/main.py:_register_event_prune_job`` reads these on startup.
+
+    Fields
+    ------
+    enabled:
+        Kill-switch. Defaults to True. ``EVENT_PRUNE_ENABLED=false`` skips
+        registration entirely (mirrors ``SYSTEM_STATUS_SNAPSHOTS_ENABLED``).
+    interval_seconds:
+        How often the APScheduler ``IntervalTrigger`` fires. Default 1h.
+        Min 60s to avoid hammering Neo4j.
+    batch_size:
+        Max RECOVERED rows to close per tick. Default borrows from
+        :class:`EventBatchSettings` (``EVENT_BATCH_SIZE``, default 500).
+        ``EVENT_PRUNE_BATCH_SIZE`` overrides.
+    stale_after_seconds:
+        Age threshold for ``events_recovered_stale_total`` (REQ-OBS-PRUNE-001).
+        Default 1h; ``EVENT_PRUNE_STALE_AFTER_SECONDS`` overrides.
+    """
+
+    enabled: bool = True
+    interval_seconds: int = Field(
+        default=EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS,
+        ge=EVENT_PRUNE_MIN_INTERVAL_SECONDS,
+    )
+    batch_size: int = Field(
+        default=EVENT_PRUNE_DEFAULT_BATCH_SIZE,
+        ge=EVENT_PRUNE_MIN_BATCH_SIZE,
+    )
+    stale_after_seconds: int = Field(
+        default=EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS,
+        ge=EVENT_PRUNE_MIN_STALE_AFTER_SECONDS,
+    )
+
+    @classmethod
+    def from_env(cls) -> EventPruneSettings:
+        """Load auto-prune scheduler settings from environment variables.
+
+        Invalid values fall back to defaults without raising — mirrors
+        ``_parse_system_status_int`` / ``_parse_system_status_bool`` in
+        ``main.py:45-71``. An invalid bool falls back to True (safe default).
+        """
+
+        def _int(name: str, default: int) -> int:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            try:
+                value = int(raw.strip())
+            except ValueError:
+                return default
+            return value if value > 0 else default
+
+        enabled_raw = os.getenv("EVENT_PRUNE_ENABLED")
+        if enabled_raw is None:
+            enabled = True
+        else:
+            normalized = enabled_raw.strip().lower()
+            # Invalid values (anything not in the truthy set and not in the
+            # explicit falsy set) fall back to True — mirrors
+            # ``_parse_system_status_bool`` in main.py:45-50 which returns
+            # None on invalid input and main.py then defaults to True with a
+            # warning log. This keeps the scheduler safe by default.
+            if normalized in {"1", "true", "yes", "on"}:
+                enabled = True
+            elif normalized in {"0", "false", "no", "off"}:
+                enabled = False
+            else:
+                enabled = True
+
+        # Borrow batch-size default from EventBatchSettings so the two
+        # knobs stay aligned by default.
+        try:
+            default_batch_size = EventBatchSettings().batch_size
+        except Exception:
+            default_batch_size = EVENT_PRUNE_DEFAULT_BATCH_SIZE
+
+        return cls(
+            enabled=enabled,
+            interval_seconds=_int(
+                "EVENT_PRUNE_INTERVAL_SECONDS", EVENT_PRUNE_DEFAULT_INTERVAL_SECONDS
+            ),
+            batch_size=_int("EVENT_PRUNE_BATCH_SIZE", default_batch_size),
+            stale_after_seconds=_int(
+                "EVENT_PRUNE_STALE_AFTER_SECONDS", EVENT_PRUNE_DEFAULT_STALE_AFTER_SECONDS
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # MQTT Settings
 # ---------------------------------------------------------------------------
 
@@ -460,11 +567,29 @@ class ICMPSettings(BaseModel):
     debounce_count: int = Field(default=3, ge=1)
     latency_warning_ms: float = Field(default=100.0, ge=0)
     latency_critical_ms: float = Field(default=500.0, gt=0)
+    jitter_warning_ms: float = Field(default=50.0, ge=0)
+    jitter_critical_ms: float = Field(default=150.0, gt=0)
+    packet_loss_warning_pct: float = Field(default=10.0, ge=0, le=100)
+    packet_loss_critical_pct: float = Field(default=50.0, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_latency_thresholds(self) -> ICMPSettings:
         if self.latency_warning_ms >= self.latency_critical_ms:
             raise ValueError("ICMP_LATENCY_WARNING_MS must be less than ICMP_LATENCY_CRITICAL_MS")
+        return self
+
+    @model_validator(mode="after")
+    def validate_jitter_thresholds(self) -> ICMPSettings:
+        if self.jitter_warning_ms >= self.jitter_critical_ms:
+            raise ValueError("ICMP_JITTER_WARNING_MS must be less than ICMP_JITTER_CRITICAL_MS")
+        return self
+
+    @model_validator(mode="after")
+    def validate_packet_loss_thresholds(self) -> ICMPSettings:
+        if self.packet_loss_warning_pct >= self.packet_loss_critical_pct:
+            raise ValueError(
+                "ICMP_PACKET_LOSS_WARNING_PCT must be less than ICMP_PACKET_LOSS_CRITICAL_PCT"
+            )
         return self
 
     @classmethod
@@ -476,6 +601,10 @@ class ICMPSettings(BaseModel):
             debounce_count=int(os.getenv("ICMP_DEBOUNCE_COUNT", "3")),
             latency_warning_ms=float(os.getenv("ICMP_LATENCY_WARNING_MS", "100")),
             latency_critical_ms=float(os.getenv("ICMP_LATENCY_CRITICAL_MS", "500")),
+            jitter_warning_ms=float(os.getenv("ICMP_JITTER_WARNING_MS", "50")),
+            jitter_critical_ms=float(os.getenv("ICMP_JITTER_CRITICAL_MS", "150")),
+            packet_loss_warning_pct=float(os.getenv("ICMP_PACKET_LOSS_WARNING_PCT", "10")),
+            packet_loss_critical_pct=float(os.getenv("ICMP_PACKET_LOSS_CRITICAL_PCT", "50")),
         )
 
 
@@ -503,6 +632,8 @@ class LMStudioSettings(BaseModel):
     model: str = "local-model"
     timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     max_tokens: int = Field(default=800, gt=0, le=4096)
+    context_limit_tokens: int = Field(default=32768, gt=0, le=1_000_000)
+    compaction_threshold: float = Field(default=0.80, gt=0.0, le=1.0)
 
     @classmethod
     def from_env(cls) -> LMStudioSettings:
@@ -524,6 +655,18 @@ class LMStudioSettings(BaseModel):
                     minimum=1.0,
                     maximum=4096.0,
                 )
+            ),
+            context_limit_tokens=_env_int_bounded(
+                "LM_STUDIO_CONTEXT_LIMIT_TOKENS",
+                32768,
+                minimum=1,
+                maximum=1_000_000,
+            ),
+            compaction_threshold=_env_float_bounded(
+                "LM_STUDIO_COMPACTION_THRESHOLD",
+                0.80,
+                minimum=0.000001,
+                maximum=1.0,
             ),
         )
 

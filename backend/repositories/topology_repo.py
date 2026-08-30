@@ -845,6 +845,163 @@ def build_open_parent_index(
     return index
 
 
+def get_topology_relations(session, ci_ids: set[str]) -> dict[str, set[str]]:
+    """Preload the eligible upstream adjacency graph for observed CIs.
+
+    The query expands each observed CI to the same depth-three relationship
+    boundary as ``build_open_parent_index`` and returns the direct edges from
+    those paths. ``build_cycle_parent_index`` then performs the deterministic
+    in-memory walk without additional Neo4j round-trips.
+    """
+    safe_ci_ids = sorted(ci_id for ci_id in ci_ids if ci_id)
+    if not safe_ci_ids:
+        return {}
+
+    records = session.run(
+        """
+        UNWIND $ci_ids AS ci_id
+        MATCH path=(ci:CI {id: ci_id})
+            -[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3]->(:CI)
+        UNWIND relationships(path) AS rel
+        WITH startNode(rel) AS source, endNode(rel) AS parent
+        RETURN DISTINCT source.id AS source_ci_id,
+                        parent.id AS parent_ci_id
+        """,
+        ci_ids=safe_ci_ids,
+    )
+
+    relations: dict[str, set[str]] = {}
+    for row in records:
+        source_ci_id = row.get("source_ci_id")
+        parent_ci_id = row.get("parent_ci_id")
+        if not source_ci_id or not parent_ci_id:
+            continue
+        relations.setdefault(source_ci_id, set()).add(parent_ci_id)
+    return relations
+
+
+def build_cycle_parent_index(
+    observations: list[Any],
+    topology_relations: dict[str, set[str]] | None,
+) -> dict[tuple[str, str], str]:
+    """Resolve each observed CI/metric to an observed upstream CI in memory.
+
+    ``topology_relations`` is an adjacency map from a CI to its upstream CIs,
+    pre-filtered to ``DEPENDS_ON``, ``HOSTED_ON`` and ``CONNECTS_TO``. The walk
+    mirrors ``build_open_parent_index``'s depth-three limit without issuing a
+    Neo4j query. Only event-producing CIs observed in this cycle are eligible
+    parents, ensuring that Pass 2 can materialize the selected root before the
+    dependent-attachment pass.
+
+    The nearest observed ancestor wins. Equal-depth matches are sorted by CI id
+    so the result is independent of relationship and observation order.
+    Missing, malformed or incomplete topology safely leaves the pair absent,
+    which preserves independent-ROOT behavior.
+    """
+    event_rows = [
+        row
+        for row in observations
+        if isinstance(row, dict)
+        and row.get("node_id")
+        and row.get("metric_id")
+        and row.get("event_type")
+    ]
+    observed_ci_ids = {row["node_id"] for row in event_rows}
+    safe_relations = topology_relations if isinstance(topology_relations, dict) else {}
+    index: dict[tuple[str, str], str] = {}
+
+    for row in event_rows:
+        ci_id = row["node_id"]
+        key = (ci_id, row["metric_id"])
+        visited = {ci_id}
+        frontier = {ci_id}
+
+        for _depth in range(3):
+            upstream: set[str] = set()
+            for current_ci_id in frontier:
+                parent_ids = safe_relations.get(current_ci_id, set())
+                if isinstance(parent_ids, str):
+                    parent_ids = {parent_ids}
+                if not isinstance(parent_ids, (set, list, tuple)):
+                    continue
+                upstream.update(
+                    parent_id
+                    for parent_id in parent_ids
+                    if isinstance(parent_id, str) and parent_id and parent_id not in visited
+                )
+
+            if not upstream:
+                break
+
+            observed_parents = sorted(upstream & observed_ci_ids)
+            if observed_parents:
+                index[key] = observed_parents[0]
+                break
+
+            visited.update(upstream)
+            frontier = upstream
+
+    return index
+
+
+def current_cycle_parent_candidates(
+    observations: list[Any],
+) -> set[tuple[str, str, str]]:
+    """Enumerate the (ci_id, metric_id, event_type) tuples that COULD become ROOT.
+
+    Pure helper — in-memory complement to ``build_open_parent_index`` (same
+    vocabulary: depth-three ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3`` walk over
+    OPEN/ACK parents) but with NO Neo4j I/O. The caller already owns the
+    pre-built ``build_open_parent_index`` cache and uses it in
+    ``engines.correlation.cycle_root_candidates`` to filter the actual
+    PROPAGATED rows. This helper exists to:
+
+    1. Give the topology repo a thin, dependency-free entry point that the
+       same-cycle correlation pass in ``poll_snmp`` can call without
+       importing ``engines.correlation``.
+    2. Enforce the strict TDD contract: a single source of truth for
+       "what is an event-producing observation" — REQ-002/REQ-005.
+    3. Guarantee safe independent-ROOT behaviour (REQ-005, SCN-006/007):
+       a row whose topology lookup would fail or whose metric is
+       non-propagating is STILL a candidate here. The cache-based filter
+       is applied by the caller, so the absence of topology data
+       (kill-switch OFF, cache build raised, ``can_propagate=false``) never
+       silently drops a row.
+
+    Args:
+        observations: list of observation rows from the current cycle. Each
+            row is expected to expose at least ``node_id``, ``metric_id`` and
+            ``event_type``. Rows whose ``event_type`` is missing or empty
+            are not event-producing and are skipped. Rows missing
+            ``node_id`` or ``metric_id`` cannot form a cache key and are
+            dropped. Malformed inputs (e.g. ``None`` entries, empty dicts)
+            are silently ignored — the helper MUST NEVER raise on bad
+            input because the hot CREATE path consumes the result.
+
+    Returns:
+        Set of ``(ci_id, metric_id, event_type)`` tuples for every
+        event-producing observation. Order-independent (a ``set`` is
+        returned). The set may contain duplicates in pathological input
+        (e.g. two observations with the same triple) but the returned
+        type collapses them.
+    """
+    candidates: set[tuple[str, str, str]] = set()
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        node_id = row.get("node_id")
+        metric_id = row.get("metric_id")
+        event_type = row.get("event_type")
+        # Rows without an event_type are not event-producing — skip them.
+        if not event_type:
+            continue
+        # Rows missing node_id or metric_id cannot form a cache key — skip.
+        if not node_id or not metric_id:
+            continue
+        candidates.add((node_id, metric_id, event_type))
+    return candidates
+
+
 def ensure_icmp_sidecar_metric_defs(session) -> None:
     icmp_settings = get_icmp_settings()
     session.run(

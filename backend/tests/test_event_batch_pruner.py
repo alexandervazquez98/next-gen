@@ -47,7 +47,13 @@ def restore_snmp_service_stub():
 
 
 class MockNeo4jRecord:
-    """Simulates a Neo4j record dict-like access."""
+    """Simulates a Neo4j record dict-like access.
+
+    Implements the full Mapping protocol so production helpers that do
+    ``dict(record)`` (e.g. ``event_service._fetch_page``) work without raising
+    TypeError. Without ``keys()`` / ``__iter__`` the original mock was only
+    partial and broke chunk-counting tests whenever ``_fetch_page`` ran.
+    """
 
     def __init__(self, data):
         self._data = data if isinstance(data, dict) else {}
@@ -57,6 +63,24 @@ class MockNeo4jRecord:
 
     def get(self, key, default=None):
         return self._data.get(key, default)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def keys(self):
+        return self._data.keys()
+
+    def values(self):
+        return self._data.values()
+
+    def items(self):
+        return self._data.items()
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __len__(self):
+        return len(self._data)
 
 
 class MockNeo4jResult:
@@ -376,35 +400,45 @@ class TestEventBatchPrunerTimeout:
 
 
 class TestEventBatchPrunerSafetyGuards:
-    """Verify streaming prune preserves ACK/comment safeguards at close time."""
+    """Verify streaming prune only requires recovered, unacknowledged events."""
 
-    def test_close_query_rechecks_ack_and_comments_after_selection(self, mock_driver):
-        """Events ACKed or commented after selection must not be closed by prune."""
+    def test_commented_recovered_unacknowledged_event_is_closed(self, mock_driver):
+        """Non-ACK comments do not make a recovered event ineligible for pruning."""
         event_service = _load_event_service_module()
         session = mock_driver.session()
         session.set_response("return count(e) as total", [{"total": 1}])
         session.set_response(
             "return e.id as event_id, e.status",
-            [{"event_id": "evt-1", "status": "RECOVERED"}],
+            [
+                {
+                    "event_id": "evt-commented",
+                    "status": "RECOVERED",
+                    "comments": [{"text": "operator note"}],
+                }
+            ],
         )
 
         original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
         try:
+            progress_list = []
 
             async def consume():
-                async for _ in event_service.event_batch_pruner(user="system", batch_delay_ms=0):
-                    pass
+                async for progress in event_service.event_batch_pruner(
+                    user="system", batch_delay_ms=0
+                ):
+                    progress_list.append(progress)
 
             _run_async(consume())
 
-            close_queries = [
-                q["query"] for q in session.queries if "RETURN e.id AS closed_id" in q["query"]
-            ]
-            assert close_queries, "Expected guarded close query to run"
-            close_query = close_queries[0]
+            close_queries = [q for q in session.queries if "RETURN e.id AS closed_id" in q["query"]]
+            assert close_queries, "Expected commented recovered event to be closed"
+            assert close_queries[0]["params"]["eid"] == "evt-commented"
+            assert progress_list[-1]["processed"] == 1
+
+            close_query = close_queries[0]["query"]
             assert "WHERE e.status = 'RECOVERED'" in close_query
             assert "AND (e.ack IS NULL OR e.ack = false)" in close_query
-            assert "AND (e.comments IS NULL OR size(e.comments) = 0)" in close_query
+            assert "comments" not in close_query.lower()
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
 
@@ -454,6 +488,76 @@ class TestEventBatchPrunerSafetyGuards:
             _restore_get_db(original_driver, original_get_db, event_service)
 
 
+class TestEventBatchPrunerNullCursorProgress:
+    """RED -> GREEN: cursor pagination must make forward progress on NULL-bearing rows.
+
+    Pre-#279 legacy rows have ``created_at IS NULL``. The pre-fix cursor was
+    ``AND e.created_at > $last_cursor`` which evaluates to NULL (filter excludes
+    every subsequent row) once a NULL row was processed. The composite cursor
+    uses ``(e.created_at, e.id)`` with ``ORDER BY ... NULLS LAST`` and a
+    NULL-safe WHERE tiebreak so iter 2+ keeps moving.
+    """
+
+    def test_event_batch_pruner_null_cursor_progress(self, mock_driver):
+        """Iter 2 issues a NULL-safe comparison so a NULL-bearing fixture still advances."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        # batch_size=1 ensures iter 1 returns a full page so iter 2 is issued.
+        session.set_response("return count(e) as total", [{"total": 2}])
+        # Iter 1 returns one NULL-row, iter 2 returns one timestamped row.
+        ts = "2026-01-01T00:00:00Z"
+        session.set_sequence_response(
+            "return e.id as event_id, e.status",
+            [
+                [{"event_id": "evt-1", "status": "RECOVERED", "created_at": None}],
+                [{"event_id": "evt-2", "status": "RECOVERED", "created_at": ts}],
+            ],
+        )
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            progress_list = []
+
+            async def consume():
+                async for p in event_service.event_batch_pruner(
+                    user="system", batch_size=1, batch_delay_ms=0
+                ):
+                    progress_list.append(p)
+
+            _run_async(consume())
+
+            # iter 1 processed the NULL row (the cursor advance sets
+            # last_id="evt-1"); the contract we lock here is that iter 2's
+            # page query uses a NULL-safe comparison (carries the prior id AND
+            # the WHERE clause survives a NULL cursor).
+            page_queries = [
+                q
+                for q in session.queries
+                if "ORDER BY" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            ]
+            assert (
+                len(page_queries) >= 2
+            ), f"Expected at least two page queries (one per batch), got {len(page_queries)}"
+
+            second_query = page_queries[1]
+            # The composite cursor MUST carry the prior row's id as the tiebreak
+            # so the next batch can advance past a NULL row.
+            assert second_query["params"].get("last_id") == "evt-1", (
+                f"Iter 2 cursor must carry the prior row's id as the tiebreak; "
+                f"got params={second_query['params']!r}"
+            )
+            # Iter 2's cursor MUST include a NULL-safe clause so it can keep
+            # moving on a NULL-bearing fixture (the broken cursor used
+            # `e.created_at > $last_cursor` which is NULL when last_cursor is NULL).
+            assert "IS NULL" in second_query["query"].upper(), (
+                f"Iter 2 cursor filter must include a NULL-safe clause so a "
+                f"NULL-bearing fixture keeps moving; got query={second_query['query']!r}"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
 class TestEventBatchPrunerProgressShape:
     """RED → GREEN → TRIANGULATE: Test progress dict shape per chunk."""
 
@@ -490,5 +594,76 @@ class TestEventBatchPrunerProgressShape:
             assert "processed" in chunk
             assert "remaining" in chunk
             assert "batch" in chunk
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
+class TestEventBatchPrunerRetryCap:
+    """RED -> GREEN: the retry loop must terminate when fetch keeps failing.
+
+    Pre-#433 the catch-all at ``event_service.event_batch_pruner``'s chunk loop
+    swallowed exceptions and yielded an error chunk forever, so a transient
+    fetch failure could turn into an infinite loop (the SSE endpoint would hang
+    past the 1s first-byte budget and beyond). The contract under test is:
+    after ``MAX_CONSECUTIVE_CHUNK_FAILURES`` consecutive failures the generator
+    re-raises the last exception instead of looping.
+    """
+
+    def test_breaks_after_max_consecutive_chunk_failures(self, mock_driver):
+        """When _fetch_page always raises, the generator must terminate."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        # Total count succeeds (5 events "need" pruning), but every page
+        # fetch raises. Without the retry cap the loop spins forever and
+        # yields an unbounded stream of error chunks.
+        session.set_response("return count(e) as total", [{"total": 5}])
+
+        original_run = session.run
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise RuntimeError("simulated fetch failure")
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+            outcome: tuple[str, Exception | None] = ("completed", None)
+
+            async def consume() -> None:
+                try:
+                    async for progress in event_service.event_batch_pruner(
+                        user="system", batch_delay_ms=0
+                    ):
+                        chunks.append(progress)
+                except Exception as exc:
+                    nonlocal outcome
+                    outcome = ("raised", exc)
+
+            # Bound the test itself with asyncio.wait_for so an unfixed
+            # implementation fails RED with TimeoutError instead of hanging
+            # the runner (defense in depth — pytest-timeout is the broader
+            # safety net wired in #433 / Change 3).
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            assert outcome[0] == "raised", (
+                f"Generator must re-raise after the retry cap is hit, "
+                f"instead it {outcome[0]!r} after yielding {len(chunks)} chunks"
+            )
+            assert isinstance(outcome[1], RuntimeError)
+            assert "simulated fetch failure" in str(outcome[1])
+
+            # Initial (batch=0) plus at most MAX_CONSECUTIVE_CHUNK_FAILURES
+            # error chunks before the generator re-raises on the next failure.
+            assert chunks[0]["batch"] == 0
+            error_chunks = [c for c in chunks if "error" in c]
+            assert len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES, (
+                f"Expected exactly {event_service.MAX_CONSECUTIVE_CHUNK_FAILURES} "
+                f"error chunks before re-raise, got {len(error_chunks)}"
+            )
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+import logging
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import get_db
 from fastapi import HTTPException
 from services.snmp_service import run_diagnostic
+
+logger = logging.getLogger(__name__)
 
 
 def _serialize_value(value: Any) -> Any:
@@ -14,12 +17,12 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
-def _node_to_dict(value: Any) -> Dict[str, Any]:
+def _node_to_dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, dict):
         return {key: _serialize_value(item) for key, item in value.items()}
-    return {key: _serialize_value(value[key]) for key in value.keys()}
+    return {key: _serialize_value(value[key]) for key in value.keys()}  # noqa: SIM118
 
 
 def _record_value(record: Any, key: str) -> Any:
@@ -31,39 +34,39 @@ def _record_value(record: Any, key: str) -> Any:
         return record.get(key) if hasattr(record, "get") else None
 
 
-def _parse_datetime(value: Any) -> Optional[datetime]:
+def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         normalized = value.replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(normalized)
         except ValueError:
             return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
 
 
 def _compute_sla_remaining_minutes(
-    created_at: Any, sla_minutes: Optional[int], now: Optional[datetime] = None
-) -> Optional[int]:
+    created_at: Any, sla_minutes: int | None, now: datetime | None = None
+) -> int | None:
     if sla_minutes is None:
         return None
     created_dt = _parse_datetime(created_at)
     if created_dt is None:
         return None
-    reference = now or datetime.now(timezone.utc)
+    reference = now or datetime.now(UTC)
     age_minutes = int((reference - created_dt).total_seconds() // 60)
     return int(sla_minutes) - age_minutes
 
 
-def _clean_dict(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _clean_dict(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
-def _strip_known_audit_prefixes(message: Optional[str]) -> str:
+def _strip_known_audit_prefixes(message: str | None) -> str:
     if not message:
         return ""
     cleaned = message.strip()
@@ -88,7 +91,7 @@ def _build_ack_audit_message(user: str) -> str:
     return f"[AUDIT][OWNERSHIP] Caso tomado por {user}"
 
 
-def _normalize_ack_note(comment_message: Optional[str]) -> Optional[str]:
+def _normalize_ack_note(comment_message: str | None) -> str | None:
     if not comment_message:
         return None
     cleaned = comment_message.strip()
@@ -98,9 +101,7 @@ def _normalize_ack_note(comment_message: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-def _build_close_audit_message(
-    user: str, forced: bool, comment_message: Optional[str]
-) -> str:
+def _build_close_audit_message(user: str, forced: bool, comment_message: str | None) -> str:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
         lines = [f"[AUDIT][FORCED_CLOSE] Cierre forzado por {user}"]
@@ -114,16 +115,14 @@ def _build_close_audit_message(
     return "\n".join(lines)
 
 
-def _optional_contract(
-    payload: Dict[str, Any], required_keys: set[str]
-) -> Optional[Dict[str, Any]]:
+def _optional_contract(payload: dict[str, Any], required_keys: set[str]) -> dict[str, Any] | None:
     cleaned = _clean_dict(payload)
     if not required_keys.issubset(cleaned):
         return None
     return cleaned
 
 
-def _build_external_ticket_ref(event_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _build_external_ticket_ref(event_data: dict[str, Any]) -> dict[str, Any] | None:
     system = event_data.get("external_ticket_system")
     key = event_data.get("external_ticket_key")
     if system not in {"Jira", "ServiceNow"} or not key:
@@ -142,14 +141,12 @@ def _raise_event_not_found(event_id: str) -> None:
 
 
 def _build_event_summary(
-    event_data: Dict[str, Any], ci_data: Dict[str, Any], metric_data: Dict[str, Any]
-) -> Dict[str, Any]:
+    event_data: dict[str, Any], ci_data: dict[str, Any], metric_data: dict[str, Any]
+) -> dict[str, Any]:
     summary = {key: _serialize_value(value) for key, value in event_data.items()}
     if summary.get("created_at") is None:
         summary["created_at"] = (
-            summary.get("last_seen")
-            or summary.get("recovered_at")
-            or summary.get("closed_at")
+            summary.get("last_seen") or summary.get("recovered_at") or summary.get("closed_at")
         )
     summary["ci_node_id"] = ci_data.get("id")
     summary["ci_name"] = ci_data.get("name")
@@ -170,7 +167,7 @@ def _build_event_summary(
     return summary
 
 
-def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "id",
         "ci_id",
@@ -195,22 +192,38 @@ def _public_event_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "root_cause_ci_id",
         "event_type",
         "source_protocol",
+        # P2 REQ-001/002: expose the ROOT's affected-CI blast radius without
+        # smuggling it through the `propagated` derived flag. Both fields are
+        # dropped on the way back out when they are None/empty (the existing
+        # `value is not None` filter handles that).
+        "affected_ci_ids",
+        "affected_count",
     }
     result = {
-        key: value
-        for key, value in summary.items()
-        if key in allowed_keys and value is not None
+        key: value for key, value in summary.items() if key in allowed_keys and value is not None
     }
+    # P2 REQ-001/002: normalize the Neo4j writer key `affected_ci_count` to
+    # the public JSON key `affected_count` so the Pydantic surface stays
+    # consistent with the spec.
+    if "affected_ci_count" in summary and summary["affected_ci_count"] is not None:
+        result["affected_count"] = summary["affected_ci_count"]
+    # P2 REQ-001/010: drop the affected-CI fields when the legacy ROOT has
+    # no dependents. Empty list / zero count collapse to "missing" so the
+    # legacy JSON contract is preserved.
+    if not result.get("affected_ci_ids"):
+        result.pop("affected_ci_ids", None)
+    if not result.get("affected_count"):
+        result.pop("affected_count", None)
     # Add computed propagated flag only when correlation_type is PROPAGATED
     if summary.get("correlation_type") == "PROPAGATED":
         result["propagated"] = True
     return result
 
 
-def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[str, str]:
+def _extract_structured_close_fields(comment_message: str | None) -> tuple[str, str]:
     detail = _strip_known_audit_prefixes(comment_message)
     root_cause = ""
-    note_lines: List[str] = []
+    note_lines: list[str] = []
     collecting_note = False
 
     for raw_line in detail.splitlines():
@@ -231,7 +244,7 @@ def _extract_structured_close_fields(comment_message: Optional[str]) -> tuple[st
     return root_cause, note
 
 
-def _validate_close_request(forced: bool, comment_message: Optional[str]) -> None:
+def _validate_close_request(forced: bool, comment_message: str | None) -> None:
     detail = _strip_known_audit_prefixes(comment_message)
     if forced:
         # Strip the "Motivo:" label the frontend adds before checking for content
@@ -257,7 +270,7 @@ def _validate_close_request(forced: bool, comment_message: Optional[str]) -> Non
         )
 
 
-def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, Optional[str]]:
+def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, str | None]:
     if snapshot_value is not None:
         return snapshot_value, "snapshot"
     if resolved_value is not None:
@@ -266,12 +279,12 @@ def _pick_value(snapshot_value: Any, resolved_value: Any) -> tuple[Any, Optional
 
 
 def _build_business_context(
-    event_data: Dict[str, Any],
-    ci_data: Dict[str, Any],
-    business_service: Dict[str, Any],
-    service_catalog: Dict[str, Any],
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    event_data: dict[str, Any],
+    ci_data: dict[str, Any],
+    business_service: dict[str, Any],
+    service_catalog: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
     business_service_id, bs_id_source = _pick_value(
         event_data.get("business_service_id"), business_service.get("id")
     )
@@ -366,9 +379,7 @@ def _build_business_context(
     return business_context
 
 
-def build_event_detail_response(
-    record: Any, now: Optional[datetime] = None
-) -> Dict[str, Any]:
+def build_event_detail_response(record: Any, now: datetime | None = None) -> dict[str, Any]:
     event_data = _node_to_dict(_record_value(record, "e"))
     ci_data = _node_to_dict(_record_value(record, "ci"))
     metric_data = _node_to_dict(_record_value(record, "m"))
@@ -380,9 +391,7 @@ def build_event_detail_response(
         event_data, ci_data, business_service, service_catalog, now=now
     )
     business_service_context = business_context.get("business_service") or {}
-    escalation_tier = event_data.get("escalation_tier") or business_service_context.get(
-        "tier"
-    )
+    escalation_tier = event_data.get("escalation_tier") or business_service_context.get("tier")
 
     return {
         "event": {
@@ -396,31 +405,29 @@ def build_event_detail_response(
         },
         "business_context": business_context,
         "itsm_context": {
-            "assignment_state": "assigned"
-            if event_data.get("ack") and event_data.get("ack_by")
-            else "unassigned",
+            "assignment_state": (
+                "assigned" if event_data.get("ack") and event_data.get("ack_by") else "unassigned"
+            ),
             "assigned_to": event_data.get("ack_by"),
             "opened_by": "system",
-            "escalation_tier": escalation_tier
-            if escalation_tier in {"T1", "T2", "T3"}
-            else None,
+            "escalation_tier": escalation_tier if escalation_tier in {"T1", "T2", "T3"} else None,
             "external_ticket": _build_external_ticket_ref(event_data),
         },
     }
 
 
 def _resolve_availability_window(
-    start: Optional[datetime] = None,
-    end: Optional[datetime] = None,
-    now: Optional[datetime] = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    now: datetime | None = None,
 ) -> tuple[datetime, datetime, datetime]:
-    generated_at = now or datetime.now(timezone.utc)
+    generated_at = now or datetime.now(UTC)
     window_end = end or generated_at
     if window_end.tzinfo is None:
-        window_end = window_end.replace(tzinfo=timezone.utc)
+        window_end = window_end.replace(tzinfo=UTC)
     window_start = start or (window_end - timedelta(days=30))
     if window_start.tzinfo is None:
-        window_start = window_start.replace(tzinfo=timezone.utc)
+        window_start = window_start.replace(tzinfo=UTC)
     if window_start > window_end:
         raise HTTPException(status_code=400, detail="start must be before end")
     return window_start, window_end, generated_at
@@ -463,7 +470,7 @@ _SENSITIVE_CI_KEY_PARTS = (
 )
 
 
-def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
+def _is_authoritative_availability_event(event_data: dict[str, Any]) -> bool:
     event_type = str(event_data.get("event_type") or "").upper()
     availability_source = str(event_data.get("availability_source") or "").upper()
     correlation_type = str(event_data.get("correlation_type") or "ROOT").upper()
@@ -474,7 +481,7 @@ def _is_authoritative_availability_event(event_data: Dict[str, Any]) -> bool:
     )
 
 
-def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, str]]:
+def _availability_group_key(event_data: dict[str, Any]) -> tuple[str, str] | None:
     if not _is_authoritative_availability_event(event_data):
         return None
     ci_id = event_data.get("ci_id")
@@ -484,7 +491,7 @@ def _availability_group_key(event_data: Dict[str, Any]) -> Optional[tuple[str, s
     return str(ci_id), str(event_type)
 
 
-def _empty_snmp_coverage_summary() -> Dict[str, Any]:
+def _empty_snmp_coverage_summary() -> dict[str, Any]:
     return {
         "total_ci_with_snmp": 0,
         "functional_ci": 0,
@@ -496,7 +503,7 @@ def _empty_snmp_coverage_summary() -> Dict[str, Any]:
     }
 
 
-def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
+def _build_snmp_coverage_summary(record: Any) -> dict[str, Any]:
     summary = _empty_snmp_coverage_summary()
     if record is None:
         return summary
@@ -521,7 +528,7 @@ def _build_snmp_coverage_summary(record: Any) -> Dict[str, Any]:
     return summary
 
 
-def _isoformat_or_none(value: Any) -> Optional[str]:
+def _isoformat_or_none(value: Any) -> str | None:
     parsed = _parse_datetime(value)
     if parsed is not None:
         return parsed.isoformat()
@@ -530,7 +537,7 @@ def _isoformat_or_none(value: Any) -> Optional[str]:
     return str(value)
 
 
-def _snmp_no_response_event_summary(event_data: Dict[str, Any]) -> Dict[str, Any]:
+def _snmp_no_response_event_summary(event_data: dict[str, Any]) -> dict[str, Any]:
     return _clean_dict(
         {
             "id": event_data.get("id"),
@@ -540,7 +547,6 @@ def _snmp_no_response_event_summary(event_data: Dict[str, Any]) -> Dict[str, Any
             "last_seen": _isoformat_or_none(event_data.get("last_seen")),
         }
     )
-
 
 
 def _is_sensitive_ci_key(key: str) -> bool:
@@ -562,8 +568,8 @@ def _json_safe_ci_value(value: Any) -> Any:
     return None
 
 
-def _sanitize_ci_metadata(ci_data: Dict[str, Any]) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {}
+def _sanitize_ci_metadata(ci_data: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     for key, value in ci_data.items():
         if key in _CI_CANONICAL_FIELDS or _is_sensitive_ci_key(key):
             continue
@@ -574,8 +580,8 @@ def _sanitize_ci_metadata(ci_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_availability_ci_metadata(
-    ci_data: Dict[str, Any], category: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    ci_data: dict[str, Any], category: str | None = None
+) -> dict[str, Any] | None:
     if not ci_data:
         return None
     ci_type = category or ci_data.get("type") or ci_data.get("layer")
@@ -602,22 +608,20 @@ def _build_availability_ci_metadata(
 
 
 def _merge_availability_ci_metadata(
-    existing: Optional[Dict[str, Any]], incoming: Optional[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
+    existing: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any] | None:
     if not existing:
         return incoming
     if not incoming:
         return existing
-    incoming_values = {
-        key: value for key, value in incoming.items() if value is not None
-    }
+    incoming_values = {key: value for key, value in incoming.items() if value is not None}
     merged = {**existing, **incoming_values}
     existing_raw_metadata = existing.get("metadata")
     incoming_raw_metadata = incoming.get("metadata")
-    existing_metadata: Dict[str, Any] = (
+    existing_metadata: dict[str, Any] = (
         existing_raw_metadata if isinstance(existing_raw_metadata, dict) else {}
     )
-    incoming_metadata: Dict[str, Any] = (
+    incoming_metadata: dict[str, Any] = (
         incoming_raw_metadata if isinstance(incoming_raw_metadata, dict) else {}
     )
     metadata = {**existing_metadata, **incoming_metadata}
@@ -627,15 +631,16 @@ def _merge_availability_ci_metadata(
 
 
 def get_availability_report(
-    start: Optional[datetime] = None,
-    end: Optional[datetime] = None,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    start: datetime | None = None,
+    end: datetime | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return MTTR/MTBF availability metrics grouped by CI + event type.
 
     MTTR uses technical recovery (`recovered_at - created_at`). MTBF uses the
-    average interval between consecutive failure starts in the report window,
-    including valid currently open/acknowledged starts. Incomplete legacy events
+    average completed operating interval: an eligible failure start minus the
+    prior eligible failure's recovery. Active incidents never complete an interval.
+        Incomplete legacy events
     are excluded from MTTR; active events are reported separately as current
     downtime where possible.
     """
@@ -645,14 +650,14 @@ def get_availability_report(
         now=now,
     )
     window_seconds = max((window_end - window_start).total_seconds(), 0)
-    groups: Dict[tuple[str, str], Dict[str, Any]] = {}
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
     snmp_coverage = _empty_snmp_coverage_summary()
 
     def ensure_group(
         key: tuple[str, str],
-        ci_name: Optional[str] = None,
-        ci_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        ci_name: str | None = None,
+        ci_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         row = groups.setdefault(
             key,
             {
@@ -660,6 +665,7 @@ def get_availability_report(
                 "ci_name": ci_name,
                 "event_type": key[1],
                 "failure_starts": [],
+                "completed_incidents": [],
                 "repair_seconds": [],
                 "downtime_seconds": 0.0,
                 "active_events": 0,
@@ -683,7 +689,6 @@ def get_availability_report(
               AND e.availability_source IN ['PING', 'ICMP']
               AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'
               AND NOT e.status IN ['OPEN', 'ACK']
-              AND e.created_at >= $window_start
               AND e.created_at <= $window_end
               AND e.recovered_at <= $window_end
             OPTIONAL MATCH (ci)-[:CATEGORIZED_AS]->(cat:Category)
@@ -704,7 +709,7 @@ def get_availability_report(
             recovered_at = _parse_datetime(event_data.get("recovered_at"))
             if created_at is None or recovered_at is None:
                 continue
-            if created_at < window_start or created_at > window_end:
+            if created_at > window_end:
                 continue
             if recovered_at < created_at or recovered_at > window_end:
                 continue
@@ -713,14 +718,15 @@ def get_availability_report(
                 ci_data, _record_value(record, "category")
             )
             row = ensure_group(key, ci_data.get("name"), ci_metadata)
+            row["completed_incidents"].append((created_at, recovered_at))
+            if created_at < window_start:
+                continue
             repair_seconds = (recovered_at - created_at).total_seconds()
             row["failure_starts"].append(created_at)
             row["repair_seconds"].append(repair_seconds)
             clipped_start = max(created_at, window_start)
             clipped_end = min(recovered_at, window_end)
-            row["downtime_seconds"] += max(
-                0.0, (clipped_end - clipped_start).total_seconds()
-            )
+            row["downtime_seconds"] += max(0.0, (clipped_end - clipped_start).total_seconds())
 
         active_result = session.run(
             """
@@ -755,9 +761,7 @@ def get_availability_report(
             if window_start <= created_at <= window_end:
                 row["failure_starts"].append(created_at)
             clipped_start = max(created_at, window_start)
-            row["active_downtime_seconds"] += max(
-                0.0, (window_end - clipped_start).total_seconds()
-            )
+            row["active_downtime_seconds"] += max(0.0, (window_end - clipped_start).total_seconds())
 
         snmp_result = session.run(
             """
@@ -779,17 +783,28 @@ def get_availability_report(
         )
         snmp_coverage = _build_snmp_coverage_summary(snmp_result.single())
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for row in groups.values():
         failure_starts = sorted(row["failure_starts"])
         repair_seconds = row["repair_seconds"]
-        mttr_seconds = (
-            sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
-        )
-        intervals = [
-            (failure_starts[index] - failure_starts[index - 1]).total_seconds()
-            for index in range(1, len(failure_starts))
-        ]
+        mttr_seconds = sum(repair_seconds) / len(repair_seconds) if repair_seconds else None
+        intervals = []
+        effective_outage_end = None
+        seen_incidents = set()
+        for created_at, recovered_at in sorted(row["completed_incidents"]):
+            incident_key = (created_at, recovered_at)
+            if incident_key in seen_incidents:
+                continue
+            seen_incidents.add(incident_key)
+            if effective_outage_end is None:
+                effective_outage_end = recovered_at
+                continue
+            if created_at < effective_outage_end:
+                effective_outage_end = max(effective_outage_end, recovered_at)
+                continue
+            if created_at >= window_start:
+                intervals.append((created_at - effective_outage_end).total_seconds())
+            effective_outage_end = recovered_at
         mtbf_seconds = sum(intervals) / len(intervals) if intervals else None
         total_downtime = row["downtime_seconds"] + row["active_downtime_seconds"]
         availability_percentage = None
@@ -810,12 +825,8 @@ def get_availability_report(
                 "active_events": row["active_events"],
                 "active_downtime_seconds": row["active_downtime_seconds"],
                 "availability_percentage": availability_percentage,
-                "first_failure_at": failure_starts[0].isoformat()
-                if failure_starts
-                else None,
-                "last_failure_at": failure_starts[-1].isoformat()
-                if failure_starts
-                else None,
+                "first_failure_at": failure_starts[0].isoformat() if failure_starts else None,
+                "last_failure_at": failure_starts[-1].isoformat() if failure_starts else None,
                 "ci": row.get("ci"),
             }
         )
@@ -842,17 +853,17 @@ def get_availability_report(
 def get_availability_snmp_no_response_drilldown(
     limit: int = 25,
     offset: int = 0,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return affected CIs with active SNMP no-response collection failures."""
     safe_limit = max(1, min(int(limit or 25), 100))
     safe_offset = max(0, int(offset or 0))
-    generated_at = now or datetime.now(timezone.utc)
+    generated_at = now or datetime.now(UTC)
     summary = {
         "total_ci_with_no_response": 0,
         "total_events_with_no_response": 0,
     }
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
 
     driver = get_db()
     with driver.session() as session:
@@ -923,8 +934,7 @@ def get_availability_snmp_no_response_drilldown(
             ci_data = _node_to_dict(_record_value(record, "ci"))
             event_items = _record_value(record, "events") or []
             events = [
-                _snmp_no_response_event_summary(_node_to_dict(event))
-                for event in event_items
+                _snmp_no_response_event_summary(_node_to_dict(event)) for event in event_items
             ]
             rows.append(
                 _clean_dict(
@@ -955,7 +965,77 @@ def get_availability_snmp_no_response_drilldown(
     }
 
 
-def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_affected_siblings(event_id: str) -> list[dict[str, Any]]:
+    """Return the list of CIs affected by the given ROOT event.
+
+    P2 REQ-004: this is the operator-facing drill-down. The ROOT event is
+    fetched first and validated as a ROOT (legacy PROPAGATED children are
+    not drill-down targets). `affected_ci_ids` is the membership list that
+    P0 writes onto the ROOT; the lookup is an `UNWIND` + `MATCH (:CI)` that
+    preserves the original ordering and returns at least `{ci_id, ci_name,
+    status}`. Empty membership returns `[]` (no 404).
+
+    Unknown or non-ROOT ids raise `HTTPException(404, "Event not found: <id>")`.
+    """
+    driver = get_db()
+    with driver.session() as session:
+        lookup = session.run(
+            """
+            MATCH (e:Event {id: $event_id})
+            RETURN e.correlation_type AS correlation_type,
+                   e.affected_ci_ids AS affected_ci_ids
+            """,
+            event_id=event_id,
+        ).single()
+
+        if not lookup or lookup.get("correlation_type") != "ROOT":
+            _raise_event_not_found(event_id)
+
+        ci_ids = list(lookup.get("affected_ci_ids") or [])
+        if not ci_ids:
+            return []
+
+        result = session.run(
+            """
+            UNWIND $ci_ids AS ci_id
+            MATCH (ci:CI {id: ci_id})
+            RETURN ci.id AS ci_id,
+                   ci.name AS ci_name,
+                   ci.status AS status,
+                   ci.ip AS ci_hostname,
+                   ci.location_name AS ci_location_name
+            """,
+            ci_ids=ci_ids,
+        )
+
+        rows_by_id = {
+            record["ci_id"]: {
+                "ci_id": record["ci_id"],
+                "ci_name": record["ci_name"],
+                "status": record["status"],
+                "ci_hostname": record["ci_hostname"],
+                "ci_location_name": record["ci_location_name"],
+            }
+            for record in result
+        }
+
+        # Preserve the original ordering of `affected_ci_ids` and drop any
+        # ids Neo4j did not resolve (defensive — should not happen in
+        # practice because the writer pins the relationship).
+        return [rows_by_id[ci_id] for ci_id in ci_ids if ci_id in rows_by_id]
+
+
+def get_events(
+    status: str | None = None,
+    include_children: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the event feed scoped to the requested status.
+
+    P2 REQ-003: when `include_children=False` (default), the query filters
+    out legacy PROPAGATED events so the operator view stops double-counting
+    the child rows P0 already collapsed into the ROOT. Pass
+    `include_children=True` to retain the raw set (audit, AI chat context).
+    """
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -968,11 +1048,16 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
                 OR ($status = 'CONSOLE' AND e.status IN ['OPEN', 'ACK', 'RECOVERED'])
                 OR ($status <> 'ACTIVE' AND $status <> 'CONSOLE' AND e.status = $status)
             )
+            AND (
+                $include_children
+                OR coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+            )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
             ORDER BY e.created_at DESC
         """,
             status=status,
+            include_children=include_children,
         )
         return [
             _public_event_summary(
@@ -986,7 +1071,7 @@ def get_events(status: Optional[str] = None) -> List[Dict[str, Any]]:
         ]
 
 
-def get_event_detail(event_id: str) -> Dict[str, Any]:
+def get_event_detail(event_id: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1007,7 +1092,7 @@ def get_event_detail(event_id: str) -> Dict[str, Any]:
         return build_event_detail_response(result)
 
 
-def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
+def get_related_events(ci_id: str) -> list[dict[str, Any]]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1033,9 +1118,7 @@ def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
             metric_value = _record_value(record, "m")
             if metric_value is not None:
                 metric_data = _node_to_dict(metric_value)
-                event_data["metric_name"] = metric_data.get("name") or metric_data.get(
-                    "id"
-                )
+                event_data["metric_name"] = metric_data.get("name") or metric_data.get("id")
             else:
                 event_data["metric_name"] = _record_value(record, "metric_name")
             related.append(_public_event_summary(event_data))
@@ -1043,13 +1126,11 @@ def get_related_events(ci_id: str) -> List[Dict[str, Any]]:
         return related
 
 
-def ack_event(
-    event_id: str, user: str, comment_message: Optional[str] = None
-) -> Dict[str, str]:
+def ack_event(event_id: str, user: str, comment_message: str | None = None) -> dict[str, str]:
     driver = get_db()
     audit_message = _build_ack_audit_message(user)
     note_message = _normalize_ack_note(comment_message)
-    with driver.session() as session:
+    with driver.session() as session:  # noqa: SIM117
         with session.begin_transaction() as tx:
             result = tx.run(
                 """
@@ -1076,8 +1157,8 @@ def close_event(
     event_id: str,
     user: str,
     forced: bool = False,
-    comment_message: Optional[str] = None,
-) -> Dict[str, str]:
+    comment_message: str | None = None,
+) -> dict[str, str]:
     # 1. Validate request content first (no DB hit)
     _validate_close_request(forced, comment_message)
 
@@ -1089,18 +1170,17 @@ def close_event(
     with driver.session() as session:
         # Check current status first to provide a better error message
         current = session.run(
-            "MATCH (e:Event {id: $eid}) RETURN e.status as status", 
-            eid=event_id
+            "MATCH (e:Event {id: $eid}) RETURN e.status as status", eid=event_id
         ).single()
-        
+
         if not current:
             _raise_event_not_found(event_id)
         assert current is not None
-        
+
         if current["status"] == "CLOSED":
             raise HTTPException(status_code=400, detail=f"Event {event_id} is already CLOSED")
 
-        result = session.run(
+        session.run(
             """
             MATCH (e:Event {id: $eid})
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
@@ -1116,7 +1196,7 @@ def close_event(
     return {"message": "Event Closed"}
 
 
-def add_event_comment(event_id: str, user: str, message: str) -> Dict[str, str]:
+def add_event_comment(event_id: str, user: str, message: str) -> dict[str, str]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(
@@ -1134,20 +1214,22 @@ def add_event_comment(event_id: str, user: str, message: str) -> Dict[str, str]:
     return {"message": "Comment added"}
 
 
-def prune_recovered_events(user: str) -> Dict[str, Any]:
+def prune_recovered_events(user: str) -> dict[str, Any]:
     driver = get_db()
     with driver.session() as session:
-        result = session.run(
-            """
+        result = (
+            session.run(
+                """
             MATCH (e:Event)
             WHERE e.status = 'RECOVERED'
               AND (e.ack IS NULL OR e.ack = false)
-              AND (e.comments IS NULL OR size(e.comments) = 0)
             SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
             RETURN count(e) as closed_count
         """,
-            user=user,
-        ).single() or {"closed_count": 0}
+                user=user,
+            ).single()
+            or {"closed_count": 0}
+        )
     closed_count = _record_value(result, "closed_count") or 0
     return {
         "message": f"Cleaned up {closed_count} events",
@@ -1156,13 +1238,67 @@ def prune_recovered_events(user: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Auto-prune scheduler entrypoint (fix-423 PR #2, AD-2/AD-5/AD-8)
+# ---------------------------------------------------------------------------
+#
+# REQ-PRUNE-003 + REQ-OBS-PRUNE-002: this is the function that the
+# ``backup_scheduler`` IntervalTrigger job invokes on every tick. It
+# acquires the distributed ``prune_lock`` (Postgres row), runs the existing
+# ``prune_recovered_events`` Cypher update, records the per-batch counter
+# in ``event_prune_metrics``, and releases the lock.
+#
+# Behaviour:
+# * If the lock is held (operator running the manual SSE prune), we log a
+#   WARN and return 0 — APScheduler is not an HTTP caller, so there is no
+#   409 to surface. The scheduler will try again on the next tick.
+# * If ``prune_recovered_events`` raises, the lock is still released (try
+#   / finally) so a transient Neo4j hiccup doesn't leave the lock held
+#   until TTL expiry.
+
+
+def run_prune_recovered_events_sync(user: str = "system-prune") -> int:
+    """Sync scheduler entrypoint for the auto-prune job.
+
+    Parameters
+    ----------
+    user:
+        Audit-trail user recorded in ``closed_by``. Defaults to
+        ``"system-prune"`` so it is obvious in event history that the
+        closure was scheduler-driven rather than operator-driven.
+
+    Returns
+    -------
+    int
+        Number of RECOVERED events closed by this tick. ``0`` when the
+        lock was contended (AD-8) or when no candidates exist.
+    """
+    # Import locally so module load doesn't require the prune-metrics
+    # singleton to be importable in every test path that imports
+    # ``event_service``.
+    from services.event_prune_metrics import record_pruned
+
+    if not acquire_prune_lock(owner="scheduler", ttl_seconds=300):
+        logger.warning(
+            "event_prune_skipped_lock_held",
+            extra={"event_prune_owner": "scheduler"},
+        )
+        return 0
+
+    try:
+        result = prune_recovered_events(user)
+        closed_count = int(result.get("count", 0) or 0)
+        record_pruned(closed_count=closed_count)
+        return closed_count
+    finally:
+        release_prune_lock(owner="scheduler")
+
+
+# ---------------------------------------------------------------------------
 # Distributed Prune Lock — prevents concurrent prune operations across operators
 # ---------------------------------------------------------------------------
 
-from datetime import datetime, timedelta, timezone
-from sqlalchemy import text
-from postgres_db import SessionLocal
-from models.prune_lock import PruneLock
+from postgres_db import SessionLocal  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 
 def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3) -> bool:
@@ -1173,18 +1309,20 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
     """
     db = SessionLocal()
     try:
-        for attempt in range(max_attempts):
+        for _attempt in range(max_attempts):
             expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
 
             # Atomic: try to insert, if lock exists and not expired, conflict
             result = db.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO prune_lock (lock_key, owner, acquired_at, expires_at)
                     VALUES ('prune', :owner, :acquired_at, :expires_at)
                     ON CONFLICT (lock_key) DO NOTHING
                     RETURNING id
-                """),
-                {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at}
+                """
+                ),
+                {"owner": owner, "acquired_at": datetime.utcnow(), "expires_at": expires_at},
             )
             row = result.fetchone()
 
@@ -1208,12 +1346,14 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
             if existing_owner == owner:
                 # We already own it — extend TTL (re-acquire)
                 db.execute(
-                    text("""
+                    text(
+                        """
                         UPDATE prune_lock
                         SET expires_at = :expires_at
                         WHERE lock_key = 'prune' AND owner = :owner
-                    """),
-                    {"owner": owner, "expires_at": expires_at}
+                    """
+                    ),
+                    {"owner": owner, "expires_at": expires_at},
                 )
                 db.commit()
                 return True
@@ -1222,7 +1362,7 @@ def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3
                 # Expired — delete and retry
                 db.execute(
                     text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND expires_at < :now"),
-                    {"now": datetime.utcnow()}
+                    {"now": datetime.utcnow()},
                 )
                 db.commit()
                 continue
@@ -1242,7 +1382,7 @@ def release_prune_lock(owner: str) -> bool:
     try:
         result = db.execute(
             text("DELETE FROM prune_lock WHERE lock_key = 'prune' AND owner = :owner RETURNING id"),
-            {"owner": owner}
+            {"owner": owner},
         )
         released = result.fetchone() is not None
         db.commit()
@@ -1256,27 +1396,44 @@ def release_prune_lock(owner: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-import asyncio
-import time
-import threading
-from typing import AsyncIterator, Set, Dict, Optional
-from config import get_event_batch_settings
+import asyncio  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from collections.abc import AsyncIterator  # noqa: E402
+
+from config import get_event_batch_settings  # noqa: E402
+
+# Maximum number of consecutive chunk fetch failures tolerated before the
+# generator re-raises instead of looping forever. The previous catch-all
+# ``except Exception`` swallowed every failure and re-entered the loop with
+# ``total_processed`` unchanged — a transient Neo4j blip became an infinite
+# loop and the SSE endpoint never received its first byte. Three retries
+# matches the existing per-event idempotency window (cache_ttl_s=300s) and
+# is the smallest cap that survives a single flap without giving up.
+MAX_CONSECUTIVE_CHUNK_FAILURES = 3
 
 
 async def event_batch_pruner(
     user: str,
-    batch_size: Optional[int] = None,
-    batch_delay_ms: Optional[int] = None,
-    batch_timeout_s: Optional[int] = None,
-    _idempotency_cache: Optional[Dict[str, float]] = None,
-    last_cursor: Optional[str] = None,
-) -> AsyncIterator[Dict[str, Any]]:
+    batch_size: int | None = None,
+    batch_delay_ms: int | None = None,
+    batch_timeout_s: int | None = None,
+    _idempotency_cache: dict[str, float] | None = None,
+    last_cursor: str | None = None,
+    last_id: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     """
     Async generator that yields progress after each chunk.
 
-    Uses cursor-based pagination (stable to inserts) with per-chunk transactions.
+    Uses a composite ``(created_at, id)`` cursor with NULL-safe tiebreak so it
+    makes forward progress on legacy NULL-``created_at`` rows (70%+ of
+    production rows pre-#279). Per-chunk transactions preserve atomicity.
     Idempotency is ensured via a request-scoped in-memory cache with TTL.
     Handles per-chunk timeout.
+
+    After ``MAX_CONSECUTIVE_CHUNK_FAILURES`` consecutive chunk failures the
+    generator re-raises the last exception so the caller (e.g. the SSE
+    endpoint) can surface a clean failure instead of hanging forever.
 
     Yields progress dicts with keys:
         - total: total events found to process
@@ -1295,7 +1452,7 @@ async def event_batch_pruner(
     # generator's lifetime.
     if _idempotency_cache is None:
         _idempotency_cache = {}
-    _CACHE_TTL_S = 300  # 5 minutes — events processed within this window are cached
+    cache_ttl_s = 300  # 5 minutes — events processed within this window are cached
 
     # Lock ensures atomic cache operations (WARNING #7 fix)
     _cache_lock = threading.Lock()
@@ -1312,7 +1469,7 @@ async def event_batch_pruner(
 
     def _cache_add(event_id: str) -> None:
         """Add event_id to cache with current TTL expiry."""
-        _idempotency_cache[event_id] = time.monotonic() + _CACHE_TTL_S
+        _idempotency_cache[event_id] = time.monotonic() + cache_ttl_s
 
     def _cache_check_and_add(event_id: str) -> bool:
         """Atomically check if event_id is in cache and add if not. Returns True if added."""
@@ -1322,22 +1479,88 @@ async def event_batch_pruner(
             _cache_add(event_id)
             return True
 
-    driver = get_db()
+    # ``get_db()`` is invoked inside each sync helper below so the call
+    # happens inside the worker thread (matters for tests that swap the
+    # driver via monkeypatch — the thread will see the swapped driver).
     batch = 0
     total_processed = 0
 
-    # First: get total count of recoverable events
-    with driver.session() as session:
-        result = session.run(
-            """
-            MATCH (e:Event)
-            WHERE e.status = 'RECOVERED'
-              AND (e.ack IS NULL OR e.ack = false)
-              AND (e.comments IS NULL OR size(e.comments) = 0)
-            RETURN count(e) as total
-            """
-        ).single()
-        total = _record_value(result, "total") or 0
+    # First: get total count of recoverable events.
+    #
+    # fix-sse-bulk-prune-clean: v1.14.5 attempted to convert
+    # ``event_batch_pruner`` to the neo4j 5.16 AsyncDriver API directly
+    # (``async with driver.session()``, ``await session.run(...)``,
+    # ``async for record in result:``). That broke at runtime because
+    # ``get_db()`` returns the SYNC driver — the v1.14.5 deploy hit
+    # ``TypeError: 'Session' object does not support the asynchronous
+    # context manager protocol`` on the first iteration of the SSE
+    # endpoint and was rolled back to v1.14.4.
+    #
+    # The actually-correct fix: keep the sync driver (no architecture
+    # change across the rest of the codebase) and run every blocking
+    # Neo4j call inside ``asyncio.to_thread`` so the event loop is
+    # freed for the SSE stream to flush the first ``data: {json}``
+    # frame well before the 1s first-byte budget. The cache helpers
+    # (``_cache_has``, ``_cache_check_and_add``) stay synchronous because
+    # they only operate on in-process mutable state.
+
+    def _fetch_total_count() -> int:
+        """Count RECOVERED + not-ack-eligible events. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            return (
+                _record_value(
+                    s.run(
+                        """
+                    MATCH (e:Event)
+                    WHERE e.status = 'RECOVERED'
+                      AND (e.ack IS NULL OR e.ack = false)
+                    RETURN count(e) as total
+                    """
+                    ).single(),
+                    "total",
+                )
+                or 0
+            )
+
+    def _fetch_page(cursor_filter: str, cursor_params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read one page of candidates. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            result = s.run(
+                f"""
+                MATCH (e:Event)
+                WHERE e.status = 'RECOVERED'
+                  AND (e.ack IS NULL OR e.ack = false)
+                  {cursor_filter}
+                RETURN e.id as event_id, e.status, e.created_at as created_at
+                ORDER BY e.created_at ASC NULLS LAST, e.id ASC
+                LIMIT $limit
+                """,
+                **cursor_params,
+            )
+            return [dict(record) for record in result]
+
+    def _close_one(event_id: str) -> bool:
+        """Close one event in its own transaction. Sync, runs in a thread."""
+        d = get_db()
+        with d.session() as s:
+            with s.begin_transaction() as tx:
+                r = tx.run(
+                    """
+                    MATCH (e:Event {id: $eid})
+                    WHERE e.status = 'RECOVERED'
+                      AND (e.ack IS NULL OR e.ack = false)
+                    SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
+                    RETURN e.id AS closed_id
+                    """,
+                    eid=event_id,
+                    user=user,
+                ).single()
+                tx.commit()
+            return bool(r)
+
+    total = await asyncio.to_thread(_fetch_total_count)
 
     yield {"total": total, "processed": 0, "remaining": total, "batch": 0}
 
@@ -1345,99 +1568,98 @@ async def event_batch_pruner(
         return
 
     # Process batches until all events are handled
+    consecutive_failures = 0
     while total_processed < total:
         batch += 1
         processed_in_chunk = 0
-        chunk_start = time.monotonic()
-
-        # Cursor-based pagination: resume from last processed event's created_at
+        # Composite (created_at, id) cursor with NULL-safe tiebreak — see
+        # openspec/changes/fix-423-recovered-event-accumulation/design.md AD-1.
+        # Legacy NULL `created_at` rows (pre-#279) would otherwise stop iter 2+
+        # because `NULL > <anything>` evaluates to NULL.
         cursor_filter = ""
+        cursor_params: dict[str, Any] = {"limit": batch_size}
         if last_cursor is not None:
-            cursor_filter = "AND e.created_at > $last_cursor"
+            cursor_filter = (
+                "AND (e.created_at > $last_cursor OR (e.created_at IS NULL AND e.id > $last_id))"
+            )
+            cursor_params["last_cursor"] = last_cursor
+            cursor_params["last_id"] = last_id
+        elif last_id is not None:
+            # Cursor is at the tail of a NULL-bearing pass: only rows whose
+            # created_at is still NULL AND whose id is strictly greater are
+            # eligible. We deliberately avoid `> NULL` since that returns NULL
+            # (which excludes every row in Cypher).
+            cursor_filter = "AND (e.created_at IS NULL AND e.id > $last_id)"
+            cursor_params["last_id"] = last_id
 
-        with driver.session() as session:
-            try:
-                result = session.run(
-                    f"""
-                    MATCH (e:Event)
-                    WHERE e.status = 'RECOVERED'
-                      AND (e.ack IS NULL OR e.ack = false)
-                      AND (e.comments IS NULL OR size(e.comments) = 0)
-                      {cursor_filter}
-                    RETURN e.id as event_id, e.status, e.created_at as created_at
-                    ORDER BY e.created_at ASC
-                    LIMIT $limit
-                    """,
-                    limit=batch_size,
-                    last_cursor=last_cursor if last_cursor else None,
-                )
+        try:
+            page = await asyncio.to_thread(_fetch_page, cursor_filter, cursor_params)
 
-                event_ids: Set[str] = set()
-                last_processed_cursor = None
-                for record in result:
-                    event_id = record.get("event_id")
-                    created_at = record.get("created_at")
-                    if event_id and not _cache_has(event_id):
-                        event_ids.add(event_id)
-                        last_processed_cursor = created_at
+            event_ids: set[str] = set()
+            last_processed_cursor = None
+            last_processed_id = None
+            for record in page:
+                event_id = record.get("event_id")
+                created_at = record.get("created_at")
+                if event_id and not _cache_has(event_id):
+                    event_ids.add(event_id)
+                    last_processed_cursor = created_at
+                    last_processed_id = event_id
 
-                # Close each event in its own transaction for safety
-                for event_id in event_ids:
-                    # WARNING #7 fix: use atomic check-and-add to prevent race between
-                    # _cache_has check and _cache_add call across concurrent operations
-                    if not _cache_check_and_add(event_id):
-                        continue
-                    try:
-                        with session.begin_transaction() as tx:
-                            close_result = tx.run(
-                                """
-                                MATCH (e:Event {id: $eid})
-                                WHERE e.status = 'RECOVERED'
-                                  AND (e.ack IS NULL OR e.ack = false)
-                                  AND (e.comments IS NULL OR size(e.comments) = 0)
-                                SET e.status = 'CLOSED', e.closed_at = datetime(), e.closed_by = $user
-                                RETURN e.id AS closed_id
-                                """,
-                                eid=event_id,
-                                user=user,
-                            ).single()
-                            tx.commit()
-                        if close_result:
-                            processed_in_chunk += 1
-                    except Exception:
-                        # Chunk timeout or other error — log and continue
-                        continue
+            # Close each event in its own transaction for safety
+            for event_id in event_ids:
+                # WARNING #7 fix: use atomic check-and-add to prevent race between
+                # _cache_has check and _cache_add call across concurrent operations
+                if not _cache_check_and_add(event_id):
+                    continue
+                try:
+                    if await asyncio.to_thread(_close_one, event_id):
+                        processed_in_chunk += 1
+                except Exception:
+                    # Chunk timeout or other error — log and continue
+                    continue
 
-                total_processed += processed_in_chunk
+            total_processed += processed_in_chunk
+            # Any successful chunk resets the failure streak so a transient
+            # blip doesn't poison the rest of the run.
+            consecutive_failures = 0
 
-                # Update cursor for next batch
-                if last_processed_cursor is not None:
-                    last_cursor = last_processed_cursor
+            # Update cursor for next batch. The composite cursor needs both
+            # the row's `created_at` (None when NULL) and its `id` so the
+            # next iteration can place the boundary deterministically.
+            if last_processed_id is not None:
+                last_cursor = last_processed_cursor
+                last_id = last_processed_id
 
-                yield {
-                    "total": total,
-                    "processed": total_processed,
-                    "remaining": max(0, total - total_processed),
-                    "batch": batch,
-                }
+            yield {
+                "total": total,
+                "processed": total_processed,
+                "remaining": max(0, total - total_processed),
+                "batch": batch,
+            }
 
-                # If the selected page was smaller than batch_size, there are no later
-                # eligible rows. Use selected count instead of closed count because an
-                # event can become ACKed/commented after selection and be skipped by
-                # the guarded close recheck without meaning pagination is exhausted.
-                if len(event_ids) < batch_size:
-                    break
+            # If the selected page was smaller than batch_size, there are no later
+            # eligible rows. Use selected count instead of closed count because an
+            # event can become ACKed/commented after selection and be skipped by
+            # the guarded close recheck without meaning pagination is exhausted.
+            if len(event_ids) < batch_size:
+                break
 
-            except Exception as e:
-                # Timeout or error on this chunk — yield error but continue
-                yield {
-                    "total": total,
-                    "processed": total_processed,
-                    "remaining": max(0, total - total_processed),
-                    "batch": batch,
-                    "error": str(e),
-                }
-                # Don't increment total_processed — chunk will be retried if not idempotent
+        except Exception as e:
+            # Timeout or error on this chunk — yield error but bound retries.
+            consecutive_failures += 1
+            if consecutive_failures > MAX_CONSECUTIVE_CHUNK_FAILURES:
+                # Cap exceeded — re-raise so the caller surfaces a clean
+                # failure rather than the generator looping forever.
+                raise
+            yield {
+                "total": total,
+                "processed": total_processed,
+                "remaining": max(0, total - total_processed),
+                "batch": batch,
+                "error": str(e),
+            }
+            # Don't increment total_processed — chunk will be retried if not idempotent
 
         # Delay between chunks (with small jitter to avoid thundering herd)
         if batch_delay_ms > 0:
@@ -1445,7 +1667,7 @@ async def event_batch_pruner(
             await asyncio.sleep(max(0, jitter_ms / 1000.0))
 
 
-def run_event_diagnostic(event_id: str, user: str) -> Dict[str, str]:
+def run_event_diagnostic(event_id: str, user: str) -> dict[str, str]:
     driver = get_db()
     with driver.session() as session:
         result = session.run(

@@ -5,6 +5,7 @@ import services.event_service as event_service
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from models.core import (
+    AffectedCI,
     AvailabilityReportResponse,
     AvailabilitySnmpNoResponseResponse,
     EventDetailResponse,
@@ -47,14 +48,33 @@ def _has_ai_permission(permission: AIPermission, current_user: User) -> bool:
     return permission.value in current_user.permissions
 
 
-@router.get("", response_model=list[EventFeedSummary])
-async def get_events(status: str | None = None):
+@router.get("", response_model=list[EventFeedSummary], response_model_exclude_none=True)
+async def get_events(
+    status: str | None = None,
+    include_children: bool = Query(  # noqa: B008
+        False,
+        description=(
+            "When false (default), only ROOT events are returned. Set to true "
+            "to retain legacy PROPAGATED child rows (audit, AI chat context)."
+        ),
+    ),
+):
     """
     Fetch system events filtered by status.
+
     Args:
-        status (str, optional): 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack), or 'CONSOLE' (Open/Ack/Recovered).
+        status: 'OPEN', 'ACK', 'CLOSED', 'RECOVERED', 'ACTIVE' (Open/Ack),
+            or 'CONSOLE' (Open/Ack/Recovered).
+        include_children: default False (root-only feed). See P2 REQ-003.
+
+    P2 REQ-001 / SCN-010: `response_model_exclude_none=True` guarantees that
+    absent `affected_ci_ids` / `affected_count` fields stay absent from the
+    JSON payload. The service-side `_public_event_summary` drops null
+    values, but FastAPI's default response-model serialization rebuilds
+    the schema and would re-emit the schema defaults as `null`; the
+    exclude_none flag preserves the omission contract end-to-end.
     """
-    return event_service.get_events(status)
+    return event_service.get_events(status, include_children=include_children)
 
 
 @router.get("/availability-report", response_model=AvailabilityReportResponse)
@@ -82,6 +102,22 @@ async def get_availability_snmp_no_response(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/{event_id}/affected", response_model=list[AffectedCI])
+async def get_event_affected(
+    event_id: str, current_user: User = Depends(get_current_active_user)  # noqa: B008
+):
+    """Drill-down endpoint returning the CI list affected by a ROOT event.
+
+    P2 REQ-004: declared BEFORE `/{event_id}` so the path resolver wins
+    the precedence race. Unknown or non-ROOT ids answer 404 with the
+    canonical detail string from `_raise_event_not_found`. The guard
+    mirrors `GET /events/{event_id}`.
+    """
+    if not check_permission(UserPermission.EVENT_VIEW, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view events")
+    return event_service.get_affected_siblings(event_id)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse)

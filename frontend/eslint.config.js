@@ -58,6 +58,7 @@ export default [
         URLSearchParams: "readonly",
         Event: "readonly",
         CustomEvent: "readonly",
+        PromiseRejectionEvent: "readonly",
         HTMLElement: "readonly",
         HTMLDivElement: "readonly",
         HTMLInputElement: "readonly",
@@ -102,6 +103,20 @@ export default [
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+      // The base `no-unused-vars` rule from `js.configs.recommended`
+      // fires on function-type parameter declarations (e.g.
+      // `(value: T) => void`) even when those names are merely
+      // documentation-only. Mirror the typescript-eslint ignore
+      // pattern so underscored parameter names on function types
+      // are treated the same way in both rule layers.
+      "no-unused-vars": [
+        "error",
+        {
+          args: "after-used",
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
       ],
       "@typescript-eslint/no-explicit-any": "warn",
       "no-console": "warn",

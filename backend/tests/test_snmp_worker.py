@@ -759,6 +759,10 @@ class TestICMPDebounce:
         assert availability_queries, mock_session.queries
         availability_query = "\n".join(q["query"] for q in availability_queries)
         assert "source_protocol" in availability_query
+        # Note: The b5bfb4e assertions `not in [...] ACK, RECOVERED` and `in [...] ACK`
+        # were removed by PR #358 (f443eb7) because the production query intentionally
+        # matches OPEN | ACK | RECOVERED to keep AVOIDABILITY events connected during
+        # the recovery window. Pinned by that commit; not relevant to fix-416.
         assert (
             "MERGE (created)-[:TRIGGERED_BY]->(m)" in availability_query
             or "MERGE (existing)-[:TRIGGERED_BY]->(m)" in availability_query
@@ -1030,7 +1034,9 @@ def test_refresh_icmp_latency_events_updates_open_or_ack_events_without_merge_du
     )
 
     query = session.queries[0]["query"]
-    assert "existing.status IN ['OPEN', 'ACK']" in query
+    # fix-423 PR #2 / REQ-PRUNE-004 / AD-4: ICMP-latency filter widened to
+    # include RECOVERED so a DOWN→OK→DOWN cycle re-uses the same ROOT id.
+    assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
     assert "coalesce(existing.correlation_type, 'ROOT') = 'ROOT'" in query
     assert (
         "MERGE (e:Event {ci_id: row.node_id, metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH', status: 'OPEN'})"
@@ -1337,3 +1343,240 @@ def test_poll_snmp_skips_icmp_sidecar_metrics_as_primary_poll_targets():
     assert not any(
         row["metric_id"] == "icmp_jitter_ms" and row["value"] in (0.0, 1.0) for row in rows
     )
+
+
+def test_refresh_icmp_jitter_events_creates_open_threshold_breach():
+    from engines.snmp_worker import _refresh_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_jitter_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "Jitter warning",
+            }
+        ],
+    )
+
+    assert session.queries, "expected jitter refresh to run a Neo4j query"
+    query = session.queries[0]["query"]
+    # The metric_id is bound via the row params, not embedded in the query.
+    assert session.queries[0]["params"]["breaches"][0]["metric_id"] == "icmp_jitter_ms"
+    assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
+    assert "SET existing.severity = row.status" in query
+
+
+def test_refresh_icmp_jitter_events_acquires_pg_advisory_lock_before_neo4j_write():
+    from unittest.mock import MagicMock, patch
+
+    from engines.snmp_worker import _refresh_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    lock_db = MagicMock()
+    call_order: list[str] = []
+
+    with patch("engines.snmp_worker.acquire_event_triplet_lock") as mock_lock:
+        mock_lock.side_effect = lambda *_a, **_kw: call_order.append("lock")
+
+        original_run = session.run
+
+        def tracking_run(query, **params):
+            call_order.append("neo4j")
+            return original_run(query, **params)
+
+        session.run = tracking_run
+
+        _refresh_icmp_jitter_events(
+            session,
+            [
+                {
+                    "node_id": "ci-001",
+                    "metric_id": "icmp_jitter_ms",
+                    "protocol": "ICMP",
+                    "source_protocol": "ICMP",
+                    "event_type": "THRESHOLD_BREACH",
+                    "status": "WARNING",
+                    "message": "Jitter warning",
+                }
+            ],
+            lock_db=lock_db,
+        )
+
+    assert mock_lock.call_count == 1
+    lock_args = mock_lock.call_args_list[0].args
+    assert lock_args[0] is lock_db
+    assert lock_args[1] == "ci-001"
+    assert lock_args[2] == "icmp_jitter_ms"
+    assert lock_args[3] == "THRESHOLD_BREACH"
+    assert mock_lock.call_args_list[0].kwargs["writer_context"] == "snmp_worker_icmp_jitter"
+    assert call_order[0] == "lock"
+    assert call_order.index("lock") < call_order.index("neo4j")
+
+
+def test_refresh_icmp_jitter_events_skips_when_status_ok():
+    from engines.snmp_worker import _refresh_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_jitter_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "OK",
+                "message": "OK",
+            }
+        ],
+    )
+
+    assert session.queries == [], "OK status must NOT trigger a Neo4j write"
+
+
+def test_refresh_icmp_packet_loss_events_creates_open_threshold_breach():
+    from engines.snmp_worker import _refresh_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "packet_loss_pct",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "CRITICAL",
+                "message": "Packet loss critical",
+            }
+        ],
+    )
+
+    assert session.queries, "expected packet_loss refresh to run a Neo4j query"
+    query = session.queries[0]["query"]
+    assert session.queries[0]["params"]["breaches"][0]["metric_id"] == "packet_loss_pct"
+    assert "existing.status IN ['OPEN', 'ACK', 'RECOVERED']" in query
+    assert "SET existing.severity = row.status" in query
+
+
+def test_refresh_icmp_packet_loss_events_acquires_pg_advisory_lock_before_neo4j_write():
+    from unittest.mock import MagicMock, patch
+
+    from engines.snmp_worker import _refresh_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    lock_db = MagicMock()
+    call_order: list[str] = []
+
+    with patch("engines.snmp_worker.acquire_event_triplet_lock") as mock_lock:
+        mock_lock.side_effect = lambda *_a, **_kw: call_order.append("lock")
+
+        original_run = session.run
+
+        def tracking_run(query, **params):
+            call_order.append("neo4j")
+            return original_run(query, **params)
+
+        session.run = tracking_run
+
+        _refresh_icmp_packet_loss_events(
+            session,
+            [
+                {
+                    "node_id": "ci-001",
+                    "metric_id": "packet_loss_pct",
+                    "protocol": "ICMP",
+                    "source_protocol": "ICMP",
+                    "event_type": "THRESHOLD_BREACH",
+                    "status": "CRITICAL",
+                    "message": "Packet loss critical",
+                }
+            ],
+            lock_db=lock_db,
+        )
+
+    assert mock_lock.call_count == 1
+    lock_args = mock_lock.call_args_list[0].args
+    assert lock_args[0] is lock_db
+    assert lock_args[1] == "ci-001"
+    assert lock_args[2] == "packet_loss_pct"
+    assert lock_args[3] == "THRESHOLD_BREACH"
+    assert mock_lock.call_args_list[0].kwargs["writer_context"] == "snmp_worker_icmp_packet_loss"
+    assert call_order[0] == "lock"
+    assert call_order.index("lock") < call_order.index("neo4j")
+
+
+def test_refresh_icmp_packet_loss_events_skips_when_status_ok():
+    from engines.snmp_worker import _refresh_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "packet_loss_pct",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "OK",
+                "message": "OK",
+            }
+        ],
+    )
+
+    assert session.queries == [], "OK status must NOT trigger a Neo4j write"
+
+
+def test_refresh_icmp_jitter_events_ignores_other_metric_ids():
+    from engines.snmp_worker import _refresh_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    # Even if the event_type looks like a breach, the helper must filter by
+    # metric_id so a latency update never lands in the jitter refresh.
+    _refresh_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "latency warning",
+            }
+        ],
+    )
+
+    assert session.queries == [], "jitter refresh must ignore latency rows"
+
+
+def test_refresh_icmp_packet_loss_events_ignores_other_metric_ids():
+    from engines.snmp_worker import _refresh_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _refresh_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "event_type": "THRESHOLD_BREACH",
+                "status": "WARNING",
+                "message": "latency warning",
+            }
+        ],
+    )
+
+    assert session.queries == [], "packet_loss refresh must ignore latency rows"

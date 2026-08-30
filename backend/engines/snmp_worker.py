@@ -17,19 +17,29 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../backend"))
 from config import get_icmp_settings, get_polling_pipeline_settings  # noqa: E402
 from polling.icmp_measurements import (  # noqa: E402
     ICMP_AVAILABILITY_METRIC_ID,
+    ICMP_JITTER_METRIC_ID,
     ICMP_LATENCY_METRIC_ID,
+    ICMP_PACKET_LOSS_METRIC_ID,
     PingMeasurement,
     build_icmp_sidecar_samples,
     coerce_ping_measurement,
+    evaluate_jitter_status,
     evaluate_latency_status,
+    evaluate_packet_loss_status,
     is_icmp_availability_metric,
     is_icmp_telemetry_metric,
+    jitter_threshold_metadata,
     latency_threshold_metadata,
+    packet_loss_threshold_metadata,
     parse_ping_latency_ms,
 )
 from postgres_db import SessionLocal  # noqa: E402
 from repositories.metric_repo import bulk_insert_metrics  # noqa: E402
-from repositories.topology_repo import build_open_parent_index  # noqa: E402
+from repositories.topology_repo import (  # noqa: E402
+    build_cycle_parent_index,
+    build_open_parent_index,
+    get_topology_relations,
+)
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock  # noqa: E402
 from services.neo4j_write_guard import (  # noqa: E402
     is_poll_collector_id_undefined_error,
@@ -92,7 +102,7 @@ def verify_connection():
             print("Connected to Neo4j!")
             return
         except Exception:
-            print(f"Waiting for Neo4j... ({i+1}/{max_retries})")
+            print(f"Waiting for Neo4j... ({i + 1}/{max_retries})")
             time.sleep(2)
     raise Exception("Could not connect to Neo4j after multiple retries")
 
@@ -227,10 +237,12 @@ def _log_observe_only_cycle(
 
 def _count_monitored_cis(session) -> int:
     """Return the stable count of distinct CIs with active metric assignments."""
-    record = session.run("""
+    record = session.run(
+        """
         MATCH (n:CI)-[:HAS_METRIC]->(:MetricDef)
         RETURN count(DISTINCT n) AS cis_monitored
-    """).single()
+    """
+    ).single()
     if not record:
         return 0
     return int(record.get("cis_monitored") or 0)
@@ -246,11 +258,13 @@ def _base_severity_from_criticality(criticality) -> str:
 
 def _previous_latency_ms(db, node_id: str, before: datetime) -> float | None:
     result = db.execute(
-        text("""
+        text(
+            """
             SELECT value FROM metric_values
             WHERE node_id = :node_id AND metric_id = :metric_id AND time < :before
             ORDER BY time DESC LIMIT 1
-        """),
+        """
+        ),
         {"node_id": node_id, "metric_id": ICMP_LATENCY_METRIC_ID, "before": before},
     )
     row = result.first() if hasattr(result, "first") else None
@@ -731,7 +745,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -739,7 +753,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
                     id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                     event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                     message: row.message, source_protocol: row.source_protocol,
-                    last_seen: datetime(), ack: false,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type,
                     propagated_from: row.propagated_from,
                     root_cause_ci_id: row.root_cause_ci_id,
@@ -771,7 +785,7 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             MATCH (n:CI {id: row.node_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
-            WHERE existing.status IN ['OPEN', 'ACK']
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
               AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -779,7 +793,265 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
                     id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
                     event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
                     message: row.message, source_protocol: row.source_protocol,
-                    last_seen: datetime(), ack: false,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
+                    correlation_type: row.correlation_type,
+                    propagated_from: row.propagated_from,
+                    root_cause_ci_id: row.root_cause_ci_id
+                })
+                MERGE (n)-[:HAS_EVENT]->(created)
+                MERGE (created)-[:TRIGGERED_BY]->(m)
+            )
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+                SET existing.severity = row.status,
+                    existing.message = row.message,
+                    existing.source_protocol = row.source_protocol,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
+                    existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                    existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id)
+                MERGE (n)-[:HAS_EVENT]->(existing)
+                MERGE (existing)-[:TRIGGERED_BY]->(m)
+            )
+        """
+        run_with_cypher_param_fallback(
+            session,
+            primary_query,
+            {
+                "breaches": root_rows,
+                "poll_collector_id": POLL_COLLECTOR_ID,
+            },
+            fallback_query,
+            {"breaches": root_rows},
+            is_poll_collector_id_undefined_error,
+            logger,
+        )
+
+    # Keep PROPAGATED children from creating their own child events.
+    # Instead, attach affected-CI metadata to the ROOT event.
+    _update_propagated_root_events(session, propagated_rows)
+
+
+def _refresh_icmp_jitter_events(session, updates, cache=None, lock_db=None):
+    breaches = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_JITTER_METRIC_ID
+        and u.get("event_type") == EVENT_TYPE_THRESHOLD_BREACH
+        and u.get("status") in {"WARNING", "CRITICAL"}
+    ]
+    if not breaches:
+        return
+    # Decorate each row with topology-derived correlation fields (fix #310).
+    if cache is None:
+        cache = {}
+    for row in breaches:
+        row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
+
+    root_rows = [row for row in breaches if row.get("correlation_type") != "PROPAGATED"]
+    propagated_rows = [row for row in breaches if row.get("correlation_type") == "PROPAGATED"]
+
+    # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write (issue #322).
+    if lock_db is not None:
+        distinct_triplets = sorted(
+            {
+                (row.get("node_id"), row.get("metric_id"), row.get("event_type"))
+                for row in breaches
+                if row.get("node_id") and row.get("metric_id") and row.get("event_type")
+            }
+        )
+        for ci_id, metric_id, event_type in distinct_triplets:
+            acquire_event_triplet_lock(
+                lock_db,
+                ci_id,
+                metric_id,
+                event_type,
+                writer_context="snmp_worker_icmp_jitter",
+            )
+
+    if root_rows:
+        primary_query = """
+            UNWIND $breaches AS row
+            MATCH (n:CI {id: row.node_id})
+            MATCH (m:MetricDef {id: row.metric_id})
+            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+            WITH row, n, m, head(collect(existing)) AS existing
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                CREATE (created:Event {
+                    id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                    event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                    message: row.message, source_protocol: row.source_protocol,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
+                    correlation_type: row.correlation_type,
+                    propagated_from: row.propagated_from,
+                    root_cause_ci_id: row.root_cause_ci_id,
+                    poll_collector_id: $poll_collector_id
+                })
+                MERGE (n)-[:HAS_EVENT]->(created)
+                MERGE (created)-[:TRIGGERED_BY]->(m)
+            )
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+                SET existing.severity = row.status,
+                    existing.message = row.message,
+                    existing.source_protocol = row.source_protocol,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
+                    existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                    existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id),
+                    existing.poll_collector_id = $poll_collector_id
+                MERGE (n)-[:HAS_EVENT]->(existing)
+                MERGE (existing)-[:TRIGGERED_BY]->(m)
+            )
+        """
+        # Fallback Cypher — hand-written (see #340, verify-report CRITICAL #1).
+        fallback_query = """
+            UNWIND $breaches AS row
+            MATCH (n:CI {id: row.node_id})
+            MATCH (m:MetricDef {id: row.metric_id})
+            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+            WITH row, n, m, head(collect(existing)) AS existing
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                CREATE (created:Event {
+                    id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                    event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                    message: row.message, source_protocol: row.source_protocol,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
+                    correlation_type: row.correlation_type,
+                    propagated_from: row.propagated_from,
+                    root_cause_ci_id: row.root_cause_ci_id
+                })
+                MERGE (n)-[:HAS_EVENT]->(created)
+                MERGE (created)-[:TRIGGERED_BY]->(m)
+            )
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+                SET existing.severity = row.status,
+                    existing.message = row.message,
+                    existing.source_protocol = row.source_protocol,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
+                    existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                    existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id)
+                MERGE (n)-[:HAS_EVENT]->(existing)
+                MERGE (existing)-[:TRIGGERED_BY]->(m)
+            )
+        """
+        run_with_cypher_param_fallback(
+            session,
+            primary_query,
+            {
+                "breaches": root_rows,
+                "poll_collector_id": POLL_COLLECTOR_ID,
+            },
+            fallback_query,
+            {"breaches": root_rows},
+            is_poll_collector_id_undefined_error,
+            logger,
+        )
+
+    # Keep PROPAGATED children from creating their own child events.
+    # Instead, attach affected-CI metadata to the ROOT event.
+    _update_propagated_root_events(session, propagated_rows)
+
+
+def _refresh_icmp_packet_loss_events(session, updates, cache=None, lock_db=None):
+    breaches = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_PACKET_LOSS_METRIC_ID
+        and u.get("event_type") == EVENT_TYPE_THRESHOLD_BREACH
+        and u.get("status") in {"WARNING", "CRITICAL"}
+    ]
+    if not breaches:
+        return
+    # Decorate each row with topology-derived correlation fields (fix #310).
+    if cache is None:
+        cache = {}
+    for row in breaches:
+        row.update(_resolve_correlation(cache, row.get("node_id"), row.get("metric_id")))
+
+    root_rows = [row for row in breaches if row.get("correlation_type") != "PROPAGATED"]
+    propagated_rows = [row for row in breaches if row.get("correlation_type") == "PROPAGATED"]
+
+    # Serialize concurrent writers per (ci_id, metric_id, event_type) triplet
+    # before the Neo4j OPTIONAL MATCH + FOREACH(CREATE) Event write (issue #322).
+    if lock_db is not None:
+        distinct_triplets = sorted(
+            {
+                (row.get("node_id"), row.get("metric_id"), row.get("event_type"))
+                for row in breaches
+                if row.get("node_id") and row.get("metric_id") and row.get("event_type")
+            }
+        )
+        for ci_id, metric_id, event_type in distinct_triplets:
+            acquire_event_triplet_lock(
+                lock_db,
+                ci_id,
+                metric_id,
+                event_type,
+                writer_context="snmp_worker_icmp_packet_loss",
+            )
+
+    if root_rows:
+        primary_query = """
+            UNWIND $breaches AS row
+            MATCH (n:CI {id: row.node_id})
+            MATCH (m:MetricDef {id: row.metric_id})
+            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+            WITH row, n, m, head(collect(existing)) AS existing
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                CREATE (created:Event {
+                    id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                    event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                    message: row.message, source_protocol: row.source_protocol,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
+                    correlation_type: row.correlation_type,
+                    propagated_from: row.propagated_from,
+                    root_cause_ci_id: row.root_cause_ci_id,
+                    poll_collector_id: $poll_collector_id
+                })
+                MERGE (n)-[:HAS_EVENT]->(created)
+                MERGE (created)-[:TRIGGERED_BY]->(m)
+            )
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+                SET existing.severity = row.status,
+                    existing.message = row.message,
+                    existing.source_protocol = row.source_protocol,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
+                    existing.correlation_type = coalesce(existing.correlation_type, 'ROOT'),
+                    existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.node_id),
+                    existing.poll_collector_id = $poll_collector_id
+                MERGE (n)-[:HAS_EVENT]->(existing)
+                MERGE (existing)-[:TRIGGERED_BY]->(m)
+            )
+        """
+        # Fallback Cypher — hand-written (see #340, verify-report CRITICAL #1).
+        fallback_query = """
+            UNWIND $breaches AS row
+            MATCH (n:CI {id: row.node_id})
+            MATCH (m:MetricDef {id: row.metric_id})
+            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})
+            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
+            WITH row, n, m, head(collect(existing)) AS existing
+            FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                CREATE (created:Event {
+                    id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                    event_type: 'THRESHOLD_BREACH', status: 'OPEN', severity: row.status,
+                    message: row.message, source_protocol: row.source_protocol,
+                    created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type,
                     propagated_from: row.propagated_from,
                     root_cause_ci_id: row.root_cause_ci_id
@@ -918,7 +1190,8 @@ def poll_snmp():
     try:
         with driver.session() as session:
             # Enhanced query: Get CI credentials and Metric metadata
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (n:CI)-[r:HAS_METRIC]->(m:MetricDef)
                 WITH n, r, m,
                      coalesce(m.polling_interval, 60) as interval,
@@ -932,7 +1205,8 @@ def poll_snmp():
                        m.metric_kind as metric_kind,
                        m.availability_source as availability_source,
                        interval
-            """)
+            """
+            )
 
             records = list(result)
             records.sort(
@@ -1104,6 +1378,14 @@ def poll_snmp():
                             warning_ms=icmp_settings.latency_warning_ms,
                             critical_ms=icmp_settings.latency_critical_ms,
                         )
+                        jitter_thresholds = jitter_threshold_metadata(
+                            warning_ms=icmp_settings.jitter_warning_ms,
+                            critical_ms=icmp_settings.jitter_critical_ms,
+                        )
+                        packet_loss_thresholds = packet_loss_threshold_metadata(
+                            warning_pct=icmp_settings.packet_loss_warning_pct,
+                            critical_pct=icmp_settings.packet_loss_critical_pct,
+                        )
                         sample_status = "OK"
                         sample_message = (
                             "Latest ICMP telemetry sample collected by legacy SNMP worker"
@@ -1131,6 +1413,56 @@ def poll_snmp():
                                 sample_message = (
                                     f"Metric ICMP Latency is OK. Value: {sample['value']}"
                                 )
+                        elif sample["metric_id"] == ICMP_JITTER_METRIC_ID:
+                            sample_status = evaluate_jitter_status(
+                                sample.get("value"),
+                                warning_ms=icmp_settings.jitter_warning_ms,
+                                critical_ms=icmp_settings.jitter_critical_ms,
+                            )
+                            sample_severity = (
+                                sample_status
+                                if sample_status in {"WARNING", "CRITICAL"}
+                                else "INFO"
+                            )
+                            if sample_status == "CRITICAL":
+                                sample_message = f"Critical Threshold Breached: {sample['value']} >= {icmp_settings.jitter_critical_ms}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            elif sample_status == "WARNING":
+                                sample_message = f"Warning Threshold Breached: {sample['value']} >= {icmp_settings.jitter_warning_ms}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            else:
+                                sample_message = (
+                                    f"Metric ICMP Jitter is OK. Value: {sample['value']}"
+                                )
+                        elif sample["metric_id"] == ICMP_PACKET_LOSS_METRIC_ID:
+                            sample_status = evaluate_packet_loss_status(
+                                sample.get("value"),
+                                warning_pct=icmp_settings.packet_loss_warning_pct,
+                                critical_pct=icmp_settings.packet_loss_critical_pct,
+                            )
+                            sample_severity = (
+                                sample_status
+                                if sample_status in {"WARNING", "CRITICAL"}
+                                else "INFO"
+                            )
+                            if sample_status == "CRITICAL":
+                                sample_message = f"Critical Threshold Breached: {sample['value']} >= {icmp_settings.packet_loss_critical_pct}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            elif sample_status == "WARNING":
+                                sample_message = f"Warning Threshold Breached: {sample['value']} >= {icmp_settings.packet_loss_warning_pct}"
+                                sample_event_type = EVENT_TYPE_THRESHOLD_BREACH
+                            else:
+                                sample_message = (
+                                    f"Metric ICMP Packet Loss is OK. Value: {sample['value']}"
+                                )
+                        if sample["metric_id"] == ICMP_LATENCY_METRIC_ID:
+                            sample_criticality = latency_thresholds["criticality"]
+                        elif sample["metric_id"] == ICMP_JITTER_METRIC_ID:
+                            sample_criticality = jitter_thresholds["criticality"]
+                        elif sample["metric_id"] == ICMP_PACKET_LOSS_METRIC_ID:
+                            sample_criticality = packet_loss_thresholds["criticality"]
+                        else:
+                            sample_criticality = record["criticality"]
                         latest_updates.append(
                             {
                                 "node_id": node_id,
@@ -1138,11 +1470,7 @@ def poll_snmp():
                                 "value": sample["value"],
                                 "protocol": protocol,
                                 "metric_name": sample["metric_id"],
-                                "criticality": (
-                                    latency_thresholds["criticality"]
-                                    if sample["metric_id"] == ICMP_LATENCY_METRIC_ID
-                                    else record["criticality"]
-                                ),
+                                "criticality": sample_criticality,
                                 "status": sample_status,
                                 "message": sample_message,
                                 "event_type": sample_event_type,
@@ -1225,11 +1553,12 @@ def poll_snmp():
                 and _availability_source(u.get("availability_source")) is not None
                 and float(u.get("value") or 0) == 0.0
             ]
-            latency_pairs_updates = [
+            threshold_breach_pairs_updates = [
                 u
                 for u in latest_updates
                 if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
-                and u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+                and u.get("metric_id")
+                in {ICMP_LATENCY_METRIC_ID, ICMP_JITTER_METRIC_ID, ICMP_PACKET_LOSS_METRIC_ID}
                 and u.get("event_type") == EVENT_TYPE_THRESHOLD_BREACH
                 and u.get("status") in {"WARNING", "CRITICAL"}
             ]
@@ -1238,12 +1567,13 @@ def poll_snmp():
                 correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
             for u in availability_pairs_updates:
                 correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
-            for u in latency_pairs_updates:
+            for u in threshold_breach_pairs_updates:
                 correlation_pairs.add((u.get("node_id"), u.get("metric_id")))
             # Drop any pair with a None component (cannot be a cache key).
             correlation_pairs = {p for p in correlation_pairs if p[0] and p[1]}
 
             cache = {}  # local to this cycle — never module-level
+            cache_build_failed = False
             if polling_settings.enable_topology_rca and correlation_pairs:
                 try:
                     cache = build_open_parent_index(session, correlation_pairs)
@@ -1256,9 +1586,91 @@ def poll_snmp():
                         sorted(correlation_pairs),
                         exc,
                     )
+                    cache_build_failed = True
                     cache = {}
 
-            _refresh_snmp_collection_failures(session, failure_updates, cache=cache, lock_db=db)
+            # ── Two-pass same-cycle correlation (fix #416 P0) ────────────
+            # Pass 2 writes ROOT events for the CIs that have NO parent in
+            # the freshly-built cache. Pass 3 re-resolves the cache (which
+            # now includes the Pass 2 ROOT events) and routes the
+            # dependents through PROPAGATED + affected-CI attach via
+            # ``_update_propagated_root_events``. See design.md (AD-3,
+            # AD-4, AD-7) for the contract.
+            availability_updates = [
+                u for u in latest_updates if u.get("metric_kind") == "availability"
+            ]
+            latency_updates = [
+                u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID
+            ]
+            jitter_updates = [
+                u for u in latest_updates if u.get("metric_id") == ICMP_JITTER_METRIC_ID
+            ]
+            packet_loss_updates = [
+                u for u in latest_updates if u.get("metric_id") == ICMP_PACKET_LOSS_METRIC_ID
+            ]
+            # Combine every event-producing row from this cycle so
+            # ``cycle_root_candidates`` sees a uniform (node_id, metric_id,
+            # event_type) shape regardless of the family it came from.
+            all_event_observations: list[dict[str, Any]] = list(failure_updates)
+            for update in latest_updates:
+                if update.get("event_type"):
+                    all_event_observations.append(update)
+
+            from engines.correlation import (
+                cycle_root_candidates,
+                materialize_current_cycle_roots,
+            )
+
+            # Pass 1.5: preload the current-cycle topology and resolve observed
+            # dependents before selecting roots. This closes the first-cycle
+            # gap where the open-event cache is legitimately empty because the
+            # parent ROOT has not been materialized yet.
+            cycle_parent_index: dict[tuple[str, str], str] = {}
+            if (
+                polling_settings.enable_topology_rca
+                and correlation_pairs
+                and not cache_build_failed
+            ):
+                try:
+                    topology_relations = get_topology_relations(
+                        session,
+                        {ci_id for ci_id, _metric_id in correlation_pairs},
+                    )
+                    cycle_parent_index = build_cycle_parent_index(
+                        all_event_observations,
+                        topology_relations,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "topology_rca_cycle_parent_build_failed using open-parent "
+                        "cache only; pairs=%s error=%s",
+                        sorted(correlation_pairs),
+                        exc,
+                    )
+                    cycle_parent_index = {}
+
+            candidates = cycle_root_candidates(
+                all_event_observations,
+                cache,
+                cycle_parent_index,
+            )
+
+            # Pass 2a (before bulk insert): the COLLECTION_FAILURE family
+            # only. The pre-fix code routed collection-failures before
+            # bulk_insert and ICMP availability/latency after — preserving
+            # that order is what the existing
+            # ``test_debounce_threshold_bulk_insert_failure_does_not_write_event``
+            # invariant protects (REQ-007: events are not written if the
+            # durable Timescale insert fails).
+            materialize_current_cycle_roots(
+                session=session,
+                db=db,
+                observations=failure_updates,
+                candidates=candidates,
+                refresh_collection_failures=_refresh_snmp_collection_failures,
+                refresh_icmp_availability=lambda *_args, **_kwargs: None,
+                refresh_icmp_latency=lambda *_args, **_kwargs: None,
+            )
 
             # Perform Bulk Insert at the end of the cycle. Only publish latest
             # values to Neo4j after Timescale persistence succeeds, so the UI
@@ -1292,19 +1704,120 @@ def poll_snmp():
                         status=update["status"],
                         msg=update["message"],
                     )
-                availability_updates = [
-                    u for u in latest_updates if u.get("metric_kind") == "availability"
+
+            # Pass 2b (after bulk insert): the ICMP availability and
+            # latency families. These are routed after the durable insert
+            # so a Timescale failure does not write dangling Event rows
+            # for ICMP availability/latency. The COLLECTION_FAILURE family
+            # already ran in Pass 2a; we exclude it here.
+            icmp_event_observations = [
+                row
+                for row in all_event_observations
+                if row.get("event_type") in {EVENT_TYPE_AVAILABILITY, EVENT_TYPE_THRESHOLD_BREACH}
+            ]
+            materialize_current_cycle_roots(
+                session=session,
+                db=db,
+                observations=icmp_event_observations,
+                candidates=candidates,
+                refresh_collection_failures=lambda *_args, **_kwargs: None,
+                refresh_icmp_availability=_refresh_icmp_availability_events,
+                refresh_icmp_latency=_refresh_icmp_latency_events,
+            )
+
+            # The orchestrator's ``_refresh_icmp_latency_events`` filters by
+            # metric_id == ICMP_LATENCY_METRIC_ID, so jitter and packet-loss
+            # ROOT candidates are silently dropped above. Route those
+            # candidates through their dedicated refresh helpers with the
+            # same cache={} contract.
+            jitter_candidates = {c for c in candidates if c[1] == ICMP_JITTER_METRIC_ID}
+            packet_loss_candidates = {c for c in candidates if c[1] == ICMP_PACKET_LOSS_METRIC_ID}
+            if jitter_candidates:
+                jitter_root_rows = [
+                    u
+                    for u in jitter_updates
+                    if (u.get("node_id"), u.get("metric_id"), u.get("event_type"))
+                    in jitter_candidates
                 ]
-                _refresh_icmp_availability_events(
-                    session, availability_updates, cache=cache, lock_db=db
+                if jitter_root_rows:
+                    _refresh_icmp_jitter_events(session, jitter_root_rows, cache={}, lock_db=db)
+            if packet_loss_candidates:
+                packet_loss_root_rows = [
+                    u
+                    for u in packet_loss_updates
+                    if (u.get("node_id"), u.get("metric_id"), u.get("event_type"))
+                    in packet_loss_candidates
+                ]
+                if packet_loss_root_rows:
+                    _refresh_icmp_packet_loss_events(
+                        session, packet_loss_root_rows, cache={}, lock_db=db
+                    )
+
+            # ── Recovery passes (unchanged from the pre-fix flow) ─────────
+            # The design places them between Pass 2 and Pass 3 so a parent
+            # that recovers in the same cycle cannot accept new dependent
+            # attachments (REQ-006 / SCN-008).
+            _recover_snmp_collection_failures(session, latest_updates)
+            _recover_icmp_availability_events(session, availability_updates)
+            _recover_icmp_latency_events(session, latency_updates)
+
+            # Pass 3: rebuild the cache now that Pass 2's ROOT events are
+            # persisted, then route the NON-candidate rows through the
+            # refresh helpers with the rebuilt cache. The candidates
+            # already have their ROOT events; if we sent them through
+            # Pass 3 they would resolve to themselves and the
+            # ``_update_propagated_root_events`` query would attempt to
+            # attach a CI to its own ROOT. We filter them out so Pass 3
+            # only handles dependents.
+            rebuilt_cache: dict = {}
+            if polling_settings.enable_topology_rca and correlation_pairs:
+                try:
+                    rebuilt_cache = build_open_parent_index(session, correlation_pairs)
+                except Exception as exc:
+                    # W2 (whole-cycle blast radius) for the rebuild: log
+                    # once, fall back to ROOT for every non-candidate
+                    # this cycle. Next cycle rebuilds the cache.
+                    logger.warning(
+                        "topology_rca_cache_rebuild_failed falling back to ROOT "
+                        "for non-candidates this cycle; pairs=%s error=%s",
+                        sorted(correlation_pairs),
+                        exc,
+                    )
+                    rebuilt_cache = {}
+
+            def _is_candidate(row: dict[str, Any]) -> bool:
+                return (
+                    row.get("node_id"),
+                    row.get("metric_id"),
+                    row.get("event_type"),
+                ) in candidates
+
+            non_candidate_failures = [u for u in failure_updates if not _is_candidate(u)]
+            non_candidate_availability = [u for u in availability_updates if not _is_candidate(u)]
+            non_candidate_latency = [u for u in latency_updates if not _is_candidate(u)]
+            non_candidate_jitter = [u for u in jitter_updates if not _is_candidate(u)]
+            non_candidate_packet_loss = [u for u in packet_loss_updates if not _is_candidate(u)]
+
+            if non_candidate_failures:
+                _refresh_snmp_collection_failures(
+                    session, non_candidate_failures, cache=rebuilt_cache, lock_db=db
                 )
-                _recover_icmp_availability_events(session, availability_updates)
-                latency_updates = [
-                    u for u in latest_updates if u.get("metric_id") == ICMP_LATENCY_METRIC_ID
-                ]
-                _refresh_icmp_latency_events(session, latency_updates, cache=cache, lock_db=db)
-                _recover_icmp_latency_events(session, latency_updates)
-                _recover_snmp_collection_failures(session, latest_updates)
+            if non_candidate_availability:
+                _refresh_icmp_availability_events(
+                    session, non_candidate_availability, cache=rebuilt_cache, lock_db=db
+                )
+            if non_candidate_latency:
+                _refresh_icmp_latency_events(
+                    session, non_candidate_latency, cache=rebuilt_cache, lock_db=db
+                )
+            if non_candidate_jitter:
+                _refresh_icmp_jitter_events(
+                    session, non_candidate_jitter, cache=rebuilt_cache, lock_db=db
+                )
+            if non_candidate_packet_loss:
+                _refresh_icmp_packet_loss_events(
+                    session, non_candidate_packet_loss, cache=rebuilt_cache, lock_db=db
+                )
                 print(
                     f"[{datetime.now().isoformat()}] Bulk saved {len(metrics_to_save)} metrics to TimescaleDB."
                 )

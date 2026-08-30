@@ -437,7 +437,7 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
             MATCH (n:CI {id: row.ci_id})
             MATCH (m:MetricDef {id: row.metric_id})
             OPTIONAL MATCH (existing:Event {ci_id: row.ci_id, metric_id: row.metric_id})
-            WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+            WHERE existing.status IN ['OPEN', 'ACK']
               AND (
                 existing.event_type = row.event_type
                 OR (existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')

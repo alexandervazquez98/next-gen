@@ -17,6 +17,7 @@ import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -608,5 +609,173 @@ class TestDiagnoseEvent:
             call_kwargs = mock_record.call_args
             assert call_kwargs[1]["operation"] == "diagnose"
             assert call_kwargs[1]["result"] == "success"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/events?include_children
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventsIncludeChildren:
+    """REQ-003 / SCN-001..003: GET /api/events forwards the include_children
+    boolean to event_service and threads the default."""
+
+    def test_default_call_uses_root_only(self):
+        """SCN-001: default GET forwards include_children=False."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=False)
+
+    def test_explicit_true_forwards_include_children_true(self):
+        """SCN-002: include_children=true flag is forwarded."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get("/api/events?status=CONSOLE&include_children=true")
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=True)
+
+    def test_explicit_false_matches_default(self):
+        """SCN-003: include_children=false is identical to default."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = []
+
+            response = client.get("/api/events?status=CONSOLE&include_children=false")
+
+            assert response.status_code == 200
+            mock_service.get_events.assert_called_once_with("CONSOLE", include_children=False)
+
+
+# ---------------------------------------------------------------------------
+# REQ-001 / SCN-010: serialize ROOT without affected fields — keys must be
+# absent from the JSON payload, not emitted as `null`. FastAPI re-emits
+# ResponseModel defaults if `response_model_exclude_none` is not set.
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventsResponseExcludeNone:
+    """SCN-010: ROOT without `affected_ci_ids` / `affected_count` should
+    emit those keys as absent in the JSON payload, not as `null`.
+    """
+
+    def test_root_without_affected_omits_keys_from_json(self):
+        """SCN-010: a ROOT with no affected set must NOT include the
+        `affected_ci_ids` or `affected_count` keys in the JSON wire."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = [
+                {
+                    "id": "evt-root-1",
+                    "ci_id": "ci-1",
+                    "status": "OPEN",
+                    "severity": "CRITICAL",
+                    "message": "boom",
+                    "ack": False,
+                    "correlation_type": "ROOT",
+                },
+            ]
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert len(body) == 1
+            assert "affected_ci_ids" not in body[0]
+            assert "affected_count" not in body[0]
+
+    def test_root_with_affected_keeps_keys_in_json(self):
+        """SCN-006: a ROOT with populated affected set keeps both keys."""
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_events.return_value = [
+                {
+                    "id": "evt-root-2",
+                    "ci_id": "ci-1",
+                    "status": "OPEN",
+                    "severity": "CRITICAL",
+                    "message": "boom",
+                    "ack": False,
+                    "correlation_type": "ROOT",
+                    "affected_ci_ids": ["ci-A", "ci-B"],
+                    "affected_count": 2,
+                },
+            ]
+
+            response = client.get("/api/events?status=CONSOLE")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body[0]["affected_ci_ids"] == ["ci-A", "ci-B"]
+            assert body[0]["affected_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/events/{event_id}/affected
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventAffected:
+    """REQ-004 / SCN-004 / SCN-005: drill-down endpoint."""
+
+    def test_affected_returns_200_with_ordered_rows(self):
+        async def override():
+            return _operator_user(permissions=[UserPermission.EVENT_VIEW])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_affected_siblings.return_value = [
+                {"ci_id": "ci-A", "ci_name": "Router-A", "status": "OK"},
+                {"ci_id": "ci-B", "ci_name": "Router-B", "status": "OK"},
+            ]
+
+            response = client.get("/api/events/evt-1/affected")
+
+            assert response.status_code == 200
+            body = response.json()
+            assert len(body) == 2
+            assert body[0]["ci_id"] == "ci-A"
+            mock_service.get_affected_siblings.assert_called_once_with("evt-1")
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_affected_unknown_event_returns_404(self):
+        async def override():
+            return _operator_user(permissions=[UserPermission.EVENT_VIEW])
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        with patch("routers.events.event_service") as mock_service:
+            mock_service.get_affected_siblings.side_effect = HTTPException(
+                status_code=404, detail="Event not found: missing-id"
+            )
+
+            response = client.get("/api/events/missing-id/affected")
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Event not found: missing-id"
+
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+    def test_affected_missing_event_view_returns_403(self):
+        async def override():
+            return User(
+                username="viewer",
+                role="VIEWER",
+                permissions=[],
+                allowed_locations=[],
+            )
+
+        app.dependency_overrides[get_current_active_user] = override
+
+        response = client.get("/api/events/evt-1/affected")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to view events"
 
         app.dependency_overrides.pop(get_current_active_user, None)
