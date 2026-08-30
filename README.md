@@ -40,6 +40,7 @@ NEX-GEN es una plataforma ITOM para operar infraestructura desde una CMDB basada
 - [`docs/domain/business-model.md`](docs/domain/business-model.md) - vocabulario de dominio, relaciones `CI -> BusinessService -> ServiceCatalog`, snapshot/fallback y bootstrap manual.
 - [`docs/itsm/event-flow.md`](docs/itsm/event-flow.md) - lifecycle del evento, ownership, SLA, escalacion y puntos de integracion Jira/ServiceNow.
 - [`docs/itsm/service-catalog-ticket-folios.md`](docs/itsm/service-catalog-ticket-folios.md) - operacion del Service Catalog ITSM, Ticket/Folios, lifecycle, permisos y arranque seguro.
+- [`docs/itsm/user-manual.md`](docs/itsm/user-manual.md) - manual de usuario del Service Catalog y Tickets (estados, permisos, conexion folio-servicio, en ingles).
 - [`docs/reference/modelo_entidad_relacion.md`](docs/reference/modelo_entidad_relacion.md) - referencia tecnica de entidades, relaciones y payloads relevantes.
 - [`CONTEXT.md`](CONTEXT.md) - contexto funcional y roadmap del sistema.
 
