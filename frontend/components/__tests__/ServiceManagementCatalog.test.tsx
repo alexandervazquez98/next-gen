@@ -15,14 +15,20 @@ const mocks = vi.hoisted(() => ({
   importCatalogWorkbook: vi.fn(),
 }));
 
-vi.mock("../../services/itsm", () => ({
-  listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
-  createServiceCatalog: (...args: unknown[]) => mocks.createServiceCatalog(...args),
-  updateServiceCatalog: (...args: unknown[]) => mocks.updateServiceCatalog(...args),
-  deactivateServiceCatalog: (...args: unknown[]) => mocks.deactivateServiceCatalog(...args),
-  downloadCatalogTemplate: (...args: unknown[]) => mocks.downloadCatalogTemplate(...args),
-  importCatalogWorkbook: (...args: unknown[]) => mocks.importCatalogWorkbook(...args),
-}));
+vi.mock("../../services/itsm", async () => {
+  const actual = await vi.importActual<typeof import("../../services/itsm")>(
+    "../../services/itsm",
+  );
+  return {
+    ...actual,
+    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
+    createServiceCatalog: (...args: unknown[]) => mocks.createServiceCatalog(...args),
+    updateServiceCatalog: (...args: unknown[]) => mocks.updateServiceCatalog(...args),
+    deactivateServiceCatalog: (...args: unknown[]) => mocks.deactivateServiceCatalog(...args),
+    downloadCatalogTemplate: (...args: unknown[]) => mocks.downloadCatalogTemplate(...args),
+    importCatalogWorkbook: (...args: unknown[]) => mocks.importCatalogWorkbook(...args),
+  };
+});
 
 const sampleCatalogs = [
   {
@@ -121,7 +127,8 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(mocks.createServiceCatalog).toHaveBeenCalledTimes(1));
-    expect(mocks.createServiceCatalog).toHaveBeenCalledWith({
+    const payload = mocks.createServiceCatalog.mock.calls[0][0];
+    expect(payload).toMatchObject({
       service_id: "svc-chat",
       name: "Chat API",
       description: "Chat service",
@@ -129,6 +136,10 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
       value_stream: "operate",
       sla_target_minutes: 20,
     });
+    // Make sure canonical governance fields are present in the wire payload.
+    expect(payload).toHaveProperty("service_type");
+    expect(payload).toHaveProperty("value_stream");
+    expect(payload).toHaveProperty("description");
   });
 
   it("blocks save when description, service_type, or value_stream is missing", async () => {

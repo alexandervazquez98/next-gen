@@ -10,48 +10,95 @@ const mocks = vi.hoisted(() => ({
   createTicketFolio: vi.fn(),
   updateTicketFolio: vi.fn(),
   transitionTicketFolio: vi.fn(),
+  listServiceCatalog: vi.fn(),
+  listActiveUsers: vi.fn(),
+  downloadTicketTemplate: vi.fn(),
+  importTicketWorkbook: vi.fn(),
 }));
 
-vi.mock("../../services/itsm", () => ({
-  listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
-  createTicketFolio: (...args: unknown[]) => mocks.createTicketFolio(...args),
-  updateTicketFolio: (...args: unknown[]) => mocks.updateTicketFolio(...args),
-  transitionTicketFolio: (...args: unknown[]) => mocks.transitionTicketFolio(...args),
-}));
+vi.mock("../../services/itsm", async () => {
+  const actual = await vi.importActual<typeof import("../../services/itsm")>(
+    "../../services/itsm",
+  );
+  return {
+    ...actual,
+    listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
+    createTicketFolio: (...args: unknown[]) => mocks.createTicketFolio(...args),
+    updateTicketFolio: (...args: unknown[]) => mocks.updateTicketFolio(...args),
+    transitionTicketFolio: (...args: unknown[]) => mocks.transitionTicketFolio(...args),
+    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
+    listActiveUsers: (...args: unknown[]) => mocks.listActiveUsers(...args),
+    downloadTicketTemplate: (...args: unknown[]) => mocks.downloadTicketTemplate(...args),
+    importTicketWorkbook: (...args: unknown[]) => mocks.importTicketWorkbook(...args),
+  };
+});
 
 const sampleTickets = [
   {
-    ticket_id: "TK-001",
-    type: "request",
+    ticket_id: 1,
+    type: "service_request" as const,
     title: "Access request",
     description: "Grant VPN access",
     service_catalog_id: "svc-auth",
-    status: "open",
+    assignee_username: "alice",
+    assignee_display_name: "alice",
+    assignee_active_at_assignment: true,
+    assignee_currently_active: true,
+    status: "open" as const,
+    archived: false,
     closed_reason: null,
-    created_at: "2025-01-01T00:00:00Z",
-    updated_at: "2025-01-01T00:00:00Z",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     updated_by: "admin",
   },
   {
-    ticket_id: "TK-002",
-    type: "incident",
+    ticket_id: 2,
+    type: "incident" as const,
     title: "API outage",
     description: null,
     service_catalog_id: null,
-    status: "in_validation",
+    assignee_username: "bob",
+    assignee_display_name: "bob",
+    assignee_active_at_assignment: true,
+    assignee_currently_active: true,
+    status: "in_validation" as const,
+    archived: false,
     closed_reason: null,
-    created_at: "2025-01-02T00:00:00Z",
-    updated_at: "2025-01-02T00:00:00Z",
+    created_at: "2026-01-02T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z",
     updated_by: "admin",
   },
 ];
 
+const sampleCatalog = [
+  {
+    service_id: "svc-auth",
+    name: "Auth API",
+    owner_team: null,
+    category: null,
+    tier: null,
+    criticality: null,
+    sla_target_minutes: 60,
+    description: "Auth service",
+    service_type: "service_request" as const,
+    value_stream: "deliver",
+    active: true,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    updated_by: null,
+  },
+];
+
+const activeUsers = [
+  { username: "alice", disabled: false, is_active: true },
+  { username: "bob", disabled: false, is_active: true },
+];
+
 describe("ItsmTicketFolioPage", () => {
   beforeEach(() => {
-    mocks.listTicketFolios.mockReset();
-    mocks.createTicketFolio.mockReset();
-    mocks.updateTicketFolio.mockReset();
-    mocks.transitionTicketFolio.mockReset();
+    vi.clearAllMocks();
+    mocks.listServiceCatalog.mockResolvedValue(sampleCatalog);
+    mocks.listActiveUsers.mockResolvedValue(activeUsers);
   });
 
   it("lists ticket folios and keeps UI independent from event endpoints", async () => {
@@ -59,7 +106,9 @@ describe("ItsmTicketFolioPage", () => {
 
     render(<ItsmTicketFolioPage />);
 
-    expect(screen.getByRole("heading", { name: /itsm tickets/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /service management/i, level: 1 }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
     expect(screen.getByText("API outage")).toBeInTheDocument();
     expect(mocks.listTicketFolios).toHaveBeenCalledWith({});
@@ -71,11 +120,11 @@ describe("ItsmTicketFolioPage", () => {
       .mockResolvedValueOnce(sampleTickets)
       .mockResolvedValueOnce([
         ...sampleTickets,
-        { ...sampleTickets[0], ticket_id: "TK-003", title: "New request" },
+        { ...sampleTickets[0], ticket_id: 3, title: "New request" },
       ]);
     mocks.createTicketFolio.mockResolvedValueOnce({
       ...sampleTickets[0],
-      ticket_id: "TK-003",
+      ticket_id: 3,
       title: "New request",
     });
 
@@ -83,20 +132,19 @@ describe("ItsmTicketFolioPage", () => {
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /new ticket/i }));
-    await user.type(screen.getByLabelText(/ticket id/i), "TK-003");
-    await user.selectOptions(screen.getByLabelText(/type/i), "incident");
-    await user.type(screen.getByLabelText(/title/i), "New request");
-    await user.type(screen.getByLabelText(/description/i), "Created outside events");
-    await user.type(screen.getByLabelText(/service catalog id/i), "svc-auth");
+    await user.selectOptions(screen.getByLabelText(/^type$/i), "service_request");
+    await user.type(screen.getByLabelText(/^title$/i), "New request");
+    await user.selectOptions(screen.getByLabelText(/^service$/i), "svc-auth");
+    await user.selectOptions(screen.getByLabelText(/^assignee$/i), "alice");
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
 
     await waitFor(() => expect(mocks.createTicketFolio).toHaveBeenCalledTimes(1));
     expect(mocks.createTicketFolio).toHaveBeenCalledWith({
-      ticket_id: "TK-003",
-      type: "incident",
+      type: "service_request",
       title: "New request",
-      description: "Created outside events",
+      description: null,
       service_catalog_id: "svc-auth",
+      assignee_username: "alice",
     });
   });
 
@@ -116,14 +164,14 @@ describe("ItsmTicketFolioPage", () => {
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: /edit TK-001/i }));
-    const titleInput = screen.getByLabelText(/title/i);
+    await user.click(screen.getByRole("button", { name: /^Edit 1$/i }));
+    const titleInput = screen.getByLabelText(/^title$/i);
     await user.clear(titleInput);
     await user.type(titleInput, "Access request updated");
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
 
     await waitFor(() =>
-      expect(mocks.updateTicketFolio).toHaveBeenCalledWith("TK-001", {
+      expect(mocks.updateTicketFolio).toHaveBeenCalledWith(1, {
         title: "Access request updated",
         description: "Grant VPN access",
         service_catalog_id: "svc-auth",
@@ -145,22 +193,22 @@ describe("ItsmTicketFolioPage", () => {
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
     expect(
-      screen.queryByRole("button", { name: /move TK-001 to resolved/i }),
+      screen.queryByRole("button", { name: /move 1 to resolved/i }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /move TK-001 to in_progress/i }));
+    await user.click(screen.getByRole("button", { name: /move 1 to in_progress/i }));
 
     await waitFor(() =>
-      expect(mocks.transitionTicketFolio).toHaveBeenCalledWith("TK-001", "in_progress", undefined),
+      expect(mocks.transitionTicketFolio).toHaveBeenCalledWith(1, "in_progress", undefined),
     );
   });
 
   it("asks for a close reason when moving to closed", async () => {
     const user = userEvent.setup();
-    const resolvedTicket = { ...sampleTickets[0], status: "resolved" };
+    const resolvedTicket = { ...sampleTickets[0], status: "resolved" as const };
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Validated by requester");
     mocks.listTicketFolios
       .mockResolvedValueOnce([resolvedTicket])
-      .mockResolvedValueOnce([{ ...resolvedTicket, status: "closed" }]);
+      .mockResolvedValueOnce([{ ...resolvedTicket, status: "closed" as const }]);
     mocks.transitionTicketFolio.mockResolvedValueOnce({
       ...resolvedTicket,
       status: "closed",
@@ -170,11 +218,11 @@ describe("ItsmTicketFolioPage", () => {
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: /move TK-001 to closed/i }));
+    await user.click(screen.getByRole("button", { name: /move 1 to closed/i }));
 
     await waitFor(() =>
       expect(mocks.transitionTicketFolio).toHaveBeenCalledWith(
-        "TK-001",
+        1,
         "closed",
         "Validated by requester",
       ),

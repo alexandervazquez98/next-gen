@@ -18,16 +18,22 @@ const mocks = vi.hoisted(() => ({
   apiPost: vi.fn(),
 }));
 
-vi.mock("../../services/itsm", () => ({
-  listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
-  createTicketFolio: (...args: unknown[]) => mocks.createTicketFolio(...args),
-  updateTicketFolio: (...args: unknown[]) => mocks.updateTicketFolio(...args),
-  transitionTicketFolio: (...args: unknown[]) => mocks.transitionTicketFolio(...args),
-  listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
-  listActiveUsers: (...args: unknown[]) => mocks.listActiveUsers(...args),
-  downloadTicketTemplate: (...args: unknown[]) => mocks.downloadTicketTemplate(...args),
-  importTicketWorkbook: (...args: unknown[]) => mocks.importTicketWorkbook(...args),
-}));
+vi.mock("../../services/itsm", async () => {
+  const actual = await vi.importActual<typeof import("../../services/itsm")>(
+    "../../services/itsm",
+  );
+  return {
+    ...actual,
+    listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
+    createTicketFolio: (...args: unknown[]) => mocks.createTicketFolio(...args),
+    updateTicketFolio: (...args: unknown[]) => mocks.updateTicketFolio(...args),
+    transitionTicketFolio: (...args: unknown[]) => mocks.transitionTicketFolio(...args),
+    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
+    listActiveUsers: (...args: unknown[]) => mocks.listActiveUsers(...args),
+    downloadTicketTemplate: (...args: unknown[]) => mocks.downloadTicketTemplate(...args),
+    importTicketWorkbook: (...args: unknown[]) => mocks.importTicketWorkbook(...args),
+  };
+});
 
 const sampleTickets = [
   {
@@ -156,7 +162,9 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
       assignee_username: "alice",
     });
     expect(Object.keys(payload)).not.toContain("ticket_id");
-    await waitFor(() => expect(screen.getByText("4242")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Edit 4242" })).toBeInTheDocument(),
+    );
   });
 
   it("filters service options by the selected ticket type", async () => {
@@ -195,7 +203,7 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     await user.selectOptions(screen.getByLabelText(/^service$/i), "svc-net-inc");
 
     const assigneeSelect = screen.getByLabelText(/^assignee$/i) as HTMLSelectElement;
-    expect(assigneeSelect.required).toBe(true);
+    expect(assigneeSelect.getAttribute("aria-required")).toBe("true");
 
     // Force a blank value: no option selected.
     await user.selectOptions(assigneeSelect, "");

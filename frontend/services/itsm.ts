@@ -111,6 +111,8 @@ export const deactivateUser = (username: string) =>
 // ------------------------------------------------------------
 
 // Type guard for the structured validation payload returned by the import routes.
+// Exported so page tests can stub it cleanly; the implementation does not
+// touch state and is safe to call directly.
 export function isImportValidationFailure(value: unknown): value is ImportValidationFailure {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -120,4 +122,25 @@ export function isImportValidationFailure(value: unknown): value is ImportValida
     Array.isArray(candidate.errors) &&
     typeof candidate.error_count === "number"
   );
+}
+
+export function extractImportError(err: unknown): ImportValidationFailure | null {
+  if (!err || typeof err !== "object") return null;
+  const detail = (err as { detail?: unknown }).detail;
+  if (isImportValidationFailure(detail)) return detail;
+  if (isImportValidationFailure(err)) return err;
+  return null;
+}
+
+export function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === "object") {
+    const anyErr = err as { message?: string; detail?: unknown };
+    if (typeof anyErr.message === "string" && anyErr.message) return anyErr.message;
+    if (typeof anyErr.detail === "string") return anyErr.detail;
+    if (anyErr.detail && typeof anyErr.detail === "object") {
+      const inner = anyErr.detail as { message?: string };
+      if (typeof inner.message === "string") return inner.message;
+    }
+  }
+  return fallback;
 }

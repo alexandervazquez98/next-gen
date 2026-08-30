@@ -1,7 +1,7 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import UserManager from "../UserManager";
+import UserManager from "./UserManager";
 
 const mocks = vi.hoisted(() => ({
   api: {

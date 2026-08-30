@@ -155,6 +155,26 @@ const UserManager: React.FC = () => {
         fetchUsers();
     };
 
+    // PR 5 — WU 8 logical deactivation: prefers POST /users/{username}/deactivate
+    // over destructive delete when the user has ticket history. Treats 404/409
+    // as idempotent no-ops so accidental double-clicks stay quiet.
+    const handleDeactivate = async (username: string) => {
+        if (!confirm(`Deactivate user ${username}? Historical ticket assignments will be preserved.`)) {
+            return;
+        }
+        try {
+            await api.post(`/users/${username}/deactivate`, {});
+        } catch (err) {
+            const status = (err as { status?: number })?.status;
+            if (status !== 404 && status !== 409) {
+                console.error(err);
+                alert(`Deactivation failed: ${(err as Error).message ?? "unknown error"}`);
+                return;
+            }
+        }
+        await fetchUsers();
+    };
+
     const handleResetPassword = async (username: string) => {
         const newPass = prompt(`Enter new password for ${username}:`);
         if (!newPass) return;
@@ -360,6 +380,14 @@ const UserManager: React.FC = () => {
                                             </button>
                                             <button onClick={() => handleResetPassword(u.username)} className="text-neutral-500 hover:text-white" title="Reset Password">
                                                 <span className="material-symbols-outlined">lock_reset</span>
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeactivate(u.username)}
+                                                className="text-amber-400 hover:text-amber-300"
+                                                title="Deactivate User"
+                                                aria-label={`Deactivate user ${u.username}`}
+                                            >
+                                                <span className="material-symbols-outlined">block</span>
                                             </button>
                                             <button onClick={() => handleDelete(u.username)} className="text-red-500 hover:text-red-400" title="Delete User">
                                                 <span className="material-symbols-outlined">delete</span>
