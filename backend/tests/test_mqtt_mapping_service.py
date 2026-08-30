@@ -8,6 +8,7 @@ from models.mqtt import MqttMappingCreateRequest, MqttMappingThresholds, MqttMap
 from models.user import User, UserPermission
 from repositories.mqtt_mapping_repo import MappingConflictError, MappingNotFoundError
 from services import audit_service
+from services.audit_service import AUDIT_CONTEXT_ALLOWED_KEYS
 from services.mqtt_mapping_service import MqttMappingService
 
 
@@ -208,6 +209,252 @@ def test_denied_action_without_db_still_raises_and_emits_nothing(audit_calls):
 
     assert exc.value.status_code == 403
     assert audit_calls == []
+
+
+def _only_call(audit_calls):
+    assert len(audit_calls) == 1, f"expected exactly one audit row, got {len(audit_calls)}"
+    return audit_calls[0]
+
+
+# ── Success emission ────────────────────────────────────────────────────────
+
+
+def test_create_mapping_emits_audit_row_success(audit_calls):
+    """Spec: create produces a CREATE row with previous_state=null, next_state=DRAFT, version=1."""
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    result = _invoke_create(service, _user([MANAGE]))
+
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_CREATE"
+    assert call["outcome"] == "SUCCESS"
+    assert call["target_type"] == "mqtt_mapping"
+    assert call["target_id"] == result["id"]
+    context = call["context"]
+    assert context["mapping_id"] == result["id"]
+    assert context["previous_state"] is None
+    assert context["next_state"] == "DRAFT"
+    assert context["version"] == 1
+    assert context["source_device_id"] == "rtu-1"
+    assert context["source_metric_id"] == "rtu-1/temp"
+    assert context["target_ci_id"] == "ci-1"
+    assert context["target_metric_def_id"] == "temperature"
+
+
+def test_update_mapping_emits_changed_fields(audit_calls):
+    """Spec: update enumerates the modified field names."""
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    service.update_mapping(
+        "map-1",
+        MqttMappingUpdateRequest(
+            source_metric_name="temperature",
+            thresholds=MqttMappingThresholds(operator=">=", warning=60, critical=85),
+        ),
+        _user([MANAGE]),
+        db=_DB,
+    )
+
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_UPDATE"
+    assert call["outcome"] == "SUCCESS"
+    context = call["context"]
+    assert context["previous_state"] == "DRAFT"
+    assert context["next_state"] == "DRAFT"
+    # operator is unchanged (">=" in both), so it must NOT be reported
+    assert context["changed_fields"] == ["critical", "source_metric_name", "warning"]
+
+
+def test_update_mapping_without_threshold_change_reports_only_renamed_field(audit_calls):
+    """Triangulation: a different payload must produce a different changed_fields list."""
+    service = MqttMappingService(repo=_RepoStub())
+
+    _invoke_update(service, _user([MANAGE]))
+
+    assert _only_call(audit_calls)["context"]["changed_fields"] == ["source_metric_name"]
+
+
+def test_approve_mapping_emits_previous_and_next_state(audit_calls):
+    """Spec: approve carries previous_state=DRAFT, next_state=APPROVED and the new version."""
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    _invoke_approve(service, _user([MANAGE]))
+
+    assert "map-1" in repo.get_mapping_calls, "previous_state requires a service-level pre-read"
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_APPROVE"
+    assert call["outcome"] == "SUCCESS"
+    context = call["context"]
+    assert context["previous_state"] == "DRAFT"
+    assert context["next_state"] == "APPROVED"
+    assert context["version"] == 2
+    assert context["source_device_id"] == "rtu-1"
+
+
+def test_revoke_mapping_emits_previous_state_from_pre_read(audit_calls):
+    """Spec: revoke from APPROVED records the pre-mutation state."""
+    repo = _RepoStub()
+    repo.mappings[0]["status"] = "APPROVED"
+    service = MqttMappingService(repo=repo)
+
+    _invoke_revoke(service, _user([MANAGE]))
+
+    assert "map-1" in repo.get_mapping_calls
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_REVOKE"
+    assert call["outcome"] == "SUCCESS"
+    assert call["context"]["previous_state"] == "APPROVED"
+    assert call["context"]["next_state"] == "REVOKED"
+    assert call["context"]["version"] == 3
+
+
+def test_update_thresholds_emits_threshold_changed_fields(audit_calls):
+    """Spec: threshold update stays APPROVED and lists the threshold keys."""
+    repo = _RepoStub()
+    repo.mappings[0]["status"] = "APPROVED"
+    service = MqttMappingService(repo=repo)
+
+    _invoke_thresholds(service, _user([MANAGE]))
+
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_THRESHOLD_UPDATE"
+    assert call["outcome"] == "SUCCESS"
+    context = call["context"]
+    assert context["previous_state"] == "APPROVED"
+    assert context["next_state"] == "APPROVED"
+    assert context["changed_fields"] == ["critical", "operator", "warning"]
+
+
+# ── Validation-failure emission ─────────────────────────────────────────────
+
+
+def test_create_mapping_missing_source_emits_validation_failure(audit_calls):
+    repo = _RepoStub()
+    repo.raise_on_create = MappingNotFoundError("Source device not found")
+    service = MqttMappingService(repo=repo)
+
+    with pytest.raises(HTTPException) as exc:
+        _invoke_create(service, _user([MANAGE]))
+
+    assert exc.value.status_code == 404
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_CREATE"
+    assert call["outcome"] == "VALIDATION_FAILURE"
+    assert call["context"]["source_device_id"] == "rtu-1"
+
+
+def test_approve_conflict_emits_validation_failure(audit_calls):
+    repo = _RepoStub()
+    repo.raise_on_approve = MappingConflictError("Revoked mappings must be recreated")
+    service = MqttMappingService(repo=repo)
+
+    with pytest.raises(HTTPException) as exc:
+        _invoke_approve(service, _user([MANAGE]))
+
+    assert exc.value.status_code == 409
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_APPROVE"
+    assert call["outcome"] == "VALIDATION_FAILURE"
+    assert call["context"]["previous_state"] == "DRAFT"
+
+
+def test_update_thresholds_on_draft_mapping_emits_validation_failure(audit_calls):
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    with pytest.raises(HTTPException) as exc:
+        _invoke_thresholds(service, _user([MANAGE]))
+
+    assert exc.value.status_code == 409
+    assert repo.thresholds is None
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_THRESHOLD_UPDATE"
+    assert call["outcome"] == "VALIDATION_FAILURE"
+    assert call["context"]["previous_state"] == "DRAFT"
+
+
+def test_update_thresholds_on_missing_mapping_emits_validation_failure(audit_calls):
+    service = MqttMappingService(repo=_RepoStub())
+
+    with pytest.raises(HTTPException) as exc:
+        service.update_thresholds(
+            "map-missing",
+            MqttMappingThresholds(operator=">=", warning=75, critical=95),
+            _user([MANAGE]),
+            db=_DB,
+        )
+
+    assert exc.value.status_code == 404
+    call = _only_call(audit_calls)
+    assert call["outcome"] == "VALIDATION_FAILURE"
+    assert call["context"]["previous_state"] is None
+
+
+def test_update_mapping_on_missing_mapping_emits_validation_failure(audit_calls):
+    service = MqttMappingService(repo=_RepoStub())
+
+    with pytest.raises(HTTPException) as exc:
+        service.update_mapping(
+            "map-missing",
+            MqttMappingUpdateRequest(source_metric_name="temperature"),
+            _user([MANAGE]),
+            db=_DB,
+        )
+
+    assert exc.value.status_code == 404
+    call = _only_call(audit_calls)
+    assert call["event_type"] == "MQTT_MAPPING_UPDATE"
+    assert call["outcome"] == "VALIDATION_FAILURE"
+
+
+# ── Redaction and failure isolation ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("event_type", "invoke"), LIFECYCLE_ACTIONS)
+def test_emitted_context_contains_only_allow_listed_keys(event_type, invoke, audit_calls):
+    """Threat matrix rows 1-3: no topic, payload body or credential may reach the audit row."""
+    repo = _RepoStub()
+    repo.mappings[0]["status"] = "APPROVED"
+    service = MqttMappingService(repo=repo)
+
+    invoke(service, _user([MANAGE]))
+
+    context = _only_call(audit_calls)["context"]
+    assert set(context).issubset(AUDIT_CONTEXT_ALLOWED_KEYS)
+    for forbidden in ("source_topic", "body", "raw_body", "token", "cookie", "password"):
+        assert forbidden not in context
+
+
+def test_create_mapping_succeeds_when_audit_store_is_down(monkeypatch):
+    """Spec: the mutation completes and a warning is logged when emission fails."""
+    def _explode(**kwargs):
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(audit_service, "record_critical_change", _explode)
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    result = _invoke_create(service, _user([MANAGE]))
+
+    assert result["status"] == "DRAFT"
+    assert repo.created["created_by"] == "operator"
+
+
+def test_denied_action_still_raises_when_audit_store_is_down(monkeypatch):
+    """A broken audit store must not turn a 403 into a 500."""
+    def _explode(**kwargs):
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(audit_service, "record_critical_change", _explode)
+    service = MqttMappingService(repo=_RepoStub())
+
+    with pytest.raises(HTTPException) as exc:
+        _invoke_approve(service, _user([READ_ONLY]))
+
+    assert exc.value.status_code == 403
 
 
 def test_create_mapping_requires_mapping_permission():

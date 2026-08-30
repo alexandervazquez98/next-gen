@@ -36,12 +36,12 @@ Chain strategy: stacked-to-main
 
 - [x] 2.1 RED — `test_mqtt_mapping_service.py`: every action emits `event_type=MQTT_MAPPING_<ACT>` + `outcome=DENIED`; `record_denied` NEVER called. Spec: *Denied approve attempt is audited*.
 - [x] 2.2 GREEN — Add `_enforce_manage_with_audit(*, current_user, db, request, mapping_id, event_type)` in `mqtt_mapping_service.py`: on no perm emits denial row, then `require_mqtt_permission` raises.
-- [ ] 2.3 RED — `test_create_mapping_emits_audit_row_success`: outcome=SUCCESS, `previous_state=None`, `next_state=DRAFT`, `version=1` (spec: *Create produces a CREATE audit row*).
-- [ ] 2.4 GREEN — `create_mapping`: add `db`+`request` kwargs; emit `record_critical_change(MQTT_MAPPING_CREATE, SUCCESS, target_type=mqtt_mapping, target_id=mapping_id, context=9 keys)`.
-- [ ] 2.5 GREEN — `update_mapping`: same; `changed_fields` from `payload.dict(exclude_unset=True)` diff vs pre-read. Spec: *Update enumerates changed fields*.
-- [ ] 2.6 GREEN — `approve_mapping` + `revoke_mapping`: same with pre-read `previous_state` via `self._repo.get_mapping(...)`. Spec: *Approve transitions DRAFT to APPROVED*, *Revoke from APPROVED*.
-- [ ] 2.7 GREEN — `update_thresholds`: same; `previous_state=next_state=APPROVED`; threshold keys in `changed_fields`. Spec: *Threshold update on APPROVED mapping*.
-- [ ] 2.8 GREEN — `try/except HTTPException` on repo calls: on 404/409 emit `VALIDATION_FAILURE` row then re-raise.
+- [x] 2.3 RED — `test_create_mapping_emits_audit_row_success`: outcome=SUCCESS, `previous_state=None`, `next_state=DRAFT`, `version=1` (spec: *Create produces a CREATE audit row*).
+- [x] 2.4 GREEN — `create_mapping`: add `db`+`request` kwargs; emit `record_critical_change(MQTT_MAPPING_CREATE, SUCCESS, target_type=mqtt_mapping, target_id=mapping_id, context=9 keys)`.
+- [x] 2.5 GREEN — `update_mapping`: same; `changed_fields` from `payload.dict(exclude_unset=True)` diff vs pre-read. Spec: *Update enumerates changed fields*.
+- [x] 2.6 GREEN — `approve_mapping` + `revoke_mapping`: same with pre-read `previous_state` via `self._repo.get_mapping(...)`. Spec: *Approve transitions DRAFT to APPROVED*, *Revoke from APPROVED*.
+- [x] 2.7 GREEN — `update_thresholds`: same; `previous_state=next_state=APPROVED`; threshold keys in `changed_fields`. Spec: *Threshold update on APPROVED mapping*.
+- [x] 2.8 GREEN — `try/except HTTPException` on repo calls: on 404/409 emit `VALIDATION_FAILURE` row then re-raise.
 
 ## Phase 3: Router + Isolation (WU4)
 

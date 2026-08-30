@@ -41,6 +41,14 @@ AUDIT_OUTCOME_DENIED = "DENIED"
 AUDIT_REASON_DENIED = "mapping_permission_denied"
 AUDIT_REASON_VALIDATION_FAILURE = "mapping_validation_failed"
 
+_LIFECYCLE_SUCCESS_REASONS = {
+    AUDIT_EVENT_MAPPING_CREATE: "mapping_created",
+    AUDIT_EVENT_MAPPING_UPDATE: "mapping_updated",
+    AUDIT_EVENT_MAPPING_APPROVE: "mapping_approved",
+    AUDIT_EVENT_MAPPING_REVOKE: "mapping_revoked",
+    AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE: "mapping_thresholds_updated",
+}
+
 MAPPING_STATE_DRAFT = "DRAFT"
 MAPPING_STATE_APPROVED = "APPROVED"
 MAPPING_STATE_REVOKED = "REVOKED"
@@ -226,6 +234,74 @@ def _enforce_manage_with_audit(
     require_mqtt_permission(MQTT_MAPPING_MANAGE_PERMISSION_KIND, current_user)
 
 
+def _emit_lifecycle_outcome(
+    *,
+    db: Session | None,
+    request: Request | None,
+    actor: User,
+    event_type: str,
+    outcome: str,
+    mapping_id: str | None,
+    **context_fields: Any,
+) -> None:
+    """Emit the success or validation-failure row for one lifecycle invocation."""
+    reason = (
+        _LIFECYCLE_SUCCESS_REASONS[event_type]
+        if outcome == AUDIT_OUTCOME_SUCCESS
+        else AUDIT_REASON_VALIDATION_FAILURE
+    )
+    _emit_mapping_audit(
+        db=db,
+        request=request,
+        actor=actor,
+        event_type=event_type,
+        outcome=outcome,
+        mapping_id=mapping_id,
+        reason=reason,
+        context=_mapping_audit_context(mapping_id=mapping_id, **context_fields),
+    )
+
+
+def _identifiers_from_mapping(mapping: dict[str, Any] | None) -> dict[str, Any]:
+    """Project a stored mapping onto the four allow-listed identifier keys."""
+    source = mapping or {}
+    return {key: source.get(key) for key in _MAPPING_IDENTIFIER_KEYS}
+
+
+def _safe_pre_read(repo: MqttMappingRepo, mapping_id: str) -> dict[str, Any] | None:
+    """Read pre-mutation state for audit only; a read failure must not break the mutation."""
+    try:
+        return repo.get_mapping(mapping_id)
+    except Exception as exc:
+        logger.warning("Failed to pre-read MQTT mapping %s for audit: %s", mapping_id, exc)
+        return None
+
+
+def _changed_fields_for_update(
+    payload: MqttMappingUpdateRequest, current: dict[str, Any] | None
+) -> list[str]:
+    """Return the explicitly provided field names whose value differs from stored state."""
+    provided = payload.model_dump(exclude_unset=True)
+    candidates: dict[str, Any] = {
+        key: provided[key]
+        for key in ("source_metric_name", "target_ci_id", "target_metric_def_id")
+        if key in provided
+    }
+    if payload.thresholds is not None:
+        for field in _THRESHOLD_FIELDS:
+            candidates[field] = getattr(payload.thresholds, field)
+
+    baseline = current or {}
+    return sorted(
+        key for key, value in candidates.items() if value is not None and value != baseline.get(key)
+    )
+
+
+def _changed_threshold_fields(thresholds: MqttMappingThresholds) -> list[str]:
+    """Return the threshold keys carried by a threshold-update request."""
+    return sorted(field for field in _THRESHOLD_FIELDS if getattr(thresholds, field) is not None)
+
+
 class MqttMappingService:
     """Application service for MQTT mapping lifecycle and thresholds."""
 
@@ -281,7 +357,7 @@ class MqttMappingService:
         )
         warning, critical, operator = self._threshold_values(payload.thresholds)
         try:
-            return self._repo.create_draft(
+            result = self._repo.create_draft(
                 mapping_id=mapping_id,
                 source_device_id=payload.source_device_id,
                 source_metric_id=payload.source_metric_id,
@@ -294,8 +370,31 @@ class MqttMappingService:
                 operator=operator,
             )
         except Exception as exc:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_CREATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                identifiers=identifiers,
+            )
             self._raise_http_error(exc)
             raise
+
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_CREATE,
+            outcome=AUDIT_OUTCOME_SUCCESS,
+            mapping_id=mapping_id,
+            previous_state=None,
+            next_state=result.get("status") or MAPPING_STATE_DRAFT,
+            identifiers=identifiers,
+            version=result.get("version") or MAPPING_INITIAL_VERSION,
+        )
+        return result
 
     def update_mapping(
         self,
@@ -316,14 +415,27 @@ class MqttMappingService:
         if payload.thresholds is None:
             current = self._repo.get_mapping(mapping_id)
             if current is None:
+                _emit_lifecycle_outcome(
+                    db=db,
+                    request=request,
+                    actor=current_user,
+                    event_type=AUDIT_EVENT_MAPPING_UPDATE,
+                    outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                    mapping_id=mapping_id,
+                )
                 raise HTTPException(status_code=404, detail=f"Mapping not found: {mapping_id}")
             warning = current.get("warning")
             critical = current.get("critical")
             operator = current.get("operator")
         else:
+            current = _safe_pre_read(self._repo, mapping_id)
             warning, critical, operator = self._threshold_values(payload.thresholds)
+
+        previous_state = (current or {}).get("status")
+        identifiers = _identifiers_from_mapping(current)
+        changed_fields = _changed_fields_for_update(payload, current)
         try:
-            return self._repo.update_draft(
+            result = self._repo.update_draft(
                 mapping_id=mapping_id,
                 source_metric_name=payload.source_metric_name,
                 target_ci_id=payload.target_ci_id,
@@ -333,8 +445,34 @@ class MqttMappingService:
                 operator=operator,
             )
         except Exception as exc:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_UPDATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                previous_state=previous_state,
+                identifiers=identifiers,
+                changed_fields=changed_fields,
+            )
             self._raise_http_error(exc)
             raise
+
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_UPDATE,
+            outcome=AUDIT_OUTCOME_SUCCESS,
+            mapping_id=mapping_id,
+            previous_state=previous_state,
+            next_state=result.get("status") or MAPPING_STATE_DRAFT,
+            identifiers=identifiers,
+            version=result.get("version"),
+            changed_fields=changed_fields,
+        )
+        return result
 
     def approve_mapping(
         self,
@@ -351,11 +489,40 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_APPROVE,
         )
+        mapping = _safe_pre_read(self._repo, mapping_id)
+        previous_state = (mapping or {}).get("status")
+        identifiers = _identifiers_from_mapping(mapping)
         try:
-            return self._repo.approve(mapping_id=mapping_id, approved_by=self._actor(current_user))
+            result = self._repo.approve(
+                mapping_id=mapping_id, approved_by=self._actor(current_user)
+            )
         except Exception as exc:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_APPROVE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                previous_state=previous_state,
+                identifiers=identifiers,
+            )
             self._raise_http_error(exc)
             raise
+
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_APPROVE,
+            outcome=AUDIT_OUTCOME_SUCCESS,
+            mapping_id=mapping_id,
+            previous_state=previous_state,
+            next_state=result.get("status") or MAPPING_STATE_APPROVED,
+            identifiers=identifiers,
+            version=result.get("version"),
+        )
+        return result
 
     def revoke_mapping(
         self,
@@ -372,11 +539,38 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_REVOKE,
         )
+        mapping = _safe_pre_read(self._repo, mapping_id)
+        previous_state = (mapping or {}).get("status")
+        identifiers = _identifiers_from_mapping(mapping)
         try:
-            return self._repo.revoke(mapping_id=mapping_id, revoked_by=self._actor(current_user))
+            result = self._repo.revoke(mapping_id=mapping_id, revoked_by=self._actor(current_user))
         except Exception as exc:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_REVOKE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                previous_state=previous_state,
+                identifiers=identifiers,
+            )
             self._raise_http_error(exc)
             raise
+
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_REVOKE,
+            outcome=AUDIT_OUTCOME_SUCCESS,
+            mapping_id=mapping_id,
+            previous_state=previous_state,
+            next_state=result.get("status") or MAPPING_STATE_REVOKED,
+            identifiers=identifiers,
+            version=result.get("version"),
+        )
+        return result
 
     def get_thresholds(self, mapping_id: str, current_user: User) -> dict:
         require_mqtt_permission(MQTT_READ_PERMISSION_KIND, current_user)
@@ -409,23 +603,72 @@ class MqttMappingService:
             event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
         )
         mapping = self._repo.get_mapping(mapping_id)
+        previous_state = (mapping or {}).get("status")
+        identifiers = _identifiers_from_mapping(mapping)
+        changed_fields = _changed_threshold_fields(thresholds)
         if mapping is None:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                changed_fields=changed_fields,
+            )
             raise HTTPException(status_code=404, detail=f"Mapping not found: {mapping_id}")
         if mapping.get("status") != MAPPING_STATE_APPROVED:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                previous_state=previous_state,
+                identifiers=identifiers,
+                changed_fields=changed_fields,
+            )
             raise HTTPException(
                 status_code=409,
                 detail="Thresholds can only be updated for APPROVED mappings",
             )
         try:
-            return self._repo.update_thresholds(
+            result = self._repo.update_thresholds(
                 mapping_id=mapping_id,
                 warning=thresholds.warning,
                 critical=thresholds.critical,
                 operator=thresholds.operator,
             )
         except Exception as exc:
+            _emit_lifecycle_outcome(
+                db=db,
+                request=request,
+                actor=current_user,
+                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
+                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
+                mapping_id=mapping_id,
+                previous_state=previous_state,
+                identifiers=identifiers,
+                changed_fields=changed_fields,
+            )
             self._raise_http_error(exc)
             raise
+
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
+            outcome=AUDIT_OUTCOME_SUCCESS,
+            mapping_id=mapping_id,
+            previous_state=MAPPING_STATE_APPROVED,
+            next_state=MAPPING_STATE_APPROVED,
+            identifiers=identifiers,
+            version=result.get("version"),
+            changed_fields=changed_fields,
+        )
+        return result
 
 
 _mapping_service: MqttMappingService | None = None
