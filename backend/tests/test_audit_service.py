@@ -203,6 +203,148 @@ def test_record_critical_change_truncates_free_text_and_rejects_sensitive_contex
     assert stored.context == {"changed_fields": ["email"]}
 
 
+# Issue #386 — MQTT mapping lifecycle context keys must be allow-listed so
+# `MQTT_MAPPING_*` audit events persist mapping identifiers and lifecycle state.
+# Sensitive payload/credential material must still be stripped.
+
+MQTT_MAPPING_CONTEXT_KEYS = {
+    "mapping_id",
+    "source_device_id",
+    "source_metric_id",
+    "target_ci_id",
+    "target_metric_def_id",
+    "previous_state",
+    "next_state",
+    "version",
+    "changed_fields",
+}
+
+
+def _mapping_actor():
+    return type("User", (), {"username": "operator", "role": "OPERATOR"})()
+
+
+def test_mqtt_mapping_context_keys_are_allow_listed():
+    """Mapping lifecycle context keys must be in AUDIT_CONTEXT_ALLOWED_KEYS."""
+    missing = MQTT_MAPPING_CONTEXT_KEYS - AUDIT_CONTEXT_ALLOWED_KEYS
+    assert not missing, f"AUDIT_CONTEXT_ALLOWED_KEYS missing mapping lifecycle keys: {missing}"
+
+
+def test_record_critical_change_preserves_mapping_context_verbatim(audit_db):
+    """Spec: mapping context keys survive sanitization."""
+    record_critical_change(
+        audit_db,
+        request=None,
+        actor=_mapping_actor(),
+        event_type="MQTT_MAPPING_APPROVE",
+        outcome="SUCCESS",
+        target_type="mqtt_mapping",
+        target_id="map-1",
+        target_label="map-1",
+        reason="mapping_approved",
+        source="mqtt_mapping",
+        context={
+            "mapping_id": "map-1",
+            "source_device_id": "rtu-1",
+            "source_metric_id": "rtu-1/temp",
+            "target_ci_id": "ci-1",
+            "target_metric_def_id": "temperature",
+            "previous_state": "DRAFT",
+            "next_state": "APPROVED",
+            "version": 2,
+            "changed_fields": ["status"],
+        },
+    )
+
+    stored = audit_db.query(AuditEvent).one()
+    assert stored.target_type == "mqtt_mapping"
+    assert stored.target_id == "map-1"
+    assert stored.context["mapping_id"] == "map-1"
+    assert stored.context["source_device_id"] == "rtu-1"
+    assert stored.context["source_metric_id"] == "rtu-1/temp"
+    assert stored.context["target_ci_id"] == "ci-1"
+    assert stored.context["target_metric_def_id"] == "temperature"
+    assert stored.context["previous_state"] == "DRAFT"
+    assert stored.context["next_state"] == "APPROVED"
+    assert stored.context["version"] == 2
+    assert stored.context["changed_fields"] == ["status"]
+
+
+def test_mapping_context_strips_every_sensitive_key(audit_db):
+    """Threat matrix row 1 — no credential or payload material may persist."""
+    record_critical_change(
+        audit_db,
+        request=None,
+        actor=_mapping_actor(),
+        event_type="MQTT_MAPPING_CREATE",
+        outcome="SUCCESS",
+        target_type="mqtt_mapping",
+        target_id="map-2",
+        reason="mapping_created",
+        source="mqtt_mapping",
+        context={
+            "mapping_id": "map-2",
+            "next_state": "DRAFT",
+            "body": "raw mqtt payload leak-me",
+            "raw_body": {"password": "leak-me"},
+            "request_body": "leak-me",
+            "token": "Bearer leak-me",
+            "session_token": "leak-me",
+            "refresh_token": "leak-me",
+            "cookie": "session=leak-me",
+            "cookies": "session=leak-me",
+            "authorization": "Bearer leak-me",
+            "password": "leak-me",
+        },
+    )
+
+    stored = audit_db.query(AuditEvent).one()
+    assert stored.context["mapping_id"] == "map-2"
+    assert stored.context["next_state"] == "DRAFT"
+    for forbidden in (
+        "body",
+        "raw_body",
+        "request_body",
+        "token",
+        "session_token",
+        "refresh_token",
+        "cookie",
+        "cookies",
+        "authorization",
+        "password",
+    ):
+        assert forbidden not in stored.context
+    assert "leak-me" not in str(stored.context).lower()
+    assert set(stored.context).issubset(AUDIT_CONTEXT_ALLOWED_KEYS)
+
+
+def test_mapping_context_drops_unknown_keys_and_caps_value_length(audit_db):
+    """Spec: unknown keys are stripped; threat matrix row 3 — no source_topic, bounded values."""
+    record_critical_change(
+        audit_db,
+        request=None,
+        actor=_mapping_actor(),
+        event_type="MQTT_MAPPING_UPDATE",
+        outcome="SUCCESS",
+        target_type="mqtt_mapping",
+        target_id="map-3",
+        reason="mapping_updated",
+        source="mqtt_mapping",
+        context={
+            "mapping_id": "map-3",
+            "source_topic": "plant/floor-1/rtu-1/telemetry",
+            "mqtt_username": "broker-user",
+            "source_metric_id": "y" * 1000,
+        },
+    )
+
+    stored = audit_db.query(AuditEvent).one()
+    assert stored.context["mapping_id"] == "map-3"
+    assert "source_topic" not in stored.context
+    assert "mqtt_username" not in stored.context
+    assert len(stored.context["source_metric_id"]) == 256
+
+
 def test_cleanup_old_events_deletes_strictly_older_than_90_days(audit_db):
     now = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
     old_event = AuditEvent(

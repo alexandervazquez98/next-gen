@@ -29,8 +29,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Allow-list Foundation (WU1)
 
-- [ ] 1.1 RED — `test_audit_service.py`: 9 mapping keys survive `sanitize_context`; sensitive keys stripped. Spec: *Mapping context keys survive sanitization*, *Sensitive payload keys never persist*.
-- [ ] 1.2 GREEN — Append 9 keys to `AUDIT_CONTEXT_ALLOWED_KEYS` at `audit_service.py:18-31` (additive).
+- [x] 1.1 RED — `test_audit_service.py`: 9 mapping keys survive `sanitize_context`; sensitive keys stripped. Spec: *Mapping context keys survive sanitization*, *Sensitive payload keys never persist*.
+- [x] 1.2 GREEN — Append 9 keys to `AUDIT_CONTEXT_ALLOWED_KEYS` at `audit_service.py:18-31` (additive).
 
 ## Phase 2: Service Layer (WU2 + WU3)
 

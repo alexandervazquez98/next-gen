@@ -28,6 +28,17 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
     "policy_profile",
     "throttle_seconds",
     "activity_anchor",
+    # Issue #386 — MQTT mapping lifecycle context for `MQTT_MAPPING_*` events.
+    # Identifiers and lifecycle state only; never topics, payloads, or secrets.
+    # (`changed_fields` is already allow-listed above and is reused here.)
+    "mapping_id",
+    "source_device_id",
+    "source_metric_id",
+    "target_ci_id",
+    "target_metric_def_id",
+    "previous_state",
+    "next_state",
+    "version",
 }
 
 SENSITIVE_CONTEXT_KEYS = {
