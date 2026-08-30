@@ -59,8 +59,8 @@ const MqttMonitoringPage: React.FC = () => {
             </h1>
             <p className="text-xs text-neutral-500 mt-1">
               Raw, non-KPI telemetry only. Readings stay classified as{" "}
-              <span className="font-bold text-amber-300">RAW_MQTT_NON_KPI</span> and never promote
-              to KPI.
+              <span className="font-bold text-amber-300">RAW_MQTT_NON_KPI</span> and never become
+              KPI-eligible.
             </p>
           </div>
         </div>
