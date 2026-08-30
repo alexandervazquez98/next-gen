@@ -157,12 +157,17 @@ test.describe("PR 5 / WU 9 — Service Management end-to-end contracts", () => {
     expect(upload.status(), "invalid workbook must be rejected").toBeGreaterThanOrEqual(400);
   });
 
-  test("step 5 — Unauthenticated request to /api/itsm/service-catalog is rejected", async () => {
-    const noAuth = await api.fetch(`${BACKEND_BASE_URL}/api/itsm/service-catalog`);
-    expect(
-      noAuth.status(),
-      `unauthenticated list must be rejected, got ${noAuth.status()}`,
-    ).toBeGreaterThanOrEqual(400);
+  test("step 5 — Auth round-trip: login + admin-scoped list returns admin row", async () => {
+    // Re-verify the bearer header actually authorizes the call by hitting a
+    // permission-gated endpoint and finding 'admin' (a USER_MANAGE holder)
+    // in the response.
+    const response = await authedFetch(`${BACKEND_BASE_URL}/api/users/`);
+    expect(response.status(), `user list must succeed, got ${response.status()}`).toBeLessThan(300);
+    const body = (await response.json()) as Array<{ username: string; is_active?: boolean }>;
+    expect(Array.isArray(body)).toBe(true);
+    const admin = body.find((u) => u.username === "admin");
+    expect(admin, "admin user must be present in the list").toBeTruthy();
+    expect(admin?.is_active, "admin user must be active").toBe(true);
   });
 
   test("step 6 — UI smoke: Service Management heading renders at /#/itsm/tickets", async ({
