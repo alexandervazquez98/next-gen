@@ -62,8 +62,16 @@ export interface TicketFolioListOptions {
   signal?: AbortSignal;
 }
 
-export const listTicketFolios = ({ signal, ...params }: TicketFolioListOptions = {}) =>
-  api.get<TicketFolioResponse[]>("/itsm/tickets", { signal, params });
+export const listTicketFolios = (options: TicketFolioListOptions = {}) => {
+  const { signal, status, service_catalog_id, archived } = options;
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (service_catalog_id) params.set("service_catalog_id", service_catalog_id);
+  if (archived !== undefined) params.set("archived", String(archived));
+  const query = params.toString();
+  const endpoint = query ? `/itsm/tickets?${query}` : "/itsm/tickets";
+  return api.get<TicketFolioResponse[]>(endpoint, { signal });
+};
 
 export const createTicketFolio = (payload: TicketFolioCreatePayload) =>
   api.post<TicketFolioResponse>("/itsm/tickets", payload);
