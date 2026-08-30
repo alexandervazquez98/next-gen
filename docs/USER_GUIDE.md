@@ -181,7 +181,7 @@ Muestra información de gestión de incidentes:
 | **Asignación** | Si el evento está asignado y a quién |
 | **Abierto por** | Quién o qué sistema generó el evento |
 | **Tier de escalación** | T1, T2 o T3 |
-| **Ticket externo** | Si hay integración con Jira/ServiceNow, muestra el ticket vinculado (pendiente de implementación) |
+| **Ticket externo** | Integración con Jira/ServiceNow **no incluida** en esta entrega. Para gestión de tickets/folios propios del módulo ITSM, ver [`docs/itsm/user-manual.md`](itsm/user-manual.md). |
 
 ### 3.5 Timeline (historial del evento)
 
