@@ -78,7 +78,9 @@ def build_ticket_template_workbook(
         except Exception:  # noqa: BLE001 — never break template generation
             rows = []
         for row in rows or []:
-            users_ref.append([row.get("username"), row.get("display_name"), row.get("is_active", True)])
+            users_ref.append(
+                [row.get("username"), row.get("display_name"), row.get("is_active", True)]
+            )
 
     out = BytesIO()
     wb.save(out)
@@ -147,10 +149,16 @@ def _normalize_ticket_row(
     if raw_type not in {"incident", "service_request"}:
         fail("type", "invalid_enum", "Must be one of: incident, service_request")
 
-    if catalog_repository is not None and raw_service and raw_type in {"incident", "service_request"}:
+    if (
+        catalog_repository is not None
+        and raw_service
+        and raw_type in {"incident", "service_request"}
+    ):
         catalog = catalog_repository.get_by_id(raw_service)
         if catalog is None:
-            fail("service_catalog_id", "service_not_found", f"Service '{raw_service}' does not exist")
+            fail(
+                "service_catalog_id", "service_not_found", f"Service '{raw_service}' does not exist"
+            )
         elif not catalog.get("active", True):
             fail("service_catalog_id", "service_inactive", f"Service '{raw_service}' is inactive")
         elif catalog.get("service_type") != raw_type:
@@ -218,7 +226,9 @@ def import_ticket_workbook(
     # Lock-ordered full-batch acquisition — required by WU 7 to prevent
     # deadlock cycles when the same set of assignees is also being deactivated.
     if pg_session is not None and normalized:
-        ordered_assignees = sorted({payload_model.assignee_username.lower() for payload_model in normalized})
+        ordered_assignees = sorted(
+            {payload_model.assignee_username.lower() for payload_model in normalized}
+        )
         try:
             acquire_user_locks_in_order(pg_session, ordered_assignees)
         except RuntimeError as exc:

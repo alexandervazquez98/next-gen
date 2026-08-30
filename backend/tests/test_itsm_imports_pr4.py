@@ -49,7 +49,9 @@ class _StubCatalogRepository:
 class _StubUserRepository:
     def __init__(self, users: Iterable[str], *, active: Iterable[str] | None = None) -> None:
         active_set = set(active if active is not None else users)
-        self._rows = {name: MagicMock(username=name, is_active=(name in active_set)) for name in users}
+        self._rows = {
+            name: MagicMock(username=name, is_active=(name in active_set)) for name in users
+        }
 
     def get_by_username(self, _db, username: str):
         return self._rows.get(username)
@@ -69,7 +71,10 @@ def _build_catalog_workbook(
     wb = Workbook()
     ws = wb.active
     ws.title = "Catalog Import"
-    ws.append(headers or ["service_id", "name", "SLA", "description", "service_type", "value_stream", "active"])
+    ws.append(
+        headers
+        or ["service_id", "name", "SLA", "description", "service_type", "value_stream", "active"]
+    )
     for row in rows or []:
         ws.append(row)
     streams = active_streams if active_streams is not None else {"operate", "deliver"}
@@ -90,9 +95,18 @@ def _build_ticket_workbook(rows: list[list[str]] | None = None) -> bytes:
     for row in rows or []:
         ws.append(row)
     for name, ref_rows in (
-        ("Ref - Incident Services", [["service_id", "name", "value_stream"], ["svc-inc-1", "Net", "operate"]]),
-        ("Ref - Service Request Services", [["service_id", "name", "value_stream"], ["svc-req-1", "Access", "deliver"]]),
-        ("Ref - Active Users", [["username", "display_name", "is_active"], ["op1", "Op One", "true"]]),
+        (
+            "Ref - Incident Services",
+            [["service_id", "name", "value_stream"], ["svc-inc-1", "Net", "operate"]],
+        ),
+        (
+            "Ref - Service Request Services",
+            [["service_id", "name", "value_stream"], ["svc-req-1", "Access", "deliver"]],
+        ),
+        (
+            "Ref - Active Users",
+            [["username", "display_name", "is_active"], ["op1", "Op One", "true"]],
+        ),
     ):
         ref = wb.create_sheet(name)
         for row in ref_rows:
@@ -167,13 +181,17 @@ class TestCatalogHeaderValidation:
 
 class TestCatalogRowValidation:
     def test_invalid_service_type_returns_invalid_enum(self):
-        wb_bytes = _build_catalog_workbook([["svc-1", "Net", "30", "Desc", "request", "operate", "true"]])
+        wb_bytes = _build_catalog_workbook(
+            [["svc-1", "Net", "30", "Desc", "request", "operate", "true"]]
+        )
         with pytest.raises(ImportValidationError) as exc:
             catalog_import.parse_catalog_workbook(wb_bytes)
         assert any(e.code == "invalid_enum" for e in exc.value.errors)
 
     def test_inactive_value_stream_rejected(self):
-        wb_bytes = _build_catalog_workbook([["svc-1", "Net", "30", "Desc", "incident", "legacy", "true"]])
+        wb_bytes = _build_catalog_workbook(
+            [["svc-1", "Net", "30", "Desc", "incident", "legacy", "true"]]
+        )
         with pytest.raises(ImportValidationError) as exc:
             catalog_import.parse_catalog_workbook(
                 wb_bytes, value_stream_lookup=_StubValueStreamLookup()
@@ -248,7 +266,14 @@ class TestCatalogFileGuard:
 class TestTicketTemplate:
     def test_template_includes_three_reference_sheets(self):
         catalog_repo = _StubCatalogRepository(
-            {"svc-inc-1": {"service_id": "svc-inc-1", "service_type": "incident", "active": True, "value_stream": "operate"}}
+            {
+                "svc-inc-1": {
+                    "service_id": "svc-inc-1",
+                    "service_type": "incident",
+                    "active": True,
+                    "value_stream": "operate",
+                }
+            }
         )
         user_repo = _StubUserRepository(["op1"])
         wb_bytes = ticket_import.build_ticket_template_workbook(
@@ -267,31 +292,32 @@ class TestTicketTemplate:
 
 class TestTicketRowValidation:
     def test_missing_assignee_reports_row_error(self):
-        wb_bytes = _build_ticket_workbook(
-            [["incident", "Router down", "desc", "svc-inc-1", ""]]
-        )
+        wb_bytes = _build_ticket_workbook([["incident", "Router down", "desc", "svc-inc-1", ""]])
         with pytest.raises(ImportValidationError) as exc:
             ticket_import.parse_ticket_workbook(wb_bytes)
         assert any(e.field == "assignee_username" for e in exc.value.errors)
 
     def test_incompatible_service_type_reports_row_error(self):
-        wb_bytes = _build_ticket_workbook(
-            [["incident", "Router down", "desc", "svc-req-1", "op1"]]
-        )
+        wb_bytes = _build_ticket_workbook([["incident", "Router down", "desc", "svc-req-1", "op1"]])
         with pytest.raises(ImportValidationError) as exc:
             ticket_import.parse_ticket_workbook(
                 wb_bytes,
                 catalog_repository=_StubCatalogRepository(
-                    {"svc-req-1": {"service_id": "svc-req-1", "service_type": "service_request", "active": True, "value_stream": "deliver"}}
+                    {
+                        "svc-req-1": {
+                            "service_id": "svc-req-1",
+                            "service_type": "service_request",
+                            "active": True,
+                            "value_stream": "deliver",
+                        }
+                    }
                 ),
                 user_repository=_StubUserRepository(["op1"]),
             )
         assert any(e.code == "service_type_mismatch" for e in exc.value.errors)
 
     def test_inactive_user_reports_row_error(self):
-        wb_bytes = _build_ticket_workbook(
-            [["incident", "Router down", "desc", "svc-inc-1", "op1"]]
-        )
+        wb_bytes = _build_ticket_workbook([["incident", "Router down", "desc", "svc-inc-1", "op1"]])
         catalog_repo = _make_catalog_repo([])
         with pytest.raises(ImportValidationError) as exc:
             ticket_import.parse_ticket_workbook(
@@ -304,9 +330,7 @@ class TestTicketRowValidation:
 
 class TestTicketAtomicityAndLocking:
     def test_invalid_workbook_persists_zero_tickets(self):
-        wb_bytes = _build_ticket_workbook(
-            [["incident", "Router down", "desc", "svc-inc-1", ""]]
-        )
+        wb_bytes = _build_ticket_workbook([["incident", "Router down", "desc", "svc-inc-1", ""]])
         ticket_repo = MagicMock()
         ticket_repo.bulk_create_with_generated_ids = MagicMock(return_value=[])
         with pytest.raises(ImportValidationError):

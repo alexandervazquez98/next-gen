@@ -75,7 +75,9 @@ def parse_catalog_workbook(
     guard_xlsx_payload(payload, max_size_bytes=max_size_bytes)
     wb = open_workbook(payload)
     headers = read_header_row(wb, CATALOG_SHEET)
-    header_error = collect_header_errors(headers, CATALOG_REQUIRED_HEADERS, CATALOG_DISALLOWED_HEADERS)
+    header_error = collect_header_errors(
+        headers, CATALOG_REQUIRED_HEADERS, CATALOG_DISALLOWED_HEADERS
+    )
     if header_error.has_errors():
         raise header_error
 
@@ -132,7 +134,9 @@ def _normalize_catalog_row(
             if sla_value < 0:
                 fail("sla_target_minutes", "out_of_range", "SLA must be >= 0")
         except ValueError:
-            fail("sla_target_minutes", "invalid_integer", f"SLA must be an integer, got '{raw_sla}'")
+            fail(
+                "sla_target_minutes", "invalid_integer", f"SLA must be an integer, got '{raw_sla}'"
+            )
 
     if raw_service_type not in {"incident", "service_request"}:
         fail("service_type", "invalid_enum", "Must be one of: incident, service_request")
@@ -140,7 +144,11 @@ def _normalize_catalog_row(
     if value_stream_lookup is not None and raw_value_stream:
         try:
             if not value_stream_lookup.is_active(raw_value_stream):
-                fail("value_stream", "inactive_value_stream", f"value_stream '{raw_value_stream}' is not active")
+                fail(
+                    "value_stream",
+                    "inactive_value_stream",
+                    f"value_stream '{raw_value_stream}' is not active",
+                )
         except Exception:  # noqa: BLE001 — lookup failure must not block validation
             fail("value_stream", "lookup_failed", "value_stream lookup failed")
 

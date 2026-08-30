@@ -33,7 +33,9 @@ def open_workbook(payload: bytes) -> Workbook:
 
 def read_header_row(workbook: Workbook, sheet_name: str) -> list[str]:
     if sheet_name not in workbook.sheetnames:
-        raise _error(sheet_name, "missing_sheet", f"Workbook is missing required sheet '{sheet_name}'")
+        raise _error(
+            sheet_name, "missing_sheet", f"Workbook is missing required sheet '{sheet_name}'"
+        )
     ws = workbook[sheet_name]
     header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
     return [str(c).strip() if c is not None else "" for c in (header_row or [])]
@@ -43,7 +45,9 @@ def read_data_rows(workbook: Workbook, sheet_name: str) -> Iterable[tuple[int, t
     """Yield ``(visible_row_number, cell_tuple)`` for every row after the header."""
 
     if sheet_name not in workbook.sheetnames:
-        raise _error(sheet_name, "missing_sheet", f"Workbook is missing required sheet '{sheet_name}'")
+        raise _error(
+            sheet_name, "missing_sheet", f"Workbook is missing required sheet '{sheet_name}'"
+        )
     ws = workbook[sheet_name]
     for visible_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         cells = tuple("" if c is None else str(c) for c in row)
@@ -61,7 +65,12 @@ def collect_header_errors(
     seen = {h.strip() for h in actual}
     for header in required:
         if header not in seen:
-            error.add(row=None, field=header, code="missing_header", reason=f"Required header '{header}' is missing")
+            error.add(
+                row=None,
+                field=header,
+                code="missing_header",
+                reason=f"Required header '{header}' is missing",
+            )
     for header in disallowed:
         if header in seen:
             error.add(
