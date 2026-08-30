@@ -44,6 +44,7 @@ export default [
         document: "readonly",
         alert: "readonly",
         confirm: "readonly",
+        prompt: "readonly",
         SVGElement: "readonly",
         SVGSVGElement: "readonly",
         SVGGElement: "readonly",

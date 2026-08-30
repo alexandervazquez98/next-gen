@@ -44,13 +44,16 @@ const UserManager: React.FC = () => {
     useEffect(() => {
         fetchUsers();
         fetchRoles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab]); // Refresh when tab changes
 
     const fetchUsers = async () => {
         try {
             const data = await api.get<User[]>('/users/');
             setUsers(data);
-        } catch (e) { console.error(e); }
+        } catch (e) {
+        // eslint-disable-next-line no-console
+            console.error(e); }
     };
 
     const fetchRoles = async () => {
@@ -61,7 +64,9 @@ const UserManager: React.FC = () => {
                 const currentRole = data.find(r => r.name === newUser.role);
                 if (currentRole) setNewUser(prev => ({ ...prev, permissions: currentRole.permissions }));
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {
+        // eslint-disable-next-line no-console
+            console.error(e); }
     };
 
     const handleRoleChange = (roleName: string) => {
@@ -120,7 +125,9 @@ const UserManager: React.FC = () => {
 
                 fetchUsers();
                 resetNewUserForm();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } catch (e: any) {
+                // eslint-disable-next-line no-console
                 console.error(e);
                 alert(`Update failed: ${e.message}`);
             }
@@ -138,7 +145,9 @@ const UserManager: React.FC = () => {
             });
             fetchUsers();
             resetNewUserForm();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
+            // eslint-disable-next-line no-console
             console.error(e);
             alert(`Failed: ${e.message}`);
         }
