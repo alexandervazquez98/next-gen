@@ -238,6 +238,7 @@ from routers import (  # noqa: E402
     cis,
     cli,
     dictionaries,
+    event_recommendations,
     events,
     itsm_service_catalog,
     links,
@@ -370,6 +371,7 @@ app.include_router(itsm_service_catalog.router, prefix="/api")
 app.include_router(links.router, prefix="/api")
 app.include_router(tunnels.router, prefix="/api")
 app.include_router(ticket_folios.router, prefix="/api")
+app.include_router(event_recommendations.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(dictionaries.router, prefix="/api")
