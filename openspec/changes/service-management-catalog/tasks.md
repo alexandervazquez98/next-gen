@@ -247,6 +247,8 @@ Dependencies: Work Unit 3, Work Unit 5, and Work Unit 6 complete.
 ## Work Unit 8 — frontend: Service Management naming, contract-aligned ticket/catalog forms, and compatibility selectors
 Dependencies: Work Unit 5 complete.
 
+- **Status (PR 5 implementation):** completed in `feat/service-management-catalog-pr5`. RED → GREEN → REFACTOR + rename + activate pass. Detailed TDD evidence and verification in `apply-progress.md` § "PR 5 — WU 8 + WU 9".
+
 - **Target areas**:
   - `frontend/components/ItsmTicketFolioPage.tsx`
   - `frontend/components/ItsmServiceCatalogPage.tsx`
@@ -278,6 +280,8 @@ Dependencies: Work Unit 5 complete.
 
 ## Work Unit 9 — end-to-end compatibility checks and release-ready verification
 Dependencies: Work Units 1–8 complete.
+
+- **Status (PR 5 implementation):** completed in `feat/service-management-catalog-pr5`. Playwright journey exercises login → catalog create → compatible ticket → incompatible rejection → deactivate → historical snapshot → invalid import rollback → UI smoke. Detailed evidence in `apply-progress.md` § "PR 5 — WU 8 + WU 9".
 
 - **Target areas**:
   - `backend/routers/ticket_folios.py`
