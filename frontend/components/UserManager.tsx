@@ -167,6 +167,7 @@ const UserManager: React.FC = () => {
         } catch (err) {
             const status = (err as { status?: number })?.status;
             if (status !== 404 && status !== 409) {
+                // eslint-disable-next-line no-console
                 console.error(err);
                 alert(`Deactivation failed: ${(err as Error).message ?? "unknown error"}`);
                 return;
