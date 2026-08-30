@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-08-29
+
+### Added
+
+- **AI chat context-window guard via sliding-window compaction** (PR #435, closes #415): `backend/services/ai_chat_service.py` gains `_compact_history()` that applies a sliding window to non-system messages before the payload is sent to `_post_lm_studio_chat_completion`. The first system message is reserved (never trimmed, never counted toward the eviction budget). Two new `LMStudioSettings` fields in `backend/config.py`: `context_limit_tokens` (env `LM_STUDIO_CONTEXT_LIMIT_TOKENS`, default 32768, range 1..1_000_000) and `compaction_threshold` (env `LM_STUDIO_COMPACTION_THRESHOLD`, default 0.80, range 0..1). Setting `compaction_threshold >= 1.0` makes the compactor a no-op (operator kill switch). Token estimation uses `len(text)//4` (no new dependency; tiktoken is OpenAI-specific BPE and misleads on Qwen/local models). 5 new tests: trims oldest on overflow, no-op under threshold, threshold=1.0 kill switch, system message byte-identical, end-to-end via `/api/ai/chat` with `LM_STUDIO_CONTEXT_LIMIT_TOKENS=512`. `pytest tests/test_ai_chat_service.py -q` → 79 passed. Closes the failure mode where long system prompt + chat history could exceed the local-LLM input window and produce HTTP 400 `context_length_exceeded`.
+
+### Fixed
+
+- **`event_batch_pruner` no longer hangs the SSE endpoint on persistent chunk failures** (PR #434, closes #433): `MAX_CONSECUTIVE_CHUNK_FAILURES = 3` cap introduced in `backend/services/event_service.py`. The previous catch-all `except Exception` swallowed every chunk failure and re-entered the loop with `total_processed` unchanged — a transient Neo4j blip became an infinite loop and the SSE endpoint never received its first byte. After three consecutive failures the generator now re-raises so the caller (e.g. `GET /api/events/bulk/stream-progress`) surfaces a clean error. Root cause of the hang: `MockNeo4jRecord` (`backend/tests/test_event_batch_pruner.py:49`) only implemented `__getitem__/get`, missing the rest of the Mapping protocol, so the prod helper `_fetch_page` (`[dict(record) for record in result]`) raised `TypeError` on every chunk. The mock now implements the full protocol (`__iter__/keys/values/items/__contains__/__len__`). Also adds `pytest-timeout>=2.1,<3` to `backend/requirements-dev.txt` and `--timeout=120` to `backend/pytest.ini` so any future hang surfaces as a 2-minute test failure rather than a 60-minute runner stall.
+
+### Documentation
+
+- **ITSM Service Catalog and Ticket/Folio user manual** (PR #437): `docs/itsm/user-manual.md` (229 lines) documents the five-state ticket lifecycle (`open → in_progress → in_validation → resolved → closed`), the ticket-to-service reference model, the `ITSM_VIEW` / `ITSM_EDIT` permissions (default `OPERATOR` role), and operational limits. Two Mermaid diagrams: `stateDiagram-v2` for the lifecycle, `graph LR` for the ticket-service relationship. Linked from `docs/USER_GUIDE.md` (also clarifies the `Ticket externo` field) and `README.md` docs index.
+
 ## [1.14.7] — 2026-08-29
 
 ### Fixed
