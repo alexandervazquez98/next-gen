@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -262,6 +263,34 @@ def _emit_lifecycle_outcome(
     )
 
 
+def _lifecycle_auditor(
+    *,
+    db: Session | None,
+    request: Request | None,
+    actor: User,
+    event_type: str,
+    mapping_id: str | None,
+) -> Callable[..., None]:
+    """Bind the fields that stay constant across one invocation's audit rows.
+
+    Lets each lifecycle method emit with just the outcome and the context that
+    actually varies, instead of repeating the same five arguments per call site.
+    """
+
+    def emit(outcome: str, **context_fields: Any) -> None:
+        _emit_lifecycle_outcome(
+            db=db,
+            request=request,
+            actor=actor,
+            event_type=event_type,
+            outcome=outcome,
+            mapping_id=mapping_id,
+            **context_fields,
+        )
+
+    return emit
+
+
 def _identifiers_from_mapping(mapping: dict[str, Any] | None) -> dict[str, Any]:
     """Project a stored mapping onto the four allow-listed identifier keys."""
     source = mapping or {}
@@ -355,6 +384,13 @@ class MqttMappingService:
             event_type=AUDIT_EVENT_MAPPING_CREATE,
             identifiers=identifiers,
         )
+        audit = _lifecycle_auditor(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_CREATE,
+            mapping_id=mapping_id,
+        )
         warning, critical, operator = self._threshold_values(payload.thresholds)
         try:
             result = self._repo.create_draft(
@@ -370,25 +406,12 @@ class MqttMappingService:
                 operator=operator,
             )
         except Exception as exc:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_CREATE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
-                identifiers=identifiers,
-            )
+            audit(AUDIT_OUTCOME_VALIDATION_FAILURE, identifiers=identifiers)
             self._raise_http_error(exc)
             raise
 
-        _emit_lifecycle_outcome(
-            db=db,
-            request=request,
-            actor=current_user,
-            event_type=AUDIT_EVENT_MAPPING_CREATE,
-            outcome=AUDIT_OUTCOME_SUCCESS,
-            mapping_id=mapping_id,
+        audit(
+            AUDIT_OUTCOME_SUCCESS,
             previous_state=None,
             next_state=result.get("status") or MAPPING_STATE_DRAFT,
             identifiers=identifiers,
@@ -412,17 +435,17 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_UPDATE,
         )
+        audit = _lifecycle_auditor(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_UPDATE,
+            mapping_id=mapping_id,
+        )
         if payload.thresholds is None:
             current = self._repo.get_mapping(mapping_id)
             if current is None:
-                _emit_lifecycle_outcome(
-                    db=db,
-                    request=request,
-                    actor=current_user,
-                    event_type=AUDIT_EVENT_MAPPING_UPDATE,
-                    outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                    mapping_id=mapping_id,
-                )
+                audit(AUDIT_OUTCOME_VALIDATION_FAILURE)
                 raise HTTPException(status_code=404, detail=f"Mapping not found: {mapping_id}")
             warning = current.get("warning")
             critical = current.get("critical")
@@ -445,13 +468,8 @@ class MqttMappingService:
                 operator=operator,
             )
         except Exception as exc:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_UPDATE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
+            audit(
+                AUDIT_OUTCOME_VALIDATION_FAILURE,
                 previous_state=previous_state,
                 identifiers=identifiers,
                 changed_fields=changed_fields,
@@ -459,13 +477,8 @@ class MqttMappingService:
             self._raise_http_error(exc)
             raise
 
-        _emit_lifecycle_outcome(
-            db=db,
-            request=request,
-            actor=current_user,
-            event_type=AUDIT_EVENT_MAPPING_UPDATE,
-            outcome=AUDIT_OUTCOME_SUCCESS,
-            mapping_id=mapping_id,
+        audit(
+            AUDIT_OUTCOME_SUCCESS,
             previous_state=previous_state,
             next_state=result.get("status") or MAPPING_STATE_DRAFT,
             identifiers=identifiers,
@@ -489,6 +502,13 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_APPROVE,
         )
+        audit = _lifecycle_auditor(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_APPROVE,
+            mapping_id=mapping_id,
+        )
         mapping = _safe_pre_read(self._repo, mapping_id)
         previous_state = (mapping or {}).get("status")
         identifiers = _identifiers_from_mapping(mapping)
@@ -497,26 +517,16 @@ class MqttMappingService:
                 mapping_id=mapping_id, approved_by=self._actor(current_user)
             )
         except Exception as exc:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_APPROVE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
+            audit(
+                AUDIT_OUTCOME_VALIDATION_FAILURE,
                 previous_state=previous_state,
                 identifiers=identifiers,
             )
             self._raise_http_error(exc)
             raise
 
-        _emit_lifecycle_outcome(
-            db=db,
-            request=request,
-            actor=current_user,
-            event_type=AUDIT_EVENT_MAPPING_APPROVE,
-            outcome=AUDIT_OUTCOME_SUCCESS,
-            mapping_id=mapping_id,
+        audit(
+            AUDIT_OUTCOME_SUCCESS,
             previous_state=previous_state,
             next_state=result.get("status") or MAPPING_STATE_APPROVED,
             identifiers=identifiers,
@@ -539,32 +549,29 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_REVOKE,
         )
+        audit = _lifecycle_auditor(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_REVOKE,
+            mapping_id=mapping_id,
+        )
         mapping = _safe_pre_read(self._repo, mapping_id)
         previous_state = (mapping or {}).get("status")
         identifiers = _identifiers_from_mapping(mapping)
         try:
             result = self._repo.revoke(mapping_id=mapping_id, revoked_by=self._actor(current_user))
         except Exception as exc:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_REVOKE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
+            audit(
+                AUDIT_OUTCOME_VALIDATION_FAILURE,
                 previous_state=previous_state,
                 identifiers=identifiers,
             )
             self._raise_http_error(exc)
             raise
 
-        _emit_lifecycle_outcome(
-            db=db,
-            request=request,
-            actor=current_user,
-            event_type=AUDIT_EVENT_MAPPING_REVOKE,
-            outcome=AUDIT_OUTCOME_SUCCESS,
-            mapping_id=mapping_id,
+        audit(
+            AUDIT_OUTCOME_SUCCESS,
             previous_state=previous_state,
             next_state=result.get("status") or MAPPING_STATE_REVOKED,
             identifiers=identifiers,
@@ -602,29 +609,23 @@ class MqttMappingService:
             mapping_id=mapping_id,
             event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
         )
+        audit = _lifecycle_auditor(
+            db=db,
+            request=request,
+            actor=current_user,
+            event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
+            mapping_id=mapping_id,
+        )
         mapping = self._repo.get_mapping(mapping_id)
         previous_state = (mapping or {}).get("status")
         identifiers = _identifiers_from_mapping(mapping)
         changed_fields = _changed_threshold_fields(thresholds)
         if mapping is None:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
-                changed_fields=changed_fields,
-            )
+            audit(AUDIT_OUTCOME_VALIDATION_FAILURE, changed_fields=changed_fields)
             raise HTTPException(status_code=404, detail=f"Mapping not found: {mapping_id}")
         if mapping.get("status") != MAPPING_STATE_APPROVED:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
+            audit(
+                AUDIT_OUTCOME_VALIDATION_FAILURE,
                 previous_state=previous_state,
                 identifiers=identifiers,
                 changed_fields=changed_fields,
@@ -641,13 +642,8 @@ class MqttMappingService:
                 operator=thresholds.operator,
             )
         except Exception as exc:
-            _emit_lifecycle_outcome(
-                db=db,
-                request=request,
-                actor=current_user,
-                event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
-                outcome=AUDIT_OUTCOME_VALIDATION_FAILURE,
-                mapping_id=mapping_id,
+            audit(
+                AUDIT_OUTCOME_VALIDATION_FAILURE,
                 previous_state=previous_state,
                 identifiers=identifiers,
                 changed_fields=changed_fields,
@@ -655,13 +651,8 @@ class MqttMappingService:
             self._raise_http_error(exc)
             raise
 
-        _emit_lifecycle_outcome(
-            db=db,
-            request=request,
-            actor=current_user,
-            event_type=AUDIT_EVENT_MAPPING_THRESHOLD_UPDATE,
-            outcome=AUDIT_OUTCOME_SUCCESS,
-            mapping_id=mapping_id,
+        audit(
+            AUDIT_OUTCOME_SUCCESS,
             previous_state=MAPPING_STATE_APPROVED,
             next_state=MAPPING_STATE_APPROVED,
             identifiers=identifiers,
