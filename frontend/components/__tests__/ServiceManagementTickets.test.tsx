@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ItsmTicketFolioPage from "../ItsmTicketFolioPage";
 
-// All service endpoints the page uses are mocked below.
 const mocks = vi.hoisted(() => ({
   listTicketFolios: vi.fn(),
   createTicketFolio: vi.fn(),
@@ -15,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   listActiveUsers: vi.fn(),
   downloadTicketTemplate: vi.fn(),
   importTicketWorkbook: vi.fn(),
-  apiPost: vi.fn(),
 }));
 
 vi.mock("../../services/itsm", async () => {
@@ -24,36 +22,34 @@ vi.mock("../../services/itsm", async () => {
   );
   return {
     ...actual,
-    listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
-    createTicketFolio: (...args: unknown[]) => mocks.createTicketFolio(...args),
-    updateTicketFolio: (...args: unknown[]) => mocks.updateTicketFolio(...args),
-    transitionTicketFolio: (...args: unknown[]) => mocks.transitionTicketFolio(...args),
-    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
-    listActiveUsers: (...args: unknown[]) => mocks.listActiveUsers(...args),
-    downloadTicketTemplate: (...args: unknown[]) => mocks.downloadTicketTemplate(...args),
-    importTicketWorkbook: (...args: unknown[]) => mocks.importTicketWorkbook(...args),
+    listTicketFolios: (...a: unknown[]) => mocks.listTicketFolios(...a),
+    createTicketFolio: (...a: unknown[]) => mocks.createTicketFolio(...a),
+    updateTicketFolio: (...a: unknown[]) => mocks.updateTicketFolio(...a),
+    transitionTicketFolio: (...a: unknown[]) => mocks.transitionTicketFolio(...a),
+    listServiceCatalog: (...a: unknown[]) => mocks.listServiceCatalog(...a),
+    listActiveUsers: (...a: unknown[]) => mocks.listActiveUsers(...a),
+    downloadTicketTemplate: (...a: unknown[]) => mocks.downloadTicketTemplate(...a),
+    importTicketWorkbook: (...a: unknown[]) => mocks.importTicketWorkbook(...a),
   };
 });
 
-const sampleTickets = [
-  {
-    ticket_id: 1,
-    type: "incident",
-    title: "Router down",
-    description: "Core router unreachable",
-    service_catalog_id: "svc-net-inc",
-    assignee_username: "alice",
-    assignee_display_name: "alice",
-    assignee_active_at_assignment: true,
-    assignee_currently_active: true,
-    status: "open",
-    archived: false,
-    closed_reason: null,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    updated_by: "admin",
-  },
-];
+const baseTicket = {
+  ticket_id: 1,
+  type: "incident" as const,
+  title: "Router down",
+  description: "Core router unreachable",
+  service_catalog_id: "svc-net-inc",
+  assignee_username: "alice",
+  assignee_display_name: "alice",
+  assignee_active_at_assignment: true,
+  assignee_currently_active: true,
+  status: "open" as const,
+  archived: false,
+  closed_reason: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  updated_by: "admin",
+};
 
 const sampleCatalog = [
   {
@@ -65,7 +61,7 @@ const sampleCatalog = [
     criticality: null,
     sla_target_minutes: 60,
     description: "Network incident handling",
-    service_type: "incident",
+    service_type: "incident" as const,
     value_stream: "operate",
     active: true,
     created_at: "2026-01-01T00:00:00Z",
@@ -81,7 +77,7 @@ const sampleCatalog = [
     criticality: null,
     sla_target_minutes: 30,
     description: "VPN access requests",
-    service_type: "service_request",
+    service_type: "service_request" as const,
     value_stream: "deliver",
     active: true,
     created_at: "2026-01-01T00:00:00Z",
@@ -102,8 +98,8 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     mocks.listActiveUsers.mockResolvedValue(activeUsers);
   });
 
-  it("renames the heading to Service Management and shows only canonical ticket types", async () => {
-    mocks.listTicketFolios.mockResolvedValueOnce(sampleTickets);
+  it("renames the heading to Service Management and exposes only canonical ticket types", async () => {
+    mocks.listTicketFolios.mockResolvedValueOnce([baseTicket]);
     render(<ItsmTicketFolioPage />);
 
     expect(
@@ -120,7 +116,7 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
   });
 
   it("does NOT expose a client-supplied ticket_id input on create", async () => {
-    mocks.listTicketFolios.mockResolvedValueOnce(sampleTickets);
+    mocks.listTicketFolios.mockResolvedValueOnce([baseTicket]);
     render(<ItsmTicketFolioPage />);
 
     await screen.findByRole("heading", { name: /service management/i, level: 1 });
@@ -129,15 +125,13 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     expect(screen.queryByLabelText(/^ticket id$/i)).not.toBeInTheDocument();
   });
 
-  it("shows the server-generated numeric ticket_id after create", async () => {
+  it("creates with numeric generated id and surfaces the row in the table", async () => {
     const user = userEvent.setup();
     mocks.listTicketFolios
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { ...sampleTickets[0], ticket_id: 4242, title: "Generated" },
-      ]);
+      .mockResolvedValueOnce([{ ...baseTicket, ticket_id: 4242, title: "Generated" }]);
     mocks.createTicketFolio.mockResolvedValueOnce({
-      ...sampleTickets[0],
+      ...baseTicket,
       ticket_id: 4242,
       title: "Generated",
     });
@@ -176,7 +170,6 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
 
     await user.click(screen.getByRole("button", { name: /new ticket/i }));
 
-    // Default type is incident — service_request must be filtered out.
     const serviceSelect = screen.getByLabelText(/^service$/i) as HTMLSelectElement;
     let values = Array.from(serviceSelect.options)
       .map((opt) => opt.value)
@@ -192,81 +185,48 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     expect(values).not.toContain("svc-net-inc");
   });
 
-  it("requires an assignee and rejects submit when missing", async () => {
+  it("requires an assignee and surfaces the backend inactive-user / compatibility errors", async () => {
     const user = userEvent.setup();
     mocks.listTicketFolios.mockResolvedValueOnce([]);
+
+    const reactive = (err: string) =>
+      Object.assign(new Error(err), { status: 400, detail: err });
+    mocks.createTicketFolio
+      .mockRejectedValueOnce(reactive("user_inactive_at_write"))
+      .mockRejectedValueOnce(reactive("service_type_mismatch_at_write"));
+
     render(<ItsmTicketFolioPage />);
     await screen.findByRole("heading", { name: /service management/i, level: 1 });
 
+    // 1. Missing assignee path: select blank, click save, expect inline error.
     await user.click(screen.getByRole("button", { name: /new ticket/i }));
     await user.type(screen.getByLabelText(/^title$/i), "No assignee");
     await user.selectOptions(screen.getByLabelText(/^service$/i), "svc-net-inc");
-
     const assigneeSelect = screen.getByLabelText(/^assignee$/i) as HTMLSelectElement;
     expect(assigneeSelect.getAttribute("aria-required")).toBe("true");
-
-    // Force a blank value: no option selected.
     await user.selectOptions(assigneeSelect, "");
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
-
     expect(mocks.createTicketFolio).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/assignee is required/i),
-    ).toBeInTheDocument();
-  });
+    expect(await screen.findByText(/assignee is required/i)).toBeInTheDocument();
 
-  it("surfaces the inactive-user backend error when assignee is rejected at write time", async () => {
-    const user = userEvent.setup();
-    mocks.listTicketFolios.mockResolvedValueOnce([]);
-    mocks.createTicketFolio.mockRejectedValueOnce(
-      Object.assign(new Error("user_inactive_at_write"), { status: 400 }),
-    );
-
-    render(<ItsmTicketFolioPage />);
-    await screen.findByRole("heading", { name: /service management/i, level: 1 });
-
-    await user.click(screen.getByRole("button", { name: /new ticket/i }));
-    await user.type(screen.getByLabelText(/^title$/i), "Trigger inactive error");
-    await user.selectOptions(screen.getByLabelText(/^service$/i), "svc-net-inc");
+    // 2. Inactive-user path.
     await user.selectOptions(screen.getByLabelText(/^assignee$/i), "alice");
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
+    expect(await screen.findByText(/user_inactive_at_write/)).toBeInTheDocument();
 
-    expect(
-      await screen.findByText(/user_inactive_at_write|inactive/i),
-    ).toBeInTheDocument();
-  });
-
-  it("surfaces the compatibility error when backend rejects the selected service", async () => {
-    const user = userEvent.setup();
-    mocks.listTicketFolios.mockResolvedValueOnce([]);
-    mocks.createTicketFolio.mockRejectedValueOnce(
-      Object.assign(new Error("service_type_mismatch_at_write"), { status: 400 }),
-    );
-
-    render(<ItsmTicketFolioPage />);
-    await screen.findByRole("heading", { name: /service management/i, level: 1 });
-
-    await user.click(screen.getByRole("button", { name: /new ticket/i }));
-    await user.selectOptions(screen.getByLabelText(/^type$/i), "incident");
-    await user.type(screen.getByLabelText(/^title$/i), "Trigger compatibility error");
-    await user.selectOptions(screen.getByLabelText(/^service$/i), "svc-net-inc");
-    await user.selectOptions(screen.getByLabelText(/^assignee$/i), "alice");
+    // 3. Compatibility path.
     await user.click(screen.getByRole("button", { name: /save ticket/i }));
-
-    expect(
-      await screen.findByText(/service_type_mismatch|compatibility|incompatible/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/service_type_mismatch_at_write/)).toBeInTheDocument();
   });
 
   it("downloads the ticket import template when the button is clicked", async () => {
     mocks.listTicketFolios.mockResolvedValueOnce([]);
     mocks.downloadTicketTemplate.mockResolvedValueOnce(undefined);
-    const user = userEvent.setup();
 
     render(<ItsmTicketFolioPage />);
     await screen.findByRole("heading", { name: /service management/i, level: 1 });
 
-    await user.click(screen.getByRole("button", { name: /download import template/i }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /download import template/i }));
     expect(mocks.downloadTicketTemplate).toHaveBeenCalledTimes(1);
   });
 
@@ -291,7 +251,9 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     await screen.findByRole("heading", { name: /service management/i, level: 1 });
 
     const fileInput = screen.getByLabelText(/^import workbook$/i) as HTMLInputElement;
-    const file = new File(["fake"], "tickets.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const file = new File(["fake"], "tickets.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
     await user.upload(fileInput, file);
 
     await waitFor(() => expect(mocks.importTicketWorkbook).toHaveBeenCalledTimes(1));

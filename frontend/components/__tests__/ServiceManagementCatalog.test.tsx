@@ -21,33 +21,31 @@ vi.mock("../../services/itsm", async () => {
   );
   return {
     ...actual,
-    listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),
-    createServiceCatalog: (...args: unknown[]) => mocks.createServiceCatalog(...args),
-    updateServiceCatalog: (...args: unknown[]) => mocks.updateServiceCatalog(...args),
-    deactivateServiceCatalog: (...args: unknown[]) => mocks.deactivateServiceCatalog(...args),
-    downloadCatalogTemplate: (...args: unknown[]) => mocks.downloadCatalogTemplate(...args),
-    importCatalogWorkbook: (...args: unknown[]) => mocks.importCatalogWorkbook(...args),
+    listServiceCatalog: (...a: unknown[]) => mocks.listServiceCatalog(...a),
+    createServiceCatalog: (...a: unknown[]) => mocks.createServiceCatalog(...a),
+    updateServiceCatalog: (...a: unknown[]) => mocks.updateServiceCatalog(...a),
+    deactivateServiceCatalog: (...a: unknown[]) => mocks.deactivateServiceCatalog(...a),
+    downloadCatalogTemplate: (...a: unknown[]) => mocks.downloadCatalogTemplate(...a),
+    importCatalogWorkbook: (...a: unknown[]) => mocks.importCatalogWorkbook(...a),
   };
 });
 
-const sampleCatalogs = [
-  {
-    service_id: "svc-auth",
-    name: "Auth API",
-    owner_team: "Platform",
-    category: "SaaS",
-    tier: "gold",
-    criticality: "high",
-    sla_target_minutes: 15,
-    description: "Auth service",
-    service_type: "service_request",
-    value_stream: "deliver",
-    active: true,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    updated_by: null,
-  },
-];
+const baseCatalog = {
+  service_id: "svc-auth",
+  name: "Auth API",
+  owner_team: "Platform",
+  category: "SaaS",
+  tier: "gold",
+  criticality: "high",
+  sla_target_minutes: 15,
+  description: "Auth service",
+  service_type: "service_request" as const,
+  value_stream: "deliver",
+  active: true,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  updated_by: null,
+};
 
 const renderCatalogRoute = () =>
   render(
@@ -58,61 +56,36 @@ const renderCatalogRoute = () =>
     </MemoryRouter>,
   );
 
-describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+describe("ItsmServiceCatalogPage — WU 8 governance + import UX", () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it("renders the catalog with Service Management copy and exposes required fields", async () => {
-    mocks.listServiceCatalog.mockResolvedValueOnce(sampleCatalogs);
+  it("renders the catalog with Service Management copy and required governance fields", async () => {
+    mocks.listServiceCatalog.mockResolvedValueOnce([baseCatalog]);
     renderCatalogRoute();
 
     expect(
       await screen.findByRole("heading", { name: /service catalog/i, level: 1 }),
     ).toBeInTheDocument();
-
     expect(screen.getByText(/Auth API/)).toBeInTheDocument();
   });
 
   it("creates a catalog entry with description, service_type, and value_stream", async () => {
     const user = userEvent.setup();
-    mocks.listServiceCatalog
-      .mockResolvedValueOnce(sampleCatalogs)
-      .mockResolvedValueOnce([
-        ...sampleCatalogs,
-        {
-          service_id: "svc-chat",
-          name: "Chat API",
-          owner_team: "Product",
-          category: null,
-          tier: null,
-          criticality: null,
-          sla_target_minutes: 20,
-          description: "Chat service",
-          service_type: "incident",
-          value_stream: "operate",
-          active: true,
-          created_at: "2026-01-02T00:00:00Z",
-          updated_at: "2026-01-02T00:00:00Z",
-          updated_by: null,
-        },
-      ]);
-    mocks.createServiceCatalog.mockResolvedValueOnce({
+    const createdEntry = {
+      ...baseCatalog,
       service_id: "svc-chat",
       name: "Chat API",
       owner_team: "Product",
-      category: null,
-      tier: null,
-      criticality: null,
-      sla_target_minutes: 20,
       description: "Chat service",
-      service_type: "incident",
+      service_type: "incident" as const,
       value_stream: "operate",
-      active: true,
-      created_at: "2026-01-02T00:00:00Z",
-      updated_at: "2026-01-02T00:00:00Z",
-      updated_by: null,
-    });
+      sla_target_minutes: 20,
+    };
+
+    mocks.listServiceCatalog
+      .mockResolvedValueOnce([baseCatalog])
+      .mockResolvedValueOnce([baseCatalog, createdEntry]);
+    mocks.createServiceCatalog.mockResolvedValueOnce(createdEntry);
 
     renderCatalogRoute();
     await screen.findByText(/Auth API/);
@@ -136,15 +109,11 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
       value_stream: "operate",
       sla_target_minutes: 20,
     });
-    // Make sure canonical governance fields are present in the wire payload.
-    expect(payload).toHaveProperty("service_type");
-    expect(payload).toHaveProperty("value_stream");
-    expect(payload).toHaveProperty("description");
   });
 
   it("blocks save when description, service_type, or value_stream is missing", async () => {
     const user = userEvent.setup();
-    mocks.listServiceCatalog.mockResolvedValueOnce(sampleCatalogs);
+    mocks.listServiceCatalog.mockResolvedValueOnce([baseCatalog]);
 
     renderCatalogRoute();
     await screen.findByText(/Auth API/);
@@ -152,30 +121,26 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
     await user.click(screen.getByRole("button", { name: /new service catalog/i }));
     await user.type(screen.getByLabelText(/^service id$/i), "svc-bad");
     await user.type(screen.getByLabelText(/^name$/i), "Bad");
-    // description left blank
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     expect(mocks.createServiceCatalog).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/description.*required/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/description.*required/i)).toBeInTheDocument();
   });
 
   it("downloads the catalog import template when the button is clicked", async () => {
-    mocks.listServiceCatalog.mockResolvedValueOnce(sampleCatalogs);
+    mocks.listServiceCatalog.mockResolvedValueOnce([baseCatalog]);
     mocks.downloadCatalogTemplate.mockResolvedValueOnce(undefined);
-    const user = userEvent.setup();
 
     renderCatalogRoute();
     await screen.findByText(/Auth API/);
 
-    await user.click(screen.getByRole("button", { name: /download import template/i }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /download import template/i }));
     expect(mocks.downloadCatalogTemplate).toHaveBeenCalledTimes(1);
   });
 
   it("uploads the workbook and surfaces the structured validation failure", async () => {
     const user = userEvent.setup();
-    mocks.listServiceCatalog.mockResolvedValueOnce(sampleCatalogs);
+    mocks.listServiceCatalog.mockResolvedValueOnce([baseCatalog]);
     mocks.importCatalogWorkbook.mockRejectedValueOnce(
       Object.assign(new Error("Validation failed"), {
         status: 400,
@@ -183,7 +148,12 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
           status: "validation_failed",
           message: "Workbook validation failed; no records were imported.",
           errors: [
-            { row: 4, field: "service_type", code: "invalid_enum", reason: "Must be one of: incident, service_request" },
+            {
+              row: 4,
+              field: "service_type",
+              code: "invalid_enum",
+              reason: "Must be one of: incident, service_request",
+            },
           ],
           error_count: 1,
         },
@@ -194,7 +164,9 @@ describe("ItsmServiceCatalogPage — WU 8 catalog governance + import UX", () =>
     await screen.findByText(/Auth API/);
 
     const fileInput = screen.getByLabelText(/^import workbook$/i) as HTMLInputElement;
-    const file = new File(["fake"], "catalog.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const file = new File(["fake"], "catalog.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
     await user.upload(fileInput, file);
 
     await waitFor(() => expect(mocks.importCatalogWorkbook).toHaveBeenCalledTimes(1));
