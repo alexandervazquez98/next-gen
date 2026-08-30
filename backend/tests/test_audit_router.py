@@ -154,8 +154,12 @@ def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
 def test_audit_events_paginates_and_supports_ascending_sort(audit_db):
     base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     first = _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
-    second = _add_event(audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1))
-    third = _add_event(audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2))
+    second = _add_event(
+        audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1)
+    )
+    third = _add_event(
+        audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2)
+    )
     _set_current_user(_user(permissions=[UserPermission.AUDIT_VIEW]))
 
     response = client.get(
@@ -234,11 +238,7 @@ def test_stale_reminder_dismiss_audit_row_has_event_id_and_reason_code(audit_db)
             assert forbidden not in body["context"]
 
         # Audit row landed in Postgres with the right shape.
-        row = (
-            audit_db.query(AuditEvent)
-            .filter_by(event_type="STALE_EVENT_REMINDER_DISMISS")
-            .one()
-        )
+        row = audit_db.query(AuditEvent).filter_by(event_type="STALE_EVENT_REMINDER_DISMISS").one()
         assert row.target_type == "Event"
         assert row.target_id == "evt-1"
         assert row.context == {
@@ -253,12 +253,15 @@ def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings
     """Snooze audit row records snooze_until computed from settings (not body)."""
     from config import StaleEventReminderSettings
 
-    with patch(
-        "routers.event_recommendations._neo4j_driver",
-        _mock_event_recommendations_driver(),
-    ), patch(
-        "routers.event_recommendations.get_stale_event_reminder_settings",
-        return_value=StaleEventReminderSettings(enabled=True, snooze_ttl_hours=24),
+    with (
+        patch(
+            "routers.event_recommendations._neo4j_driver",
+            _mock_event_recommendations_driver(),
+        ),
+        patch(
+            "routers.event_recommendations.get_stale_event_reminder_settings",
+            return_value=StaleEventReminderSettings(enabled=True, snooze_ttl_hours=24),
+        ),
     ):
         _set_current_user(_stale_reminder_user())
 
@@ -283,11 +286,7 @@ def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings
         delta_h = (parsed - datetime.now(UTC)).total_seconds() / 3600.0
         assert 23.0 < delta_h < 25.0, delta_h
 
-        row = (
-            audit_db.query(AuditEvent)
-            .filter_by(event_type="STALE_EVENT_REMINDER_SNOOZE")
-            .one()
-        )
+        row = audit_db.query(AuditEvent).filter_by(event_type="STALE_EVENT_REMINDER_SNOOZE").one()
         assert row.context["event_id"] == "evt-1"
         assert row.context["reason_code"] == "no_refresh_in_window"
         assert "snooze_until" in row.context
@@ -322,12 +321,15 @@ def test_stale_reminder_quick_action_returns_503_when_kill_switch_off(audit_db):
     """Kill-switch off → 503 and no audit row written."""
     from config import StaleEventReminderSettings
 
-    with patch(
-        "routers.event_recommendations._neo4j_driver",
-        _mock_event_recommendations_driver(),
-    ), patch(
-        "routers.event_recommendations.get_stale_event_reminder_settings",
-        return_value=StaleEventReminderSettings(enabled=False),
+    with (
+        patch(
+            "routers.event_recommendations._neo4j_driver",
+            _mock_event_recommendations_driver(),
+        ),
+        patch(
+            "routers.event_recommendations.get_stale_event_reminder_settings",
+            return_value=StaleEventReminderSettings(enabled=False),
+        ),
     ):
         _set_current_user(_stale_reminder_user())
 
@@ -338,10 +340,7 @@ def test_stale_reminder_quick_action_returns_503_when_kill_switch_off(audit_db):
                 json={"reason_code": "older_than_threshold"},
             )
             assert response.status_code == 503, action
-            assert (
-                "STALE_EVENT_REMINDER_ENABLED=false"
-                in response.json().get("detail", "")
-            )
+            assert "STALE_EVENT_REMINDER_ENABLED=false" in response.json().get("detail", "")
 
         # No audit row should have been written.
         count = (

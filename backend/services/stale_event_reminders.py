@@ -283,9 +283,7 @@ def build_stale_event_recommendations(
     ``WITH`` / ``RETURN`` / ``ORDER BY`` / ``LIMIT`` keywords.
     """
     if limit < MIN_LIMIT or limit > MAX_LIMIT:
-        raise ValueError(
-            f"limit must be within [{MIN_LIMIT}, {MAX_LIMIT}], got {limit}"
-        )
+        raise ValueError(f"limit must be within [{MIN_LIMIT}, {MAX_LIMIT}], got {limit}")
     parameters = {
         "statuses": list(TARGET_STATUSES),
         "event_type": TARGET_EVENT_TYPE,

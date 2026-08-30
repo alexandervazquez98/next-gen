@@ -147,11 +147,14 @@ class TestFromMappingRoundTrip:
         from services.stale_event_reminders import StaleEventRecommendation
 
         for code in ("older_than_threshold", "no_refresh_in_window", "link_missing"):
-            row = _row(reason_code=code, refresh_status={
-                "older_than_threshold": "stale_refresh",
-                "no_refresh_in_window": "stale_refresh",
-                "link_missing": "no_link",
-            }[code])
+            row = _row(
+                reason_code=code,
+                refresh_status={
+                    "older_than_threshold": "stale_refresh",
+                    "no_refresh_in_window": "stale_refresh",
+                    "link_missing": "no_link",
+                }[code],
+            )
             rec = StaleEventRecommendation.from_mapping(row)
             assert rec.reason_code == code
 
@@ -239,8 +242,7 @@ class TestDetectionCypher:
 
         for forbidden in ("MERGE", "SET", "DELETE", "CREATE", "REMOVE", "DETACH"):
             assert (
-                re.search(rf"\b{forbidden}\b", READ_ONLY_DETECTION_QUERY, re.IGNORECASE)
-                is None
+                re.search(rf"\b{forbidden}\b", READ_ONLY_DETECTION_QUERY, re.IGNORECASE) is None
             ), f"forbidden write clause {forbidden!r} present in Cypher"
 
     def test_detection_query_uses_read_session(self):
@@ -249,8 +251,9 @@ class TestDetectionCypher:
             build_stale_event_recommendations,
         )
 
-        driver = _FakeDriver([_row(reason_code="older_than_threshold",
-                                    refresh_status="stale_refresh")])
+        driver = _FakeDriver(
+            [_row(reason_code="older_than_threshold", refresh_status="stale_refresh")]
+        )
         build_stale_event_recommendations(driver, age_hours=24, refresh_window_hours=6)
 
         query, params = driver.session_obj.queries[0]
@@ -301,9 +304,7 @@ class TestDetectionRowFiltering:
                 ),
             ]
         )
-        response = build_stale_event_recommendations(
-            driver, age_hours=24, refresh_window_hours=6
-        )
+        response = build_stale_event_recommendations(driver, age_hours=24, refresh_window_hours=6)
         assert response.total == 1
         assert response.rows[0].event_id == "evt-stale"
 
@@ -312,18 +313,28 @@ class TestDetectionRowFiltering:
 
         driver = _FakeDriver(
             [
-                _row(event_id="evt-age", reason_code="older_than_threshold",
-                     refresh_status="stale_refresh"),
-                _row(event_id="evt-stale-refresh", reason_code="no_refresh_in_window",
-                     refresh_status="stale_refresh"),
-                _row(event_id="evt-link", reason_code="link_missing",
-                     refresh_status="no_link", ci_id=None, ci_name=None,
-                     metricdef_id=None, metricdef_name=None),
+                _row(
+                    event_id="evt-age",
+                    reason_code="older_than_threshold",
+                    refresh_status="stale_refresh",
+                ),
+                _row(
+                    event_id="evt-stale-refresh",
+                    reason_code="no_refresh_in_window",
+                    refresh_status="stale_refresh",
+                ),
+                _row(
+                    event_id="evt-link",
+                    reason_code="link_missing",
+                    refresh_status="no_link",
+                    ci_id=None,
+                    ci_name=None,
+                    metricdef_id=None,
+                    metricdef_name=None,
+                ),
             ]
         )
-        response = build_stale_event_recommendations(
-            driver, age_hours=24, refresh_window_hours=6
-        )
+        response = build_stale_event_recommendations(driver, age_hours=24, refresh_window_hours=6)
         codes = {row.reason_code for row in response.rows}
         assert codes == {"older_than_threshold", "no_refresh_in_window", "link_missing"}
 
@@ -343,8 +354,7 @@ class TestRendererParity:
         )
 
         rec = StaleEventRecommendation.from_mapping(
-            _row(event_id="evt-42", reason_code="link_missing",
-                 refresh_status="no_link")
+            _row(event_id="evt-42", reason_code="link_missing", refresh_status="no_link")
         )
         response = StaleEventRecommendationsResponse(
             schema_version=RECOMMENDATION_SCHEMA_VERSION,
@@ -392,10 +402,7 @@ class TestRendererParity:
             recommendation_to_markdown,
         )
 
-        rows = [
-            StaleEventRecommendation.from_mapping(_row(event_id=f"evt-{i}"))
-            for i in range(3)
-        ]
+        rows = [StaleEventRecommendation.from_mapping(_row(event_id=f"evt-{i}")) for i in range(3)]
         response = StaleEventRecommendationsResponse(
             schema_version=RECOMMENDATION_SCHEMA_VERSION,
             generated_at="2026-08-30T12:00:00",
@@ -553,6 +560,7 @@ class TestKillSwitchOff:
             Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
             db = TestingSessionLocal()
             try:
+
                 def _override_pg():
                     yield db
 
@@ -576,9 +584,8 @@ class TestKillSwitchOff:
                             json={"reason_code": "older_than_threshold"},
                         )
                         assert response.status_code == 503, action
-                        assert (
-                            "STALE_EVENT_REMINDER_ENABLED=false"
-                            in response.json().get("detail", "")
+                        assert "STALE_EVENT_REMINDER_ENABLED=false" in response.json().get(
+                            "detail", ""
                         )
                     # No audit rows should have been written.
                     assert db.query(AuditEvent).count() == 0
@@ -612,6 +619,7 @@ class TestEventViewPermission:
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
         db = TestingSessionLocal()
         try:
+
             def _override_pg():
                 yield db
 
@@ -664,6 +672,7 @@ class TestQuickActionAuditEmission:
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
         db = TestingSessionLocal()
         try:
+
             def _override_pg():
                 yield db
 
@@ -691,9 +700,9 @@ class TestQuickActionAuditEmission:
                 assert body["context"]["event_id"] == "evt-1"
                 assert body["context"]["reason_code"] == "no_refresh_in_window"
 
-                row = db.query(AuditEvent).filter_by(
-                    event_type="STALE_EVENT_REMINDER_DISMISS"
-                ).one()
+                row = (
+                    db.query(AuditEvent).filter_by(event_type="STALE_EVENT_REMINDER_DISMISS").one()
+                )
                 assert row.target_type == "Event"
                 assert row.target_id == "evt-1"
                 assert row.context == {
@@ -708,9 +717,7 @@ class TestQuickActionAuditEmission:
             db.close()
             engine.dispose()
 
-    def test_snooze_writes_audit_row_with_snooze_until_from_settings(
-        self, _disable_neo4j_driver
-    ):
+    def test_snooze_writes_audit_row_with_snooze_until_from_settings(self, _disable_neo4j_driver):
         from config import StaleEventReminderSettings
         from fastapi.testclient import TestClient
         from main import app
@@ -731,6 +738,7 @@ class TestQuickActionAuditEmission:
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
         db = TestingSessionLocal()
         try:
+
             def _override_pg():
                 yield db
 
@@ -748,9 +756,7 @@ class TestQuickActionAuditEmission:
             app.dependency_overrides[get_current_active_user] = _override_user
             with patch(
                 "routers.event_recommendations.get_stale_event_reminder_settings",
-                return_value=StaleEventReminderSettings(
-                    enabled=True, snooze_ttl_hours=24
-                ),
+                return_value=StaleEventReminderSettings(enabled=True, snooze_ttl_hours=24),
             ):
                 try:
                     client = TestClient(app)
@@ -775,9 +781,11 @@ class TestQuickActionAuditEmission:
                     delta_h = (parsed - now).total_seconds() / 3600.0
                     assert 23.0 < delta_h < 25.0, delta_h
 
-                    row = db.query(AuditEvent).filter_by(
-                        event_type="STALE_EVENT_REMINDER_SNOOZE"
-                    ).one()
+                    row = (
+                        db.query(AuditEvent)
+                        .filter_by(event_type="STALE_EVENT_REMINDER_SNOOZE")
+                        .one()
+                    )
                     assert row.context["event_id"] == "evt-1"
                     assert row.context["reason_code"] == "older_than_threshold"
                     assert "snooze_until" in row.context
@@ -811,6 +819,7 @@ class TestQuickActionAuditEmission:
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
         db = TestingSessionLocal()
         try:
+
             def _override_pg():
                 yield db
 
@@ -835,9 +844,9 @@ class TestQuickActionAuditEmission:
                 assert response.status_code == 200
                 body = response.json()
                 assert body["event_type"] == "STALE_EVENT_REMINDER_ESCALATE"
-                row = db.query(AuditEvent).filter_by(
-                    event_type="STALE_EVENT_REMINDER_ESCALATE"
-                ).one()
+                row = (
+                    db.query(AuditEvent).filter_by(event_type="STALE_EVENT_REMINDER_ESCALATE").one()
+                )
                 assert row.context == {
                     "event_id": "evt-1",
                     "reason_code": "link_missing",
@@ -900,9 +909,7 @@ class TestHelperFunctions:
     def test_build_quick_action_context_omits_none_keys(self):
         from routers.event_recommendations import _build_quick_action_context
 
-        ctx = _build_quick_action_context(
-            event_id="evt-1", reason_code=None, snooze_until=None
-        )
+        ctx = _build_quick_action_context(event_id="evt-1", reason_code=None, snooze_until=None)
         assert ctx == {"event_id": "evt-1"}
 
     def test_build_quick_action_context_for_snooze(self):
