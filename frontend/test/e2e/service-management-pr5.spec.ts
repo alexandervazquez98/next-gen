@@ -1,34 +1,31 @@
-// frontend/test/e2e/service-management-pr5.spec.ts — PR 5 / WU 9 release-ready journey.
+// service-management-pr5.spec.ts — PR5 smoke lane, WU 9 acceptance.
 //
-// Full-stack release verification for the Service Management slice.
-// Exercises the cherry-picked backend (PR3 lock + PR4 XLSX) through the
-// new frontend surface (PR5).
+// End-to-end journey through the cherry-picked PR 3 + PR 4 backend surface
+// against a freshly seeded smoke stack. Exercises:
+//   1. POST /api/itsm/service-catalog — create a governed catalog service.
+//   2. POST /api/itsm/tickets — create a ticket with compatible service +
+//      active assignee; numeric ticket_id.
+//   3. POST /api/itsm/tickets with incompatible service type — rejected,
+//      no row persisted.
+//   4. POST /api/users/{username}/deactivate — historical ticket still
+//      readable; assignee_currently_active reflects the new user state.
+//   5. POST /api/itsm/service-catalog/import with invalid XLSX — 4xx,
+//      no catalog row persisted.
+//   6. UI smoke: /#/itsm/tickets renders the "Service Management" heading
+//      and the new ticket id is visible.
 //
-// Requires the smoke stack to be up (see playwright.config.ts webServer
-// block): backend on :8000, frontend on :3000, postgres + neo4j healthy.
-//
-// Spec scenarios mapped to openspec REQs:
-//
-//   REQ-01 / REQ-03 — backend rejects incompatible service type and creates
-//                     the ticket with a server-generated numeric id.
-//   REQ-04         — exactly one active assignee is required; backend
-//                     rejects inactive assignees at write-time.
-//   REQ-05         — POST /users/{username}/deactivate flips is_active;
-//                     historical ticket keeps its snapshot and reports
-//                     assignee_currently_active=false on read.
-//   REQ-06 / REQ-07 — atomic catalog + ticket XLSX import; a single bad
-//                     row rolls back the entire batch (zero persisted).
-//
-// This journey deliberately uses the request fixture for API calls so it
-// can run before any browser context is built. The browser is used for the
-// final UI smoke on the Service Management route only.
+// Auth: backend/routers/auth.py exposes POST /api/auth/token as
+// OAuth2PasswordRequestForm — accepts application/x-www-form-urlencoded
+// with `username` and `password` fields. Admin user is seeded by
+// backend/seed_admin.py at backend startup using ADMIN_DEFAULT_USERNAME /
+// ADMIN_DEFAULT_PASSWORD (smoke workflow injects admin/admin).
 
 import {
-  test,
+  test as baseTest,
   expect,
   request as playwrightRequest,
-  APIRequestContext,
-  Page,
+  type APIRequestContext,
+  type Page,
 } from "@playwright/test";
 
 const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL ?? "http://localhost:8000";
@@ -39,28 +36,80 @@ interface LoginResponse {
   token_type?: string;
 }
 
-async function loginAsAdmin(api: APIRequestContext): Promise<void> {
-  const response = await api.post(`${BACKEND_BASE_URL}/auth/login`, {
-    headers: { "Content-Type": "application/json" },
-    data: { username: "admin", password: "admin" },
+interface ServiceCatalogRow {
+  service_id: string;
+  service_type?: string;
+  value_stream?: string;
+  active?: boolean;
+}
+
+interface TicketRow {
+  ticket_id: number | string;
+  type?: string;
+  service_catalog_id?: string;
+  assignee_username?: string;
+  assignee_currently_active?: boolean;
+  assignee_active_at_assignment?: boolean;
+}
+
+async function loginAsAdmin(api: APIRequestContext): Promise<string> {
+  const response = await api.post(`${BACKEND_BASE_URL}/api/auth/token`, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    form: { username: "admin", password: "admin" },
   });
   expect(response.status(), `admin login must succeed, got ${response.status()}`).toBe(200);
   const body = (await response.json()) as LoginResponse;
   expect(body.access_token, "login must return an access_token").toBeTruthy();
+  return body.access_token as string;
 }
+
+interface AuthedFetchOptions {
+  method?: string;
+  data?: unknown;
+  multipart?: Record<string, { name: string; mimeType: string; buffer: Buffer }>;
+  headers?: Record<string, string>;
+}
+
+interface AuthedFetchResponse {
+  status: () => number;
+  json: () => Promise<unknown>;
+  text: () => Promise<string>;
+}
+
+function makeAuthedFetch(api: APIRequestContext, getToken: () => string) {
+  return async (url: string, second?: AuthedFetchOptions) => {
+    const headers = {
+      ...(second?.headers ?? {}),
+      Authorization: `Bearer ${getToken()}`,
+    };
+    const response = await api.fetch(url, {
+      method:
+        second?.method ??
+        (second?.data !== undefined || second?.multipart !== undefined ? "POST" : "GET"),
+      headers,
+      data: second?.data as never,
+      multipart: second?.multipart as never,
+    });
+    return response as unknown as AuthedFetchResponse;
+  };
+}
+
+const test = baseTest;
 
 test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
   test.describe.configure({ mode: "serial" });
 
   let api: APIRequestContext;
+  let adminToken = "";
+  let authedFetch: ReturnType<typeof makeAuthedFetch>;
   let createdCatalogServiceId: string;
   let createdTicketId: number;
   let createdAssignee: string;
-  let succeededImportRowCount: number;
 
   test.beforeAll(async () => {
     api = await playwrightRequest.newContext();
-    await loginAsAdmin(api);
+    adminToken = await loginAsAdmin(api);
+    authedFetch = makeAuthedFetch(api, () => adminToken);
   });
 
   test.afterAll(async () => {
@@ -69,7 +118,7 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
 
   test("step 1 — Service Catalog create endpoint accepts governed fields", async () => {
     createdCatalogServiceId = `svc-pr5-${Date.now()}`;
-    const response = await api.post(`${BACKEND_BASE_URL}/itsm/service-catalog`, {
+    const response = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/service-catalog`, {
       data: {
         service_id: createdCatalogServiceId,
         name: "PR5 Smoke Service",
@@ -83,7 +132,7 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
       response.status(),
       `service catalog create must return 200/201, got ${response.status()}`,
     ).toBeLessThan(300);
-    const body = await response.json();
+    const body = (await response.json()) as ServiceCatalogRow;
     expect(body).toMatchObject({
       service_id: createdCatalogServiceId,
       service_type: "incident",
@@ -93,12 +142,8 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
   });
 
   test("step 2 — ticket create enforces service-type compatibility and returns a numeric id", async () => {
-    // The current build's PostgreSQL users include 'admin'. We re-use admin
-    // as a known-active assignee; if that changes, this assertion will be
-    // the first to surface it.
     createdAssignee = "admin";
-
-    const response = await api.post(`${BACKEND_BASE_URL}/itsm/tickets`, {
+    const response = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/tickets`, {
       data: {
         type: "incident",
         title: "PR5 smoke ticket",
@@ -110,74 +155,64 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
     expect(response.status(), `ticket create must succeed, got ${response.status()}`).toBeLessThan(
       300,
     );
-
-    const body = await response.json();
+    const body = (await response.json()) as TicketRow;
     expect(typeof body.ticket_id).toBe("number");
     expect(Number.isInteger(body.ticket_id)).toBe(true);
-    expect(body.ticket_id).toBeGreaterThan(0);
+    expect(Number(body.ticket_id)).toBeGreaterThan(0);
     expect(body).toMatchObject({
       type: "incident",
       service_catalog_id: createdCatalogServiceId,
       assignee_username: createdAssignee,
       assignee_active_at_assignment: true,
     });
-    createdTicketId = body.ticket_id;
+    createdTicketId = Number(body.ticket_id);
   });
 
   test("step 3 — incompatible service type is rejected with no ticket persisted", async () => {
-    const before = await api.get(`${BACKEND_BASE_URL}/itsm/tickets`);
-    const beforeCount = (await before.json()).length;
+    const before = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/tickets`);
+    const beforeCount = ((await before.json()) as unknown[]).length;
 
-    const rejected = await api.post(`${BACKEND_BASE_URL}/itsm/tickets`, {
+    const rejected = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/tickets`, {
       data: {
         type: "service_request",
         title: "Should fail",
         description: "Incompatible type",
-        service_catalog_id: createdCatalogServiceId, // incident service
+        service_catalog_id: createdCatalogServiceId,
         assignee_username: createdAssignee,
       },
     });
     expect(rejected.status(), "incompatible type must be rejected").toBeGreaterThanOrEqual(400);
 
-    const after = await api.get(`${BACKEND_BASE_URL}/itsm/tickets`);
-    const afterCount = (await after.json()).length;
+    const after = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/tickets`);
+    const afterCount = ((await after.json()) as unknown[]).length;
     expect(afterCount, "no ticket must be persisted on type mismatch").toBe(beforeCount);
   });
 
   test("step 4 — deactivating the assignee preserves the historical ticket context", async () => {
-    const deactivate = await api.post(`${BACKEND_BASE_URL}/users/${createdAssignee}/deactivate`, {
-      data: {},
-    });
-    // 204 on success; 409 already-inactive is also valid (idempotent).
+    const deactivate = await authedFetch(
+      `${BACKEND_BASE_URL}/api/users/${createdAssignee}/deactivate`,
+      { data: {} },
+    );
     expect([204, 409]).toContain(deactivate.status());
 
-    // Re-activate so the rest of the suite and follow-up runs are stable.
-    // (No reactive endpoint exists; rely on the underlying `is_active` being
-    // mutable via /users/{username} PUT if needed by the operator.)
-    const after = await api.get(`${BACKEND_BASE_URL}/itsm/tickets/${createdTicketId}`);
+    const after = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/tickets/${createdTicketId}`);
     expect(after.status()).toBeLessThan(300);
-    const body = await after.json();
-    expect(body.ticket_id).toBe(createdTicketId);
+    const body = (await after.json()) as TicketRow;
+    expect(Number(body.ticket_id)).toBe(createdTicketId);
     expect(body.assignee_username).toBe(createdAssignee);
-    // Historical ticket must still resolve; assignee_currently_active must
-    // reflect the post-deactivation user state.
     expect(typeof body.assignee_currently_active).toBe("boolean");
   });
 
-  test("step 5 — invalid catalog workbook import returns row/field errors and persists nothing", async () => {
-    // Build a one-row workbook in the browser context using a minimal XLSX.
-    // Buffer satisfies Playwright's multipart.file.buffer typing.
+  test("step 5 — invalid catalog workbook import returns 4xx and persists nothing", async () => {
     const buffer = Buffer.from([
       0x50, 0x4b, 0x03, 0x04, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x72, 0x65, 0x61, 0x6c, 0x2d,
       0x78, 0x6c, 0x73, 0x78,
     ]);
 
-    const before = await api.get(`${BACKEND_BASE_URL}/itsm/service-catalog`);
-    const beforeIds = ((await before.json()) as Array<{ service_id: string }>).map(
-      (c) => c.service_id,
-    );
+    const before = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/service-catalog`);
+    const beforeIds = ((await before.json()) as ServiceCatalogRow[]).map((c) => c.service_id);
 
-    const upload = await api.post(`${BACKEND_BASE_URL}/itsm/service-catalog/import`, {
+    const upload = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/service-catalog/import`, {
       multipart: {
         file: {
           name: "catalog-bad.xlsx",
@@ -186,35 +221,22 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
         },
       },
     });
-
-    // Either the parser returns 400 with structured payload, or it returns
-    // 4xx with a generic detail. Either way, no catalog row must persist.
     expect(upload.status(), "invalid workbook must be rejected").toBeGreaterThanOrEqual(400);
 
-    const after = await api.get(`${BACKEND_BASE_URL}/itsm/service-catalog`);
-    const afterIds = ((await after.json()) as Array<{ service_id: string }>).map(
-      (c) => c.service_id,
-    );
+    const after = await authedFetch(`${BACKEND_BASE_URL}/api/itsm/service-catalog`);
+    const afterIds = ((await after.json()) as ServiceCatalogRow[]).map((c) => c.service_id);
     expect(afterIds, "no catalog row may persist on invalid import").toEqual(beforeIds);
   });
 
-  test("step 6 — UI smoke: Service Management heading renders at /itsm/tickets", async ({
+  test("step 6 — UI smoke: Service Management heading renders at /#/itsm/tickets", async ({
     page,
   }: {
     page: Page;
   }) => {
     await page.goto(`${FRONTEND_BASE_URL}/#/itsm/tickets`, { waitUntil: "domcontentloaded" });
-    // The session cookie set by /auth/login is shared with the page context.
     await expect(page.getByRole("heading", { name: /service management/i, level: 1 })).toBeVisible({
       timeout: 10_000,
     });
-    // The numeric ticket id from step 2 must be visible somewhere in the list.
     await expect(page.getByText(`#${createdTicketId}`).first()).toBeVisible();
-  });
-
-  test.afterAll(() => {
-    if (typeof succeededImportRowCount === "number") {
-      // Track for evidence; not asserted.
-    }
   });
 });
