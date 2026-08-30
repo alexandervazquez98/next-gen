@@ -97,17 +97,39 @@ class TestTicketFolioTypeAndLifecycle:
                 title="Reset password",
                 description="Request access reset",
                 service_catalog_id="svc-request",
+                assignee_username="op1",
             )
             assert payload.type == ticket_type
 
         with pytest.raises(ValidationError):
-            TicketFolioCreate(type="request", title="Legacy request")
+            TicketFolioCreate(type="request", title="Legacy request", assignee_username="op1")
 
         with pytest.raises(ValidationError):
-            TicketFolioCreate(type="change", title="Change request")
+            TicketFolioCreate(type="change", title="Change request", assignee_username="op1")
 
         with pytest.raises(ValidationError, match="ticket_id"):
-            TicketFolioCreate(type="incident", title="Client supplied ID", ticket_id=2)
+            TicketFolioCreate(
+                type="incident",
+                title="Client supplied ID",
+                ticket_id=2,
+                assignee_username="op1",
+            )
+
+    def test_ticket_folio_assignee_username_is_required_and_non_blank(self):
+        with pytest.raises(ValidationError):
+            TicketFolioCreate(
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-net-01",
+            )
+
+        with pytest.raises(ValidationError, match="assignee_username"):
+            TicketFolioCreate(
+                type="incident",
+                title="Router down",
+                service_catalog_id="svc-net-01",
+                assignee_username="   ",
+            )
 
     def test_ticket_transition_only_allows_linear_progression(self):
         assert validate_ticket_transition(TicketStatus.OPEN, TicketStatus.IN_PROGRESS)

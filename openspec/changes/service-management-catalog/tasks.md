@@ -102,8 +102,20 @@ Dependencies: Work Units 1–2 complete.
 - **Explicit exclusions:** value streams, catalog UI, XLSX import, user locking/lifecycle, and frontend work remain later work units.
 - **Acceptance linkage:** REQ-02 and REQ-03 (minimum backend contract only).
 
+## [x] PR3 boundary adjustment — cross-store assignee locking + user lifecycle
+Dependencies: Work Units 1, 2, and PR2 boundary extension complete.
+
+- **Slice scope:** Work Unit 3 only. Adds `assignee_username` (required, exactly one) to `TicketFolioCreate`; resolves the user through the user repository; acquires a PostgreSQL per-user advisory lock (`pg_advisory_xact_lock(hashtext('user:' || lower(username)))`) for the duration of the ticket create transaction; revalidates `is_active=True` while the lock is held; releases on commit, rollback, or bounded timeout. Exposes `POST /api/users/{username}/deactivate` (logical, no destructive delete). Snapshot fields (`assignee_display_name`, `assignee_active_at_assignment`) captured at create time; `assignee_currently_active` recomputed at read time and updated by deactivation flows.
+- **Explicit exclusions:** bulk XLSX ticket import (`WU 7` consumes the lock helper but ships with PR 4), frontend assignee selector and ticket form rename (`WU 8` ships with PR 5), end-to-end release verification (`WU 9`).
+- **Acceptance linkage:** REQ-04 (single active assignee on create), REQ-05 (logical deactivation preserves ticket history). REQ-03 (catalog/ticket compatibility) is already covered by the PR2 boundary extension and remains green.
+- **Lock-ordering rule:** when batch operations acquire multiple per-user locks in the same transaction, they acquire in normalized (`lower()`) username order. PR 3 implements the helper; PR 4 (import) consumes it.
+- **Strict TDD:** every behavior change ships with failing RED tests first. Lock helper, validator, and deactivate endpoint each get their own RED → GREEN → TRIANGULATE → REFACTOR cycle in the same work unit. Local verify uses `cd backend && python -m pytest …` and `cd backend && python -m ruff check --config ruff.toml …` from the `backend/` working directory (matching CI).
+- **Slice design doc:** `openspec/changes/service-management-catalog/pr3-design.md`.
+
 ## Work Unit 3 — backend: shared active-user locking + logical deactivation contract
 Dependencies: Work Unit 2 complete.
+
+- **Status (PR 3 implementation):** completed in `feat/service-management-catalog-pr3` (commits `f2db573`, `e3d77fa`, `58d4ef9`). RED → GREEN → ruff-fix cycle followed end-to-end. Detailed TDD evidence and verification in `apply-progress.md`.
 
 - **Target areas**:
   - `backend/services/ticket_folio_service.py`
@@ -180,7 +192,7 @@ Dependencies: Work Unit 4 complete.
 - **REFACTOR evidence**:
   - Normalize error constructors and payload contract helper shared by ticket create/import.
 
-## Work Unit 6 — backend: atomic XLSX catalog import stack (template, parser, validator, transaction)
+## [x] Work Unit 6 — backend: atomic XLSX catalog import stack (template, parser, validator, transaction)
 Dependencies: Work Unit 4 and Work Unit 5 complete.
 
 - **Target areas**:
@@ -207,7 +219,7 @@ Dependencies: Work Unit 4 and Work Unit 5 complete.
 - **REFACTOR evidence**:
   - Extract shared workbook helpers usable by ticket import package.
 
-## Work Unit 7 — backend: atomic XLSX ticket import with reference sheets + lock-aware full-batch behavior
+## [x] Work Unit 7 — backend: atomic XLSX ticket import with reference sheets + lock-aware full-batch behavior
 Dependencies: Work Unit 3, Work Unit 5, and Work Unit 6 complete.
 
 - **Target areas**:
@@ -232,8 +244,10 @@ Dependencies: Work Unit 3, Work Unit 5, and Work Unit 6 complete.
 - **REFACTOR evidence**:
   - Consolidate common error payload mapping between catalog and ticket import paths.
 
-## Work Unit 8 — frontend: Service Management naming, contract-aligned ticket/catalog forms, and compatibility selectors
+## [x] Work Unit 8 — frontend: Service Management naming, contract-aligned ticket/catalog forms, and compatibility selectors
 Dependencies: Work Unit 5 complete.
+
+- **Status (PR 5 implementation):** completed in `feat/service-management-catalog-pr5`. RED → GREEN → REFACTOR + rename + activate pass. Detailed TDD evidence and verification in `apply-progress.md` § "PR 5 — WU 8 + WU 9".
 
 - **Target areas**:
   - `frontend/components/ItsmTicketFolioPage.tsx`
@@ -264,8 +278,10 @@ Dependencies: Work Unit 5 complete.
 - **REFACTOR evidence**:
   - Share canonical type/value enum and service option utilities across catalog and ticket views.
 
-## Work Unit 9 — end-to-end compatibility checks and release-ready verification
+## [x] Work Unit 9 — end-to-end compatibility checks and release-ready verification
 Dependencies: Work Units 1–8 complete.
+
+- **Status (PR 5 implementation):** completed in `feat/service-management-catalog-pr5`. Playwright journey exercises login → catalog create → compatible ticket → incompatible rejection → deactivate → historical snapshot → invalid import rollback → UI smoke. Detailed evidence in `apply-progress.md` § "PR 5 — WU 8 + WU 9".
 
 - **Target areas**:
   - `backend/routers/ticket_folios.py`
