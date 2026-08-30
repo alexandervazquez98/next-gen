@@ -28,6 +28,15 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
     "policy_profile",
     "throttle_seconds",
     "activity_anchor",
+    # PR1 #154 — stale event review reminders quick-action context. The
+    # three keys below are appended to the allow-list so the audit rows
+    # emitted by `routers/event_recommendations.py` (event_id, reason_code,
+    # snooze_until) survive `sanitize_context` without leaking tokens,
+    # cookies, authorization headers, or raw request bodies. They are
+    # additive: existing call sites continue to use their existing key set.
+    "event_id",
+    "reason_code",
+    "snooze_until",
 }
 
 SENSITIVE_CONTEXT_KEYS = {
