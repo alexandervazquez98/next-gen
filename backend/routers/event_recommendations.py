@@ -22,24 +22,18 @@ existing ``/events/{event_id}`` dynamic route in
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
+from config import get_stale_event_reminder_settings
 from database import driver as _neo4j_driver
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-
-from config import (
-    STALE_EVENT_REMINDER_DEFAULT_AGE_HOURS,
-    STALE_EVENT_REMINDER_DEFAULT_REFRESH_WINDOW_HOURS,
-    get_stale_event_reminder_settings,
-)
 from models.user import User, UserPermission
 from postgres_db import get_pg_db
+from pydantic import BaseModel, Field
 from services import stale_event_reminders as reminder_service
 from services.audit_service import record_critical_change
 from services.auth_service import check_permission, get_current_active_user
-
+from sqlalchemy.orm import Session
 
 router = APIRouter(
     prefix="/events/recommendations",
@@ -126,10 +120,10 @@ def _compute_snooze_until(timestamp: datetime, ttl_hours: int) -> datetime:
 
 def _isoformat_utc(value: datetime) -> str:
     """Render a naive UTC datetime as an ISO-8601 string with Z suffix."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:  # noqa: SIM108
+        value = value.replace(tzinfo=UTC)
     else:
-        value = value.astimezone(timezone.utc)
+        value = value.astimezone(UTC)
     return value.replace(tzinfo=None).isoformat() + "Z"
 
 
@@ -310,7 +304,7 @@ async def snooze_recommendation(
     settings = get_stale_event_reminder_settings()
     reason_code = (payload.reason_code if payload else None) or None
     snooze_until = _compute_snooze_until(
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
         settings.snooze_ttl_hours,
     )
     audit_event_id = _record_quick_action(

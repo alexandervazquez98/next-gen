@@ -24,12 +24,11 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — Neo4j driver stub mirroring test_legacy_event_discriminator_audit
@@ -100,7 +99,7 @@ def _row(**overrides):
         "metricdef_id": "md-snmp-uptime",
         "metricdef_name": "SNMP Uptime",
         "age_hours": 28.4,
-        "last_seen": datetime(2026, 8, 29, 7, 36, tzinfo=timezone.utc),
+        "last_seen": datetime(2026, 8, 29, 7, 36, tzinfo=UTC),
         "reason_code": "older_than_threshold",
         "refresh_status": "stale_refresh",
     }
@@ -489,7 +488,6 @@ def _disable_neo4j_driver():
 
 class TestKillSwitchOff:
     def test_get_recommendations_returns_empty_when_disabled(self, _disable_neo4j_driver):
-        from routers import event_recommendations
         from config import StaleEventReminderSettings
 
         settings = StaleEventReminderSettings(enabled=False)
@@ -508,9 +506,8 @@ class TestKillSwitchOff:
                 disabled=False,
             )
 
-            from services.auth_service import get_current_active_user
-
             from main import app
+            from services.auth_service import get_current_active_user
 
             async def _override_user():
                 return app_user
@@ -530,7 +527,6 @@ class TestKillSwitchOff:
     def test_quick_action_returns_503_when_disabled_without_writing_audit(
         self, _disable_neo4j_driver
     ):
-        from routers import event_recommendations
         from config import StaleEventReminderSettings
 
         settings = StaleEventReminderSettings(enabled=False)
@@ -539,24 +535,23 @@ class TestKillSwitchOff:
             return_value=settings,
         ):
             from fastapi.testclient import TestClient
+            from main import app
+            from models.audit_event import AuditEvent
+            from models.user import User, UserPermission
+            from postgres_db import Base, get_pg_db
+            from services.auth_service import get_current_active_user
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
             from sqlalchemy.pool import StaticPool
-
-            from postgres_db import Base, get_pg_db
-            from models.audit_event import AuditEvent
-            from models.user import User, UserPermission
-            from services.auth_service import get_current_active_user
-            from main import app
 
             engine = create_engine(
                 "sqlite://",
                 connect_args={"check_same_thread": False},
                 poolclass=StaticPool,
             )
-            TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
             Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-            db = TestingSession()
+            db = TestingSessionLocal()
             try:
                 def _override_pg():
                     yield db
@@ -599,24 +594,23 @@ class TestKillSwitchOff:
 class TestEventViewPermission:
     def test_get_returns_403_without_event_view(self, _disable_neo4j_driver):
         from fastapi.testclient import TestClient
+        from main import app
+        from models.audit_event import AuditEvent
+        from models.user import User
+        from postgres_db import Base, get_pg_db
+        from services.auth_service import get_current_active_user
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from sqlalchemy.pool import StaticPool
-
-        from postgres_db import Base, get_pg_db
-        from models.audit_event import AuditEvent
-        from models.user import User
-        from services.auth_service import get_current_active_user
-        from main import app
 
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSession()
+        db = TestingSessionLocal()
         try:
             def _override_pg():
                 yield db
@@ -652,24 +646,23 @@ class TestQuickActionAuditEmission:
         self, _disable_neo4j_driver
     ):
         from fastapi.testclient import TestClient
+        from main import app
+        from models.audit_event import AuditEvent
+        from models.user import User, UserPermission
+        from postgres_db import Base, get_pg_db
+        from services.auth_service import get_current_active_user
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from sqlalchemy.pool import StaticPool
-
-        from postgres_db import Base, get_pg_db
-        from models.audit_event import AuditEvent
-        from models.user import User, UserPermission
-        from services.auth_service import get_current_active_user
-        from main import app
 
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSession()
+        db = TestingSessionLocal()
         try:
             def _override_pg():
                 yield db
@@ -718,26 +711,25 @@ class TestQuickActionAuditEmission:
     def test_snooze_writes_audit_row_with_snooze_until_from_settings(
         self, _disable_neo4j_driver
     ):
+        from config import StaleEventReminderSettings
         from fastapi.testclient import TestClient
+        from main import app
+        from models.audit_event import AuditEvent
+        from models.user import User, UserPermission
+        from postgres_db import Base, get_pg_db
+        from services.auth_service import get_current_active_user
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from sqlalchemy.pool import StaticPool
-
-        from postgres_db import Base, get_pg_db
-        from models.audit_event import AuditEvent
-        from models.user import User, UserPermission
-        from services.auth_service import get_current_active_user
-        from main import app
-        from config import StaleEventReminderSettings
 
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSession()
+        db = TestingSessionLocal()
         try:
             def _override_pg():
                 yield db
@@ -778,8 +770,8 @@ class TestQuickActionAuditEmission:
                     # Roughly 24h from now (allow slack for slow tests).
                     parsed = datetime.fromisoformat(snooze_until.rstrip("Z"))
                     if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
-                    now = datetime.now(timezone.utc)
+                        parsed = parsed.replace(tzinfo=UTC)
+                    now = datetime.now(UTC)
                     delta_h = (parsed - now).total_seconds() / 3600.0
                     assert 23.0 < delta_h < 25.0, delta_h
 
@@ -801,24 +793,23 @@ class TestQuickActionAuditEmission:
 
     def test_escalate_writes_audit_row(self, _disable_neo4j_driver):
         from fastapi.testclient import TestClient
+        from main import app
+        from models.audit_event import AuditEvent
+        from models.user import User, UserPermission
+        from postgres_db import Base, get_pg_db
+        from services.auth_service import get_current_active_user
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from sqlalchemy.pool import StaticPool
-
-        from postgres_db import Base, get_pg_db
-        from models.audit_event import AuditEvent
-        from models.user import User, UserPermission
-        from services.auth_service import get_current_active_user
-        from main import app
 
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSession()
+        db = TestingSessionLocal()
         try:
             def _override_pg():
                 yield db
@@ -902,7 +893,7 @@ class TestHelperFunctions:
     def test_compute_snooze_until_adds_ttl_hours(self):
         from routers.event_recommendations import _compute_snooze_until
 
-        start = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
         snooze_until = _compute_snooze_until(start, ttl_hours=24)
         assert snooze_until - start == timedelta(hours=24)
 
@@ -917,7 +908,7 @@ class TestHelperFunctions:
     def test_build_quick_action_context_for_snooze(self):
         from routers.event_recommendations import _build_quick_action_context
 
-        snooze_until = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+        snooze_until = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
         ctx = _build_quick_action_context(
             event_id="evt-1", reason_code="older_than_threshold", snooze_until=snooze_until
         )

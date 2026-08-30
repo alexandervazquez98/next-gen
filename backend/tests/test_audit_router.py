@@ -1,16 +1,15 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from models.audit_event import AuditEvent
+from models.user import User, UserPermission
+from postgres_db import Base, get_pg_db
+from services.auth_service import get_current_active_user
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from postgres_db import Base, get_pg_db
-from models.audit_event import AuditEvent
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
 
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
@@ -79,7 +78,7 @@ def test_audit_events_requires_audit_view_permission(audit_db):
         event_type="LOGIN_FAILURE",
         outcome="FAILURE",
         actor_username="alice",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     _set_current_user(_user(permissions=[UserPermission.EVENT_VIEW]))
 
@@ -90,7 +89,7 @@ def test_audit_events_requires_audit_view_permission(audit_db):
 
 
 def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
-    now = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     expected = _add_event(
         audit_db,
         event_type="LOGIN_FAILURE",
@@ -153,7 +152,7 @@ def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
 
 
 def test_audit_events_paginates_and_supports_ascending_sort(audit_db):
-    base = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     first = _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
     second = _add_event(audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1))
     third = _add_event(audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2))
@@ -213,7 +212,6 @@ def _mock_event_recommendations_driver():
 
 def test_stale_reminder_dismiss_audit_row_has_event_id_and_reason_code(audit_db):
     """Dismiss emits audit row with allow-listed keys (no sensitive keys)."""
-    from routers import event_recommendations
 
     with patch(
         "routers.event_recommendations._neo4j_driver",
@@ -254,7 +252,6 @@ def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings
 ):
     """Snooze audit row records snooze_until computed from settings (not body)."""
     from config import StaleEventReminderSettings
-    from routers import event_recommendations
 
     with patch(
         "routers.event_recommendations._neo4j_driver",
@@ -282,8 +279,8 @@ def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings
         assert "2099" not in snooze_until
         parsed = datetime.fromisoformat(snooze_until.rstrip("Z"))
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        delta_h = (parsed - datetime.now(timezone.utc)).total_seconds() / 3600.0
+            parsed = parsed.replace(tzinfo=UTC)
+        delta_h = (parsed - datetime.now(UTC)).total_seconds() / 3600.0
         assert 23.0 < delta_h < 25.0, delta_h
 
         row = (
@@ -298,7 +295,6 @@ def test_stale_reminder_snooze_audit_row_records_snooze_until_only_from_settings
 
 def test_stale_reminder_escalate_audit_row_has_event_id_and_reason_code(audit_db):
     """Escalate emits audit row with allow-listed keys (no sensitive keys)."""
-    from routers import event_recommendations
 
     with patch(
         "routers.event_recommendations._neo4j_driver",
@@ -325,7 +321,6 @@ def test_stale_reminder_escalate_audit_row_has_event_id_and_reason_code(audit_db
 def test_stale_reminder_quick_action_returns_503_when_kill_switch_off(audit_db):
     """Kill-switch off → 503 and no audit row written."""
     from config import StaleEventReminderSettings
-    from routers import event_recommendations
 
     with patch(
         "routers.event_recommendations._neo4j_driver",
@@ -368,7 +363,6 @@ def test_stale_reminder_quick_action_returns_503_when_kill_switch_off(audit_db):
 def test_stale_reminder_audit_allow_list_redacts_injected_sensitive_keys(audit_db):
     """Defense in depth: even if a caller slips sensitive keys into context,
     ``sanitize_context`` drops them before persistence."""
-    from routers import event_recommendations
     from services.audit_service import sanitize_context
 
     raw = {

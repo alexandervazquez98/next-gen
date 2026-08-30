@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 from models.audit_event import AuditEvent
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +58,13 @@ _MAX_CONTEXT_VALUE_LENGTH = 256
 
 
 def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _truncate(value: Any, max_length: int) -> str | None:
@@ -276,7 +275,7 @@ def cleanup_old_events(
 ) -> int:
     """Delete audit events strictly older than the retention window."""
 
-    reference = _as_naive_utc(now or datetime.now(timezone.utc))
+    reference = _as_naive_utc(now or datetime.now(UTC))
     cutoff = reference - timedelta(days=retention_days)
     stale_query = db.query(AuditEvent).filter(AuditEvent.created_at < cutoff)
     deleted = stale_query.delete(synchronize_session=False)

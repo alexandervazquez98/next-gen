@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -82,7 +82,7 @@ TARGET_FAILURE_FAMILY = "SNMP_NO_RESPONSE"
 TARGET_STATUSES: tuple[str, ...] = ("OPEN", "ACK")
 
 
-class ReasonCode(str, Enum):
+class ReasonCode(str, Enum):  # noqa: UP042
     """Stable enumeration of stale-event reason codes.
 
     ``str`` mixin lets values serialize as plain JSON strings without
@@ -468,4 +468,4 @@ def _md(value: Any) -> str:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    return datetime.now(UTC).replace(tzinfo=None).isoformat()
