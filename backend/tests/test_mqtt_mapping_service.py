@@ -1,4 +1,4 @@
-"""Service tests for MQTT mapping lifecycle authorization and validation."""
+"""Service tests for MQTT mapping lifecycle authorization, validation and audit."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from models.mqtt import MqttMappingCreateRequest, MqttMappingThresholds, MqttMappingUpdateRequest
 from models.user import User, UserPermission
 from repositories.mqtt_mapping_repo import MappingConflictError, MappingNotFoundError
+from services import audit_service
 from services.mqtt_mapping_service import MqttMappingService
 
 
@@ -16,10 +17,20 @@ class _RepoStub:
         self.updated = None
         self.thresholds = None
         self.raise_on_create = None
+        self.raise_on_update = None
+        self.raise_on_approve = None
+        self.raise_on_revoke = None
+        self.get_mapping_calls = []
         self.mappings = [
             {
                 "id": "map-1",
+                "source_device_id": "rtu-1",
+                "source_metric_id": "rtu-1/temp",
+                "source_metric_name": "temp",
+                "target_ci_id": "ci-1",
+                "target_metric_def_id": "temperature",
                 "status": "DRAFT",
+                "version": 1,
                 "operator": ">=",
                 "warning": 70.0,
                 "critical": 90.0,
@@ -27,6 +38,7 @@ class _RepoStub:
         ]
 
     def get_mapping(self, mapping_id):
+        self.get_mapping_calls.append(mapping_id)
         for mapping in self.mappings:
             if mapping["id"] == mapping_id:
                 return mapping
@@ -41,25 +53,161 @@ class _RepoStub:
         if self.raise_on_create:
             raise self.raise_on_create
         self.created = kwargs
-        return {"id": kwargs["mapping_id"], "status": "DRAFT", **kwargs}
+        return {"id": kwargs["mapping_id"], "status": "DRAFT", "version": 1, **kwargs}
 
     def update_draft(self, **kwargs):
+        if self.raise_on_update:
+            raise self.raise_on_update
         self.updated = kwargs
-        return {"id": kwargs["mapping_id"], "status": "DRAFT", **kwargs}
+        return {"id": kwargs["mapping_id"], "status": "DRAFT", "version": 1, **kwargs}
 
     def approve(self, mapping_id, approved_by):
-        return {"id": mapping_id, "status": "APPROVED", "approved_by": approved_by}
+        if self.raise_on_approve:
+            raise self.raise_on_approve
+        return {
+            "id": mapping_id,
+            "status": "APPROVED",
+            "version": 2,
+            "approved_by": approved_by,
+        }
 
     def revoke(self, mapping_id, revoked_by):
-        return {"id": mapping_id, "status": "REVOKED", "revoked_by": revoked_by}
+        if self.raise_on_revoke:
+            raise self.raise_on_revoke
+        return {"id": mapping_id, "status": "REVOKED", "version": 3, "revoked_by": revoked_by}
 
     def update_thresholds(self, **kwargs):
         self.thresholds = kwargs
-        return {"id": kwargs["mapping_id"], "status": "APPROVED", **kwargs}
+        return {"id": kwargs["mapping_id"], "status": "APPROVED", "version": 4, **kwargs}
 
 
 def _user(permissions=None):
     return User(username="operator", role="OPERATOR", permissions=permissions or [])
+
+
+# ── Issue #386 — audit emission harness ─────────────────────────────────────
+
+_DB = object()  # opaque session sentinel; the service must never introspect it
+
+MANAGE = UserPermission.MQTT_MAPPING_MANAGE.value
+READ_ONLY = UserPermission.MQTT_READ.value
+
+
+@pytest.fixture()
+def audit_calls(monkeypatch):
+    """Capture `record_critical_change` kwargs and fail if `record_denied` is used."""
+    calls: list[dict] = []
+
+    def _record(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    def _denied(**kwargs):
+        raise AssertionError(
+            "record_denied hardcodes ACCESS_DENIED and must not be used for MQTT lifecycle events"
+        )
+
+    monkeypatch.setattr(audit_service, "record_critical_change", _record)
+    monkeypatch.setattr(audit_service, "record_denied", _denied)
+    return calls
+
+
+def _create_payload(**overrides):
+    base = {
+        "source_device_id": "rtu-1",
+        "source_metric_id": "rtu-1/temp",
+        "source_metric_name": "temp",
+        "target_ci_id": "ci-1",
+        "target_metric_def_id": "temperature",
+    }
+    base.update(overrides)
+    return MqttMappingCreateRequest(**base)
+
+
+def _invoke_create(service, user, **kwargs):
+    return service.create_mapping(_create_payload(), user, db=_DB, **kwargs)
+
+
+def _invoke_update(service, user, **kwargs):
+    return service.update_mapping(
+        "map-1",
+        MqttMappingUpdateRequest(source_metric_name="temperature"),
+        user,
+        db=_DB,
+        **kwargs,
+    )
+
+
+def _invoke_approve(service, user, **kwargs):
+    return service.approve_mapping("map-1", user, db=_DB, **kwargs)
+
+
+def _invoke_revoke(service, user, **kwargs):
+    return service.revoke_mapping("map-1", user, db=_DB, **kwargs)
+
+
+def _invoke_thresholds(service, user, **kwargs):
+    return service.update_thresholds(
+        "map-1",
+        MqttMappingThresholds(operator=">=", warning=75, critical=95),
+        user,
+        db=_DB,
+        **kwargs,
+    )
+
+
+LIFECYCLE_ACTIONS = [
+    ("MQTT_MAPPING_CREATE", _invoke_create),
+    ("MQTT_MAPPING_UPDATE", _invoke_update),
+    ("MQTT_MAPPING_APPROVE", _invoke_approve),
+    ("MQTT_MAPPING_REVOKE", _invoke_revoke),
+    ("MQTT_MAPPING_THRESHOLD_UPDATE", _invoke_thresholds),
+]
+
+
+@pytest.mark.parametrize(("event_type", "invoke"), LIFECYCLE_ACTIONS)
+def test_denied_lifecycle_action_emits_lifecycle_event_type(event_type, invoke, audit_calls):
+    """Spec: denied attempts are audited with the lifecycle event type, not ACCESS_DENIED."""
+    repo = _RepoStub()
+    repo.mappings[0]["status"] = "APPROVED"
+    service = MqttMappingService(repo=repo)
+
+    with pytest.raises(HTTPException) as exc:
+        invoke(service, _user([READ_ONLY]))
+
+    assert exc.value.status_code == 403
+    assert len(audit_calls) == 1
+    call = audit_calls[0]
+    assert call["event_type"] == event_type
+    assert call["outcome"] == "DENIED"
+    assert call["target_type"] == "mqtt_mapping"
+    assert call["target_id"]
+    assert call["context"]["required_permission"] == "MQTT_MAPPING_MANAGE"
+
+
+def test_denied_action_does_not_touch_the_repository(audit_calls):
+    """A denial must be audited before any lifecycle mutation is attempted."""
+    repo = _RepoStub()
+    service = MqttMappingService(repo=repo)
+
+    with pytest.raises(HTTPException):
+        _invoke_approve(service, _user([READ_ONLY]))
+
+    assert repo.created is None
+    assert repo.updated is None
+    assert repo.thresholds is None
+    assert audit_calls[0]["outcome"] == "DENIED"
+
+
+def test_denied_action_without_db_still_raises_and_emits_nothing(audit_calls):
+    """Callers that pass no session (existing unit callers) keep the 403 contract."""
+    service = MqttMappingService(repo=_RepoStub())
+
+    with pytest.raises(HTTPException) as exc:
+        service.approve_mapping("map-1", _user([READ_ONLY]))
+
+    assert exc.value.status_code == 403
+    assert audit_calls == []
 
 
 def test_create_mapping_requires_mapping_permission():
