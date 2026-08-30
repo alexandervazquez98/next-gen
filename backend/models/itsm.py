@@ -273,6 +273,12 @@ class TicketFolioCreate(BaseModel):
     title: str
     description: str | None = None
     service_catalog_id: str
+    assignee_username: str  # PR 3 WU3 — required, exactly one
+    # PR 3 WU3 — snapshot fields populated by the service after the user
+    # lookup while holding the per-user advisory lock. They are NOT part of
+    # the wire contract; the service sets them via ``model_copy``.
+    assignee_display_name: str | None = None
+    assignee_active_at_assignment: bool | None = None
     status: str = TicketStatus.OPEN
     archived: bool = False
     closed_reason: str | None = None
@@ -293,6 +299,14 @@ class TicketFolioCreate(BaseModel):
         if not str(value).strip():
             raise ValueError("title cannot be empty")
         return value
+
+    @field_validator("assignee_username")
+    @classmethod
+    def _validate_assignee(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("assignee_username cannot be empty")
+        return normalized
 
     @field_validator("status")
     @classmethod
@@ -316,6 +330,10 @@ class TicketFolioResponse(BaseModel):
     title: str
     description: str | None = None
     service_catalog_id: str | None = None
+    assignee_username: str | None = None  # PR 3 WU3 — snapshot at create time
+    assignee_display_name: str | None = None  # PR 3 WU3 — snapshot at create time
+    assignee_active_at_assignment: bool | None = None  # PR 3 WU3 — True at create time
+    assignee_currently_active: bool | None = None  # PR 3 WU3 — read-time recompute
     status: str = TicketStatus.OPEN
     archived: bool = False
     closed_reason: str | None = None

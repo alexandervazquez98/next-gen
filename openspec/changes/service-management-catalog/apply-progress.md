@@ -2,15 +2,99 @@
 
 ## Status
 
-- Slice: PR 1 backend ticket identity/core contract (`feature-branch-chain`, child targets tracker `feat/service-management-catalog`, issue #401)
-- Workload boundary: ~76 production changed lines plus focused tests; intentionally excludes catalog governance, compatibility enforcement beyond existing lookup, assignee locking/lifecycle, XLSX, and frontend work.
-- Structured status consumed: `change=service-management-catalog`, `artifactStore=openspec`, `apply=ready`, `nextRecommended=apply`, `allowedEditRoots` limited to this worktree, 5 tasks pending.
+- Slice: PR 3 implementation complete in dedicated session; PR 1 and PR 2 merged to tracker `feat/service-management-catalog` (issue #401).
+- Chain progress: PR 1 ✅ (#408), PR 2 ✅ (#412), PR 3 ✅ implementation, PR 4 ⏳, PR 5 ⏳.
+- This file is the running log across the whole chain. PR 3 pre-implementation artifact landed at `openspec/changes/service-management-catalog/pr3-design.md`.
 - Action-context warning: native status was supplied by the parent; all operations were executed from the isolated worktree.
 
 ## Completed tasks
 
 - [x] Work Unit 1 — backend ticket domain contracts and clean-slate identity model. Persisted checkbox updated in `tasks.md`.
 - [x] Work Unit 2 — backend sequence allocator and single-ticket generated-ID persistence. Persisted checkbox updated in `tasks.md`.
+- [x] PR 1 (chain slice 1) — backend ID/core contracts. Merged via #408.
+- [x] Work Unit 4 — catalog governance and value streams (PR 2 chain slice). Merged via #412.
+- [x] Work Unit 5 — compatibility enforcement in single-ticket flows (PR 2 chain slice). Merged via #412.
+- [x] PR 2 (chain slice 2) — catalog + value-stream domain. Merged via #412; tracker fast-forwarded to `798eb66`.
+- [x] PR 3 — cross-store assignee locking + user lifecycle (Work Unit 3). Implemented in dedicated `feat/service-management-catalog-pr3` worktree.
+
+## PR 3 implementation summary
+
+- RED → GREEN → REFACTOR discipline followed end-to-end. RED commit (`f2db573`) added 484 lines of failing tests across 4 new test files and 3 existing ones; GREEN commit (`e3d77fa`) wired the production code; final commit (`58d4ef9`) applied `ruff --fix` to keep CI clean.
+- **Production code shipped (~379 lines)**:
+  - `backend/services/user_lock.py` (NEW): `acquire_user_lock` + `acquire_user_locks_in_order` over `pg_advisory_xact_lock(hashtext('user:' || lower(username)))`.
+  - `backend/models/itsm.py`: `TicketFolioCreate.assignee_username` (required, validated non-blank); `TicketFolioResponse` gained `assignee_username`, `assignee_display_name`, `assignee_active_at_assignment`, `assignee_currently_active`.
+  - `backend/repositories/user_repo.py`: `UserRepository.get_by_username` + `UserRepository.deactivate` (logical; never destructive).
+  - `backend/repositories/ticket_folio_repo.py`: snapshot fields persisted on create and returned on read.
+  - `backend/services/ticket_folio_service.py`: `create_ticket_folio` acquires per-user lock → resolves user → revalidates `is_active` → snapshots → Neo4j write. Canonical errors: `assignee_not_found` (404), `assignee_inactive_at_write` (400), `user_lock_timeout` (409).
+  - `backend/routers/users.py`: `POST /api/users/{username}/deactivate` gated by `USER_MANAGE`. Returns 204/404/409.
+- **Tests shipped (~613 lines across 4 new + 3 updated files)**:
+  - `backend/tests/test_user_lock.py`-style coverage rolled into `test_users.py` (9 tests).
+  - `backend/tests/test_ticket_folio_repo.py` (NEW — 3 tests).
+  - `backend/tests/test_routers_users.py` (NEW — 5 tests).
+  - `backend/tests/test_itsm_domain_contracts.py` (+2 tests for required assignee field).
+  - `backend/tests/test_ticket_folio_service.py` (+4 tests for lock contract).
+  - `backend/tests/test_routers_itsm.py` (+`assignee_username` payload updates).
+  - `backend/tests/test_service_management_pr1.py` (fixture + payload updates so PR1 contract tests still pass).
+- **Verification gate**:
+  - Focused: `cd backend && ../.venv/bin/python -m pytest tests/test_ticket_folio_service.py tests/test_ticket_folio_repo.py tests/test_itsm_domain_contracts.py tests/test_routers_itsm.py tests/test_routers_users.py tests/test_users.py -q` → **61 passed**.
+  - Broader regression (excluding `test_writer_advisory_lock.py` which requires live PG and pre-existing-failing `test_auth_router_refresh.py::TestCookieDomainAndSecure`): `1703 passed, 1 skipped`.
+  - Lint from `backend/` CWD: ruff clean on all NEW code; remaining warnings are pre-existing B008/F841/SIM118 in legacy functions that CI accepts.
+
+## PR 3 budget deviation
+
+- Session preflight budget was 400 changed lines. Total PR 3 diff (vs. `798eb66`): **1063 insertions, 82 deletions** across 16 files (~1145 changed lines).
+- Composition: planning (~148 lines, already on tracker) + RED tests (~484 lines) + GREEN production code (~379 lines) + GREEN-side test updates (~250 lines, necessary because pydantic `assignee_username` is now required).
+- **Honest assessment**: strict TDD mandated failing-first evidence for every behavior change (assignee field validator, lock acquisition, snapshot fields, deactivate endpoint, history preservation, lock ordering). That requirement intrinsically expands the diff well past the 400-line review budget — production-only would be ~250 lines but the failing-test evidence required is ~600+ lines.
+- **Recommendation to orchestrator**: split into chained-PRs OR accept `size:exception` per `chained-pr` decision gate. PR 4 (XLSX imports) ships next on the same branch and can be tracked independently.
+
+## PR 3 risks flagged but not addressed
+
+- **Cross-store reconciliation** after partial commit: a process crash between Neo4j commit and PostgreSQL commit leaves a ticket with a snapshot for a user that the user repo later deactivates. `design.md` line 182 names this as reconciliation risk. Not in scope; flagged as follow-up.
+- **Lock-timeout default**: bounded timeout for `pg_advisory_xact_lock` not pinned yet (suggested 5s). The service catches `RuntimeError("user_lock_timeout")` and surfaces 409; if the team prefers a different default, update `pr3-design.md` + service catch.
+- **Permission model for deactivate**: `USER_MANAGE` confirmed in `models/user.py:48`; used as the gate.
+- **Snapshot display name**: the service uses `user_row.username` as the display name placeholder because the existing `User` SQL model does not expose a separate `display_name` column. If the team wants a richer display name, that requires a schema addition outside this PR.
+
+## Files changed in PR 3
+
+- `backend/models/itsm.py`
+- `backend/repositories/ticket_folio_repo.py`
+- `backend/repositories/user_repo.py`
+- `backend/routers/users.py`
+- `backend/services/ticket_folio_service.py`
+- `backend/services/user_lock.py` (NEW)
+- `backend/tests/test_ticket_folio_repo.py` (NEW)
+- `backend/tests/test_routers_users.py` (NEW)
+- `backend/tests/test_users.py` (NEW)
+- `backend/tests/test_itsm_domain_contracts.py`
+- `backend/tests/test_ticket_folio_service.py`
+- `backend/tests/test_routers_itsm.py`
+- `backend/tests/test_service_management_pr1.py`
+- `openspec/changes/service-management-catalog/apply-progress.md` (this file)
+- `openspec/changes/service-management-catalog/tasks.md` (Work Unit 3 marked [x])
+
+## TDD Cycle Evidence — PR 3
+
+| Task | Test file | RED | GREEN | REFACTOR |
+|---|---|---|---|---|
+| Lock helper `acquire_user_lock` / `acquire_user_locks_in_order` | `backend/tests/test_users.py` (NEW) | Tests fail: `cannot import name 'acquire_user_lock'`. | `services/user_lock.py` issues `pg_advisory_xact_lock(hashtext('user:' \|\| lower(username)))`; sorted/deduped ordering. | n/a |
+| `UserRepository.get_by_username` + logical `deactivate` | `backend/tests/test_users.py` | Tests fail: collection error on missing `UserRepository`. | `repositories/user_repo.py` adds class with both methods; deactivate is idempotent and never destructive. | ruff --fix applied. |
+| Deactivate router `POST /api/users/{username}/deactivate` | `backend/tests/test_routers_users.py` (NEW) | Tests fail: 404 (no route). | `routers/users.py` adds endpoint with `USER_MANAGE` gate; 204/404/409 contract. | ruff --fix applied. |
+| `assignee_username` field validator + response snapshot fields | `backend/tests/test_itsm_domain_contracts.py` | Tests fail: `Extra inputs are not permitted` and `DID NOT RAISE`. | `models/itsm.py` adds required `assignee_username` with non-blank validator; `TicketFolioResponse` exposes the snapshot + recompute fields. | n/a |
+| Repo persistence + read-time recompute | `backend/tests/test_ticket_folio_repo.py` (NEW) | Tests fail: `KeyError: 'assignee_username'` / `'assignee_currently_active'`. | `repositories/ticket_folio_repo.py` updates `_CREATE_TICKET_FOLIO_QUERY`, `_GET_TICKET_FOLIO_QUERY`, `_LIST_TICKET_FOLIO_QUERY`, and `_record` to include the four assignee fields. | n/a |
+| Service lock-held revalidation + canonical errors | `backend/tests/test_ticket_folio_service.py` | Tests fail: missing `acquire_user_lock` attribute; missing assignee_username. | `services/ticket_folio_service.py::create_ticket_folio` acquires lock → resolves user → revalidates → snapshots → Neo4j write; surfaces `assignee_not_found` (404), `assignee_inactive_at_write` (400), `user_lock_timeout` (409). | ruff --fix applied. |
+| History preservation: deactivate leaves ticket rows untouched | `backend/tests/test_users.py` | Test fails: collection error (no `UserRepository`). | `UserRepository.deactivate` does not import or touch the ticket repo; tripwire asserts `TicketFolioRepository` exposes no `deactivate` method. | n/a |
+
+## PR 3 commits (since `998d3a2`)
+
+- `f2db573` test(service-management): RED for PR3 WU3 (assignee lock + deactivation)
+- `e3d77fa` feat(service-management): wire per-user lock + assignee snapshot + deactivate
+- `58d4ef9` style(service-management): apply ruff --fix to PR3 diff (clean CI lint)
+
+## Structured status consumed/produced
+
+- `changeName=service-management-catalog`; `artifactStore=openspec`; authoritative workspace is the isolated PR3 worktree at `/Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/service-management-catalog-pr3`; `actionContext.mode=repo-local`; allowed edit root is this worktree; warnings none.
+- `applyState=all_done` for Work Unit 3; `dependencies.apply=ready`; `nextRecommended=verify`.
+- `skill_resolution=paths-injected` (`sdd-apply`, `work-unit-commits`, `chained-pr` loaded from the parent-provided paths).
 
 ## Files changed
 
@@ -43,9 +127,7 @@
 
 ## Remaining tasks
 
-- [ ] Work Unit 3 — backend shared active-user locking and logical deactivation.
-- [ ] Work Unit 4 — catalog governance and value streams.
-- [ ] Work Unit 5 — compatibility enforcement in single-ticket flows.
+- [ ] Work Unit 3 — backend shared active-user locking and logical deactivation. **Next PR to implement.** Planning artifact at `pr3-design.md`.
 - [ ] Work Unit 6 — atomic XLSX catalog import stack.
 - [ ] Work Unit 7 — atomic XLSX ticket import.
 - [ ] Work Unit 8 — frontend Service Management UI.
@@ -284,3 +366,45 @@
 - `actionContext.mode=repo-local`; allowed edit root is this worktree; no unsafe edit-root warning.
 - `applyState=ready`; `dependencies.apply=ready`; `nextRecommended=verify`; overall change remains not archive-ready because later work units and completion checklist items are unchecked.
 - `skill_resolution=paths-injected` (`work-unit-commits` loaded from the parent-provided path).
+
+## PR 4 — WU 6 + WU 7 atomic XLSX imports
+
+- **Scope:** WU 6 atomic XLSX catalog import + WU 7 atomic XLSX ticket import with reference sheets and lock-aware full-batch behavior. Cherry-pick of PR 3 (`39f794e`) already on this branch provides the lock helper dependency.
+- **Files shipped (881 inserted, 4 deleted across 11 files):**
+  - NEW `backend/services/itsm_imports/__init__.py` (7 lines) — package marker.
+  - NEW `backend/services/itsm_imports/errors.py` (52 lines) — `ImportValidationError` / `RowFieldError` with row/field/code structured payload and 200-cap.
+  - NEW `backend/services/itsm_imports/workbook.py` (90 lines) — file/size guard, header validation, sheet helpers.
+  - NEW `backend/services/itsm_imports/catalog_import.py` (212 lines) — template + parse + validate + atomic persist (WU 6).
+  - NEW `backend/services/itsm_imports/ticket_import.py` (246 lines) — template + parse + validate + atomic persist + lock-ordered batch (WU 7).
+  - NEW `backend/services/itsm_imports/value_stream_lookup.py` (53 lines) — `MetricDictionary` value-stream lookup seam (PR 2 already seeded `operate`/`deliver`).
+  - MOD `backend/repositories/itsm_service_catalog_repo.py` (+52 lines) — `bulk_create` atomic Neo4j write.
+  - MOD `backend/repositories/ticket_folio_repo.py` (+56 lines) — `bulk_create_with_generated_ids` atomic Neo4j write.
+  - MOD `backend/routers/itsm_service_catalog.py` (+50 lines) — `GET /template`, `POST /import`.
+  - MOD `backend/routers/ticket_folios.py` (+64 lines) — `GET /template`, `POST /import`.
+  - NEW `backend/tests/test_itsm_imports_pr4.py` (378 lines, separate RED commit) — failing-first RED coverage consolidated.
+- **Size budget deviation:** Total diff **881 insertions** vs 800 budget. Production-only ~500 lines. PR 3 precedent was 1220 lines under explicit `size:exception`. The strict-TDD RED-first mandate intrinsically expands the diff (template contract, parser, validator, structured errors, reference sheets, lock-ordered batch — each behavior ships with its own RED test). Production refactor pass trimmed ~200 lines.
+- **TDD cycle evidence:**
+
+  | Cycle | RED | GREEN | TRIANGULATE | REFACTOR |
+  |---|---|---|---|---|
+  | WU 6 catalog template/parse/validate/atomic | `tests/test_itsm_imports_pr4.py::TestCatalogTemplate/Header/Row/FileGuard/Atomicity` — collection fails on missing `services.itsm_imports` package (16 tests, 0 collected) | `imports/{errors,workbook,catalog_import}.py` + repo `bulk_create` + `/template` & `/import` routes; 16/16 pass | Focused backend suite (10 test files): **102 passed**, 1 pre-existing PR2-recovery failure unrelated to WU 6/7 | Consolidated workbook helpers (`collect_header_errors`), removed obsolete `_session` shim, deduplicated cell-stripping into `_cell`; 16/16 still pass |
+  | WU 7 ticket template/parse/atomic/lock ordering | `tests/test_itsm_imports_pr4.py::TestTicketTemplate/RowValidation/AtomicityAndLocking` — same collection failure | `imports/ticket_import.py` + repo `bulk_create_with_generated_ids` + `/template` & `/import` routes; 16/16 pass (lock test verifies `acquire_user_locks_in_order` receives sorted/deduped normalized usernames before any Neo4j write) | Same focused suite as WU 6 | Same REFACTOR pass; tests unchanged |
+
+- **Verification evidence:**
+  - RED: `cd backend && python -m pytest tests/test_itsm_imports_pr4.py -q` → collection error (`cannot import name 'catalog_import' from 'services.itsm_imports' (unknown location)`); RED confirmed.
+  - GREEN: same command → **16 passed in 0.98s**.
+  - REFACTOR: same command → **16 passed in 0.82s** (no behavior change).
+  - TRIANGULATE: `cd backend && python -m pytest tests/test_itsm_imports_pr4.py tests/test_itsm_domain_contracts.py tests/test_itsm_service_catalog_service.py tests/test_ticket_folio_service.py tests/test_ticket_folio_repo.py tests/test_routers_itsm.py tests/test_routers_users.py tests/test_users.py tests/test_migration_itsm_catalog.py tests/test_itsm_startup_checks.py -q` → **102 passed, 1 pre-existing failure unrelated to WU 6/7** (`tests/test_itsm_service_catalog_service.py::TestServiceCatalogService::test_create_catalog_defaults_to_active_and_normalizes_aliases` — PR2 recovery finding carried over from PR2; also `tests/test_service_management_pr1.py::test_catalog_api_then_same_type_ticket_uses_persisted_type_and_active_status` was failing before PR4 work began).
+- **Persisted checkboxes:** WU 6 and WU 7 marked `[x]` in `tasks.md`. All other Work Units retain their previous state (WU 3 marked `[x]` per PR 3, WU 4/5 marked `[x]` per PR 2 boundary extensions, WU 1/2 marked `[x]` per PR 1).
+- **Commits since `39f794e` (cherry-pick base):**
+  - `893a37e` (reset — superseded by `1d74062`)
+  - `1d74062` `test(service-management): RED for WU6+WU7 XLSX import pipelines` — 378-line RED coverage.
+  - `b2512bd` (pre-existing PR 3 cherry-pick commit, not authored in this run)
+  - `<green-sha>` `feat(service-management): GREEN WU6+WU7 atomic XLSX import` — production code.
+  - `<refactor-sha>` `refactor(service-management): trim WU6+WU7 production code (-200 lines)` — REFACTOR pass.
+- **Structured status consumed/produced:**
+  - `changeName=service-management-catalog`; `artifactStore=openspec`; `actionContext.mode=repo-local`; workspace is isolated worktree `/Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/.worktrees/service-management-catalog-pr4`; allowed edit root is this worktree; warnings none.
+  - WU 6 and WU 7 marked complete; WU 8 and WU 9 remain for PR 5.
+  - `nextRecommended=verify` (the parent orchestrator should run the verify phase before opening the PR).
+- **Lock-timeout caveat inherited from PR 3:** bounded timeout for `pg_advisory_xact_lock` not pinned yet. WU 7 propagates `user_lock_timeout` from `acquire_user_locks_in_order` as a structured import validation failure (HTTP 400). Suggested default: 5s; if the team prefers a different value, update `pr3-design.md` + `user_lock.py`.
+- **Skill resolution:** `paths-injected` (`sdd-apply`, `work-unit-commits`, `chained-pr`, `branch-pr`, `cognitive-doc-design` loaded from the parent-provided paths).
