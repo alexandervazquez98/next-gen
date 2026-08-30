@@ -17,9 +17,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../services/itsm", async () => {
-  const actual = await vi.importActual<typeof import("../../services/itsm")>(
-    "../../services/itsm",
-  );
+  const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
   return {
     ...actual,
     listTicketFolios: (...a: unknown[]) => mocks.listTicketFolios(...a),
@@ -189,8 +187,7 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     const user = userEvent.setup();
     mocks.listTicketFolios.mockResolvedValueOnce([]);
 
-    const reactive = (err: string) =>
-      Object.assign(new Error(err), { status: 400, detail: err });
+    const reactive = (err: string) => Object.assign(new Error(err), { status: 400, detail: err });
     mocks.createTicketFolio
       .mockRejectedValueOnce(reactive("user_inactive_at_write"))
       .mockRejectedValueOnce(reactive("service_type_mismatch_at_write"));
@@ -226,7 +223,9 @@ describe("ItsmTicketFolioPage — WU 8 contract-aligned form", () => {
     render(<ItsmTicketFolioPage />);
     await screen.findByRole("heading", { name: /service management/i, level: 1 });
 
-    await userEvent.setup().click(screen.getByRole("button", { name: /download import template/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /download import template/i }));
     expect(mocks.downloadTicketTemplate).toHaveBeenCalledTimes(1);
   });
 

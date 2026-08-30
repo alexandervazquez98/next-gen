@@ -61,10 +61,7 @@ const ItsmTicketFolioPage: React.FC = () => {
   const [importError, setImportError] = useState<ImportValidationFailure | null>(null);
   const [importInfo, setImportInfo] = useState<string | null>(null);
 
-  const activeCatalog = useMemo(
-    () => catalog.filter((c) => c.active),
-    [catalog],
-  );
+  const activeCatalog = useMemo(() => catalog.filter((c) => c.active), [catalog]);
 
   const compatibleServices = useMemo(
     () => activeCatalog.filter((c) => c.service_type === formState.type),
@@ -102,10 +99,7 @@ const ItsmTicketFolioPage: React.FC = () => {
     void loadCatalogAndAssignees();
   }, []);
 
-  const onChange = <K extends keyof TicketFormState>(
-    field: K,
-    value: TicketFormState[K],
-  ) => {
+  const onChange = <K extends keyof TicketFormState>(field: K, value: TicketFormState[K]) => {
     setFormState((prev) => {
       const next = { ...prev, [field]: value };
       // Reset incompatible service selection when ticket type changes.
@@ -296,7 +290,9 @@ const ItsmTicketFolioPage: React.FC = () => {
             <tbody>
               {importError.errors.map((err, idx) => (
                 <tr key={`${err.row}-${err.field}-${idx}`} className="border-t border-red-500/20">
-                  <td className="p-1">Row {err.row ?? "?"} — {err.field}</td>
+                  <td className="p-1">
+                    Row {err.row ?? "?"} — {err.field}
+                  </td>
                   <td className="p-1 text-red-200">{err.field}</td>
                   <td className="p-1 text-red-200">{err.code}</td>
                   <td className="p-1 text-red-200">{err.reason}</td>
@@ -439,9 +435,7 @@ const ItsmTicketFolioPage: React.FC = () => {
                   <td className="p-3 text-neutral-300">
                     {ticket.assignee_username || "—"}
                     {ticket.assignee_currently_active === false && (
-                      <span className="ml-2 text-[10px] uppercase text-amber-300">
-                        (inactive)
-                      </span>
+                      <span className="ml-2 text-[10px] uppercase text-amber-300">(inactive)</span>
                     )}
                   </td>
                   <td className="p-3 text-neutral-300">{statusLabel(ticket.status)}</td>

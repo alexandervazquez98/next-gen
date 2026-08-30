@@ -16,9 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../services/itsm", async () => {
-  const actual = await vi.importActual<typeof import("../../services/itsm")>(
-    "../../services/itsm",
-  );
+  const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
   return {
     ...actual,
     listServiceCatalog: (...args: unknown[]) => mocks.listServiceCatalog(...args),

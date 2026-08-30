@@ -17,9 +17,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../services/itsm", async () => {
-  const actual = await vi.importActual<typeof import("../../services/itsm")>(
-    "../../services/itsm",
-  );
+  const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
   return {
     ...actual,
     listTicketFolios: (...args: unknown[]) => mocks.listTicketFolios(...args),
@@ -192,9 +190,7 @@ describe("ItsmTicketFolioPage", () => {
     render(<ItsmTicketFolioPage />);
     await waitFor(() => expect(screen.getByText("Access request")).toBeInTheDocument());
 
-    expect(
-      screen.queryByRole("button", { name: /move 1 to resolved/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /move 1 to resolved/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /move 1 to in_progress/i }));
 
     await waitFor(() =>

@@ -68,9 +68,7 @@ describe("UserManager — WU 8 logical deactivation", () => {
 
     fireEvent.click(deactivateButtons[0]);
 
-    await waitFor(() =>
-      expect(mocks.api.post).toHaveBeenCalledWith("/users/alice/deactivate", {}),
-    );
+    await waitFor(() => expect(mocks.api.post).toHaveBeenCalledWith("/users/alice/deactivate", {}));
   });
 
   it("does not call deactivate when the confirm prompt is rejected", async () => {
@@ -100,8 +98,6 @@ describe("UserManager — WU 8 logical deactivation", () => {
     fireEvent.click(deactivateButtons[0]);
 
     // 409 is treated as a no-op; no alert noise and the list is reloaded.
-    await waitFor(() =>
-      expect(mocks.api.get).toHaveBeenCalledWith("/users/"),
-    );
+    await waitFor(() => expect(mocks.api.get).toHaveBeenCalledWith("/users/"));
   });
 });

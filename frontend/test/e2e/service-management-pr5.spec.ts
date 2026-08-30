@@ -23,7 +23,13 @@
 // can run before any browser context is built. The browser is used for the
 // final UI smoke on the Service Management route only.
 
-import { test, expect, request as playwrightRequest, APIRequestContext, Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  request as playwrightRequest,
+  APIRequestContext,
+  Page,
+} from "@playwright/test";
 
 const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL ?? "http://localhost:8000";
 const FRONTEND_BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
@@ -38,10 +44,7 @@ async function loginAsAdmin(api: APIRequestContext): Promise<void> {
     headers: { "Content-Type": "application/json" },
     data: { username: "admin", password: "admin" },
   });
-  expect(
-    response.status(),
-    `admin login must succeed, got ${response.status()}`,
-  ).toBe(200);
+  expect(response.status(), `admin login must succeed, got ${response.status()}`).toBe(200);
   const body = (await response.json()) as LoginResponse;
   expect(body.access_token, "login must return an access_token").toBeTruthy();
 }
@@ -104,10 +107,9 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
         assignee_username: createdAssignee,
       },
     });
-    expect(
-      response.status(),
-      `ticket create must succeed, got ${response.status()}`,
-    ).toBeLessThan(300);
+    expect(response.status(), `ticket create must succeed, got ${response.status()}`).toBeLessThan(
+      300,
+    );
 
     const body = await response.json();
     expect(typeof body.ticket_id).toBe("number");
@@ -143,10 +145,9 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
   });
 
   test("step 4 — deactivating the assignee preserves the historical ticket context", async () => {
-    const deactivate = await api.post(
-      `${BACKEND_BASE_URL}/users/${createdAssignee}/deactivate`,
-      { data: {} },
-    );
+    const deactivate = await api.post(`${BACKEND_BASE_URL}/users/${createdAssignee}/deactivate`, {
+      data: {},
+    });
     // 204 on success; 409 already-inactive is also valid (idempotent).
     expect([204, 409]).toContain(deactivate.status());
 
@@ -167,8 +168,8 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
     // Build a one-row workbook in the browser context using a minimal XLSX.
     // Buffer satisfies Playwright's multipart.file.buffer typing.
     const buffer = Buffer.from([
-      0x50, 0x4b, 0x03, 0x04, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x72, 0x65, 0x61,
-      0x6c, 0x2d, 0x78, 0x6c, 0x73, 0x78,
+      0x50, 0x4b, 0x03, 0x04, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x72, 0x65, 0x61, 0x6c, 0x2d,
+      0x78, 0x6c, 0x73, 0x78,
     ]);
 
     const before = await api.get(`${BACKEND_BASE_URL}/itsm/service-catalog`);
@@ -197,12 +198,16 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
     expect(afterIds, "no catalog row may persist on invalid import").toEqual(beforeIds);
   });
 
-  test("step 6 — UI smoke: Service Management heading renders at /itsm/tickets", async ({ page }: { page: Page }) => {
+  test("step 6 — UI smoke: Service Management heading renders at /itsm/tickets", async ({
+    page,
+  }: {
+    page: Page;
+  }) => {
     await page.goto(`${FRONTEND_BASE_URL}/#/itsm/tickets`, { waitUntil: "domcontentloaded" });
     // The session cookie set by /auth/login is shared with the page context.
-    await expect(
-      page.getByRole("heading", { name: /service management/i, level: 1 }),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: /service management/i, level: 1 })).toBeVisible({
+      timeout: 10_000,
+    });
     // The numeric ticket id from step 2 must be visible somewhere in the list.
     await expect(page.getByText(`#${createdTicketId}`).first()).toBeVisible();
   });

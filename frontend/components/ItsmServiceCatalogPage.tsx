@@ -132,10 +132,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
     });
   };
 
-  const onChange = <K extends keyof CatalogFormState>(
-    field: K,
-    value: CatalogFormState[K],
-  ) => {
+  const onChange = <K extends keyof CatalogFormState>(field: K, value: CatalogFormState[K]) => {
     setFormState((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -228,7 +225,8 @@ const ItsmServiceCatalogPage: React.FC = () => {
             Service Catalog
           </h1>
           <p className="text-xs font-black text-neutral-400 uppercase tracking-wider">
-            Manage typed, governed service definitions in a dedicated surface distinct from CI inventory.
+            Manage typed, governed service definitions in a dedicated surface distinct from CI
+            inventory.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -297,7 +295,9 @@ const ItsmServiceCatalogPage: React.FC = () => {
             <tbody>
               {importError.errors.map((err, idx) => (
                 <tr key={`${err.row}-${err.field}-${idx}`} className="border-t border-red-500/20">
-                  <td className="p-1">Row {err.row ?? "?"} — {err.field}</td>
+                  <td className="p-1">
+                    Row {err.row ?? "?"} — {err.field}
+                  </td>
                   <td className="p-1 text-red-200">{err.field}</td>
                   <td className="p-1 text-red-200">{err.code}</td>
                   <td className="p-1 text-red-200">{err.reason}</td>
@@ -424,7 +424,7 @@ const ItsmServiceCatalogPage: React.FC = () => {
               />
             </label>
           </div>
-        <div className="flex gap-3 justify-end">
+          <div className="flex gap-3 justify-end">
             <button
               type="button"
               className="px-3 py-2 rounded-lg border border-white/20 text-white text-sm"
@@ -461,7 +461,8 @@ const ItsmServiceCatalogPage: React.FC = () => {
                   </p>
                   <p className="text-xs text-neutral-500">
                     SLA {catalog.sla_target_minutes} min · {catalog.criticality || "Unknown"} ·{" "}
-                    {catalog.tier || "Unknown tier"} · type {catalog.service_type} · stream {catalog.value_stream}
+                    {catalog.tier || "Unknown tier"} · type {catalog.service_type} · stream{" "}
+                    {catalog.value_stream}
                   </p>
                   <p className="text-[11px] text-neutral-500">
                     {catalog.active ? "Status: Active" : "Status: Deactivated"}

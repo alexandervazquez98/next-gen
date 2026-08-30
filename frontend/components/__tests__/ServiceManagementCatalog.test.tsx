@@ -16,9 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../services/itsm", async () => {
-  const actual = await vi.importActual<typeof import("../../services/itsm")>(
-    "../../services/itsm",
-  );
+  const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
   return {
     ...actual,
     listServiceCatalog: (...a: unknown[]) => mocks.listServiceCatalog(...a),
@@ -134,7 +132,9 @@ describe("ItsmServiceCatalogPage — WU 8 governance + import UX", () => {
     renderCatalogRoute();
     await screen.findByText(/Auth API/);
 
-    await userEvent.setup().click(screen.getByRole("button", { name: /download import template/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /download import template/i }));
     expect(mocks.downloadCatalogTemplate).toHaveBeenCalledTimes(1);
   });
 
