@@ -47,7 +47,13 @@ def restore_snmp_service_stub():
 
 
 class MockNeo4jRecord:
-    """Simulates a Neo4j record dict-like access."""
+    """Simulates a Neo4j record dict-like access.
+
+    Implements the full Mapping protocol so production helpers that do
+    ``dict(record)`` (e.g. ``event_service._fetch_page``) work without raising
+    TypeError. Without ``keys()`` / ``__iter__`` the original mock was only
+    partial and broke chunk-counting tests whenever ``_fetch_page`` ran.
+    """
 
     def __init__(self, data):
         self._data = data if isinstance(data, dict) else {}
@@ -57,6 +63,24 @@ class MockNeo4jRecord:
 
     def get(self, key, default=None):
         return self._data.get(key, default)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def keys(self):
+        return self._data.keys()
+
+    def values(self):
+        return self._data.values()
+
+    def items(self):
+        return self._data.items()
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __len__(self):
+        return len(self._data)
 
 
 class MockNeo4jResult:
@@ -570,5 +594,76 @@ class TestEventBatchPrunerProgressShape:
             assert "processed" in chunk
             assert "remaining" in chunk
             assert "batch" in chunk
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
+class TestEventBatchPrunerRetryCap:
+    """RED -> GREEN: the retry loop must terminate when fetch keeps failing.
+
+    Pre-#433 the catch-all at ``event_service.event_batch_pruner``'s chunk loop
+    swallowed exceptions and yielded an error chunk forever, so a transient
+    fetch failure could turn into an infinite loop (the SSE endpoint would hang
+    past the 1s first-byte budget and beyond). The contract under test is:
+    after ``MAX_CONSECUTIVE_CHUNK_FAILURES`` consecutive failures the generator
+    re-raises the last exception instead of looping.
+    """
+
+    def test_breaks_after_max_consecutive_chunk_failures(self, mock_driver):
+        """When _fetch_page always raises, the generator must terminate."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        # Total count succeeds (5 events "need" pruning), but every page
+        # fetch raises. Without the retry cap the loop spins forever and
+        # yields an unbounded stream of error chunks.
+        session.set_response("return count(e) as total", [{"total": 5}])
+
+        original_run = session.run
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise RuntimeError("simulated fetch failure")
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+            outcome: tuple[str, Exception | None] = ("completed", None)
+
+            async def consume() -> None:
+                try:
+                    async for progress in event_service.event_batch_pruner(
+                        user="system", batch_delay_ms=0
+                    ):
+                        chunks.append(progress)
+                except Exception as exc:
+                    nonlocal outcome
+                    outcome = ("raised", exc)
+
+            # Bound the test itself with asyncio.wait_for so an unfixed
+            # implementation fails RED with TimeoutError instead of hanging
+            # the runner (defense in depth — pytest-timeout is the broader
+            # safety net wired in #433 / Change 3).
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            assert outcome[0] == "raised", (
+                f"Generator must re-raise after the retry cap is hit, "
+                f"instead it {outcome[0]!r} after yielding {len(chunks)} chunks"
+            )
+            assert isinstance(outcome[1], RuntimeError)
+            assert "simulated fetch failure" in str(outcome[1])
+
+            # Initial (batch=0) plus at most MAX_CONSECUTIVE_CHUNK_FAILURES
+            # error chunks before the generator re-raises on the next failure.
+            assert chunks[0]["batch"] == 0
+            error_chunks = [c for c in chunks if "error" in c]
+            assert len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES, (
+                f"Expected exactly {event_service.MAX_CONSECUTIVE_CHUNK_FAILURES} "
+                f"error chunks before re-raise, got {len(error_chunks)}"
+            )
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
