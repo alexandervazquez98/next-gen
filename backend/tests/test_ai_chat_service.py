@@ -296,9 +296,11 @@ def test_compactor_trims_oldest_non_system_messages_when_over_threshold():
         {"role": "user", "content": _long_content("turn-3-")},
         {"role": "assistant", "content": _long_content("turn-4-")},
     ]
-    messages = [{"role": "system", "content": "SYSTEM_PROMPT_MARKER"}] + history + [
-        {"role": "user", "content": "current question"}
-    ]
+    messages = (
+        [{"role": "system", "content": "SYSTEM_PROMPT_MARKER"}]
+        + history
+        + [{"role": "user", "content": "current question"}]
+    )
 
     compacted = ai_chat_service._compact_history(list(messages), settings)
 
@@ -313,15 +315,11 @@ def test_compactor_trims_oldest_non_system_messages_when_over_threshold():
     # At least one of the oldest history turns must have been dropped.
     dropped_markers = {"turn-1-", "turn-2-", "turn-3-", "turn-4-"}
     surviving_markers = {m["content"][:7] for m in compacted[1:-1]}
-    assert dropped_markers - surviving_markers, (
-        "expected at least one history marker to be evicted"
-    )
+    assert dropped_markers - surviving_markers, "expected at least one history marker to be evicted"
 
     # Total estimated non-system tokens must fit the budget.
     budget = int(settings.context_limit_tokens * settings.compaction_threshold)
-    total = sum(
-        ai_chat_service._estimate_tokens(m["content"]) for m in compacted[1:]
-    )
+    total = sum(ai_chat_service._estimate_tokens(m["content"]) for m in compacted[1:])
     assert total <= budget, f"total={total} budget={budget}"
 
 
@@ -458,9 +456,9 @@ def test_ai_chat_router_compacts_history_when_env_limit_low(monkeypatch):
     # The OLDEST history entry (the user turn) must be evicted first —
     # sliding-window preserves the most recent conversational context.
     surviving_contents = "".join(m["content"] for m in messages[1:-1])
-    assert "u" * 2000 not in surviving_contents, (
-        "oldest user turn should be evicted before newer assistant turn"
-    )
+    assert (
+        "u" * 2000 not in surviving_contents
+    ), "oldest user turn should be evicted before newer assistant turn"
 
 
 def test_complete_chat_falls_back_when_model_returns_empty_event_list(monkeypatch):
