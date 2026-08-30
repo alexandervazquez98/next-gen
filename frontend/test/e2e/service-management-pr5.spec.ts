@@ -165,7 +165,8 @@ test.describe("PR 5 / WU 9 — Service Management full-stack journey", () => {
 
   test("step 5 — invalid catalog workbook import returns row/field errors and persists nothing", async () => {
     // Build a one-row workbook in the browser context using a minimal XLSX.
-    const buffer = new Uint8Array([
+    // Buffer satisfies Playwright's multipart.file.buffer typing.
+    const buffer = Buffer.from([
       0x50, 0x4b, 0x03, 0x04, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x72, 0x65, 0x61,
       0x6c, 0x2d, 0x78, 0x6c, 0x73, 0x78,
     ]);
