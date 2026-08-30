@@ -25,6 +25,7 @@ import MetricAnalytics from "./components/MetricAnalytics";
 import VisualRelationshipEditorPage from "./components/VisualRelationshipEditorPage";
 import ItsmServiceCatalogPage from "./components/ItsmServiceCatalogPage";
 import ItsmTicketFolioPage from "./components/ItsmTicketFolioPage";
+import MqttMonitoringPage from "./components/MqttMonitoringPage";
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -156,6 +157,11 @@ const MainLayout: React.FC = () => {
           {(hasPermission("ADMIN") || hasPermission("USER_MANAGE")) && (
             <NavItem to="/admin" icon="admin_panel_settings" label="Administration" />
           )}
+
+          {/* MQTT Monitoring (Issue #385) — gated by MQTT_READ per spec §Permission Gates. */}
+          {(hasPermission("MQTT_READ") || hasPermission("ADMIN")) && (
+            <NavItem to="/monitoring/mqtt" icon="cell_tower" label="MQTT Monitoring" />
+          )}
         </div>
 
         <div className="p-6 space-y-4 border-t border-white/5">
@@ -234,6 +240,9 @@ const MainLayout: React.FC = () => {
               <Route path="inventory" element={<GlobalInventory />} />
               <Route path="itsm/service-catalog" element={<ItsmServiceCatalogPage />} />
               <Route path="itsm/tickets" element={<ItsmTicketFolioPage />} />
+              {/* MQTT Monitoring (Issue #385) — page itself implements the
+                  route-level guard (hasPermission check + Navigate to /). */}
+              <Route path="monitoring/mqtt" element={<MqttMonitoringPage />} />
             </Routes>
           </div>
 
