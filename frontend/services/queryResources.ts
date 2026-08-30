@@ -8,6 +8,11 @@ import type {
   GraphLink,
   GraphNode,
   MultiMetricHistoryResponse,
+  MqttMappingResponse,
+  MqttMappingThresholds,
+  MqttRawDeviceResponse,
+  MqttRawMetricResponse,
+  MqttRuntimeStatus,
   TunnelHealthResponse,
 } from "../types";
 
@@ -338,5 +343,124 @@ export const fetchMetricsHistory = async (
   params.set("node_ids", nodeIds.join(","));
 
   const url = `/metrics/${encodeURIComponent(metricId)}/history?${params.toString()}`;
-  return api.get<MultiMetricHistoryResponse>(url, { signal });
+  return api.get<MultiMetricHistoryResponse>(url, {
+    signal,
+  });
 };
+
+// =============================================================================
+// MQTT Monitoring Frontend (Issue #385) — fetchers + mutators
+//
+// PR1 ships the read-side fetchers (devices / device-metrics / readings /
+// status) and the mapping mutators referenced from `useMqttMutations`. The
+// `MqttMappingsTab`, `MqttMappingForm`, `MqttThresholdForm`, and
+// `MqttConfirmModal` components land in PR2 — their fetchers are already
+// declared here so PR2 does not need to touch `queryResources.ts`.
+// =============================================================================
+
+export const fetchMqttDevices = ({ signal }: { signal?: AbortSignal } = {}) =>
+  api.get<MqttRawDeviceResponse[]>("/mqtt/devices", { signal });
+
+export const fetchMqttDeviceMetrics = (
+  deviceId: string,
+  { signal }: { signal?: AbortSignal } = {},
+) =>
+  api.get<MqttRawMetricResponse[]>(
+    `/mqtt/devices/${encodeURIComponent(deviceId)}/metrics`,
+    { signal },
+  );
+
+export interface FetchMqttReadingsOptions {
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export const fetchMqttReadings = ({
+  limit = 100,
+  signal,
+}: FetchMqttReadingsOptions = {}) => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return api.get<MqttRawMetricResponse[]>(`/mqtt/readings?${params.toString()}`, {
+    signal,
+  });
+};
+
+export const fetchMqttStatus = ({ signal }: { signal?: AbortSignal } = {}) =>
+  api.get<MqttRuntimeStatus>("/mqtt/status", { signal });
+
+export interface FetchMqttMappingsOptions {
+  status?: string;
+  signal?: AbortSignal;
+}
+
+export const fetchMqttMappings = ({ status, signal }: FetchMqttMappingsOptions = {}) => {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return api.get<MqttMappingResponse[]>(`/mqtt/mappings${query ? `?${query}` : ""}`, {
+    signal,
+  });
+};
+
+export const fetchMqttMappingThresholds = (
+  mappingId: string,
+  { signal }: { signal?: AbortSignal } = {},
+) =>
+  api.get<MqttMappingThresholds>(
+    `/mqtt/mappings/${encodeURIComponent(mappingId)}/thresholds`,
+    { signal },
+  );
+
+export interface MqttMappingCreatePayload {
+  source_device_id: string;
+  source_metric_id: string;
+  source_metric_name: string;
+  target_ci_id: string;
+  target_metric_def_id: string;
+  thresholds?: MqttMappingThresholds | null;
+}
+
+export const createMqttMapping = (payload: MqttMappingCreatePayload) =>
+  api.post<MqttMappingResponse>("/mqtt/mappings", payload);
+
+export interface MqttMappingUpdatePayload {
+  source_metric_name?: string | null;
+  target_ci_id?: string | null;
+  target_metric_def_id?: string | null;
+  thresholds?: MqttMappingThresholds | null;
+}
+
+/**
+ * PUT semantics per design decision #3: full-payload mutation. The form is
+ * responsible for re-fetching the latest mapping record before opening the
+ * edit sheet so partial-edit overwrite is prevented by construction.
+ */
+export const updateMqttMapping = (
+  mappingId: string,
+  payload: MqttMappingUpdatePayload,
+) =>
+  api.put<MqttMappingResponse>(
+    `/mqtt/mappings/${encodeURIComponent(mappingId)}`,
+    payload,
+  );
+
+export const approveMqttMapping = (mappingId: string) =>
+  api.post<MqttMappingResponse>(
+    `/mqtt/mappings/${encodeURIComponent(mappingId)}/approve`,
+    {},
+  );
+
+export const revokeMqttMapping = (mappingId: string) =>
+  api.post<MqttMappingResponse>(
+    `/mqtt/mappings/${encodeURIComponent(mappingId)}/revoke`,
+    {},
+  );
+
+export const updateMqttMappingThresholds = (
+  mappingId: string,
+  payload: MqttMappingThresholds,
+) =>
+  api.put<MqttMappingResponse>(
+    `/mqtt/mappings/${encodeURIComponent(mappingId)}/thresholds`,
+    payload,
+  );

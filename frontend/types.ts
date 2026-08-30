@@ -425,3 +425,92 @@ export interface MultiMetricHistoryRequest {
 export interface MultiMetricHistoryResponse {
   nodes: NodeMetricData[];
 }
+
+// =============================================================================
+// MQTT Monitoring Frontend Types (Issue #385)
+//
+// PR1 surface only: raw devices/metrics/readings, runtime status, and the
+// shared `RAW_MQTT_NON_KPI` non-KPI indicator. Mapping/threshold DTOs are
+// declared here so PR2 can reuse the types without churn, but the UI for
+// managing mappings belongs to PR2 (`openspec/specs/mqtt-mapping-management`).
+// =============================================================================
+
+/**
+ * Mapping lifecycle status. Matches `MAPPING_LIFECYCLE_STATUSES` in
+ * `backend/models/mqtt.py`. `UNMAPPED` is only ever attached to a metric that
+ * has no mapping row yet; it never appears on a mapping record itself.
+ */
+export type MqttMappingStatus = "UNMAPPED" | "DRAFT" | "APPROVED" | "REVOKED";
+
+export interface MqttRawDeviceResponse {
+  device_id: string;
+  name?: string | null;
+  location_id?: string | null;
+  source_topic?: string | null;
+  parser_name?: string | null;
+  last_seen?: string | null;
+  classification?: string | null;
+  kpi_eligible?: boolean | null;
+  mapped_metrics_count?: number | null;
+  unmapped_metrics_count?: number | null;
+}
+
+export interface MqttRawMetricResponse {
+  device_id: string;
+  metric_id: string;
+  name?: string | null;
+  last_value?: number | string | boolean | null;
+  unit?: string | null;
+  last_ts?: string | null;
+  classification?: string | null;
+  kpi_eligible?: boolean | null;
+  mapping_status?: MqttMappingStatus;
+}
+
+export interface MqttMappingThresholds {
+  operator?: string | null;
+  warning?: number | null;
+  critical?: number | null;
+}
+
+export interface MqttMappingResponse {
+  id: string;
+  source_device_id?: string | null;
+  source_metric_id?: string | null;
+  source_metric_name?: string | null;
+  target_ci_id?: string | null;
+  target_metric_def_id?: string | null;
+  status: MqttMappingStatus;
+  version?: number | null;
+  warning?: number | null;
+  critical?: number | null;
+  operator?: string | null;
+  created_by?: string | null;
+  approved_by?: string | null;
+  revoked_by?: string | null;
+  created_at?: string | null;
+  approved_at?: string | null;
+  revoked_at?: string | null;
+  updated_at?: string | null;
+}
+
+/**
+ * Mirror of `MqttRuntimeStatusRepo._row_to_dict` in
+ * `backend/repositories/mqtt_runtime_status_repo.py`. The backend also augments
+ * this with `is_stale` (boolean) at read time when the heartbeat exceeds the
+ * stale window — keep it optional so older payloads remain shape-compatible.
+ */
+export interface MqttRuntimeStatus {
+  service_name?: string;
+  configured: boolean;
+  running: boolean;
+  connected: boolean;
+  subscribed_patterns: string[];
+  last_message_at?: string | null;
+  last_error?: string | null;
+  reason_code?: string | null;
+  mapped_writes_total: number;
+  unmapped_skips_total: number;
+  failed_writes_total: number;
+  is_stale?: boolean;
+}

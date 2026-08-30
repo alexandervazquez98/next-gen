@@ -62,4 +62,56 @@ describe("queryKeys", () => {
     expect(queryKeys.relatedEvents("ci-1")).toEqual(["events", "related", "ci-1"]);
     expect(queryKeys.relatedEvents("ci-2")).toEqual(["events", "related", "ci-2"]);
   });
+
+  // MQTT Monitoring Frontend (Issue #385) — PR1 keys.
+  it("returns stable MQTT keys for the raw browse + bridge status surfaces", () => {
+    expect(queryKeys.mqttDevices()).toEqual(["mqtt", "devices"]);
+    expect(queryKeys.mqttDeviceMetrics("dev-1")).toEqual([
+      "mqtt",
+      "devices",
+      "dev-1",
+      "metrics",
+    ]);
+    // Null device id is preserved so a disabled query never collides with an
+    // unrelated real-device cache entry.
+    expect(queryKeys.mqttDeviceMetrics(null)).toEqual([
+      "mqtt",
+      "devices",
+      null,
+      "metrics",
+    ]);
+    expect(queryKeys.mqttReadings()).toEqual([
+      "mqtt",
+      "readings",
+      { limit: 100 },
+    ]);
+    expect(queryKeys.mqttReadings({ limit: 250 })).toEqual([
+      "mqtt",
+      "readings",
+      { limit: 250 },
+    ]);
+    expect(queryKeys.mqttStatus()).toEqual(["mqtt", "status"]);
+    expect(queryKeys.mqttMappings()).toEqual([
+      "mqtt",
+      "mappings",
+      { status: null },
+    ]);
+    expect(queryKeys.mqttMappings({ status: "APPROVED" })).toEqual([
+      "mqtt",
+      "mappings",
+      { status: "APPROVED" },
+    ]);
+    expect(queryKeys.mqttMappingThresholds("map-1")).toEqual([
+      "mqtt",
+      "mappings",
+      "map-1",
+      "thresholds",
+    ]);
+    expect(queryKeys.mqttMappingThresholds(null)).toEqual([
+      "mqtt",
+      "mappings",
+      null,
+      "thresholds",
+    ]);
+  });
 });

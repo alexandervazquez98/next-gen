@@ -27,4 +27,17 @@ export const queryKeys = {
     owner?: string | string[];
   }) => ["graph-topology", filters ?? {}] as const,
   relatedEvents: (ciId: string) => ["events", "related", ciId] as const,
+  // MQTT Monitoring Frontend (Issue #385) — PR1 keys.
+  // Keep these aligned with `openspec/changes/feat-mqtt-385-frontend-ux/design.md`
+  // so cache invalidation in `useMqttMutations` matches what the spec mandates.
+  mqttDevices: () => ["mqtt", "devices"] as const,
+  mqttDeviceMetrics: (deviceId: string | null) =>
+    ["mqtt", "devices", deviceId ?? null, "metrics"] as const,
+  mqttReadings: (params: { limit?: number } = {}) =>
+    ["mqtt", "readings", { limit: params.limit ?? 100 }] as const,
+  mqttStatus: () => ["mqtt", "status"] as const,
+  mqttMappings: (params: { status?: string } = {}) =>
+    ["mqtt", "mappings", { status: params.status ?? null }] as const,
+  mqttMappingThresholds: (mappingId: string | null) =>
+    ["mqtt", "mappings", mappingId ?? null, "thresholds"] as const,
 };
