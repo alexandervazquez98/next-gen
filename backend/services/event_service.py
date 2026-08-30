@@ -1403,6 +1403,15 @@ from collections.abc import AsyncIterator  # noqa: E402
 
 from config import get_event_batch_settings  # noqa: E402
 
+# Maximum number of consecutive chunk fetch failures tolerated before the
+# generator re-raises instead of looping forever. The previous catch-all
+# ``except Exception`` swallowed every failure and re-entered the loop with
+# ``total_processed`` unchanged — a transient Neo4j blip became an infinite
+# loop and the SSE endpoint never received its first byte. Three retries
+# matches the existing per-event idempotency window (cache_ttl_s=300s) and
+# is the smallest cap that survives a single flap without giving up.
+MAX_CONSECUTIVE_CHUNK_FAILURES = 3
+
 
 async def event_batch_pruner(
     user: str,
@@ -1421,6 +1430,10 @@ async def event_batch_pruner(
     production rows pre-#279). Per-chunk transactions preserve atomicity.
     Idempotency is ensured via a request-scoped in-memory cache with TTL.
     Handles per-chunk timeout.
+
+    After ``MAX_CONSECUTIVE_CHUNK_FAILURES`` consecutive chunk failures the
+    generator re-raises the last exception so the caller (e.g. the SSE
+    endpoint) can surface a clean failure instead of hanging forever.
 
     Yields progress dicts with keys:
         - total: total events found to process
@@ -1555,6 +1568,7 @@ async def event_batch_pruner(
         return
 
     # Process batches until all events are handled
+    consecutive_failures = 0
     while total_processed < total:
         batch += 1
         processed_in_chunk = 0
@@ -1606,6 +1620,9 @@ async def event_batch_pruner(
                     continue
 
             total_processed += processed_in_chunk
+            # Any successful chunk resets the failure streak so a transient
+            # blip doesn't poison the rest of the run.
+            consecutive_failures = 0
 
             # Update cursor for next batch. The composite cursor needs both
             # the row's `created_at` (None when NULL) and its `id` so the
@@ -1629,7 +1646,12 @@ async def event_batch_pruner(
                 break
 
         except Exception as e:
-            # Timeout or error on this chunk — yield error but continue
+            # Timeout or error on this chunk — yield error but bound retries.
+            consecutive_failures += 1
+            if consecutive_failures > MAX_CONSECUTIVE_CHUNK_FAILURES:
+                # Cap exceeded — re-raise so the caller surfaces a clean
+                # failure rather than the generator looping forever.
+                raise
             yield {
                 "total": total,
                 "processed": total_processed,
