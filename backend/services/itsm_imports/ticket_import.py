@@ -1,11 +1,8 @@
 """Atomic XLSX ticket import — WU 7.
 
-Imports a ticket workbook with three reference sheets (``Ref - Incident
-Services``, ``Ref - Service Request Services``, ``Ref - Active Users``).
-The import path is all-or-nothing: it acquires per-user PostgreSQL advisory
-locks for every distinct assignee in sorted order, holds them through the
-single Neo4j write transaction, and releases them whether the write commits
-or rolls back.
+Imports a ticket workbook with three reference sheets. All-or-nothing: locks
+per-user PostgreSQL advisory locks for every distinct assignee in sorted order,
+holds them through the single Neo4j write transaction.
 """
 
 from __future__ import annotations
@@ -18,20 +15,16 @@ from pydantic import ValidationError
 
 from models.itsm import TicketFolioCreate
 from services.user_lock import acquire_user_locks_in_order
-from .errors import IMPORT_VALIDATION_FAILED, ImportValidationError
+from .errors import ImportValidationError
 from .workbook import (
     DEFAULT_MAX_SIZE_BYTES,
+    collect_header_errors,
     guard_xlsx_payload,
     open_workbook,
     read_data_rows,
     read_header_row,
-    validate_required_headers,
 )
 
-
-# ---------------------------------------------------------------------------
-# Template contract
-# ---------------------------------------------------------------------------
 
 TICKET_SHEET = "Ticket Import"
 TICKET_REF_INCIDENT = "Ref - Incident Services"
@@ -47,11 +40,6 @@ TICKET_REQUIRED_HEADERS = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Repository seams — kept narrow so tests can stub them easily.
-# ---------------------------------------------------------------------------
-
-
 class CatalogRepository(Protocol):
     def get_by_id(self, service_id: str) -> dict | None: ...
     def list(self, limit: int = 100) -> list[dict]: ...
@@ -59,11 +47,6 @@ class CatalogRepository(Protocol):
 
 class UserRepository(Protocol):
     def get_by_username(self, db: Any, username: str) -> Any: ...
-
-
-# ---------------------------------------------------------------------------
-# Template generation
-# ---------------------------------------------------------------------------
 
 
 def build_ticket_template_workbook(
@@ -75,49 +58,32 @@ def build_ticket_template_workbook(
     ws.append(list(TICKET_REQUIRED_HEADERS))
 
     services = catalog_repository.list(limit=500) or []
-    incidents = [s for s in services if s.get("service_type") == "incident" and s.get("active", True)]
-    requests = [s for s in services if s.get("service_type") == "service_request" and s.get("active", True)]
-
     inc_ref = wb.create_sheet(TICKET_REF_INCIDENT)
     inc_ref.append(["service_id", "name", "value_stream"])
-    for s in incidents:
-        inc_ref.append([s.get("service_id"), s.get("name"), s.get("value_stream")])
+    for s in services:
+        if s.get("service_type") == "incident" and s.get("active", True):
+            inc_ref.append([s.get("service_id"), s.get("name"), s.get("value_stream")])
 
     req_ref = wb.create_sheet(TICKET_REF_SERVICE_REQUEST)
     req_ref.append(["service_id", "name", "value_stream"])
-    for s in requests:
-        req_ref.append([s.get("service_id"), s.get("name"), s.get("value_stream")])
+    for s in services:
+        if s.get("service_type") == "service_request" and s.get("active", True):
+            req_ref.append([s.get("service_id"), s.get("name"), s.get("value_stream")])
 
     users_ref = wb.create_sheet(TICKET_REF_USERS)
     users_ref.append(["username", "display_name", "is_active"])
-    # The user repository does not expose a list endpoint in this slice — the
-    # template ships an empty reference sheet header. Frontend consumers can
-    # resolve active users from the dedicated users endpoint.
-    _populate_active_users(users_ref, user_repository)
+    list_active = getattr(user_repository, "list_active", None)
+    if list_active is not None:
+        try:
+            rows = list_active()
+        except Exception:  # noqa: BLE001 — never break template generation
+            rows = []
+        for row in rows or []:
+            users_ref.append([row.get("username"), row.get("display_name"), row.get("is_active", True)])
 
     out = BytesIO()
     wb.save(out)
     return out.getvalue()
-
-
-def _populate_active_users(ws, user_repository: UserRepository) -> None:
-    """Best-effort user listing; failures fall back to header-only."""
-
-    db = getattr(user_repository, "_session", None)
-    list_active = getattr(user_repository, "list_active", None)
-    if list_active is None:
-        return
-    try:
-        rows = list_active(db) if db is not None else list_active()
-    except Exception:  # noqa: BLE001 — never break template generation
-        return
-    for row in rows or []:
-        ws.append([row.get("username"), row.get("display_name"), row.get("is_active", True)])
-
-
-# ---------------------------------------------------------------------------
-# Parsing + validation
-# ---------------------------------------------------------------------------
 
 
 def parse_ticket_workbook(
@@ -129,10 +95,9 @@ def parse_ticket_workbook(
 ) -> list[dict]:
     guard_xlsx_payload(payload, max_size_bytes=max_size_bytes)
     wb = open_workbook(payload)
-
     headers = read_header_row(wb, TICKET_SHEET)
-    header_error = validate_required_headers(headers, TICKET_REQUIRED_HEADERS)
-    if header_error:
+    header_error = collect_header_errors(headers, TICKET_REQUIRED_HEADERS)
+    if header_error.has_errors():
         raise header_error
 
     rows: list[dict] = []
@@ -145,12 +110,7 @@ def parse_ticket_workbook(
         )
         if row_error is not None:
             for err in row_error.errors:
-                accumulated.add(
-                    row=err.row,
-                    field=err.field,
-                    code=err.code,
-                    reason=err.reason,
-                )
+                accumulated.add(row=err.row, field=err.field, code=err.code, reason=err.reason)
             continue
         rows.append(normalized)
 
@@ -170,11 +130,11 @@ def _normalize_ticket_row(
     def fail(field: str, code: str, reason: str) -> None:
         error.add(row=visible_row, field=field, code=code, reason=reason)
 
-    raw_type = cells[0].strip() if len(cells) > 0 else ""
-    raw_title = cells[1].strip() if len(cells) > 1 else ""
-    raw_description = cells[2].strip() if len(cells) > 2 else ""
-    raw_service = cells[3].strip() if len(cells) > 3 else ""
-    raw_assignee = cells[4].strip() if len(cells) > 4 else ""
+    raw_type = _cell(cells, 0)
+    raw_title = _cell(cells, 1)
+    raw_description = _cell(cells, 2)
+    raw_service = _cell(cells, 3)
+    raw_assignee = _cell(cells, 4)
 
     if not raw_title:
         fail("title", "required", "title is required")
@@ -188,11 +148,7 @@ def _normalize_ticket_row(
     if raw_type not in {"incident", "service_request"}:
         fail("type", "invalid_enum", "Must be one of: incident, service_request")
 
-    if (
-        catalog_repository is not None
-        and raw_service
-        and raw_type in {"incident", "service_request"}
-    ):
+    if catalog_repository is not None and raw_service and raw_type in {"incident", "service_request"}:
         catalog = catalog_repository.get_by_id(raw_service)
         if catalog is None:
             fail("service_catalog_id", "service_not_found", f"Service '{raw_service}' does not exist")
@@ -227,11 +183,6 @@ def _normalize_ticket_row(
     )
 
 
-# ---------------------------------------------------------------------------
-# Atomic persistence with lock-ordered full-batch behavior
-# ---------------------------------------------------------------------------
-
-
 def import_ticket_workbook(
     payload: bytes,
     *,
@@ -249,7 +200,6 @@ def import_ticket_workbook(
         user_repository=user_repository,
     )
 
-    # Final Pydantic validation against the canonical contract.
     normalized: list[TicketFolioCreate] = []
     error = ImportValidationError()
     for row in rows:
@@ -269,11 +219,7 @@ def import_ticket_workbook(
     # Lock-ordered full-batch acquisition — required by WU 7 to prevent
     # deadlock cycles when the same set of assignees is also being deactivated.
     if pg_session is not None and normalized:
-        # Pre-sort/dedupe at the call site so the helper receives a stable
-        # canonical order independent of the workbook's row order.
-        ordered_assignees = sorted(
-            {payload_model.assignee_username.lower() for payload_model in normalized}
-        )
+        ordered_assignees = sorted({payload_model.assignee_username.lower() for payload_model in normalized})
         try:
             acquire_user_locks_in_order(pg_session, ordered_assignees)
         except RuntimeError as exc:
@@ -282,11 +228,11 @@ def import_ticket_workbook(
             raise
 
     created = ticket_repository.bulk_create_with_generated_ids(normalized, actor=actor)
-    return {
-        "status": "imported",
-        "imported_count": len(created),
-        "rows": created,
-    }
+    return {"status": "imported", "imported_count": len(created), "rows": created}
+
+
+def _cell(cells: tuple[str, ...], index: int) -> str:
+    return cells[index].strip() if len(cells) > index else ""
 
 
 __all__ = [

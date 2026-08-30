@@ -1,17 +1,4 @@
-"""Structured error contract for Service Management XLSX imports.
-
-All import validation failures funnel through ``ImportValidationError`` so the
-HTTP layer can return a single machine-readable payload:
-
-    {
-      "status": "validation_failed",
-      "message": "Workbook validation failed; no records were imported.",
-      "errors": [
-        {"row": 4, "field": "service_type", "reason": "...", "code": "invalid_enum"}
-      ],
-      "error_count": <total failures detected, may exceed len(errors) when capped>
-    }
-"""
+"""Structured error contract for Service Management XLSX imports."""
 
 from __future__ import annotations
 
@@ -31,12 +18,7 @@ class RowFieldError:
     reason: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "row": self.row,
-            "field": self.field,
-            "code": self.code,
-            "reason": self.reason,
-        }
+        return {"row": self.row, "field": self.field, "code": self.code, "reason": self.reason}
 
 
 @dataclass
@@ -67,9 +49,4 @@ class ImportValidationError(Exception):
         }
 
 
-__all__ = [
-    "IMPORT_ERROR_CAP",
-    "IMPORT_VALIDATION_FAILED",
-    "ImportValidationError",
-    "RowFieldError",
-]
+__all__ = ["IMPORT_ERROR_CAP", "IMPORT_VALIDATION_FAILED", "ImportValidationError", "RowFieldError"]
