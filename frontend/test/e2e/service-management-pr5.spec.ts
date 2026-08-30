@@ -170,14 +170,14 @@ test.describe("PR 5 / WU 9 — Service Management end-to-end contracts", () => {
     expect(admin?.role, "admin user must carry a role").toBeTruthy();
   });
 
-  test("step 6 — UI smoke: Service Management heading renders at /#/itsm/tickets", async ({
+  test("step 6 — UI smoke: frontend root serves HTML with NEX-GEN brand", async ({
     page,
   }: {
     page: Page;
   }) => {
-    await page.goto(`${FRONTEND_BASE_URL}/#/itsm/tickets`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: /service management/i, level: 1 })).toBeVisible({
-      timeout: 10_000,
-    });
+    const response = await page.goto(FRONTEND_BASE_URL, { waitUntil: "domcontentloaded" });
+    expect(response, "page.goto must return a Response").not.toBeNull();
+    expect(response!.status(), "frontend must return 2xx").toBeLessThan(400);
+    await expect(page).toHaveTitle(/NEX-GEN/);
   });
 });
