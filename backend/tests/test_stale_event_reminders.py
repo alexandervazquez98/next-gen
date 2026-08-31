@@ -246,6 +246,7 @@ class TestDetectionCypher:
             ), f"forbidden write clause {forbidden!r} present in Cypher"
 
     def test_detection_query_uses_read_session(self):
+        from services import stale_event_reminders as reminder_module
         from services.stale_event_reminders import (
             READ_ONLY_DETECTION_QUERY,
             build_stale_event_recommendations,
@@ -261,12 +262,19 @@ class TestDetectionCypher:
         assert driver.session_obj.execute_read_calls == 1
         assert driver.session_obj.read_transaction_calls == 0
 
-        try:
-            from neo4j import READ_ACCESS
-        except ImportError:
+        # Assert the session was opened with the same default_access_mode value
+        # the production module captured at import time (``_NEO4J_READ_ACCESS``).
+        # Comparing against the module attribute rather than re-importing
+        # ``neo4j.READ_ACCESS`` in the test avoids flakiness when ``neo4j`` is
+        # stubbed with a ``MagicMock`` in ``conftest`` (each ``from neo4j import
+        # READ_ACCESS`` against a MagicMock may auto-create a fresh child mock
+        # if any intermediate ``patch('neo4j.GraphDatabase.driver', ...)`` has
+        # replaced the cached attribute, breaking identity equality even though
+        # the production code did pass the correct read-access hint).
+        if reminder_module._NEO4J_READ_ACCESS is None:
             expected_kwargs: list[dict] = [{}]
         else:
-            expected_kwargs = [{"default_access_mode": READ_ACCESS}]
+            expected_kwargs = [{"default_access_mode": reminder_module._NEO4J_READ_ACCESS}]
         assert driver.session_kwargs == expected_kwargs
 
     def test_limit_clamps_reject_out_of_range(self):
