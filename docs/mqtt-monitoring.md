@@ -83,8 +83,98 @@ The API container does **not** own the subscriber by default. The dedicated subs
 - [ ] Confirm raw readings appear before approving any mapping.
 - [ ] Approve one test mapping and verify only that mapping writes monitoring data.
 
+## Operational smoke (#387)
+
+A POSIX `sh` runner closes the #387 follow-up: it proves the subscriber
+absent -> active transition is observable through `/api/mqtt/status`
+without mutating persistent state. Run it on any host that can reach the
+Compose project.
+
+### Prerequisites
+
+- Full stack (`api`, `postgres`, `neo4j`, `mqtt-subscriber`) running on
+  `localhost:8000` (or override via `MQTT_SMOKE_STATUS_URL` /
+  `MQTT_SMOKE_READINGS_URL`).
+- `docker compose v2.x` on PATH.
+- An authenticated session with the `MQTT_READ` permission; export
+  `COOKIE_JAR=/path/to/cookies.txt`. The script defaults to
+  `$HOME/.mqtt_cookie` when `COOKIE_JAR` is unset.
+- `.env` populated per `scripts/validate-env.sh`; the validator is
+  re-invoked before any status assertion, so missing `NEO4J_*` or
+  `POSTGRES_*` aborts the smoke before Docker actions.
+- `MQTT_BROKER_URL` set in the resolved Compose config (probed via
+  `docker compose config`).
+
+### Smoke flow
+
+```sh
+# Default mode: prove the absent branch, activate, prove the active branch.
+sh scripts/mqtt-ops-smoke.sh
+
+# End-to-end fixture: publish a tagged MQTT message and confirm it
+# appears in /api/mqtt/readings (adds ~30s to the run).
+sh scripts/mqtt-ops-smoke.sh --with-fixture
+```
+
+What the script does, in order:
+
+1. Validates the credential contract via `scripts/validate-env.sh`.
+   Exits non-zero (and never reaches Docker) when any required env var
+   is missing or matches a `.env.example` placeholder.
+2. Probes `MQTT_BROKER_URL` presence in the resolved `docker compose
+   config` JSON output; exits non-zero with `missing env:
+   MQTT_BROKER_URL` when unset.
+3. Reads `/api/mqtt/status` over an authenticated session. If the
+   subscriber reports `connected=false`, asserts `last_message_at` is
+   null OR older than `MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS`
+   (default 90). If `connected=true`, skips the absent assertion
+   (Scenario: subscriber already active at start).
+4. Brings the subscriber up via the `up -d` form of compose (NEVER the
+   destructive verb, NEVER the volume flag).
+5. Bounded-polls `/api/mqtt/status` until `connected=true` (default
+   timeout: `MQTT_SMOKE_ACTIVATION_TIMEOUT_SECONDS` = 60s). Exits
+   non-zero on timeout with the last payload captured.
+6. With `--with-fixture`, publishes a uniquely tagged MQTT message via
+   `mosquitto_pub` inside the `mqtt-subscriber` container and bounded-
+   polls `/api/mqtt/readings` until the tag appears (default timeout:
+   `MQTT_SMOKE_FIXTURE_TIMEOUT_SECONDS` = 30s).
+7. Prints a rollback block on every exit path (success and failure)
+   via a `trap ... EXIT` registration.
+
+### Rollback
+
+The script is non-destructive: it only ever calls the `up -d` form of
+compose and the `stop` form. To revert after a successful run:
+
+```sh
+docker compose stop mqtt-subscriber
+```
+
+Never use `docker compose down`, `-v`, `rm`, or any volume-removing
+verb to roll back this smoke. The offline test
+(`sh scripts/test-mqtt-ops-smoke.sh`) forbids those tokens as a
+static invariant; do not weaken the test.
+
+### Configuration knobs
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COOKIE_JAR` | `$HOME/.mqtt_cookie` when readable | Holds an authenticated session with `MQTT_READ`. |
+| `MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS` | 90 | Threshold that defines a "stale" `last_message_at` when `connected=false`. |
+| `MQTT_SMOKE_ACTIVATION_TIMEOUT_SECONDS` | 60 | Max wait for the subscriber to report `connected=true` after the `up -d` invocation. |
+| `MQTT_SMOKE_FIXTURE_TIMEOUT_SECONDS` | 30 | Max wait for the fixture tag to appear in `/api/mqtt/readings`. |
+| `MQTT_SMOKE_STATUS_URL` | `http://localhost:8000/api/mqtt/status` | Override the status endpoint. |
+| `MQTT_SMOKE_READINGS_URL` | `http://localhost:8000/api/mqtt/readings?limit=50` | Override the readings endpoint. |
+| `MQTT_BROKER_HOST` | `broker` | Hostname for `mosquitto_pub` during fixture publishing. |
+
+### Static safety invariant
+
+`sh scripts/test-mqtt-ops-smoke.sh` proves the smoke runner never
+invokes destructive Docker Compose verbs (down, `-v`, rm, volume
+removal) and that all required tokens are present. Run it before
+merging changes to `scripts/mqtt-ops-smoke.sh`.
+
 ## Known gaps and follow-up work
 
 - Frontend UX for mapping review/approval is tracked in [#385](https://github.com/alexandervazquez98/next-gen/issues/385).
 - Mapping/threshold audit trail and operator-facing audit views are tracked in [#386](https://github.com/alexandervazquez98/next-gen/issues/386).
-- Production smoke automation for absent-vs-active subscriber status is tracked in [#387](https://github.com/alexandervazquez98/next-gen/issues/387).
