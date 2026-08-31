@@ -97,6 +97,7 @@ done
 # Rollback block printed on every exit via the EXIT trap below. Failure
 # scripts reference this as the operator's recovery path. Do not edit
 # without re-reading docs/mqtt-monitoring.md "Operational smoke (#387)".
+# shellcheck disable=SC2329 # invoked indirectly via `trap rollback_message EXIT`
 rollback_message() {
     cat <<'ROLLBACK'
 
@@ -186,7 +187,7 @@ sh scripts/validate-env.sh
 broker_json=$(docker compose config --format json 2>/dev/null) \
     || fail 'docker compose config failed; is the stack reachable?'
 case "$broker_json" in
-    *'"MQTT_BROKER_URL"'*|*'"MQTT_BROKER_URL":'*)
+    *'"MQTT_BROKER_URL"'*)
         : # present (allow unresolved ${...} placeholders to remain)
         ;;
     *)
@@ -207,7 +208,7 @@ status=$(curl -fsS -b "$COOKIE_JAR" "$STATUS_URL") \
 # active at start in spec/mqtt-operational-smoke).
 if printf '%s' "$status" | grep -qE '"connected":[[:space:]]*false'; then
     case "$status" in
-        *'"last_message_at":null'*|*'"last_message_at":null,'*)
+        *'"last_message_at":null'*)
             printf 'absent branch: connected=false, last_message_at=null\n'
             ;;
         *)
@@ -229,6 +230,7 @@ else
     if printf '%s' "$status" | grep -qE '"connected":[[:space:]]*true'; then
         printf 'subscriber already active; skipping absent assertion\n'
     else
+        # shellcheck disable=SC2016 # backticks are intentional literal documentation in the message
         fail 'status JSON missing expected `connected` field'
     fi
 fi

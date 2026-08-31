@@ -157,6 +157,7 @@ fi
 # the smoke script intentionally mentions the validator in a docstring
 # but the real invocation is on the line we just matched.
 if ! contains_re 'set -eu' "$SMOKE"; then
+    # shellcheck disable=SC2016 # backticks are intentional literal documentation in the assertion message
     fail 'T4 missing: smoke script must enable `set -eu` so failures abort before Docker actions'
 fi
 
