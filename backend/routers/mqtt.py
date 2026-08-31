@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from models.mqtt import (
     MqttMappingCreateRequest,
     MqttMappingResponse,
@@ -12,6 +12,7 @@ from models.mqtt import (
     MqttRawMetricResponse,
 )
 from models.user import User
+from postgres_db import get_pg_db
 from services.auth_service import get_current_active_user
 from services.mqtt_mapping_service import (
     MQTT_READ_PERMISSION_KIND,
@@ -21,6 +22,7 @@ from services.mqtt_mapping_service import (
 )
 from services.mqtt_raw_reading_service import MqttRawReadingService, get_mqtt_raw_reading_service
 from services.mqtt_runtime_status import get_mqtt_runtime_status_service
+from sqlalchemy.orm import Session
 
 router = APIRouter(
     prefix="/mqtt",
@@ -49,6 +51,8 @@ CurrentUserDep = Depends(_current_user)
 RawServiceDep = Depends(_raw_service)
 MappingServiceDep = Depends(_mapping_service)
 RuntimeStatusServiceDep = Depends(_runtime_status_service)
+# Audit session for MQTT mapping lifecycle events (issue #386).
+PgDbDep = Depends(get_pg_db)
 
 
 @router.get("/devices", response_model=list[MqttRawDeviceResponse])
@@ -100,39 +104,49 @@ def list_mqtt_mappings(
 
 @router.post("/mappings", response_model=MqttMappingResponse)
 def create_mqtt_mapping(
+    request: Request,
     payload: MqttMappingCreateRequest,
     current_user: User = CurrentUserDep,
     service: MqttMappingService = MappingServiceDep,
+    db: Session = PgDbDep,
 ):
-    return service.create_mapping(payload, current_user=current_user)
+    return service.create_mapping(payload, current_user=current_user, db=db, request=request)
 
 
 @router.put("/mappings/{mapping_id}", response_model=MqttMappingResponse)
 def update_mqtt_mapping(
+    request: Request,
     mapping_id: str,
     payload: MqttMappingUpdateRequest,
     current_user: User = CurrentUserDep,
     service: MqttMappingService = MappingServiceDep,
+    db: Session = PgDbDep,
 ):
-    return service.update_mapping(mapping_id, payload, current_user=current_user)
+    return service.update_mapping(
+        mapping_id, payload, current_user=current_user, db=db, request=request
+    )
 
 
 @router.post("/mappings/{mapping_id}/approve", response_model=MqttMappingResponse)
 def approve_mqtt_mapping(
+    request: Request,
     mapping_id: str,
     current_user: User = CurrentUserDep,
     service: MqttMappingService = MappingServiceDep,
+    db: Session = PgDbDep,
 ):
-    return service.approve_mapping(mapping_id, current_user=current_user)
+    return service.approve_mapping(mapping_id, current_user=current_user, db=db, request=request)
 
 
 @router.post("/mappings/{mapping_id}/revoke", response_model=MqttMappingResponse)
 def revoke_mqtt_mapping(
+    request: Request,
     mapping_id: str,
     current_user: User = CurrentUserDep,
     service: MqttMappingService = MappingServiceDep,
+    db: Session = PgDbDep,
 ):
-    return service.revoke_mapping(mapping_id, current_user=current_user)
+    return service.revoke_mapping(mapping_id, current_user=current_user, db=db, request=request)
 
 
 @router.get("/mappings/{mapping_id}/thresholds", response_model=MqttMappingThresholds)
@@ -146,9 +160,13 @@ def get_mqtt_mapping_thresholds(
 
 @router.put("/mappings/{mapping_id}/thresholds", response_model=MqttMappingResponse)
 def update_mqtt_mapping_thresholds(
+    request: Request,
     mapping_id: str,
     payload: MqttMappingThresholds,
     current_user: User = CurrentUserDep,
     service: MqttMappingService = MappingServiceDep,
+    db: Session = PgDbDep,
 ):
-    return service.update_thresholds(mapping_id, payload, current_user=current_user)
+    return service.update_thresholds(
+        mapping_id, payload, current_user=current_user, db=db, request=request
+    )
