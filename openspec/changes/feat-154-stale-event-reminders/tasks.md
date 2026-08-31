@@ -33,30 +33,30 @@ Chain strategy: feature-branch-chain
 
 ## Phase 1: Backend Foundation (PR1)
 
-- [ ] 1.1 **[PR1][WU1]** Create `backend/services/stale_event_reminders.py` — frozen dataclasses `StaleEventRecommendation`/`StaleEventDetection`, `to_dict`/`from_mapping`, `RECOMMENDATION_SCHEMA_VERSION = "stale-event-reminder-recommendation.v1"`, `_open_read_session`/`_execute_read_query` mirroring `legacy_event_discriminator_audit.py`.
-- [ ] 1.2 **[PR1][WU1][RED-first]** RED: `backend/tests/test_stale_event_reminders.py` asserts `RECOMMENDATION_SCHEMA_VERSION` constant + `from_mapping` round-trip; `cd backend && pytest -k scaffold` (red → green).
+- [x] 1.1 **[PR1][WU1]** Create `backend/services/stale_event_reminders.py` — frozen dataclasses `StaleEventRecommendation`/`StaleEventDetection`, `to_dict`/`from_mapping`, `RECOMMENDATION_SCHEMA_VERSION = "stale-event-reminder-recommendation.v1"`, `_open_read_session`/`_execute_read_query` mirroring `legacy_event_discriminator_audit.py`.
+- [x] 1.2 **[PR1][WU1][RED-first]** RED: `backend/tests/test_stale_event_reminders.py` asserts `RECOMMENDATION_SCHEMA_VERSION` constant + `from_mapping` round-trip; `cd backend && pytest -k scaffold` (red → green).
 
 ## Phase 2: Detection Cypher + Config (PR1)
 
-- [ ] 2.1 **[PR1][WU2]** Implement `READ_ONLY_DETECTION_QUERY` — `OPTIONAL MATCH` on `:HAS_EVENT`/`:TRIGGERED_BY`, `LIMIT $limit`, three `reason_code` branches (`link_missing`/`older_than_threshold`/`no_refresh_in_window`); filter `(status IN ['OPEN','ACK'] AND event_type='COLLECTION_FAILURE' AND failure_family='SNMP_NO_RESPONSE')`.
-- [ ] 2.2 **[PR1][WU2][RED-first]** RED: limit clamps (`limit=0`/`limit>500` → 422); Cypher contains no `MERGE`/`SET`/`DELETE`/`CREATE` (threat: scan size + accidental mutation).
-- [ ] 2.3 **[PR1][WU3]** Add `StaleEventReminderSettings(BaseModel)` + `from_env` + `_stale_event_reminder_settings` + `get_stale_event_reminder_settings()` to `backend/config.py` after `EventPruneSettings`; defaults `enabled=True`, `age_hours=24`, `refresh_window_hours=6`, `snooze_ttl_hours=24`.
-- [ ] 2.4 **[PR1][WU3]** Document `STALE_EVENT_REMINDER_*` envs in `.env.example` after prune settings.
-- [ ] 2.5 **[PR1][WU3][RED-first]** RED: `from_env` reads overrides; defaults applied when env absent.
+- [x] 2.1 **[PR1][WU2]** Implement `READ_ONLY_DETECTION_QUERY` — `OPTIONAL MATCH` on `:HAS_EVENT`/`:TRIGGERED_BY`, `LIMIT $limit`, three `reason_code` branches (`link_missing`/`older_than_threshold`/`no_refresh_in_window`); filter `(status IN ['OPEN','ACK'] AND event_type='COLLECTION_FAILURE' AND failure_family='SNMP_NO_RESPONSE')`.
+- [x] 2.2 **[PR1][WU2][RED-first]** RED: limit clamps (`limit=0`/`limit>500` → 422); Cypher contains no `MERGE`/`SET`/`DELETE`/`CREATE` (threat: scan size + accidental mutation).
+- [x] 2.3 **[PR1][WU3]** Add `StaleEventReminderSettings(BaseModel)` + `from_env` + `_stale_event_reminder_settings` + `get_stale_event_reminder_settings()` to `backend/config.py` after `EventPruneSettings`; defaults `enabled=True`, `age_hours=24`, `refresh_window_hours=6`, `snooze_ttl_hours=24`.
+- [x] 2.4 **[PR1][WU3]** Document `STALE_EVENT_REMINDER_*` envs in `.env.example` after prune settings.
+- [x] 2.5 **[PR1][WU3][RED-first]** RED: `from_env` reads overrides; defaults applied when env absent.
 
 ## Phase 3: Router + Quick Actions + Audit (PR1)
 
-- [ ] 3.1 **[PR1][WU4]** Create `backend/routers/event_recommendations.py` — `APIRouter(prefix="/events/recommendations")`, `GET ""` (gated `EVENT_VIEW`) returns schema-versioned JSON; kill-switch → `{"rows": []}`.
-- [ ] 3.2 **[PR1][WU4]** Register router in `backend/main.py` (`app.include_router(event_recommendations.router, prefix="/api")`).
-- [ ] 3.3 **[PR1][WU4][RED-first]** RED: GET 403 without `EVENT_VIEW`; kill-switch off returns empty rows.
-- [ ] 3.4 **[PR1][WU5]** Add three POST `/dismiss`/`/snooze`/`/escalate` calling `audit_service.record_critical_change()` with `event_type` ∈ {`STALE_EVENT_REMINDER_DISMISS`,`STALE_EVENT_REMINDER_SNOOZE`,`STALE_EVENT_REMINDER_ESCALATE`}; kill-switch off → 503 BEFORE audit emission.
-- [ ] 3.5 **[PR1][WU5]** Extend `AUDIT_CONTEXT_ALLOWED_KEYS` in `backend/services/audit_service.py` with `"event_id"`, `"reason_code"`, `"snooze_until"` (threat: snooze-TTL bypass + sensitive-context leak).
-- [ ] 3.6 **[PR1][WU5][RED-first]** RED: snooze ignores request-body `snooze_until` (threat: snooze-TTL bypass); `snooze_until == now + settings.snooze_ttl_hours`; no `Event` mutation; audit context contains only allow-listed keys, never `token`/`cookie`/`authorization`/`body`.
+- [x] 3.1 **[PR1][WU4]** Create `backend/routers/event_recommendations.py` — `APIRouter(prefix="/events/recommendations")`, `GET ""` (gated `EVENT_VIEW`) returns schema-versioned JSON; kill-switch → `{"rows": []}`.
+- [x] 3.2 **[PR1][WU4]** Register router in `backend/main.py` (`app.include_router(event_recommendations.router, prefix="/api")`).
+- [x] 3.3 **[PR1][WU4][RED-first]** RED: GET 403 without `EVENT_VIEW`; kill-switch off returns empty rows.
+- [x] 3.4 **[PR1][WU5]** Add three POST `/dismiss`/`/snooze`/`/escalate` calling `audit_service.record_critical_change()` with `event_type` ∈ {`STALE_EVENT_REMINDER_DISMISS`,`STALE_EVENT_REMINDER_SNOOZE`,`STALE_EVENT_REMINDER_ESCALATE`}; kill-switch off → 503 BEFORE audit emission.
+- [x] 3.5 **[PR1][WU5]** Extend `AUDIT_CONTEXT_ALLOWED_KEYS` in `backend/services/audit_service.py` with `"event_id"`, `"reason_code"`, `"snooze_until"` (threat: snooze-TTL bypass + sensitive-context leak).
+- [x] 3.6 **[PR1][WU5][RED-first]** RED: snooze ignores request-body `snooze_until` (threat: snooze-TTL bypass); `snooze_until == now + settings.snooze_ttl_hours`; no `Event` mutation; audit context contains only allow-listed keys, never `token`/`cookie`/`authorization`/`body`.
 
 ## Phase 4: Backend Test Suite (PR1)
 
-- [ ] 4.1 **[PR1][WU6]** Extend `backend/tests/test_audit_router.py` — dismiss/snooze/escalate audit rows include new context keys; kill-switch off returns 503 and writes no audit row (spec: audit-logging delta).
-- [ ] 4.2 **[PR1][WU6]** Final backend: `cd backend && pytest backend/tests/test_stale_event_reminders.py backend/tests/test_audit_router.py` green.
+- [x] 4.1 **[PR1][WU6]** Extend `backend/tests/test_audit_router.py` — dismiss/snooze/escalate audit rows include new context keys; kill-switch off returns 503 and writes no audit row (spec: audit-logging delta).
+- [x] 4.2 **[PR1][WU6]** Final backend: `cd backend && pytest backend/tests/test_stale_event_reminders.py backend/tests/test_audit_router.py` green.
 
 ## Phase 5: Frontend Scaffold (PR2)
 

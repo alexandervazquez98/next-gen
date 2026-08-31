@@ -343,6 +343,141 @@ class EventPruneSettings(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stale Event Reminder Settings (Issue #154)
+# ---------------------------------------------------------------------------
+
+
+# Default values for StaleEventReminderSettings — mirror
+# openspec/changes/feat-154-stale-event-reminders/specs/stale-event-reminders/spec.md
+# "Configuration and kill-switch" requirement: 24h age threshold, 6h refresh
+# window, 24h snooze TTL. Kill-switch defaults to True so the surface is
+# active by default; operators can disable in-prod without a code redeploy.
+STALE_EVENT_REMINDER_DEFAULT_AGE_HOURS = 24
+STALE_EVENT_REMINDER_DEFAULT_REFRESH_WINDOW_HOURS = 6
+STALE_EVENT_REMINDER_DEFAULT_SNOOZE_TTL_HOURS = 24
+STALE_EVENT_REMINDER_MIN_HOURS = 1
+STALE_EVENT_REMINDER_MAX_HOURS = 24 * 30  # 30 days upper guard
+
+
+class StaleEventReminderSettings(BaseModel):
+    """Runtime settings for the stale-event reminder advisory surface (Issue #154).
+
+    Driven by environment variables; the router in
+    ``backend/routers/event_recommendations.py`` reads these on every
+    request (no module-level cache in the router) so toggles take effect
+    immediately on the next process restart.
+
+    Fields
+    ------
+    enabled:
+        Kill-switch. Defaults to True. ``STALE_EVENT_REMINDER_ENABLED=false``
+        returns an empty recommendations list and short-circuits quick
+        actions with 503 — mirrors ``EventPruneSettings.enabled`` semantics.
+    age_hours:
+        Age threshold in hours. An OPEN/ACK event whose
+        ``(now - coalesce(last_seen, created_at))`` exceeds this value
+        carries ``reason_code = older_than_threshold``.
+    refresh_window_hours:
+        Window in hours. When ``last_seen`` is older than this, the event
+        carries ``reason_code = no_refresh_in_window``.
+    snooze_ttl_hours:
+        TTL recorded in audit context only when an operator triggers the
+        ``snooze`` quick action. Never read from request body; in-memory
+        only for this first slice (no Event property is set).
+    """
+
+    enabled: bool = True
+    age_hours: int = Field(
+        default=STALE_EVENT_REMINDER_DEFAULT_AGE_HOURS,
+        ge=STALE_EVENT_REMINDER_MIN_HOURS,
+        le=STALE_EVENT_REMINDER_MAX_HOURS,
+    )
+    refresh_window_hours: int = Field(
+        default=STALE_EVENT_REMINDER_DEFAULT_REFRESH_WINDOW_HOURS,
+        ge=STALE_EVENT_REMINDER_MIN_HOURS,
+        le=STALE_EVENT_REMINDER_MAX_HOURS,
+    )
+    snooze_ttl_hours: int = Field(
+        default=STALE_EVENT_REMINDER_DEFAULT_SNOOZE_TTL_HOURS,
+        ge=STALE_EVENT_REMINDER_MIN_HOURS,
+        le=STALE_EVENT_REMINDER_MAX_HOURS,
+    )
+
+    @classmethod
+    def from_env(cls) -> StaleEventReminderSettings:
+        """Load stale-event reminder settings from environment variables.
+
+        Invalid values fall back to defaults without raising — mirrors
+        ``EventPruneSettings.from_env()`` and ``_parse_system_status_*``
+        in ``main.py``. An invalid bool falls back to True (safe default)
+        so the surface stays active unless the operator explicitly opted
+        out.
+        """
+
+        def _int(name: str, default: int) -> int:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            try:
+                value = int(raw.strip())
+            except ValueError:
+                return default
+            if value < STALE_EVENT_REMINDER_MIN_HOURS:
+                return default
+            if value > STALE_EVENT_REMINDER_MAX_HOURS:
+                return default
+            return value
+
+        enabled_raw = os.getenv("STALE_EVENT_REMINDER_ENABLED")
+        if enabled_raw is None:
+            enabled = True
+        else:
+            normalized = enabled_raw.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                enabled = True
+            elif normalized in {"0", "false", "no", "off"}:
+                enabled = False
+            else:
+                # Invalid input falls back to the safe default (active).
+                enabled = True
+
+        try:
+            return cls(
+                enabled=enabled,
+                age_hours=_int(
+                    "STALE_EVENT_REMINDER_AGE_HOURS",
+                    STALE_EVENT_REMINDER_DEFAULT_AGE_HOURS,
+                ),
+                refresh_window_hours=_int(
+                    "STALE_EVENT_REMINDER_REFRESH_WINDOW_HOURS",
+                    STALE_EVENT_REMINDER_DEFAULT_REFRESH_WINDOW_HOURS,
+                ),
+                snooze_ttl_hours=_int(
+                    "STALE_EVENT_REMINDER_SNOOZE_TTL_HOURS",
+                    STALE_EVENT_REMINDER_DEFAULT_SNOOZE_TTL_HOURS,
+                ),
+            )
+        except Exception:
+            return cls()
+
+
+_stale_event_reminder_settings: StaleEventReminderSettings | None = None
+
+
+def get_stale_event_reminder_settings() -> StaleEventReminderSettings:
+    """Return cached stale-event reminder settings (singleton).
+
+    Mirrors ``get_event_prune_settings`` shape; tests that need fresh
+    env-var reads can call ``StaleEventReminderSettings.from_env()``
+    directly.
+    """
+    global _stale_event_reminder_settings
+    if _stale_event_reminder_settings is None:
+        _stale_event_reminder_settings = StaleEventReminderSettings.from_env()
+    return _stale_event_reminder_settings
+
+
+# ---------------------------------------------------------------------------
 # MQTT Settings
 # ---------------------------------------------------------------------------
 

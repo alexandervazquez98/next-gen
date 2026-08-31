@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 from models.audit_event import AuditEvent
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,15 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
     "policy_profile",
     "throttle_seconds",
     "activity_anchor",
+    # PR1 #154 — stale event review reminders quick-action context. The
+    # three keys below are appended to the allow-list so the audit rows
+    # emitted by `routers/event_recommendations.py` (event_id, reason_code,
+    # snooze_until) survive `sanitize_context` without leaking tokens,
+    # cookies, authorization headers, or raw request bodies. They are
+    # additive: existing call sites continue to use their existing key set.
+    "event_id",
+    "reason_code",
+    "snooze_until",
 }
 
 SENSITIVE_CONTEXT_KEYS = {
@@ -50,13 +58,13 @@ _MAX_CONTEXT_VALUE_LENGTH = 256
 
 
 def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _truncate(value: Any, max_length: int) -> str | None:
@@ -267,7 +275,7 @@ def cleanup_old_events(
 ) -> int:
     """Delete audit events strictly older than the retention window."""
 
-    reference = _as_naive_utc(now or datetime.now(timezone.utc))
+    reference = _as_naive_utc(now or datetime.now(UTC))
     cutoff = reference - timedelta(days=retention_days)
     stale_query = db.query(AuditEvent).filter(AuditEvent.created_at < cutoff)
     deleted = stale_query.delete(synchronize_session=False)
