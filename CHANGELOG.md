@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MQTT audit trail for mapping lifecycle changes (#386, PR #449)**: every mutation to an MQTT mapping (create / edit / approve / revoke / threshold change) now emits an audit event persisted to the existing audit surface. `AUDIT_CONTEXT_ALLOWED_KEYS` in `backend/services/audit_service.py` extended with 8 mapping keys (mapping id, source device/metric, target CI/MetricDef, thresholds, changed_fields, before/after values) so operator actions are reconstructible post-hoc. New `_enforce_manage_with_audit` denial helper emits the audit row even on authorization failures. Operator-facing denial paths are also audited. 45 tests cover the full lifecycle (`test_audit_router.py`, `test_audit_service.py`, `test_mqtt_mapping_service.py`).
+- **MQTT frontend monitoring UX foundation — PR1 of feature-branch-chain (#385, PR #450 → tracker `feat/mqtt-385-frontend-ux`)**: new `/monitoring/mqtt` route surfaces bridge status and raw MQTT telemetry for operators with `MQTT_READ`. Foundation slice ships the route, permission gates, raw browse tab, bridge-status tab, and a `RawNonKpiBadge` that prevents raw MQTT from ever rendering as a KPI. Mapping lifecycle management UI (create/edit/approve/revoke/thresholds) is deferred to PR2, which will merge the tracker to `main` and close #385.
+- **Stale event review reminders backend — PR1 of feature-branch-chain (#154, PR #451 → tracker `feat/154-stale-event-reminders`)**: events are never silently auto-closed, but forgotten OPEN/ACK events age indefinitely without visibility. This slice adds a schema-versioned, read-only detection surface plus quick-action endpoints (ack / assign / add-note) that PR2's frontend will consume. Detection uses a dedicated Neo4j read session with `default_access_mode=READ_ACCESS` (see `_NEO4J_READ_ACCESS` capture in `backend/services/stale_event_reminders.py`). 34 backend tests cover detection cypher, action endpoints, and edge cases.
+
+## [1.16.0] — 2026-08-30
+
+### Added
+
 - **Service Management Catalog & Ticket evolution (#401, chain PRs #408/#412/#422/#446/#447)**:
   - **Backend (chain-merged to `feat/service-management-catalog-pr1` then to tracker)**:
     - Server-generated numeric ticket IDs (`TicketFolioCreate.ticket_id` rejected on create).
