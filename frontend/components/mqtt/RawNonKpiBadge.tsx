@@ -38,9 +38,8 @@ const RawNonKpiBadge: React.FC<RawNonKpiBadgeProps> = ({
   // classification falls back to the canonical `RAW_MQTT_NON_KPI` constant,
   // and any missing/null `kpi_eligible` falls back to `false`. We never
   // collapse the badge to null — the row must ALWAYS show non-KPI.
-  const label = classification && classification.trim().length > 0
-    ? classification
-    : RAW_MQTT_NON_KPI;
+  const label =
+    classification && classification.trim().length > 0 ? classification : RAW_MQTT_NON_KPI;
   const eligible = kpiEligible === true;
 
   return (

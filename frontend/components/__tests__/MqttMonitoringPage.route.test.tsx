@@ -72,7 +72,9 @@ vi.mock("../../components/AdminPage", () => ({ default: () => <div>Administratio
 vi.mock("../../components/MonitoringConsole", () => ({ default: () => <div>Monitoring</div> }));
 vi.mock("../../components/SystemDashboard", () => ({ default: () => <div>System Dashboard</div> }));
 vi.mock("../../components/GlobalInventory", () => ({ default: () => <div>Inventory</div> }));
-vi.mock("../../components/ChangePasswordPage", () => ({ default: () => <div>Change Password</div> }));
+vi.mock("../../components/ChangePasswordPage", () => ({
+  default: () => <div>Change Password</div>,
+}));
 vi.mock("../../components/UserManager", () => ({ default: () => <div>User Manager</div> }));
 vi.mock("../../components/AuditLogPage", () => ({ default: () => <div>Audit Log</div> }));
 vi.mock("../../components/CIDetailModal", () => ({ default: () => <div>CI Detail Modal</div> }));
@@ -105,8 +107,7 @@ vi.mock("../../components/MqttMonitoringPage", () => ({
   default: () => {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     const auth = useAuth();
-    const allowed =
-      auth.hasPermission("MQTT_READ") || auth.hasPermission("ADMIN");
+    const allowed = auth.hasPermission("MQTT_READ") || auth.hasPermission("ADMIN");
     if (!allowed) {
       return <Navigate to="/" replace />;
     }
@@ -132,9 +133,7 @@ const setPermissions = (perms: string[], role = "USER") => {
     allowed_locations: [],
     tier: "T1",
   };
-  const hasPermission = vi.fn((perm: string) =>
-    role === "ADMIN" ? true : perms.includes(perm),
-  );
+  const hasPermission = vi.fn((perm: string) => (role === "ADMIN" ? true : perms.includes(perm)));
   authState.hasPermission = hasPermission;
 };
 

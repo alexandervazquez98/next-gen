@@ -23,10 +23,7 @@ import {
   useMqttReadingsQuery,
 } from "../../hooks/queries/useMqttQueries";
 import RawNonKpiBadge, { RAW_MQTT_NON_KPI } from "./RawNonKpiBadge";
-import type {
-  MqttRawDeviceResponse,
-  MqttRawMetricResponse,
-} from "../../types";
+import type { MqttRawDeviceResponse, MqttRawMetricResponse } from "../../types";
 
 const formatLastSeen = (value?: string | null) => {
   if (!value) return "never";
@@ -91,12 +88,8 @@ const DeviceRow: React.FC<{ device: MqttRawDeviceResponse }> = ({ device }) => {
 
       {open && (
         <div className="border-t border-white/5 px-5 py-4 bg-surface-900">
-          {metricsQuery.isLoading && (
-            <p className="text-xs text-neutral-500">Loading metrics…</p>
-          )}
-          {metricsQuery.error && (
-            <p className="text-xs text-red-400">Failed to load metrics.</p>
-          )}
+          {metricsQuery.isLoading && <p className="text-xs text-neutral-500">Loading metrics…</p>}
+          {metricsQuery.error && <p className="text-xs text-red-400">Failed to load metrics.</p>}
           {metricsQuery.data && metricsQuery.data.length === 0 && (
             <p className="text-xs text-neutral-500">No metrics for this device.</p>
           )}
@@ -114,14 +107,16 @@ const DeviceRow: React.FC<{ device: MqttRawDeviceResponse }> = ({ device }) => {
               <tbody>
                 {metricsQuery.data.map((metric) => (
                   <tr key={metric.metric_id} className="border-t border-white/5">
-                    <td className="py-2 pr-3 font-bold text-white">{metric.name ?? metric.metric_id}</td>
+                    <td className="py-2 pr-3 font-bold text-white">
+                      {metric.name ?? metric.metric_id}
+                    </td>
                     <td className="py-2 pr-3 font-mono text-neutral-200">
                       {formatLastValue(metric.last_value)}
-                      {metric.unit ? <span className="text-neutral-500 ml-1">{metric.unit}</span> : null}
+                      {metric.unit ? (
+                        <span className="text-neutral-500 ml-1">{metric.unit}</span>
+                      ) : null}
                     </td>
-                    <td className="py-2 pr-3 text-neutral-400">
-                      {formatLastSeen(metric.last_ts)}
-                    </td>
+                    <td className="py-2 pr-3 text-neutral-400">{formatLastSeen(metric.last_ts)}</td>
                     <td className="py-2 pr-3 text-neutral-300">
                       {metric.mapping_status ?? "UNMAPPED"}
                     </td>
@@ -179,13 +174,13 @@ const LatestReadingsPanel: React.FC = () => {
               data-testid="mqtt-reading-row"
               className="flex flex-wrap items-center gap-3 text-xs text-neutral-200 border border-white/5 rounded-lg p-3 bg-surface-900"
             >
-              <span className="font-mono text-[10px] text-neutral-500">
-                {reading.device_id}
-              </span>
+              <span className="font-mono text-[10px] text-neutral-500">{reading.device_id}</span>
               <span className="font-bold">{reading.name ?? reading.metric_id}</span>
               <span className="font-mono">
                 {formatLastValue(reading.last_value)}
-                {reading.unit ? <span className="text-neutral-500 ml-1">{reading.unit}</span> : null}
+                {reading.unit ? (
+                  <span className="text-neutral-500 ml-1">{reading.unit}</span>
+                ) : null}
               </span>
               <span className="text-neutral-500">{formatLastSeen(reading.last_ts)}</span>
               <span className="ml-auto">
@@ -219,12 +214,8 @@ const MqttRawReadingsTab: React.FC = () => {
           </span>
         </header>
 
-        {devicesQuery.isLoading && (
-          <p className="text-xs text-neutral-500">Loading devices…</p>
-        )}
-        {devicesQuery.error && (
-          <p className="text-xs text-red-400">Failed to load devices.</p>
-        )}
+        {devicesQuery.isLoading && <p className="text-xs text-neutral-500">Loading devices…</p>}
+        {devicesQuery.error && <p className="text-xs text-red-400">Failed to load devices.</p>}
         {devicesQuery.data && devices.length === 0 && (
           <p
             data-testid="mqtt-devices-empty"

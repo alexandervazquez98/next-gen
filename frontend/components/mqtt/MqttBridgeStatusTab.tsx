@@ -78,11 +78,7 @@ const BranchHeader: React.FC<BranchHeaderProps> = ({ branch, reasonCode, lastErr
     );
   }
   return (
-    <div
-      data-testid="mqtt-bridge-branch"
-      data-branch="not-running"
-      className="flex flex-col gap-1"
-    >
+    <div data-testid="mqtt-bridge-branch" data-branch="not-running" className="flex flex-col gap-1">
       <div className="flex items-center gap-3">
         <span className="w-3 h-3 rounded-full bg-red-500" />
         <span className="text-xs font-black uppercase tracking-widest text-red-300">
@@ -97,13 +93,9 @@ const BranchHeader: React.FC<BranchHeaderProps> = ({ branch, reasonCode, lastErr
       {reasonCode && (
         <p className="text-[10px] font-mono text-neutral-400">reason_code: {reasonCode}</p>
       )}
-      {lastError && (
-        <p className="text-[10px] font-mono text-red-300">last_error: {lastError}</p>
-      )}
+      {lastError && <p className="text-[10px] font-mono text-red-300">last_error: {lastError}</p>}
       {!reasonCode && !lastError && (
-        <p className="text-[10px] text-neutral-500">
-          See the runbook for diagnostics.
-        </p>
+        <p className="text-[10px] text-neutral-500">See the runbook for diagnostics.</p>
       )}
     </div>
   );
@@ -114,9 +106,7 @@ const CounterTile: React.FC<{ label: string; value: number | undefined }> = ({ l
     <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
       {label}
     </span>
-    <span className="text-2xl font-black text-white tracking-tight tabular-nums">
-      {value ?? 0}
-    </span>
+    <span className="text-2xl font-black text-white tracking-tight tabular-nums">{value ?? 0}</span>
   </div>
 );
 
@@ -146,9 +136,7 @@ const MqttBridgeStatusTab: React.FC = () => {
         {statusQuery.isLoading && (
           <p className="text-xs text-neutral-500">Loading bridge status…</p>
         )}
-        {statusQuery.error && (
-          <p className="text-xs text-red-400">Failed to load bridge status.</p>
-        )}
+        {statusQuery.error && <p className="text-xs text-red-400">Failed to load bridge status.</p>}
 
         {status && (
           <>
@@ -191,10 +179,7 @@ const MqttBridgeStatusTab: React.FC = () => {
                 <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500 mb-2">
                   Subscribed patterns
                 </p>
-                <ul
-                  data-testid="mqtt-subscribed-patterns"
-                  className="flex flex-wrap gap-2"
-                >
+                <ul data-testid="mqtt-subscribed-patterns" className="flex flex-wrap gap-2">
                   {status.subscribed_patterns.map((pattern) => (
                     <li
                       key={pattern}
@@ -210,10 +195,7 @@ const MqttBridgeStatusTab: React.FC = () => {
         )}
       </section>
 
-      <section
-        data-testid="mqtt-bridge-counters"
-        className="grid grid-cols-1 md:grid-cols-3 gap-4"
-      >
+      <section data-testid="mqtt-bridge-counters" className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <CounterTile label="Mapped writes" value={status?.mapped_writes_total} />
         <CounterTile label="Unmapped skips" value={status?.unmapped_skips_total} />
         <CounterTile label="Failed writes" value={status?.failed_writes_total} />

@@ -34,9 +34,7 @@ import type {
 const MQTT_READINGS_REFETCH_MS = 5_000;
 const MQTT_STATUS_REFETCH_MS = 5_000;
 
-export const useMqttDevicesQuery = (
-  options?: Partial<UseQueryOptions<MqttRawDeviceResponse[]>>,
-) =>
+export const useMqttDevicesQuery = (options?: Partial<UseQueryOptions<MqttRawDeviceResponse[]>>) =>
   useQuery({
     queryKey: queryKeys.mqttDevices(),
     queryFn: ({ signal }) => fetchMqttDevices({ signal }),

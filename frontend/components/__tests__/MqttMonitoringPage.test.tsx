@@ -24,11 +24,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter } from "react-router-dom";
 import MqttMonitoringPage from "../MqttMonitoringPage";
-import type {
-  MqttRawDeviceResponse,
-  MqttRawMetricResponse,
-  MqttRuntimeStatus,
-} from "../../types";
+import type { MqttRawDeviceResponse, MqttRawMetricResponse, MqttRuntimeStatus } from "../../types";
 
 // ---------------------------------------------------------------------------
 // Hook mocks — return stable, hand-rolled fixtures so the tests assert

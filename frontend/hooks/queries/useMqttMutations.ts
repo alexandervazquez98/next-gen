@@ -34,10 +34,7 @@ const MISSING_PERMISSION_MESSAGE = "Permission denied: MQTT_MAPPING_MANAGE";
 
 type InvalidateKind = "approve" | "revoke" | "mapping" | "threshold";
 
-const invalidateMqttCaches = async (
-  queryClient: QueryClient,
-  kind: InvalidateKind,
-) => {
+const invalidateMqttCaches = async (queryClient: QueryClient, kind: InvalidateKind) => {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["mqtt", "mappings"] }),
     queryClient.invalidateQueries({ queryKey: ["mqtt", "mappings", undefined, "thresholds"] }),

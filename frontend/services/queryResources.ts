@@ -365,20 +365,16 @@ export const fetchMqttDeviceMetrics = (
   deviceId: string,
   { signal }: { signal?: AbortSignal } = {},
 ) =>
-  api.get<MqttRawMetricResponse[]>(
-    `/mqtt/devices/${encodeURIComponent(deviceId)}/metrics`,
-    { signal },
-  );
+  api.get<MqttRawMetricResponse[]>(`/mqtt/devices/${encodeURIComponent(deviceId)}/metrics`, {
+    signal,
+  });
 
 export interface FetchMqttReadingsOptions {
   limit?: number;
   signal?: AbortSignal;
 }
 
-export const fetchMqttReadings = ({
-  limit = 100,
-  signal,
-}: FetchMqttReadingsOptions = {}) => {
+export const fetchMqttReadings = ({ limit = 100, signal }: FetchMqttReadingsOptions = {}) => {
   const params = new URLSearchParams({ limit: String(limit) });
   return api.get<MqttRawMetricResponse[]>(`/mqtt/readings?${params.toString()}`, {
     signal,
@@ -406,10 +402,9 @@ export const fetchMqttMappingThresholds = (
   mappingId: string,
   { signal }: { signal?: AbortSignal } = {},
 ) =>
-  api.get<MqttMappingThresholds>(
-    `/mqtt/mappings/${encodeURIComponent(mappingId)}/thresholds`,
-    { signal },
-  );
+  api.get<MqttMappingThresholds>(`/mqtt/mappings/${encodeURIComponent(mappingId)}/thresholds`, {
+    signal,
+  });
 
 export interface MqttMappingCreatePayload {
   source_device_id: string;
@@ -435,31 +430,16 @@ export interface MqttMappingUpdatePayload {
  * responsible for re-fetching the latest mapping record before opening the
  * edit sheet so partial-edit overwrite is prevented by construction.
  */
-export const updateMqttMapping = (
-  mappingId: string,
-  payload: MqttMappingUpdatePayload,
-) =>
-  api.put<MqttMappingResponse>(
-    `/mqtt/mappings/${encodeURIComponent(mappingId)}`,
-    payload,
-  );
+export const updateMqttMapping = (mappingId: string, payload: MqttMappingUpdatePayload) =>
+  api.put<MqttMappingResponse>(`/mqtt/mappings/${encodeURIComponent(mappingId)}`, payload);
 
 export const approveMqttMapping = (mappingId: string) =>
-  api.post<MqttMappingResponse>(
-    `/mqtt/mappings/${encodeURIComponent(mappingId)}/approve`,
-    {},
-  );
+  api.post<MqttMappingResponse>(`/mqtt/mappings/${encodeURIComponent(mappingId)}/approve`, {});
 
 export const revokeMqttMapping = (mappingId: string) =>
-  api.post<MqttMappingResponse>(
-    `/mqtt/mappings/${encodeURIComponent(mappingId)}/revoke`,
-    {},
-  );
+  api.post<MqttMappingResponse>(`/mqtt/mappings/${encodeURIComponent(mappingId)}/revoke`, {});
 
-export const updateMqttMappingThresholds = (
-  mappingId: string,
-  payload: MqttMappingThresholds,
-) =>
+export const updateMqttMappingThresholds = (mappingId: string, payload: MqttMappingThresholds) =>
   api.put<MqttMappingResponse>(
     `/mqtt/mappings/${encodeURIComponent(mappingId)}/thresholds`,
     payload,

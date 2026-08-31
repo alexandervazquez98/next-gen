@@ -18,12 +18,7 @@ import RawNonKpiBadge, { RAW_MQTT_NON_KPI } from "./RawNonKpiBadge";
 
 describe("RawNonKpiBadge — always-visible badge contract (PR1)", () => {
   it("renders the API-supplied classification verbatim", () => {
-    render(
-      <RawNonKpiBadge
-        classification="RAW_MQTT_NON_KPI"
-        kpiEligible={false}
-      />,
-    );
+    render(<RawNonKpiBadge classification="RAW_MQTT_NON_KPI" kpiEligible={false} />);
     const badge = screen.getByTestId("raw-non-kpi-badge");
     expect(badge).toHaveAttribute("data-classification", "RAW_MQTT_NON_KPI");
     expect(badge).toHaveAttribute("data-kpi-eligible", "false");
