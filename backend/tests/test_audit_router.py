@@ -25,9 +25,9 @@ def audit_db():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-    db = TestingSessionLocal()
+    db = testing_session_local()
     try:
         yield db
     finally:
@@ -153,13 +153,11 @@ def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
 
 def test_audit_events_paginates_and_supports_ascending_sort(audit_db):
     base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
-    first = _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
+    _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
     second = _add_event(
         audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1)
     )
-    third = _add_event(
-        audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2)
-    )
+    _add_event(audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2))
     _set_current_user(_user(permissions=[UserPermission.AUDIT_VIEW]))
 
     response = client.get(

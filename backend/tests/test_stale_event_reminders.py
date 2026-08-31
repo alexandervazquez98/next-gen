@@ -556,9 +556,9 @@ class TestKillSwitchOff:
                 connect_args={"check_same_thread": False},
                 poolclass=StaticPool,
             )
-            TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
             Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-            db = TestingSessionLocal()
+            db = testing_session_local()
             try:
 
                 def _override_pg():
@@ -615,9 +615,9 @@ class TestEventViewPermission:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSessionLocal()
+        db = testing_session_local()
         try:
 
             def _override_pg():
@@ -668,9 +668,9 @@ class TestQuickActionAuditEmission:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSessionLocal()
+        db = testing_session_local()
         try:
 
             def _override_pg():
@@ -734,9 +734,9 @@ class TestQuickActionAuditEmission:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSessionLocal()
+        db = testing_session_local()
         try:
 
             def _override_pg():
@@ -815,9 +815,9 @@ class TestQuickActionAuditEmission:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-        db = TestingSessionLocal()
+        db = testing_session_local()
         try:
 
             def _override_pg():
