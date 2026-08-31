@@ -1,18 +1,17 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
-from postgres_db import Base
 from models.audit_event import AuditEvent
+from postgres_db import Base
 from services.audit_service import (
     AUDIT_CONTEXT_ALLOWED_KEYS,
     cleanup_old_events,
     record_auth_event,
     record_critical_change,
 )
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture()
@@ -22,9 +21,9 @@ def audit_db():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-    db = TestingSessionLocal()
+    db = testing_session_local()
     try:
         yield db
     finally:
@@ -101,9 +100,7 @@ PR1_SESSION_LIFECYCLE_KEYS = {
 def test_pr1_session_lifecycle_keys_are_allow_listed():
     """PR1 session lifecycle keys must be in AUDIT_CONTEXT_ALLOWED_KEYS."""
     missing = PR1_SESSION_LIFECYCLE_KEYS - AUDIT_CONTEXT_ALLOWED_KEYS
-    assert not missing, (
-        f"AUDIT_CONTEXT_ALLOWED_KEYS missing PR1 session lifecycle keys: {missing}"
-    )
+    assert not missing, f"AUDIT_CONTEXT_ALLOWED_KEYS missing PR1 session lifecycle keys: {missing}"
 
 
 def test_record_auth_event_persists_pr1_session_lifecycle_context(audit_db):
@@ -346,7 +343,7 @@ def test_mapping_context_drops_unknown_keys_and_caps_value_length(audit_db):
 
 
 def test_cleanup_old_events_deletes_strictly_older_than_90_days(audit_db):
-    now = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     old_event = AuditEvent(
         event_type="LOGIN_FAILURE",
         outcome="FAILURE",

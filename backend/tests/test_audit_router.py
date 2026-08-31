@@ -1,16 +1,15 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from models.audit_event import AuditEvent
+from models.user import User, UserPermission
+from postgres_db import Base, get_pg_db
+from services.auth_service import get_current_active_user
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from postgres_db import Base, get_pg_db
-from models.audit_event import AuditEvent
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
 
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
@@ -26,9 +25,9 @@ def audit_db():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine, tables=[AuditEvent.__table__])
-    db = TestingSessionLocal()
+    db = testing_session_local()
     try:
         yield db
     finally:
@@ -79,7 +78,7 @@ def test_audit_events_requires_audit_view_permission(audit_db):
         event_type="LOGIN_FAILURE",
         outcome="FAILURE",
         actor_username="alice",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     _set_current_user(_user(permissions=[UserPermission.EVENT_VIEW]))
 
@@ -90,7 +89,7 @@ def test_audit_events_requires_audit_view_permission(audit_db):
 
 
 def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
-    now = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     expected = _add_event(
         audit_db,
         event_type="LOGIN_FAILURE",
@@ -153,10 +152,12 @@ def test_audit_events_filters_and_sorts_for_audit_view_user(audit_db):
 
 
 def test_audit_events_paginates_and_supports_ascending_sort(audit_db):
-    base = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
-    first = _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
-    second = _add_event(audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1))
-    third = _add_event(audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2))
+    base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+    _add_event(audit_db, event_type="A", outcome="SUCCESS", created_at=base)
+    second = _add_event(
+        audit_db, event_type="B", outcome="SUCCESS", created_at=base + timedelta(minutes=1)
+    )
+    _add_event(audit_db, event_type="C", outcome="SUCCESS", created_at=base + timedelta(minutes=2))
     _set_current_user(_user(permissions=[UserPermission.AUDIT_VIEW]))
 
     response = client.get(
