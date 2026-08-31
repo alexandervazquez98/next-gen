@@ -97,7 +97,7 @@ done
 # Rollback block printed on every exit via the EXIT trap below. Failure
 # scripts reference this as the operator's recovery path. Do not edit
 # without re-reading docs/mqtt-monitoring.md "Operational smoke (#387)".
-# shellcheck disable=SC2329 # invoked indirectly via `trap rollback_message EXIT`
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via `trap rollback_message EXIT`
 rollback_message() {
     cat <<'ROLLBACK'
 
