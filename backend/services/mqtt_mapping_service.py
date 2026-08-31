@@ -116,7 +116,9 @@ def _has_mqtt_permission(kind: str, current_user: User) -> bool:
     """Return True when ``current_user`` satisfies any permission required for ``kind``."""
     required_permissions = _required_permissions_for_kind(kind)
 
-    return any(_user_has_permission(current_user, permission) for permission in required_permissions)
+    return any(
+        _user_has_permission(current_user, permission) for permission in required_permissions
+    )
 
 
 def require_mqtt_permission(kind: str, current_user: User) -> None:

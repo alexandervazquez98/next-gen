@@ -290,5 +290,7 @@ def test_mapping_mutations_thread_audit_session_and_request_into_service():
         "thresholds",
     }
     for action, captured in mapping_service.audit_kwargs.items():
-        assert isinstance(captured["db"], _FakeSession), f"{action} did not receive an audit session"
+        assert isinstance(
+            captured["db"], _FakeSession
+        ), f"{action} did not receive an audit session"
         assert isinstance(captured["request"], Request), f"{action} did not receive the request"

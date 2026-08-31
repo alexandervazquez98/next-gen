@@ -430,6 +430,7 @@ def test_emitted_context_contains_only_allow_listed_keys(event_type, invoke, aud
 
 def test_create_mapping_succeeds_when_audit_store_is_down(monkeypatch):
     """Spec: the mutation completes and a warning is logged when emission fails."""
+
     def _explode(**kwargs):
         raise RuntimeError("audit down")
 
@@ -445,6 +446,7 @@ def test_create_mapping_succeeds_when_audit_store_is_down(monkeypatch):
 
 def test_denied_action_still_raises_when_audit_store_is_down(monkeypatch):
     """A broken audit store must not turn a 403 into a 500."""
+
     def _explode(**kwargs):
         raise RuntimeError("audit down")
 
