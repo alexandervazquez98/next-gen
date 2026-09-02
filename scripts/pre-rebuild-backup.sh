@@ -139,6 +139,21 @@ printf 'Validated BACKUP_DIR: %s\n' "$backup_dir"
 require_running_service postgres
 
 printf 'Creating PostgreSQL dump: /backups/%s\n' "$postgres_file"
+# NOTE on expected warnings: TimescaleDB's `_timescaledb_catalog.hypertable`,
+# `_timescaledb_catalog.chunk`, and `_timescaledb_catalog.continuous_agg`
+# tables form circular foreign-key relationships by design. `pg_dump` is
+# conservative and emits:
+#   pg_dump: warning: there are circular foreign-key constraints on this table
+#   pg_dump: detail: hypertable / chunk / continuous_agg
+# on every dump against a Timescale-backed database. The dumps are
+# correct, restorable, and unaffected by this artefact. The
+# `--disable-triggers` hint in the warning only applies to a schema-only
+# restore on an empty database; the standard data+schema restore used
+# here is untouched. If you need to silence these warnings in operator
+# logs, pipe the dump's stderr through `2>&1 | grep -v 'circular
+# foreign-key constraints on this table'` or wrap the pg_dump call
+# accordingly; do NOT suppress them globally — they are the only signal
+# that proves pg_dump read the schema successfully. See issue #453.
 # shellcheck disable=SC2016
 compose exec -T postgres sh -c '
     set -eu
