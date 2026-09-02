@@ -2401,3 +2401,92 @@ def test_post_lm_studio_logs_missing_message(caplog):
         _post_lm_studio_chat_completion(payload, settings)
     assert "LM Studio response missing chat message" in caplog.text
     assert "lmstudio.local" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Issue #458 — Spanish verb stems / event-list phrasings in intent inference
+# ---------------------------------------------------------------------------
+
+
+def _previous_event_list_row(username: str = "operator"):
+    return type(
+        "Row",
+        (),
+        {
+            "username": username,
+            "user_message": "lista eventos activos",
+            "assistant_response": "Active events listed.",
+            "harness_result": {
+                "type": "event_list",
+                "events": [{"ci_name": "SWITCH A", "ci_id": "ci-a"}],
+            },
+        },
+    )()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "verificación de los switches",
+        "verificando los equipos",
+        "monitoreando la red",
+        "chequeando la conectividad",
+        "check the connectivity",
+    ],
+)
+def test_infer_followup_availability_recognizes_spanish_stems(query):
+    """Issue #458: new Spanish/English stems must trigger infer_followup_intent
+    when a prior event_list supplies ci_refs."""
+    from routers.ai import infer_followup_intent
+
+    db = _FakeHistoryDb([_previous_event_list_row()])
+
+    with patch("routers.ai.latest_event_list_ci_refs", return_value=["SWITCH A"]):
+        result = infer_followup_intent(query, db, "operator")
+
+    assert result is not None, f"Expected availability intent for query={query!r}"
+    assert result.type == "availability_check_batch"
+
+
+@pytest.mark.parametrize("query", ["tengo", "tenemos"])
+def test_infer_followup_availability_rejects_event_list_only_phrasings(query):
+    """Issue #458: tengo/tenemos alone (no availability verb) must not trigger
+    infer_followup_intent — they are event-list phrasings, not availability."""
+    from routers.ai import infer_followup_intent
+
+    db = _FakeHistoryDb([])
+
+    with patch("routers.ai.latest_event_list_ci_refs", return_value=[]):
+        result = infer_followup_intent(query, db, "operator")
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "tengo eventos críticos",
+        "tenemos alertas abiertas",
+        "cuáles son los eventos",
+        "cuales eventos tenemos",
+    ],
+)
+def test_infer_chat_intent_recognizes_event_list_phrasings(query):
+    """Issue #458: tengo/tenemos/cuáles combined with an event marker must
+    trigger the event-list chat intent."""
+    from routers.ai import infer_chat_intent
+
+    result = infer_chat_intent(query)
+
+    assert result is not None, f"Expected event-list intent for query={query!r}"
+    assert result.type in {"event_list", "active_events"}
+
+
+def test_infer_chat_intent_rejects_tengo_without_event_marker():
+    """Issue #458: tengo/tenemos alone (no event marker) must not trigger any
+    chat intent."""
+    from routers.ai import infer_chat_intent
+
+    result = infer_chat_intent("tengo una pregunta")
+
+    assert result is None
