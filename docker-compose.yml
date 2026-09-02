@@ -84,7 +84,7 @@ services:
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
       - DISABLE_BACKEND_COLLECTOR=true
-      - COOKIE_DOMAIN=${COOKIE_DOMAIN}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       # PR 5 E2E journey (frontend/test/e2e/service-management-pr5.spec.ts)
       # logs in as admin/admin against the freshly seeded smoke stack.
       # Without these, backend/seed_admin.py generates a random password
@@ -146,13 +146,13 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-nexgen_auth}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - POSTGRES_PORT=${POSTGRES_INTERNAL_PORT:-5432}
-      - MQTT_BROKER_URL=${MQTT_BROKER_URL}
-      - MQTT_USERNAME=${MQTT_USERNAME}
-      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_BROKER_URL=${MQTT_BROKER_URL:-}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
       - MQTT_CLIENT_ID=${MQTT_CLIENT_ID:-nexgen_subscriber}
       - MQTT_MAPPING_BRIDGE_ENABLED=${MQTT_MAPPING_BRIDGE_ENABLED:-true}
       - MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS=${MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS:-90}
-      - MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS=${MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS}
+      - MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS=${MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS:-}
       - ENABLE_MQTT_SUBSCRIBER=true
       - PYTHONPATH=/app
     restart: unless-stopped
