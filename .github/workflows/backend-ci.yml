@@ -22,20 +22,18 @@
 # CODECOV_TOKEN secret is provisioned; the artifact upload already captures
 # coverage.xml for local inspection.
 #
-# Chain strategy: PR2 targets `cicd/lint-dep-skeleton`. The path filter keeps
-# this lane silent on docs-only or frontend-only PRs to protect the
-# reviewer signal. See openspec/changes/ci-cd-pipeline/design.md.
+# Chain strategy: PR2 targets `cicd/lint-dep-skeleton`. The pull_request
+# trigger has NO `paths:` filter (see issue #452) because the workflow is a
+# GitHub required status check; a path-filtered trigger deadlocks every
+# docs-only / scripts-only / frontend-only PR. The backend-tests job gates
+# its heavy steps with the `tj-actions/changed-files` output instead, so
+# docs-only PRs still produce no pytest load while the required check
+# resolves to a satisfied state. See openspec/changes/ci-cd-pipeline/design.md.
 
 name: backend-ci
 
 on:
   pull_request:
-    paths:
-      - "backend/**"
-      - "backend/requirements.txt"
-      - "backend/requirements-dev.txt"
-      - "backend/pytest.ini"
-      - ".github/workflows/backend-ci.yml"
   push:
     branches:
       - main

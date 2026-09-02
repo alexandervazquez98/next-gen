@@ -11,10 +11,14 @@
 #                    `vitest list` collect to prove the workflow stays green
 #                    on PR + push to main + cicd/**.
 #
-# Chain strategy: PR3 targets `cicd/backend-ci`. The path filter keeps this
-# lane silent on docs-only or backend-only PRs to protect the reviewer
-# signal. ESLint + Prettier on changed files is handled by lint.yml — this
-# workflow is intentionally tests-only.
+# Chain strategy: PR3 targets `cicd/backend-ci`. The pull_request trigger
+# has NO `paths:` filter (see issue #452) because the workflow is a GitHub
+# required status check; a path-filtered trigger deadlocks every docs-only
+# / scripts-only / backend-only PR. The frontend-tests job gates its heavy
+# steps with the `tj-actions/changed-files` output instead, so docs-only
+# PRs still produce no vitest load while the required check resolves to a
+# satisfied state. ESLint + Prettier on changed files is handled by
+# lint.yml — this workflow is intentionally tests-only.
 #
 # Lockfile discipline (spec R5 scenario "Lockfile drift blocks CI"): the
 # install step uses `--frozen-lockfile` so a package.json / pnpm-lock.yaml
@@ -27,11 +31,6 @@ name: frontend-ci
 
 on:
   pull_request:
-    paths:
-      - "frontend/**"
-      - "frontend/package.json"
-      - "frontend/pnpm-lock.yaml"
-      - ".github/workflows/frontend-ci.yml"
   push:
     branches:
       - main

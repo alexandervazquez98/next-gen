@@ -40,28 +40,21 @@
 #
 # The compose wait loop is a real shell loop that calls `curl`; the
 # `set -euo pipefail` ensures partial waits fail loud.
+#
+# Chain strategy: PR5 targets `cicd/cd-prereqs`. The pull_request trigger
+# has NO `paths:` filter (see issue #452) because this workflow is a
+# GitHub required status check; a path-filtered trigger deadlocks every
+# workflows-only / docs-only / scripts-only PR. The smoke job gates every
+# heavy step with the `tj-actions/changed-files` output (pinned to the
+# same SHA as backend-ci / frontend-ci for CVE-2025-30022 mitigation),
+# so a PR that touches only `.github/workflows/*.yml` resolves the
+# required check to `success` without spending CI minutes on the full
+# compose stack + Playwright run.
 
 name: smoke
 
 on:
   pull_request:
-    paths:
-      - "docker-compose.yml"
-      - "docker-compose.prod.yml"
-      - "frontend/**"
-      - "frontend/Dockerfile"
-      - "frontend/Dockerfile.prod"
-      - "frontend/nginx.conf"
-      - "frontend/playwright.config.ts"
-      - "frontend/test/e2e/**"
-      - "frontend/package.json"
-      - "frontend/pnpm-lock.yaml"
-      - "backend/**"
-      - "backend/Dockerfile"
-      - "backend/requirements.txt"
-      - "backend/requirements-dev.txt"
-      - "scripts/**"
-      - ".github/workflows/smoke.yml"
   push:
     branches:
       - main
@@ -107,7 +100,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # #452 mitigation — move path filtering from the trigger to the job
+      # level so the workflow always fires (required-check satisfaction)
+      # and the expensive compose/Playwright steps skip when no
+      # smoke-relevant file changed.
+      - name: Detect smoke-relevant changes
+        id: changed
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5 — SHA pin (CVE-2025-30022)
+        with:
+          files: |
+            docker-compose*.yml
+            frontend/**/*.{ts,tsx,js,jsx,cjs,mjs,css,md,json}
+            frontend/Dockerfile
+            frontend/Dockerfile.prod
+            frontend/nginx.conf
+            frontend/playwright.config.ts
+            frontend/.prettierrc.json
+            frontend/.prettierignore
+            frontend/eslint.config.js
+            frontend/vite.config.ts
+            frontend/test-setup.ts
+            frontend/test/e2e/**
+            frontend/package.json
+            frontend/pnpm-lock.yaml
+            backend/**/*.py
+            backend/**/*.toml
+            backend/Dockerfile
+            backend/requirements*.txt
+            scripts/**
+            .github/workflows/smoke.yml
+
       - name: Set up Docker Buildx
+        if: steps.changed.outputs.any_changed == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           driver-opts: image=moby/buildkit:latest
@@ -117,6 +141,7 @@ jobs:
       # auto-create the source directory. Make it explicit so smoke is
       # reproducible across hosted runner versions.
       - name: Ensure host bind-mount directories exist (R1)
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           mkdir -p docker/postgres/data docker/neo4j/data docker/neo4j/logs .docker/backups
@@ -135,6 +160,7 @@ jobs:
       # satisfy docker-compose.yml's `env_file: .env` requirement and let
       # the data tier pass healthchecks.
       - name: Materialize test-only .env
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           cp .env.example .env
@@ -160,6 +186,7 @@ jobs:
       # poll backend health directly with curl because FastAPI readiness
       # is what PR5 cares about.
       - name: Compose up data tier (postgres + neo4j + backend)
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           docker compose up -d postgres neo4j backend
@@ -168,6 +195,7 @@ jobs:
       # the FastAPI root to return 200. The curl check is the SAME
       # contract the smoke spec verifies (backend/main.py GET /).
       - name: Wait for backend health (timeout ${BACKEND_HEALTH_TIMEOUT_SECONDS}s)
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           deadline=$(( $(date +%s) + BACKEND_HEALTH_TIMEOUT_SECONDS ))
@@ -186,11 +214,13 @@ jobs:
       # inside the container; the host-side port is the same (see
       # docker-compose.yml frontend.ports).
       - name: Compose up frontend
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           docker compose up -d frontend
 
       - name: Wait for frontend health (timeout ${FRONTEND_HEALTH_TIMEOUT_SECONDS}s)
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           deadline=$(( $(date +%s) + FRONTEND_HEALTH_TIMEOUT_SECONDS ))
@@ -206,6 +236,7 @@ jobs:
           echo "frontend healthy at http://localhost:${FRONTEND_PORT}/"
 
       - name: Set up Node 22
+        if: steps.changed.outputs.any_changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -221,21 +252,25 @@ jobs:
       # the pinned version, and fails with "Unable to locate executable
       # file: pnpm".
       - name: Enable Corepack + activate pinned pnpm
+        if: steps.changed.outputs.any_changed == 'true'
         run: |
           set -euo pipefail
           corepack enable
           corepack prepare pnpm@10.12.1 --activate
 
       - name: Install frontend dependencies (frozen lockfile)
+        if: steps.changed.outputs.any_changed == 'true'
         run: pnpm --dir frontend install --frozen-lockfile
 
       # Install the chromium browser binary + its apt deps. --with-deps
       # needs sudo on Linux; the ubuntu-latest runner has it by
       # default.
       - name: Install Playwright browsers
+        if: steps.changed.outputs.any_changed == 'true'
         run: pnpm --dir frontend exec playwright install --with-deps chromium
 
       - name: Run Playwright smoke specs
+        if: steps.changed.outputs.any_changed == 'true'
         run: pnpm --dir frontend run test:e2e
 
       # Even on failure, upload the report so reviewers can see WHY.
