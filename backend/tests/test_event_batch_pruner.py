@@ -13,6 +13,50 @@ import pytest
 _SNMP_SERVICE_SENTINEL = object()
 
 
+class _FakeClientError(Exception):
+    """Real exception class standing in for ``neo4j.exceptions.ClientError``.
+
+    The conftest stubs ``sys.modules['neo4j.exceptions']`` with a MagicMock,
+    so production ``isinstance(error, neo4j.exceptions.ClientError)`` checks
+    fall through. The fail-loud predicate captures the class at module load
+    (mirroring ``neo4j_write_guard``); tests patch the captured reference on
+    the live module so the predicate sees this real subclass instead of the
+    stub. Mirrors the Neo4j driver's ``message`` attribute surface.
+    """
+
+    def __init__(self, message: str = "", code: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+def _install_fake_client_error(monkeypatch, event_service):
+    """Patch the captured ``_CLIENT_ERROR_CLASS`` on the live event_service module.
+
+    Production code captures ``neo4j.exceptions.ClientError`` at import time;
+    under tests that resolves to a MagicMock, so ``isinstance(...)`` checks
+    fail. We patch the captured reference to a real class so the predicate
+    works as it does in production. Returns the patched module so the caller
+    can reach ``is_cypher_syntax_error`` for direct predicate tests.
+    """
+    import backend.services.event_service as es_backend
+
+    monkeypatch.setattr(es_backend, "_CLIENT_ERROR_CLASS", _FakeClientError)
+    try:
+        import services.event_service as es_services
+
+        monkeypatch.setattr(es_services, "_CLIENT_ERROR_CLASS", _FakeClientError)
+    except ImportError:
+        pass
+    # The test imported via the ``_load_event_service_module`` helper which
+    # pops ``services.event_service`` from sys.modules and reimports it.
+    # The freshly-loaded module is what the test holds in ``event_service``,
+    # so we must patch THAT module's captured reference, not the aliased one.
+    if hasattr(event_service, "_CLIENT_ERROR_CLASS"):
+        event_service._CLIENT_ERROR_CLASS = _FakeClientError
+    return event_service
+
+
 # ---------------------------------------------------------------------------
 # Stubs — must match conftest.py pattern so event_service imports cleanly
 # ---------------------------------------------------------------------------
@@ -488,14 +532,23 @@ class TestEventBatchPrunerSafetyGuards:
             _restore_get_db(original_driver, original_get_db, event_service)
 
 
+_NULLS_KEYWORD_RE = __import__("re").compile(r"NULLS\s+(FIRST|LAST)", __import__("re").IGNORECASE)
+
+
 class TestEventBatchPrunerNullCursorProgress:
     """RED -> GREEN: cursor pagination must make forward progress on NULL-bearing rows.
 
     Pre-#279 legacy rows have ``created_at IS NULL``. The pre-fix cursor was
     ``AND e.created_at > $last_cursor`` which evaluates to NULL (filter excludes
     every subsequent row) once a NULL row was processed. The composite cursor
-    uses ``(e.created_at, e.id)`` with ``ORDER BY ... NULLS LAST`` and a
-    NULL-safe WHERE tiebreak so iter 2+ keeps moving.
+    uses ``(e.created_at, e.id)`` ordering and a NULL-safe WHERE tiebreak so
+    iter 2+ keeps moving.
+
+    Cypher 5 / Neo4j 5.x does not accept the explicit ``NULLS FIRST`` /
+    ``NULLS LAST`` keyword in ``ORDER BY`` (rejected as
+    ``Invalid input 'NULLS'``); NULL placement is implicit — NULLs LAST under
+    ASC, NULLs FIRST under DESC. We MUST NOT emit those keywords anywhere in
+    production Cypher (issue #459).
     """
 
     def test_event_batch_pruner_null_cursor_progress(self, mock_driver):
@@ -553,6 +606,60 @@ class TestEventBatchPrunerNullCursorProgress:
             assert "IS NULL" in second_query["query"].upper(), (
                 f"Iter 2 cursor filter must include a NULL-safe clause so a "
                 f"NULL-bearing fixture keeps moving; got query={second_query['query']!r}"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+    def test_page_query_does_not_contain_nulls_first_or_last(self, mock_driver):
+        """Regression guard for issue #459 — page query MUST NOT use ``NULLS FIRST/LAST``.
+
+        Cypher 5 grammar (Neo4j 5.x) does not include the ``NULLS`` keyword;
+        emitting it raises ``Neo.ClientError.Statement.SyntaxError: Invalid
+        input 'NULLS'``. NULL placement is implicit (NULLs LAST under ASC,
+        NULLs FIRST under DESC). This test exercises the real production
+        cursor and asserts every captured ORDER BY query is free of the
+        forbidden token, regardless of which batch it came from.
+        """
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        session.set_response("return count(e) as total", [{"total": 2}])
+        ts = "2026-01-01T00:00:00Z"
+        session.set_sequence_response(
+            "return e.id as event_id, e.status",
+            [
+                [{"event_id": "evt-1", "status": "RECOVERED", "created_at": None}],
+                [{"event_id": "evt-2", "status": "RECOVERED", "created_at": ts}],
+            ],
+        )
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+
+            async def consume():
+                async for _ in event_service.event_batch_pruner(
+                    user="system", batch_size=1, batch_delay_ms=0
+                ):
+                    pass
+
+            _run_async(consume())
+
+            page_queries = [
+                q
+                for q in session.queries
+                if "ORDER BY" in q["query"].upper() and "LIMIT" in q["query"].upper()
+            ]
+            assert page_queries, "Expected the pruner to issue at least one page query"
+
+            offenders = [
+                (idx, _NULLS_KEYWORD_RE.search(q["query"]).group(0))
+                for idx, q in enumerate(page_queries)
+                if _NULLS_KEYWORD_RE.search(q["query"])
+            ]
+            assert not offenders, (
+                f"Page query MUST NOT contain ``NULLS FIRST``/``NULLS LAST`` "
+                f"(Cypher 5 / Neo4j 5.x rejects it as ``Invalid input 'NULLS'``). "
+                f"Found offenders: {offenders}"
             )
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
@@ -664,6 +771,235 @@ class TestEventBatchPrunerRetryCap:
             assert len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES, (
                 f"Expected exactly {event_service.MAX_CONSECUTIVE_CHUNK_FAILURES} "
                 f"error chunks before re-raise, got {len(error_chunks)}"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
+class TestEventBatchPrunerCypherSyntaxErrorFirstChunk:
+    """RED -> GREEN: CypherSyntaxError MUST propagate on the first chunk.
+
+    Pre-#459 the chunk loop's ``except Exception as e`` swallowed the
+    ``Neo.ClientError.Statement.SyntaxError`` raised by the invalid
+    ``ORDER BY ... ASC NULLS LAST`` clause, yielded it as a normal
+    ``{"error": "..."}`` chunk, and continued. Operators saw stale data, not a
+    failure. The contract here: a syntax error on the FIRST page MUST yield a
+    terminal error chunk, log at ERROR level, and close the stream — NOT ride
+    the 3-strike debounce.
+    """
+
+    def test_first_chunk_syntax_error_yields_terminal_chunk(self, mock_driver, monkeypatch):
+        """Syntax error on first page produces ONE error chunk then closes — no debounce."""
+        event_service = _load_event_service_module()
+        event_service = _install_fake_client_error(monkeypatch, event_service)
+        session = mock_driver.session()
+
+        # Total count succeeds.
+        session.set_response("return count(e) as total", [{"total": 5}])
+        original_run = session.run
+
+        syntax_error = _FakeClientError(
+            message="Invalid input 'NULLS': expected ...", code="Neo.ClientError.Statement.SyntaxError"
+        )
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise syntax_error
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+
+            async def consume():
+                async for progress in event_service.event_batch_pruner(
+                    user="system", batch_delay_ms=0
+                ):
+                    chunks.append(progress)
+
+            # Bound the test so a non-terminating implementation fails fast.
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            # Initial chunk + exactly ONE error chunk carrying the syntax message.
+            assert len(chunks) >= 2, f"Expected initial + error chunks, got {chunks!r}"
+            error_chunks = [c for c in chunks if "error" in c]
+            assert len(error_chunks) == 1, (
+                f"CypherSyntaxError MUST NOT be debounced — expected exactly one "
+                f"error chunk, got {len(error_chunks)} chunks: {error_chunks!r}"
+            )
+            assert "Invalid input 'NULLS'" in error_chunks[0]["error"], (
+                f"Error chunk MUST carry the syntax-error message; "
+                f"got error={error_chunks[0]['error']!r}"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+    def test_syntax_error_does_not_count_against_retry_cap(
+        self, mock_driver, monkeypatch
+    ):
+        """A syntax error MUST NOT increment consecutive_failures — it is terminal on first hit."""
+        event_service = _load_event_service_module()
+        event_service = _install_fake_client_error(monkeypatch, event_service)
+        session = mock_driver.session()
+
+        session.set_response("return count(e) as total", [{"total": 5}])
+        original_run = session.run
+        syntax_error = _FakeClientError(
+            message="Invalid input 'NULLS': expected ...",
+            code="Neo.ClientError.Statement.SyntaxError",
+        )
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise syntax_error
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+
+            async def consume():
+                async for progress in event_service.event_batch_pruner(
+                    user="system", batch_delay_ms=0
+                ):
+                    chunks.append(progress)
+
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            # Cap is 3 — if the predicate routed the syntax error into the
+            # debounce path, we would see 3 error chunks before terminate.
+            error_chunks = [c for c in chunks if "error" in c]
+            assert len(error_chunks) < event_service.MAX_CONSECUTIVE_CHUNK_FAILURES, (
+                f"Syntax error MUST bypass the 3-strike cap; "
+                f"got {len(error_chunks)} error chunks (cap is "
+                f"{event_service.MAX_CONSECUTIVE_CHUNK_FAILURES})"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+    def test_non_syntax_client_error_keeps_debounce(
+        self, mock_driver, monkeypatch
+    ):
+        """A non-syntax ClientError still rides the 3-strike cap.
+
+        Guard against over-broadening the predicate: only CypherSyntaxError
+        should fail loud. Other ClientErrors (e.g. constraint violations) keep
+        the existing debounce so a transient hiccup does not abort the run.
+        """
+        event_service = _load_event_service_module()
+        event_service = _install_fake_client_error(monkeypatch, event_service)
+        session = mock_driver.session()
+
+        session.set_response("return count(e) as total", [{"total": 5}])
+        original_run = session.run
+
+        # A non-syntax ClientError (no Neo.ClientError.Statement.SyntaxError code).
+        non_syntax = _FakeClientError(
+            message="some other constraint violation",
+            code="Neo.ClientError.Schema.ConstraintValidationFailed",
+        )
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise non_syntax
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+            outcome: tuple[str, Exception | None] = ("completed", None)
+
+            async def consume() -> None:
+                try:
+                    async for progress in event_service.event_batch_pruner(
+                        user="system", batch_delay_ms=0
+                    ):
+                        chunks.append(progress)
+                except Exception as exc:
+                    nonlocal outcome
+                    outcome = ("raised", exc)
+
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            # Non-syntax error SHOULD be debounced: exactly cap-many error chunks,
+            # then re-raise on the next failure.
+            assert outcome[0] == "raised", (
+                f"Non-syntax errors must still re-raise after the debounce cap; "
+                f"instead {outcome[0]!r}"
+            )
+            assert isinstance(outcome[1], _FakeClientError)
+            error_chunks = [c for c in chunks if "error" in c]
+            assert (
+                len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES
+            ), (
+                f"Non-syntax ClientError must ride the 3-strike cap; "
+                f"got {len(error_chunks)} error chunks"
+            )
+        finally:
+            _restore_get_db(original_driver, original_get_db, event_service)
+
+
+class TestEventBatchPrunerTransientKeepsDebounce:
+    """RED -> GREEN: non-ClientError exceptions (RuntimeError/ServiceUnavailable) keep debounce.
+
+    Pre-existing behavior contract: the chunk loop swallows non-syntax errors
+    for ``MAX_CONSECUTIVE_CHUNK_FAILURES`` consecutive failures before
+    re-raising. This class pins the asymmetry between syntax errors (fail loud)
+    and transient driver/network errors (debounce) so the new predicate does
+    not accidentally broaden into transient territory.
+    """
+
+    def test_runtime_error_runs_three_strikes_then_raises(self, mock_driver):
+        """Generic RuntimeError rides the 3-strike debounce, NOT a terminal chunk."""
+        event_service = _load_event_service_module()
+        session = mock_driver.session()
+
+        session.set_response("return count(e) as total", [{"total": 5}])
+        original_run = session.run
+
+        def selective_run(query: str, **params):
+            q_lower = query.lower()
+            if "return e.id as event_id" in q_lower:
+                raise RuntimeError("transient driver flap")
+            return original_run(query, **params)
+
+        session.run = selective_run
+
+        original_driver, original_get_db = _patch_get_db(mock_driver, event_service)
+        try:
+            chunks: list[dict] = []
+            outcome: tuple[str, Exception | None] = ("completed", None)
+
+            async def consume() -> None:
+                try:
+                    async for progress in event_service.event_batch_pruner(
+                        user="system", batch_delay_ms=0
+                    ):
+                        chunks.append(progress)
+                except Exception as exc:
+                    nonlocal outcome
+                    outcome = ("raised", exc)
+
+            _run_async(asyncio.wait_for(consume(), timeout=5.0))
+
+            assert outcome[0] == "raised"
+            assert isinstance(outcome[1], RuntimeError)
+            error_chunks = [c for c in chunks if "error" in c]
+            assert len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES
+            # Terminal chunk would be {..., "terminal": True}; we expect NONE.
+            terminal_chunks = [c for c in chunks if c.get("terminal") is True]
+            assert not terminal_chunks, (
+                f"RuntimeError is not a syntax error — must NOT emit a terminal chunk; "
+                f"got {terminal_chunks!r}"
             )
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
