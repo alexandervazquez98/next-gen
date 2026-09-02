@@ -124,6 +124,31 @@ class LMStudioTimeoutError(LMStudioError):
     """LM Studio did not answer within the configured timeout."""
 
 
+class LMStudioRequestRejected(LMStudioError):
+    """LM Studio returned a 4xx/5xx HTTP response (not a network failure).
+
+    Carries the upstream status code, a bounded body excerpt (≤512 bytes), and
+    the upstream ``reason`` string so the route can surface actionable detail
+    to operators instead of the generic "LM Studio is unavailable".
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int,
+        body_preview: str = "",
+        reason: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body_preview = body_preview
+        self.reason = reason
+
+
+_BODY_PREVIEW_MAX_BYTES = 512
+
+
 def _user_dir() -> Path | None:
     """Resolve the user override root, caching the env lookup in AI_USER_DIR."""
     global AI_USER_DIR
@@ -274,6 +299,30 @@ def _post_lm_studio_chat_completion(
     except TimeoutError as exc:
         logger.exception("LM Studio request timed out (url=%s)", url)
         raise LMStudioTimeoutError("LM Studio request timed out") from exc
+    except urllib.error.HTTPError as exc:
+        body_preview = ""
+        if exc.fp is not None:
+            try:
+                raw = exc.read()
+                body_preview = raw[:_BODY_PREVIEW_MAX_BYTES].decode(
+                    "utf-8", errors="replace"
+                )
+            except OSError:
+                body_preview = ""
+        upstream_reason = str(getattr(exc, "reason", "") or "")
+        logger.warning(
+            "LM Studio rejected the request (url=%s, status=%s, body_preview=%s)",
+            url,
+            exc.code,
+            body_preview,
+        )
+        raise LMStudioRequestRejected(
+            f"LM Studio rejected the request (status={exc.code}): "
+            f"{body_preview or upstream_reason}",
+            status=int(exc.code or 0),
+            body_preview=body_preview,
+            reason=upstream_reason,
+        ) from exc
     except urllib.error.URLError as exc:
         if isinstance(getattr(exc, "reason", None), TimeoutError):
             logger.exception("LM Studio request timed out (url=%s)", url)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any, Literal
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from services import ai_chat_service
 from services.ai_chat_service import (
     LMStudioError,
+    LMStudioRequestRejected,
     LMStudioTimeoutError,
     build_guard_denial_harness_result,
     complete_chat,
@@ -27,6 +29,8 @@ from services.auth_service import check_permission, get_current_active_user
 CurrentUserDep = Depends(get_current_active_user)
 PgDbDep = Depends(get_pg_db)
 Neo4jDriverDep = Depends(get_db)
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/ai", tags=["AI Chat"])
@@ -575,6 +579,21 @@ async def chat_with_ai(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LM Studio request timed out",
+        ) from exc
+    except LMStudioRequestRejected as exc:
+        reason = exc.body_preview or exc.reason or "unknown"
+        if exc.status >= 500:
+            detail = f"LM Studio upstream error: {exc.status} {reason}"
+        else:
+            detail = f"LM Studio rejected the request: {reason}"
+        logger.warning(
+            "LM Studio rejected chat request: status=%s detail=%s",
+            exc.status,
+            detail,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=detail,
         ) from exc
     except LMStudioError as exc:
         raise HTTPException(

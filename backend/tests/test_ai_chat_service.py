@@ -1,6 +1,8 @@
 import inspect
+import io
 import json
 import logging
+import socket
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -2483,10 +2485,269 @@ def test_infer_chat_intent_recognizes_event_list_phrasings(query):
 
 
 def test_infer_chat_intent_rejects_tengo_without_event_marker():
-    """Issue #458: tengo/tenemos alone (no event marker) must not trigger any
+    """Issue #458: tengo/tenemos alone (no availability verb) must not trigger any
     chat intent."""
     from routers.ai import infer_chat_intent
 
     result = infer_chat_intent("tengo una pregunta")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #460 — LM Studio HTTP error mapping
+# ---------------------------------------------------------------------------
+
+
+def _http_error(code: int, msg: str, body: bytes | None):
+    """Construct a urllib.error.HTTPError with a BytesIO fp (or None).
+
+    ``body=None`` models upstream responses where ``exc.fp is None`` (e.g.,
+    connection aborted before headers)."""
+    fp = io.BytesIO(body) if body is not None else None
+    return urllib.error.HTTPError(
+        "http://lmstudio.local:1234/v1/chat/completions", code, msg, {}, fp
+    )
+
+
+# --- Service-level: HTTPError -> LMStudioRequestRejected -------------------
+
+
+@pytest.mark.parametrize(
+    "code, msg, body, expected_status, expected_body_preview",
+    [
+        (
+            400,
+            "Bad Request",
+            b'{"error":"unknown model"}',
+            400,
+            '{"error":"unknown model"}',
+        ),
+        (404, "Not Found", None, 404, ""),
+        (500, "Internal Server Error", b"oops", 500, "oops"),
+        (503, "Service Unavailable", None, 503, ""),
+    ],
+)
+def test_post_lm_studio_http_error_maps_to_request_rejected(
+    code, msg, body, expected_status, expected_body_preview
+):
+    """Issue #460: HTTPError from urlopen MUST become LMStudioRequestRejected,
+    preserving upstream status and a bounded body preview (≤512 bytes).
+    Plain URLError MUST keep raising LMStudioError("LM Studio is unavailable").
+    """
+    from config import LMStudioSettings
+    from services.ai_chat_service import (
+        LMStudioRequestRejected,
+        _post_lm_studio_chat_completion,
+    )
+
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    http_err = _http_error(code, msg, body)
+
+    with patch(
+        "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
+    ):
+        with pytest.raises(LMStudioRequestRejected) as excinfo:
+            _post_lm_studio_chat_completion(payload, settings)
+
+    assert excinfo.value.status == expected_status
+    assert excinfo.value.body_preview == expected_body_preview
+
+
+def test_post_lm_studio_http_error_truncates_body_to_512_bytes():
+    """Issue #460: oversized upstream bodies MUST be bounded to 512 bytes so
+    logs/502 detail cannot be flooded by malicious or buggy LM Studio replies."""
+    from config import LMStudioSettings
+    from services.ai_chat_service import (
+        LMStudioRequestRejected,
+        _post_lm_studio_chat_completion,
+    )
+
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+    body = b"X" * 5000
+    http_err = _http_error(400, "Bad Request", body)
+
+    with patch(
+        "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
+    ):
+        with pytest.raises(LMStudioRequestRejected) as excinfo:
+            _post_lm_studio_chat_completion(payload, settings)
+
+    assert len(excinfo.value.body_preview) == 512
+    assert excinfo.value.body_preview == "X" * 512
+
+
+# --- Service-level: non-HTTP URLError -> LMStudioError / LMStudioTimeoutError ---
+
+
+def test_post_lm_studio_connection_refused_keeps_unavailable_error():
+    """Issue #460: a plain URLError (not HTTPError) MUST keep raising
+    LMStudioError("LM Studio is unavailable"). HTTPError branch must NOT
+    swallow the network failure."""
+    from config import LMStudioSettings
+    from services.ai_chat_service import (
+        LMStudioError,
+        _post_lm_studio_chat_completion,
+    )
+
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+
+    with patch(
+        "services.ai_chat_service.urllib.request.urlopen",
+        side_effect=urllib.error.URLError("Connection refused"),
+    ):
+        with pytest.raises(LMStudioError, match="LM Studio is unavailable"):
+            _post_lm_studio_chat_completion(payload, settings)
+
+
+def test_post_lm_studio_dns_failure_keeps_unavailable_error():
+    """Issue #460: DNS resolution failure (gaierror) is a non-HTTP URLError.
+    MUST raise LMStudioError("LM Studio is unavailable"), NOT a rejection."""
+    from config import LMStudioSettings
+    from services.ai_chat_service import (
+        LMStudioError,
+        LMStudioRequestRejected,
+        _post_lm_studio_chat_completion,
+    )
+
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+
+    dns_err = urllib.error.URLError("Name or service not known")
+    dns_err.reason = socket.gaierror("Name or service not known")
+
+    with patch(
+        "services.ai_chat_service.urllib.request.urlopen", side_effect=dns_err
+    ):
+        with pytest.raises(LMStudioError, match="LM Studio is unavailable") as excinfo:
+            _post_lm_studio_chat_completion(payload, settings)
+
+    assert not isinstance(excinfo.value, LMStudioRequestRejected)
+
+
+def test_post_lm_studio_url_error_wrapping_timeout_stays_timeout():
+    """Issue #460: URLError(reason=TimeoutError) MUST raise LMStudioTimeoutError,
+    not LMStudioError or LMStudioRequestRejected. The order of the except chain
+    (TimeoutError, HTTPError, URLError) must preserve the timeout signal."""
+    from config import LMStudioSettings
+    from services.ai_chat_service import (
+        LMStudioTimeoutError,
+        _post_lm_studio_chat_completion,
+    )
+
+    settings = LMStudioSettings(
+        enabled=True, model="local-model", base_url="http://lmstudio.local:1234/v1"
+    )
+    payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
+
+    timeout_wrapped = urllib.error.URLError("timed out")
+    timeout_wrapped.reason = TimeoutError("read timed out")
+
+    with patch(
+        "services.ai_chat_service.urllib.request.urlopen", side_effect=timeout_wrapped
+    ):
+        with pytest.raises(LMStudioTimeoutError):
+            _post_lm_studio_chat_completion(payload, settings)
+
+
+# --- Route-level: LMStudioRequestRejected -> 502 with structured detail ----
+
+
+@pytest.mark.parametrize(
+    "status, body_preview, upstream_reason, expected_detail",
+    [
+        (
+            400,
+            '{"error":"unknown model"}',
+            "Bad Request",
+            'LM Studio rejected the request: {"error":"unknown model"}',
+        ),
+        (404, "", "Not Found", "LM Studio rejected the request: Not Found"),
+        (500, "oops", "Internal Server Error", "LM Studio upstream error: 500 oops"),
+        (
+            503,
+            "",
+            "Service Unavailable",
+            "LM Studio upstream error: 503 Service Unavailable",
+        ),
+    ],
+)
+def test_ai_chat_maps_request_rejected_to_502_with_detail(
+    monkeypatch, status, body_preview, upstream_reason, expected_detail
+):
+    """Issue #460: route MUST surface upstream HTTP status + reason in the 502
+    detail. 4xx → "LM Studio rejected the request: <reason>"; 5xx →
+    "LM Studio upstream error: <status> <reason>". The 502 status code itself
+    is preserved (matches the issue's expected behaviour)."""
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client()
+
+    from services.ai_chat_service import LMStudioRequestRejected
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=LMStudioRequestRejected(
+            f"LM Studio rejected the request (status={status}): "
+            f"{body_preview or upstream_reason}",
+            status=status,
+            body_preview=body_preview,
+            reason=upstream_reason,
+        ),
+    ):
+        response = client.post("/api/ai/chat", json={"query": "hello"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == expected_detail
+
+
+def test_ai_chat_plain_lm_studio_error_still_unavailable(monkeypatch):
+    """Issue #460: regression guard — plain LMStudioError MUST still map to
+    "LM Studio is unavailable" (the original 502 message)."""
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client()
+
+    from services.ai_chat_service import LMStudioError
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=LMStudioError("Connection refused: stack"),
+    ):
+        response = client.post("/api/ai/chat", json={"query": "hello"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "LM Studio is unavailable"
+
+
+def test_ai_chat_timeout_still_504(monkeypatch):
+    """Issue #460: regression guard — LMStudioTimeoutError MUST still map to
+    504 with detail "LM Studio request timed out"."""
+    monkeypatch.setenv("LM_STUDIO_ENABLED", "true")
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://lmstudio.local:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "local-model")
+    client, _ = _make_client()
+
+    from services.ai_chat_service import LMStudioTimeoutError
+
+    with patch(
+        "services.ai_chat_service._post_lm_studio_chat_completion",
+        side_effect=LMStudioTimeoutError("timeout"),
+    ):
+        response = client.post("/api/ai/chat", json={"query": "hello"})
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == "LM Studio request timed out"
