@@ -120,64 +120,64 @@ class _FakeClientError(Exception):
         self.code = code
 
 
-def _load_database_module():
-    """Reload database with a stubbed neo4j so we can patch the captured ClientError."""
-    sys.modules.pop("database", None)
-    # Build a fake neo4j module whose ``exceptions.ClientError`` is a real
-    # class we can subclass + raise from tests. Otherwise the database
-    # module captures a MagicMock attribute and isinstance checks fail.
-    fake_neo4j = types.ModuleType("neo4j")
-    fake_exc = types.ModuleType("neo4j.exceptions")
-    fake_exc.ClientError = _FakeClientError
-    fake_neo4j.exceptions = fake_exc
-    sys.modules["neo4j"] = fake_neo4j
-    sys.modules["neo4j.exceptions"] = fake_exc
-    # Also need a fake GraphDatabase.driver so database module init succeeds.
-    fake_neo4j.GraphDatabase = types.SimpleNamespace(driver=MagicMock(return_value=MagicMock()))
-    return importlib.import_module("database")
+def _patch_database_client_error(monkeypatch):
+    """Patch ``database._CLIENT_ERROR_CLASS`` to a real class and return the module.
+
+    The conftest stubs ``sys.modules['neo4j.exceptions']`` to a MagicMock
+    so the production ``database._CLIENT_ERROR_CLASS`` ends up a MagicMock
+    attribute — making ``isinstance(error, ClientError)`` checks unreliable.
+    This helper monkeypatches the captured reference on the live
+    ``database`` module to a real exception class so the predicate behaves
+    like production. Returns the ``database`` module so callers can call
+    ``verify_cypher_smoke``.
+
+    Critically, this helper does NOT pop ``database`` from ``sys.modules``,
+    swap in a fake ``neo4j`` package, or import ``services.event_service``
+    at module load — those reload strategies either left downstream
+    ``services.*`` / ``routers.*`` modules holding stale
+    ``from database import get_db`` bindings (broke 23 unrelated tests
+    patching ``database.driver``) or triggered ``postgres_db.load_dotenv``
+    side-effects that polluted os.environ with ``COOKIE_SECURE=false``
+    from the repo .env file (broke the auth cookie security tests).
+    """
+    import database
+
+    monkeypatch.setattr(database, "_CLIENT_ERROR_CLASS", _FakeClientError)
+    return database
 
 
 @pytest.fixture
 def _restore_neo4j_modules():
-    """Save and restore ``sys.modules['neo4j*']`` around test fixtures.
+    """No-op safety net for tests that previously needed ``sys.modules`` rollback.
 
-    The ``_load_database_module`` helper swaps in a synthetic ``neo4j``
-    module that exposes a real ``ClientError`` class. Without this
-    fixture, the fake persists across the test session and breaks other
-    test files that import the real ``neo4j`` package (e.g.
-    ``from neo4j import Query as Neo4jQuery`` in ``main.py``).
+    Earlier revisions of this file reloaded ``sys.modules['database']`` and
+    swapped in a fake ``neo4j`` package so the captured
+    ``_CLIENT_ERROR_CLASS`` resolved to a real class. That reload leaked
+    stale ``from database import get_db`` bindings into downstream
+    ``services.*`` / ``routers.*`` modules and broke 23 unrelated tests in
+    ``test_routers_metrics_events.py``,
+    ``test_topology_relationships.py``, and ``test_topology_tunnel_health.py``.
+
+    ``_patch_database_client_error`` (the new helper) does not touch
+    ``sys.modules``; it monkeypatches ``database._CLIENT_ERROR_CLASS`` in
+    place. This fixture is kept for backward compatibility with existing
+    test signatures but no longer needs to perform any restore work.
     """
-    saved_neo4j = sys.modules.get("neo4j")
-    saved_neo4j_exc = sys.modules.get("neo4j.exceptions")
-    try:
-        yield
-    finally:
-        if saved_neo4j is None:
-            sys.modules.pop("neo4j", None)
-        else:
-            sys.modules["neo4j"] = saved_neo4j
-        if saved_neo4j_exc is None:
-            sys.modules.pop("neo4j.exceptions", None)
-        else:
-            sys.modules["neo4j.exceptions"] = saved_neo4j_exc
-        # Also drop the freshly-loaded ``database`` module so the next
-        # test gets a clean re-import off the restored real ``neo4j``.
-        sys.modules.pop("database", None)
+    yield
 
 
 @pytest.fixture
 def database_module(monkeypatch, _restore_neo4j_modules):
-    """Provide a freshly-loaded database module whose ClientError is a real class."""
-    # Strip DISABLE_NEO4J_SMOKE so tests default to "enabled".
+    """Provide the ``database`` module with ``_CLIENT_ERROR_CLASS`` set to a real class."""
     monkeypatch.delenv("DISABLE_NEO4J_SMOKE", raising=False)
-    return _load_database_module()
+    return _patch_database_client_error(monkeypatch)
 
 
 @pytest.fixture
 def database_module_disabled(monkeypatch, _restore_neo4j_modules):
-    """Provide a freshly-loaded database module with DISABLE_NEO4J_SMOKE=true."""
+    """Provide the ``database`` module with ``DISABLE_NEO4J_SMOKE=true``."""
     monkeypatch.setenv("DISABLE_NEO4J_SMOKE", "true")
-    return _load_database_module()
+    return _patch_database_client_error(monkeypatch)
 
 
 # ---------------------------------------------------------------------------

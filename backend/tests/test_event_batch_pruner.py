@@ -60,9 +60,17 @@ def _install_fake_client_error(monkeypatch, event_service):
 # ---------------------------------------------------------------------------
 # Stubs — must match conftest.py pattern so event_service imports cleanly
 # ---------------------------------------------------------------------------
+#
+# Use ``setdefault`` (NOT unconditional ``=``) so we do NOT purge the real
+# ``neo4j`` module that conftest.py installs at session start. An
+# unconditional assign here persists for the whole pytest session and breaks
+# every later test file that does ``from neo4j import ...`` (e.g. ``main.py``
+# imports ``Neo4jQuery``); the symptom is a fully mocked session returning
+# ``MagicMock``-typed query results where the production code expects a real
+# Cypher builder.
 
 for mod in ["neo4j", "neo4j.exceptions", "psycopg2", "psycopg2.extensions"]:
-    sys.modules[mod] = MagicMock()
+    sys.modules.setdefault(mod, MagicMock())
 
 
 def _load_event_service_module():
