@@ -4,9 +4,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import HTTPException
-
 from database import get_db
+from fastapi import HTTPException
 from services.snmp_service import run_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -1347,9 +1346,8 @@ def run_prune_recovered_events_sync(user: str = "system-prune") -> int:
 # Distributed Prune Lock — prevents concurrent prune operations across operators
 # ---------------------------------------------------------------------------
 
-from sqlalchemy import text  # noqa: E402
-
 from postgres_db import SessionLocal  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 
 def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3) -> bool:

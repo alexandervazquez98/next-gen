@@ -17,13 +17,12 @@ except ImportError:  # pragma: no cover - py<3.11 compatibility
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from config import get_mqtt_runtime_settings, get_time_sync_settings
+from database import get_db, verify_connection, verify_cypher_smoke
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from neo4j import Query as Neo4jQuery
-
-from config import get_mqtt_runtime_settings, get_time_sync_settings
-from database import get_db, verify_connection, verify_cypher_smoke
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -909,9 +908,8 @@ def _build_system_status_payload() -> dict:
 
     postgres_status = "UNKNOWN"
     try:
-        from sqlalchemy import text
-
         from postgres_db import engine
+        from sqlalchemy import text
 
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))

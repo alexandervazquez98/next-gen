@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from models.ai_guard_models import GuardResult
 from models.user import User
 from routers.ai import chat_with_ai, get_current_active_user, get_db, get_pg_db, router
