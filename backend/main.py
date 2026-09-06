@@ -18,7 +18,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from config import get_mqtt_runtime_settings, get_time_sync_settings
-from database import get_db, verify_connection
+from database import get_db, verify_connection, verify_cypher_smoke
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -397,12 +397,27 @@ async def startup_event():
     """
     Application startup event handler.
     1. Verifies database connectivity.
-    2. Initializes default schema/metrics.
-    3. Starts background tasks (e.g., SNMP Collector, Backup Scheduler).
-    4. Seeds default admin user.
+    2. Runs Cypher smoke query against the live driver (issue #459).
+    3. Initializes default schema/metrics.
+    4. Starts background tasks (e.g., SNMP Collector, Backup Scheduler).
+    5. Seeds default admin user.
     """
     logger.info("Starting up... Verifying DB connection")
     verify_connection()
+
+    # Issue #459 / spec ``neo4j-cypher-compatibility``: wire the smoke
+    # ONLY at startup. ``verify_connection()`` is also called from the
+    # /api/system/status polling path, and we MUST NOT re-run the smoke
+    # on every poll (20x traffic multiplier on dashboard refresh). A
+    # ``ClientError`` here propagates so cold start aborts non-zero on
+    # incompatible Cypher. ``DISABLE_NEO4J_SMOKE=true`` short-circuits
+    # the probe for offline / stubbed-driver environments.
+    try:
+        verify_cypher_smoke()
+        logger.info("cypher_smoke ok")
+    except Exception as smoke_exc:
+        logger.error("cypher_smoke failed: %s", smoke_exc, exc_info=True)
+        raise
 
     from services.itsm_bootstrap import run_service_catalog_startup_checks
 

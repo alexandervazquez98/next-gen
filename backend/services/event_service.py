@@ -10,6 +10,55 @@ from services.snmp_service import run_diagnostic
 
 logger = logging.getLogger(__name__)
 
+# Capture ``neo4j.exceptions.ClientError`` at module load so we can
+# ``isinstance``-check it from anywhere without re-importing (and so test
+# fixtures can monkeypatch the captured reference — see
+# ``backend/tests/test_event_batch_pruner.py::_install_fake_client_error``).
+# Issue #459: CypherSyntaxError must propagate from the chunk loop on the
+# first failed page so operators see a real error instead of debounced
+# silent data. See ``is_cypher_syntax_error`` and the chunk-loop branch
+# inside ``event_batch_pruner``.
+import neo4j.exceptions as _neo4j_exceptions  # noqa: E402
+
+_CLIENT_ERROR_CLASS = _neo4j_exceptions.ClientError
+_CYPHER_SYNTAX_ERROR_CODE = "Neo.ClientError.Statement.SyntaxError"
+
+
+def is_cypher_syntax_error(exc: BaseException) -> bool:
+    """Return ``True`` iff ``exc`` is a Neo4j Cypher compile-time syntax error.
+
+    Mirrors ``neo4j_write_guard.is_poll_collector_id_undefined_error``:
+    strict on three axes so a reintroduction of a different ``ClientError``
+    subclass does NOT trigger the fail-loud path.
+
+    1. ``exc`` MUST be a ``neo4j.exceptions.ClientError`` instance (the
+       Neo4j Python driver wraps statement-syntax failures under it;
+       ``ServerError`` and ``DriverError`` keep the debounce).
+    2. ``exc.code`` MUST equal ``Neo.ClientError.Statement.SyntaxError``
+       (the canonical code emitted by Cypher 5 for grammar rejects like
+       ``Invalid input 'NULLS'``).
+
+    Returning ``True`` lets the chunk loop short-circuit to a terminal
+    error chunk + log ERROR + close the stream instead of counting toward
+    ``MAX_CONSECUTIVE_CHUNK_FAILURES``.
+
+    Defensive note: the captured ``_CLIENT_ERROR_CLASS`` is a ``MagicMock``
+    attribute under the test stub (``conftest.py`` replaces
+    ``sys.modules['neo4j.exceptions']``). We guard ``isinstance`` so the
+    predicate never raises TypeError on a stubbed class — it just returns
+    ``False``, which is the safe behavior (no false-positive fail-loud).
+    """
+    client_error_cls = _CLIENT_ERROR_CLASS
+    # If the captured reference is not a real type (e.g. a MagicMock
+    # attribute because tests stubbed neo4j.exceptions), fall through to
+    # False. Production captures a real class at module load.
+    if not isinstance(client_error_cls, type):
+        return False
+    if not isinstance(exc, client_error_cls):
+        return False
+    code = getattr(exc, "code", None)
+    return code == _CYPHER_SYNTAX_ERROR_CODE
+
 
 def _serialize_value(value: Any) -> Any:
     if hasattr(value, "isoformat"):
@@ -1524,7 +1573,18 @@ async def event_batch_pruner(
             )
 
     def _fetch_page(cursor_filter: str, cursor_params: dict[str, Any]) -> list[dict[str, Any]]:
-        """Read one page of candidates. Sync, runs in a thread."""
+        """Read one page of candidates. Sync, runs in a thread.
+
+        The ordering clause relies on Cypher 5's default NULL placement:
+        NULL values sort LAST under ASC and FIRST under DESC. We MUST NOT
+        emit the explicit ordering-keyword syntax that pairs the ``NULLS``
+        token with a direction (``FIRST`` or ``LAST``) — that combination
+        is not part of the Cypher 5 grammar and raises
+        ``Neo.ClientError.Statement.SyntaxError: Invalid input 'NULLS'``
+        against Neo4j 5.x (issue #459). See
+        ``backend/tests/test_neo4j_smoke.py::NULLS_ORDERING_PATTERN`` for
+        the regex the CI regression scan uses to reject reintroductions.
+        """
         d = get_db()
         with d.session() as s:
             result = s.run(
@@ -1534,7 +1594,7 @@ async def event_batch_pruner(
                   AND (e.ack IS NULL OR e.ack = false)
                   {cursor_filter}
                 RETURN e.id as event_id, e.status, e.created_at as created_at
-                ORDER BY e.created_at ASC NULLS LAST, e.id ASC
+                ORDER BY e.created_at ASC, e.id ASC
                 LIMIT $limit
                 """,
                 **cursor_params,
@@ -1646,6 +1706,27 @@ async def event_batch_pruner(
                 break
 
         except Exception as e:
+            # Issue #459 fail-loud: a Cypher compile-time syntax error MUST
+            # bypass the debounce — it will never succeed on retry, and
+            # silently swallowing it leaves operators staring at stale data.
+            # Emit ONE terminal error chunk, log at ERROR, close the stream.
+            if is_cypher_syntax_error(e):
+                logger.error(
+                    "event_batch_pruner cypher syntax error batch=%s code=%s message=%s",
+                    batch,
+                    getattr(e, "code", None),
+                    e,
+                )
+                yield {
+                    "total": total,
+                    "processed": total_processed,
+                    "remaining": max(0, total - total_processed),
+                    "batch": batch,
+                    "error": str(e),
+                    "terminal": True,
+                }
+                return
+
             # Timeout or error on this chunk — yield error but bound retries.
             consecutive_failures += 1
             if consecutive_failures > MAX_CONSECUTIVE_CHUNK_FAILURES:
