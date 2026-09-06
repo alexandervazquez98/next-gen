@@ -124,7 +124,7 @@ class LMStudioTimeoutError(LMStudioError):
     """LM Studio did not answer within the configured timeout."""
 
 
-class LMStudioRequestRejected(LMStudioError):
+class LMStudioRequestRejected(LMStudioError):  # noqa: N818
     """LM Studio returned a 4xx/5xx HTTP response (not a network failure).
 
     Carries the upstream status code, a bounded body excerpt (≤512 bytes), and

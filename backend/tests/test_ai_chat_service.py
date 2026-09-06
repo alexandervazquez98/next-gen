@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from models.ai_guard_models import GuardResult
 from models.user import User
 from routers.ai import chat_with_ai, get_current_active_user, get_db, get_pg_db, router
@@ -2549,9 +2550,8 @@ def test_post_lm_studio_http_error_maps_to_request_rejected(
 
     with patch(
         "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
-    ):
-        with pytest.raises(LMStudioRequestRejected) as excinfo:
-            _post_lm_studio_chat_completion(payload, settings)
+    ), pytest.raises(LMStudioRequestRejected) as excinfo:
+        _post_lm_studio_chat_completion(payload, settings)
 
     assert excinfo.value.status == expected_status
     assert excinfo.value.body_preview == expected_body_preview
@@ -2575,9 +2575,8 @@ def test_post_lm_studio_http_error_truncates_body_to_512_bytes():
 
     with patch(
         "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
-    ):
-        with pytest.raises(LMStudioRequestRejected) as excinfo:
-            _post_lm_studio_chat_completion(payload, settings)
+    ), pytest.raises(LMStudioRequestRejected) as excinfo:
+        _post_lm_studio_chat_completion(payload, settings)
 
     assert len(excinfo.value.body_preview) == 512
     assert excinfo.value.body_preview == "X" * 512
@@ -2604,9 +2603,8 @@ def test_post_lm_studio_connection_refused_keeps_unavailable_error():
     with patch(
         "services.ai_chat_service.urllib.request.urlopen",
         side_effect=urllib.error.URLError("Connection refused"),
-    ):
-        with pytest.raises(LMStudioError, match="LM Studio is unavailable"):
-            _post_lm_studio_chat_completion(payload, settings)
+    ), pytest.raises(LMStudioError, match="LM Studio is unavailable"):
+        _post_lm_studio_chat_completion(payload, settings)
 
 
 def test_post_lm_studio_dns_failure_keeps_unavailable_error():
@@ -2629,9 +2627,8 @@ def test_post_lm_studio_dns_failure_keeps_unavailable_error():
 
     with patch(
         "services.ai_chat_service.urllib.request.urlopen", side_effect=dns_err
-    ):
-        with pytest.raises(LMStudioError, match="LM Studio is unavailable") as excinfo:
-            _post_lm_studio_chat_completion(payload, settings)
+    ), pytest.raises(LMStudioError, match="LM Studio is unavailable") as excinfo:
+        _post_lm_studio_chat_completion(payload, settings)
 
     assert not isinstance(excinfo.value, LMStudioRequestRejected)
 
@@ -2656,9 +2653,8 @@ def test_post_lm_studio_url_error_wrapping_timeout_stays_timeout():
 
     with patch(
         "services.ai_chat_service.urllib.request.urlopen", side_effect=timeout_wrapped
-    ):
-        with pytest.raises(LMStudioTimeoutError):
-            _post_lm_studio_chat_completion(payload, settings)
+    ), pytest.raises(LMStudioTimeoutError):
+        _post_lm_studio_chat_completion(payload, settings)
 
 
 # --- Route-level: LMStudioRequestRejected -> 502 with structured detail ----

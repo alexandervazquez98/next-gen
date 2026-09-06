@@ -5,12 +5,13 @@ import logging
 import re
 from typing import Any, Literal
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 from config import get_lm_studio_settings
 from database import get_db
-from fastapi import APIRouter, Depends, HTTPException, status
 from models.user import AIPermission, User, UserPermission
 from postgres_db import get_pg_db
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from services import ai_chat_service
 from services.ai_chat_service import (
     LMStudioError,

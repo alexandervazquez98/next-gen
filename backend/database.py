@@ -1,6 +1,6 @@
-from neo4j import GraphDatabase
 import os
-from dotenv import load_dotenv
+
+from neo4j import GraphDatabase
 
 # load_dotenv()  <-- Eliminado para que Docker mande
 
@@ -24,7 +24,7 @@ driver = GraphDatabase.driver(URI, auth=AUTH)
 # Issue #459: the smoke must fail loudly on CypherSyntaxError so a
 # regression like ``ORDER BY ... ASC NULLS LAST`` aborts cold start instead
 # of being served to operators as silent stale data.
-import neo4j.exceptions as _neo4j_exceptions
+import neo4j.exceptions as _neo4j_exceptions  # noqa: E402
 
 _CLIENT_ERROR_CLASS = _neo4j_exceptions.ClientError
 
@@ -56,11 +56,8 @@ def close_db():
     if driver:
         driver.close()
 
-import time
+import time  # noqa: E402
 
-def close_db():
-    if driver:
-        driver.close()
 
 def verify_connection(max_retries: int = 30, retry_delay: float = 2.0) -> None:
     for i in range(max_retries):

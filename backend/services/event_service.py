@@ -4,8 +4,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from database import get_db
 from fastapi import HTTPException
+
+from database import get_db
 from services.snmp_service import run_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 # first failed page so operators see a real error instead of debounced
 # silent data. See ``is_cypher_syntax_error`` and the chunk-loop branch
 # inside ``event_batch_pruner``.
-import neo4j.exceptions as _neo4j_exceptions
+import neo4j.exceptions as _neo4j_exceptions  # noqa: E402
 
 _CLIENT_ERROR_CLASS = _neo4j_exceptions.ClientError
 _CYPHER_SYNTAX_ERROR_CODE = "Neo.ClientError.Statement.SyntaxError"
@@ -1346,8 +1347,9 @@ def run_prune_recovered_events_sync(user: str = "system-prune") -> int:
 # Distributed Prune Lock — prevents concurrent prune operations across operators
 # ---------------------------------------------------------------------------
 
-from postgres_db import SessionLocal  # noqa: E402
 from sqlalchemy import text  # noqa: E402
+
+from postgres_db import SessionLocal  # noqa: E402
 
 
 def acquire_prune_lock(owner: str, ttl_seconds: int = 300, max_attempts: int = 3) -> bool:
