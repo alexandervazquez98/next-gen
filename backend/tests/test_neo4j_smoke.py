@@ -25,11 +25,9 @@ Coverage:
 
 from __future__ import annotations
 
-import importlib
 import re
 import sys
 import textwrap
-import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
