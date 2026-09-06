@@ -13,7 +13,9 @@ if not USER or not PASSWORD:
 else:
     # Mostramos solo el primer y último caracter de la pass para debuggear sin quemarla
     masked_pass = f"{PASSWORD[0]}...{PASSWORD[-1]}" if len(PASSWORD) > 2 else "***"
-    print(f"DEBUG: Attempting Neo4j connection to {URI} with user '{USER}' and pass {masked_pass} (len: {len(PASSWORD)})")
+    print(
+        f"DEBUG: Attempting Neo4j connection to {URI} with user '{USER}' and pass {masked_pass} (len: {len(PASSWORD)})"
+    )
 
 AUTH = (USER, PASSWORD)
 driver = GraphDatabase.driver(URI, auth=AUTH)
@@ -52,9 +54,11 @@ def get_db():
         pass
     return driver
 
+
 def close_db():
     if driver:
         driver.close()
+
 
 import time  # noqa: E402
 
@@ -116,7 +120,5 @@ def verify_cypher_smoke(driver_to_check=None) -> bool:
             except StopIteration:
                 ok_value = None
         if ok_value != 1:
-            raise RuntimeError(
-                f"Neo4j smoke probe unexpected value: ok={ok_value!r}"
-            )
+            raise RuntimeError(f"Neo4j smoke probe unexpected value: ok={ok_value!r}")
     return True

@@ -133,9 +133,7 @@ def _load_database_module():
     sys.modules["neo4j"] = fake_neo4j
     sys.modules["neo4j.exceptions"] = fake_exc
     # Also need a fake GraphDatabase.driver so database module init succeeds.
-    fake_neo4j.GraphDatabase = types.SimpleNamespace(
-        driver=MagicMock(return_value=MagicMock())
-    )
+    fake_neo4j.GraphDatabase = types.SimpleNamespace(driver=MagicMock(return_value=MagicMock()))
     return importlib.import_module("database")
 
 
@@ -203,15 +201,13 @@ class TestVerifyCypherSmoke:
 
         outcome = database_module.verify_cypher_smoke(driver)
 
-        assert outcome is True, (
-            f"Healthy driver must report success; got {outcome!r}"
-        )
+        assert outcome is True, f"Healthy driver must report success; got {outcome!r}"
         # Ensure the smoke issued the canonical probe query.
         issued_queries = [call.args[0] for call in session.run.call_args_list]
         assert issued_queries, "verify_cypher_smoke must issue at least one Cypher query"
-        assert any("RETURN 1" in q for q in issued_queries), (
-            f"Smoke probe must include ``RETURN 1``; got queries={issued_queries!r}"
-        )
+        assert any(
+            "RETURN 1" in q for q in issued_queries
+        ), f"Smoke probe must include ``RETURN 1``; got queries={issued_queries!r}"
 
     def test_raises_on_client_error(self, database_module):
         """A ClientError from the smoke MUST propagate so startup fails loudly."""
@@ -227,8 +223,7 @@ class TestVerifyCypherSmoke:
             database_module.verify_cypher_smoke(driver)
 
         assert "Invalid input 'NULLS'" in str(exc_info.value), (
-            f"Propagated exception must carry the original Cypher error; "
-            f"got {exc_info.value!r}"
+            f"Propagated exception must carry the original Cypher error; " f"got {exc_info.value!r}"
         )
 
     def test_disable_flag_skips(self, database_module_disabled):
@@ -238,9 +233,7 @@ class TestVerifyCypherSmoke:
         outcome = database_module_disabled.verify_cypher_smoke(driver)
 
         # The kill-switch returns a sentinel falsy value (skip) — NOT True.
-        assert outcome is False, (
-            f"Kill-switch must return a skip sentinel; got {outcome!r}"
-        )
+        assert outcome is False, f"Kill-switch must return a skip sentinel; got {outcome!r}"
         # And must NOT have opened any session.
         driver.session.assert_not_called()
 
@@ -319,9 +312,7 @@ class TestNullsRegressionScan:
             backend_root / "services", backend_root / "engines"
         )
 
-        assert offenders == [], (
-            f"Test fixtures MUST be ignored; got offenders={offenders!r}"
-        )
+        assert offenders == [], f"Test fixtures MUST be ignored; got offenders={offenders!r}"
 
     def test_scan_passes_clean_tree(self, tmp_path):
         """When no production file contains the pattern, scan returns empty."""
@@ -347,9 +338,7 @@ class TestNullsRegressionScan:
             backend_root / "services", backend_root / "engines"
         )
 
-        assert offenders == [], (
-            f"Clean source tree must scan clean; got offenders={offenders!r}"
-        )
+        assert offenders == [], f"Clean source tree must scan clean; got offenders={offenders!r}"
 
     def test_scan_uses_nulls_first_or_last_regex(self):
         """The scanner regex MUST match both NULLS FIRST and NULLS LAST."""

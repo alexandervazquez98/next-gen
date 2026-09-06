@@ -2547,9 +2547,10 @@ def test_post_lm_studio_http_error_maps_to_request_rejected(
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
     http_err = _http_error(code, msg, body)
 
-    with patch(
-        "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
-    ), pytest.raises(LMStudioRequestRejected) as excinfo:
+    with (
+        patch("services.ai_chat_service.urllib.request.urlopen", side_effect=http_err),
+        pytest.raises(LMStudioRequestRejected) as excinfo,
+    ):
         _post_lm_studio_chat_completion(payload, settings)
 
     assert excinfo.value.status == expected_status
@@ -2572,9 +2573,10 @@ def test_post_lm_studio_http_error_truncates_body_to_512_bytes():
     body = b"X" * 5000
     http_err = _http_error(400, "Bad Request", body)
 
-    with patch(
-        "services.ai_chat_service.urllib.request.urlopen", side_effect=http_err
-    ), pytest.raises(LMStudioRequestRejected) as excinfo:
+    with (
+        patch("services.ai_chat_service.urllib.request.urlopen", side_effect=http_err),
+        pytest.raises(LMStudioRequestRejected) as excinfo,
+    ):
         _post_lm_studio_chat_completion(payload, settings)
 
     assert len(excinfo.value.body_preview) == 512
@@ -2599,10 +2601,13 @@ def test_post_lm_studio_connection_refused_keeps_unavailable_error():
     )
     payload = {"model": "local-model", "messages": [{"role": "user", "content": "test"}]}
 
-    with patch(
-        "services.ai_chat_service.urllib.request.urlopen",
-        side_effect=urllib.error.URLError("Connection refused"),
-    ), pytest.raises(LMStudioError, match="LM Studio is unavailable"):
+    with (
+        patch(
+            "services.ai_chat_service.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("Connection refused"),
+        ),
+        pytest.raises(LMStudioError, match="LM Studio is unavailable"),
+    ):
         _post_lm_studio_chat_completion(payload, settings)
 
 
@@ -2624,9 +2629,10 @@ def test_post_lm_studio_dns_failure_keeps_unavailable_error():
     dns_err = urllib.error.URLError("Name or service not known")
     dns_err.reason = socket.gaierror("Name or service not known")
 
-    with patch(
-        "services.ai_chat_service.urllib.request.urlopen", side_effect=dns_err
-    ), pytest.raises(LMStudioError, match="LM Studio is unavailable") as excinfo:
+    with (
+        patch("services.ai_chat_service.urllib.request.urlopen", side_effect=dns_err),
+        pytest.raises(LMStudioError, match="LM Studio is unavailable") as excinfo,
+    ):
         _post_lm_studio_chat_completion(payload, settings)
 
     assert not isinstance(excinfo.value, LMStudioRequestRejected)
@@ -2650,9 +2656,10 @@ def test_post_lm_studio_url_error_wrapping_timeout_stays_timeout():
     timeout_wrapped = urllib.error.URLError("timed out")
     timeout_wrapped.reason = TimeoutError("read timed out")
 
-    with patch(
-        "services.ai_chat_service.urllib.request.urlopen", side_effect=timeout_wrapped
-    ), pytest.raises(LMStudioTimeoutError):
+    with (
+        patch("services.ai_chat_service.urllib.request.urlopen", side_effect=timeout_wrapped),
+        pytest.raises(LMStudioTimeoutError),
+    ):
         _post_lm_studio_chat_completion(payload, settings)
 
 

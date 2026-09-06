@@ -799,7 +799,8 @@ class TestEventBatchPrunerCypherSyntaxErrorFirstChunk:
         original_run = session.run
 
         syntax_error = _FakeClientError(
-            message="Invalid input 'NULLS': expected ...", code="Neo.ClientError.Statement.SyntaxError"
+            message="Invalid input 'NULLS': expected ...",
+            code="Neo.ClientError.Statement.SyntaxError",
         )
 
         def selective_run(query: str, **params):
@@ -837,9 +838,7 @@ class TestEventBatchPrunerCypherSyntaxErrorFirstChunk:
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
 
-    def test_syntax_error_does_not_count_against_retry_cap(
-        self, mock_driver, monkeypatch
-    ):
+    def test_syntax_error_does_not_count_against_retry_cap(self, mock_driver, monkeypatch):
         """A syntax error MUST NOT increment consecutive_failures — it is terminal on first hit."""
         event_service = _load_event_service_module()
         event_service = _install_fake_client_error(monkeypatch, event_service)
@@ -883,9 +882,7 @@ class TestEventBatchPrunerCypherSyntaxErrorFirstChunk:
         finally:
             _restore_get_db(original_driver, original_get_db, event_service)
 
-    def test_non_syntax_client_error_keeps_debounce(
-        self, mock_driver, monkeypatch
-    ):
+    def test_non_syntax_client_error_keeps_debounce(self, mock_driver, monkeypatch):
         """A non-syntax ClientError still rides the 3-strike cap.
 
         Guard against over-broadening the predicate: only CypherSyntaxError
@@ -938,9 +935,7 @@ class TestEventBatchPrunerCypherSyntaxErrorFirstChunk:
             )
             assert isinstance(outcome[1], _FakeClientError)
             error_chunks = [c for c in chunks if "error" in c]
-            assert (
-                len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES
-            ), (
+            assert len(error_chunks) == event_service.MAX_CONSECUTIVE_CHUNK_FAILURES, (
                 f"Non-syntax ClientError must ride the 3-strike cap; "
                 f"got {len(error_chunks)} error chunks"
             )

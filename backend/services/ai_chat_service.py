@@ -304,9 +304,7 @@ def _post_lm_studio_chat_completion(
         if exc.fp is not None:
             try:
                 raw = exc.read()
-                body_preview = raw[:_BODY_PREVIEW_MAX_BYTES].decode(
-                    "utf-8", errors="replace"
-                )
+                body_preview = raw[:_BODY_PREVIEW_MAX_BYTES].decode("utf-8", errors="replace")
             except OSError:
                 body_preview = ""
         upstream_reason = str(getattr(exc, "reason", "") or "")
