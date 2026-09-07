@@ -343,6 +343,42 @@ class EventPruneSettings(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Metric Retention Settings (issue #457)
+# ---------------------------------------------------------------------------
+
+
+# Re-export ``MetricRetentionSettings`` from the service module so callers
+# can ``from config import MetricRetentionSettings`` — mirroring how
+# ``EventPruneSettings`` is the canonical entry point for prune settings.
+from services.retention_service import MetricRetentionSettings  # noqa: E402, F401
+
+
+class Settings:
+    """Aggregate settings object exposing the runtime knobs used in startup.
+
+    Issue #457 / REQ-MVR-001..006. The class is intentionally thin — each
+    settings class still owns its own ``from_env`` and singleton accessor.
+    ``Settings`` simply wires them together so ``Settings().metric_retention``
+    and ``Settings().event_prune`` work uniformly for operator-facing
+    diagnostics and tests.
+
+    Attributes
+    ----------
+    metric_retention:
+        ``MetricRetentionSettings`` instance (default 90-day window,
+        kill-switch default True).
+    event_prune:
+        ``EventPruneSettings`` instance (default 1h interval, 1h stale).
+    """
+
+    def __init__(self) -> None:
+        from services.retention_service import get_metric_retention_settings
+
+        self.metric_retention: MetricRetentionSettings = get_metric_retention_settings()
+        self.event_prune: EventPruneSettings = EventPruneSettings.from_env()
+
+
+# ---------------------------------------------------------------------------
 # MQTT Settings
 # ---------------------------------------------------------------------------
 
