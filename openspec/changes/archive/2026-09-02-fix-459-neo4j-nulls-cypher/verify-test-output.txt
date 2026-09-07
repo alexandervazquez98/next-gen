@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/macbook/Library/CloudStorage/OneDrive-SharedLibraries-Onedrive/PROGRAMMING/next-gen/backend
+configfile: pytest.ini
+plugins: asyncio-0.23.5, timeout-2.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO
+timeout: 120.0s
+timeout method: signal
+timeout func_only: False
+collected 22 items
+
+tests/test_event_batch_pruner.py ...............                         [ 68%]
+tests/test_neo4j_smoke.py .......                                        [100%]
+
+============================== 22 passed ==============================
