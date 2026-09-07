@@ -9,14 +9,8 @@ logger = logging.getLogger(__name__)
 
 def create_hypertable(db: Session):
     """
-    Ensures the metric_values table is converted to a hypertable AND
-    the retention policy is applied (issue #457, REQ-MVR-001 scenario 1).
-
-    Boot-time retention apply runs only after a successful ``create_hypertable``
-    call; if hypertable creation fails, the apply is skipped so a missing
-    extension cannot break startup. ``apply_metric_retention`` is itself
-    idempotent and defensive (swallows IntegrityError / ProgrammingError),
-    so a partial TimescaleDB state will log WARNING and continue.
+    Ensures the metric_values table is converted to a hypertable.
+    This should be called on startup.
     """
     try:
         # Check if already hypertable
@@ -24,28 +18,8 @@ def create_hypertable(db: Session):
         db.execute(text("SELECT create_hypertable('metric_values', 'time', if_not_exists => TRUE);"))
         db.commit()
     except Exception as e:
-        logger.error("Error creating hypertable: %s", e)
+        print(f"Error creating hypertable: {e}")
         db.rollback()
-        return
-
-    # Boot-time retention apply — REQ-MVR-001 scenario 1.
-    # Idempotent; ``apply_metric_retention`` itself never raises, but the
-    # outer try/except is the last-resort guard so a boot never crashes
-    # because of a retention-policy hiccup.
-    try:
-        from services.retention_service import (
-            METRIC_RETENTION_DEFAULT_DAYS,
-            apply_metric_retention,
-            get_metric_retention_settings,
-        )
-
-        settings = get_metric_retention_settings()
-        apply_metric_retention(
-            engine=db.get_bind(),
-            retention_days=settings.retention_days if settings.enabled else METRIC_RETENTION_DEFAULT_DAYS,
-        )
-    except Exception as exc:  # defensive: never break boot
-        logger.warning("Boot-time metric retention apply skipped: %s", exc)
 
 def insert_metric_value(db: Session, node_id: str, metric_id: str, value: float, timestamp: Optional[datetime] = None):
     if timestamp is None:

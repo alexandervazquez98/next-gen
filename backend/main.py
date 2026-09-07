@@ -492,6 +492,30 @@ async def startup_event():
         db = SessionLocal()
         create_hypertable(db)
         db.close()
+
+        # Boot-time retention apply (REQ-MVR-001 scenario 1, issue #457).
+        # Runs only after create_hypertable succeeds; ``apply_metric_retention``
+        # is itself idempotent and defensive (swallows IntegrityError /
+        # ProgrammingError), and the outer try/except is the last-resort guard
+        # so boot never crashes because of a retention-policy hiccup.
+        try:
+            from services.retention_service import (
+                METRIC_RETENTION_DEFAULT_DAYS,
+                apply_metric_retention,
+                get_metric_retention_settings,
+            )
+
+            _metric_settings = get_metric_retention_settings()
+            apply_metric_retention(
+                engine=engine,
+                retention_days=(
+                    _metric_settings.retention_days
+                    if _metric_settings.enabled
+                    else METRIC_RETENTION_DEFAULT_DAYS
+                ),
+            )
+        except Exception as _retention_exc:  # defensive: never break boot
+            logger.warning("Boot-time metric retention apply skipped: %s", _retention_exc)
     except Exception as e:
         logger.error(f"Failed to initialize TimescaleDB: {e}")
 
