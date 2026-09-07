@@ -202,3 +202,48 @@ def apply_metric_retention(
         return
 
     logger.info("Applied metric_values retention policy: %s", interval)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler entrypoint — defensive re-apply if missing (REQ-MVR-001 scenario 2)
+# ---------------------------------------------------------------------------
+
+
+def _policy_exists(engine: Engine, hypertable_name: str) -> bool:
+    """Return True when at least one retention job is registered for the hypertable.
+
+    Reads ``timescaledb_information.jobs`` — the canonical TimescaleDB 2.x
+    catalog for background jobs. Joined with ``job_stats`` to filter by
+    hypertable_name; LIMIT 1 short-circuits on first match.
+    """
+    from sqlalchemy import text
+
+    sql = (
+        "SELECT 1 FROM timescaledb_information.jobs j "
+        "JOIN timescaledb_information.job_stats js ON js.job_id = j.job_id "
+        "WHERE j.application_name LIKE 'Retention Policy%%' "
+        "AND js.hypertable_name = :name LIMIT 1;"
+    )
+    with engine.connect() as conn:
+        row = conn.execute(text(sql), {"name": hypertable_name}).first()
+    return row is not None
+
+
+def run_metric_retention_cleanup() -> None:
+    """Scheduler entrypoint: defensively re-apply retention policy if missing.
+
+    Honors ``METRIC_RETENTION_ENABLED`` (kill-switch); reads interval from
+    ``get_metric_retention_settings()``. REQ-MVR-001 scenario 2.
+    """
+    from postgres_db import engine
+
+    settings = get_metric_retention_settings()
+    if not settings.enabled:
+        logger.debug("Metric retention cleanup skipped (kill-switch off)")
+        return
+
+    if _policy_exists(engine, METRIC_HYPERTABLE_NAME):
+        logger.debug("Metric retention policy already present")
+        return
+
+    apply_metric_retention(engine=engine, retention_days=settings.retention_days)
