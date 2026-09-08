@@ -273,6 +273,7 @@ const MainLayout: React.FC = () => {
           )}
 
           <aside
+            data-testid="ai-chat-panel"
             className={`border-l border-white/5 glass flex flex-col transition-all duration-500 ${
               isEditing || !showAIAgent
                 ? "opacity-0 translate-x-full absolute right-0"
