@@ -1,3 +1,4 @@
+/* global DOMException */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import AIAgentConsole from "../AIAgentConsole";

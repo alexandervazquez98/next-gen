@@ -1,3 +1,4 @@
+/* global DOMException */
 import type React from "react";
 import { useState, useRef, useEffect } from "react";
 import { ApiError } from "../services/api";
@@ -64,6 +65,7 @@ const AIAgentConsole: React.FC = () => {
       ) {
         return;
       }
+      // eslint-disable-next-line no-console
       console.error(error);
       setMessages((prev) => [
         ...prev,
