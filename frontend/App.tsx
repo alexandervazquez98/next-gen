@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import type React from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import LoginPage from "./components/LoginPage";
@@ -8,6 +8,8 @@ import type { GraphNode } from "./types";
 import { api } from "./services/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "./services/queryKeys";
+import { useChatPreferences } from "./hooks/useChatPreferences";
+import { useResizableHandle } from "./hooks/useResizableHandle";
 
 // Components
 import GraphCMDB from "./components/GraphCMDB";
@@ -62,6 +64,26 @@ const MainLayout: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAIAgent, setShowAIAgent] = useState(false);
+
+  // AI chat panel: persisted width + drag handle plumbing + responsive drawer.
+  const { width: chatWidth, setWidth: setChatWidth } = useChatPreferences();
+  const { onPointerDown: onHandlePointerDown, onDoubleClick: onHandleDblClick } =
+    useResizableHandle(chatWidth, setChatWidth);
+  const [isOverlay, setIsOverlay] = useState<boolean>(
+    typeof window !== "undefined" && window.innerWidth < 768,
+  );
+  useEffect(() => {
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      if (resizeTimer !== null) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => setIsOverlay(window.innerWidth < 768), 250);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (resizeTimer !== null) clearTimeout(resizeTimer);
+    };
+  }, []);
 
   // --- CRUD Functions ---
   const refreshTopologyResources = async () => {
@@ -251,8 +273,25 @@ const MainLayout: React.FC = () => {
           )}
 
           <aside
-            className={`w-96 border-l border-white/5 glass flex flex-col transition-all duration-500 ${isEditing || !showAIAgent ? "opacity-0 translate-x-full absolute right-0" : "relative opacity-100 translate-x-0"}`}
+            data-testid="ai-chat-panel"
+            className={`border-l border-white/5 glass flex flex-col transition-all duration-500 ${
+              isEditing || !showAIAgent
+                ? "opacity-0 translate-x-full absolute right-0"
+                : "relative opacity-100 translate-x-0"
+            } ${isOverlay ? "fixed inset-0 w-screen z-50" : ""}`}
+            style={{ width: isOverlay ? "100%" : chatWidth }}
           >
+            {!isOverlay && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize chat panel"
+                data-testid="ai-chat-resize-handle"
+                onPointerDown={onHandlePointerDown}
+                onDoubleClick={onHandleDblClick}
+                className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-brand-500/30 transition-colors"
+              />
+            )}
             <AIAgentConsole />
           </aside>
         </main>
