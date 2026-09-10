@@ -3,11 +3,13 @@
 Split out of test_graph_contracts.py so each contract module ships with
 its own focused test file (work-unit commits).
 """
+
+
 class TestClusterIdParse:
     """Valid parse scenarios."""
 
     def test_parse_valid_location_id(self):
-        from contracts.cluster_id import ClusterId, parse_cluster_id
+        from contracts.cluster_id import parse_cluster_id
 
         parsed = parse_cluster_id("location:dc-1")
         assert parsed.axis == "location"
@@ -39,4 +41,3 @@ class TestClusterIdParse:
         a = parse_cluster_id("location:dc-1")
         b = parse_cluster_id("location:dc-1")
         assert cluster_ids_equal(a, b)
-

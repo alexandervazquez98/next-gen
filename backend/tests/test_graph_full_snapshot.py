@@ -3,9 +3,9 @@
 Split out of test_graph_contracts.py so each contract module ships with
 its own focused test file (work-unit commits).
 """
+
 from __future__ import annotations
 
-import pytest
 
 class TestGraphFullSnapshot:
     """REQ-3 — ``/graph/full`` MUST remain byte-identical to the frozen snapshot.
@@ -26,9 +26,7 @@ class TestGraphFullSnapshot:
 
         path = TestGraphFullSnapshot.FIXTURE_PATH
         # Resolve relative to repo root (this file lives under backend/tests/).
-        repo_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         full_path = os.path.join(repo_root, path)
         with open(full_path) as f:
             return json.load(f)
@@ -49,7 +47,7 @@ class TestGraphFullSnapshot:
 
     def test_snapshot_link_field_set_is_locked(self):
         snapshot = self._load_snapshot()
-        link_keys = {tuple(sorted(l.keys())) for l in snapshot["links"]}
+        link_keys = {tuple(sorted(link.keys())) for link in snapshot["links"]}
         locked = set().union(*link_keys)
         assert {"source", "target", "relationship"}.issubset(locked)
 
@@ -58,9 +56,9 @@ class TestGraphFullSnapshot:
         snapshot = self._load_snapshot()
         forbidden_node_fields = {"public_ip_redacted"}
         for n in snapshot["nodes"]:
-            assert not (forbidden_node_fields & set(n.keys())), (
-                "snapshot node has forbidden field drift"
-            )
+            assert not (
+                forbidden_node_fields & set(n.keys())
+            ), "snapshot node has forbidden field drift"
 
     def test_snapshot_byte_equality_against_testclient(self):
         """Calling ``/graph/full`` via TestClient with the snapshot as the
@@ -77,9 +75,8 @@ class TestGraphFullSnapshot:
         from unittest.mock import MagicMock, patch
 
         from fastapi.testclient import TestClient
-        from services.auth_service import get_current_active_user
-
         from main import app
+        from services.auth_service import get_current_active_user
 
         snapshot = self._load_snapshot()
 
@@ -103,11 +100,11 @@ class TestGraphFullSnapshot:
                 raw_nodes,
                 [
                     {
-                        "source_node": {"id": l["source"]},
-                        "target_node": {"id": l["target"]},
-                        "type": l["relationship"],
+                        "source_node": {"id": link["source"]},
+                        "target_node": {"id": link["target"]},
+                        "type": link["relationship"],
                     }
-                    for l in snapshot["links"]
+                    for link in snapshot["links"]
                 ],
             )
 
@@ -127,6 +124,6 @@ class TestGraphFullSnapshot:
         assert second == snapshot
         # Ordering preserved across calls.
         assert [n["id"] for n in first["nodes"]] == [n["id"] for n in snapshot["nodes"]]
-        assert [l["source"] + "->" + l["target"] for l in first["links"]] == [
-            l["source"] + "->" + l["target"] for l in snapshot["links"]
+        assert [link["source"] + "->" + link["target"] for link in first["links"]] == [
+            link["source"] + "->" + link["target"] for link in snapshot["links"]
         ]

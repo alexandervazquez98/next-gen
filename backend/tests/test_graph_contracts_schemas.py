@@ -3,9 +3,9 @@
 Split out of test_graph_contracts.py so each contract module ships with
 its own focused test file (work-unit commits).
 """
+
 from __future__ import annotations
 
-import pytest
 
 class TestSchemaDTOs:
     """Pydantic v2 DTO round-trip + sensitive-field omission (REQ-1, REQ-2).
@@ -24,12 +24,9 @@ class TestSchemaDTOs:
     def test_overview_response_round_trip_minimal(self):
         from schemas.graph import (
             AggregatePolicy,
-            EmptyReason,
             Legend,
-            OverviewCluster,
             OverviewResponse,
             Page,
-            SafeGeoPrecision,
         )
 
         response = OverviewResponse(
@@ -131,7 +128,9 @@ class TestSchemaDTOs:
                     allowed_public_axes=["ci_type"],
                 )
             ],
-            links=[DetailLink(source_node_id="ci-1", target_node_id="ci-2", relationship="CONNECTS_TO")],
+            links=[
+                DetailLink(source_node_id="ci-1", target_node_id="ci-2", relationship="CONNECTS_TO")
+            ],
             boundary_stubs=[],
             projection_flags=ProjectionFlags(
                 show_sensitive_metadata=False,
@@ -240,4 +239,3 @@ class TestSchemaDTOs:
 
         flags = ProjectionFlags()
         assert flags.show_sensitive_metadata is False
-

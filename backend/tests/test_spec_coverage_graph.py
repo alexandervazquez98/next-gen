@@ -27,10 +27,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 SPEC_PATH = Path(
-    "openspec/changes/feat-390-lod-contracts/specs/"
-    "cmdb-graph-overview-detail-contracts/spec.md"
+    "openspec/changes/feat-390-lod-contracts/specs/" "cmdb-graph-overview-detail-contracts/spec.md"
 )
 
 
@@ -248,23 +246,18 @@ class TestSpecCoverageGate:
                     invalid.append(f"{scenario}: unknown class {class_name!r}")
                     continue
                 if not hasattr(cls, method_name):
-                    invalid.append(
-                        f"{scenario}: {class_name}.{method_name} does not exist"
-                    )
+                    invalid.append(f"{scenario}: {class_name}.{method_name} does not exist")
 
-        assert not invalid, (
-            "Mapped tests are missing:\n  - "
-            + "\n  - ".join(invalid)
-        )
+        assert not invalid, "Mapped tests are missing:\n  - " + "\n  - ".join(invalid)
 
     def test_minimum_scenario_count(self):
         """Sanity guard: the spec should declare at least 30 scenarios."""
         root = _repo_root()
         spec_text = (root / SPEC_PATH).read_text()
         scenarios = _extract_scenarios(spec_text)
-        assert len(scenarios) >= 30, (
-            f"Spec has only {len(scenarios)} scenarios — expected >=30 for #390"
-        )
+        assert (
+            len(scenarios) >= 30
+        ), f"Spec has only {len(scenarios)} scenarios — expected >=30 for #390"
 
     def test_no_extra_orphan_scenarios_in_mapping(self):
         """Every entry in SCENARIO_TO_TEST must correspond to a real scenario."""
@@ -272,7 +265,6 @@ class TestSpecCoverageGate:
         spec_text = (root / SPEC_PATH).read_text()
         scenarios = set(_extract_scenarios(spec_text))
         orphans = [k for k in SCENARIO_TO_TEST if k not in scenarios]
-        assert not orphans, (
-            f"SCENARIO_TO_TEST references scenarios not in the spec:\n  - "
-            + "\n  - ".join(orphans)
-        )
+        assert (
+            not orphans
+        ), "SCENARIO_TO_TEST references scenarios not in the spec:\n  - " + "\n  - ".join(orphans)

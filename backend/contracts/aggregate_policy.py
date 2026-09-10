@@ -13,8 +13,7 @@ Pure functions, no IO.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-
+from enum import StrEnum
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -24,7 +23,7 @@ DEFAULT_MINIMUM_COUNT = 5
 PERMISSION_REQUIRED = "graph:aggregate_breakdown:read"
 
 
-class SafeGeoPrecision(str, Enum):
+class SafeGeoPrecision(StrEnum):
     """Tiered geographic precision for aggregates.
 
     - ``none``:   too few records — suppress geo summary entirely.
@@ -62,9 +61,7 @@ class AggregatePolicy:
 # ---------------------------------------------------------------------------
 
 
-def derive_safe_geo_precision(
-    visible_count: int, minimum_count: int
-) -> str:
+def derive_safe_geo_precision(visible_count: int, minimum_count: int) -> str:
     """Map visible_count + minimum_count to a :class:`SafeGeoPrecision` value.
 
     Tiers (when ``minimum_count >= 1``):
@@ -73,13 +70,9 @@ def derive_safe_geo_precision(
         * otherwise                             -> ``SafeGeoPrecision.CITY``
     """
     if not isinstance(visible_count, int) or visible_count < 0:
-        raise ValueError(
-            f"visible_count must be a non-negative integer; got {visible_count!r}"
-        )
+        raise ValueError(f"visible_count must be a non-negative integer; got {visible_count!r}")
     if not isinstance(minimum_count, int) or minimum_count < 1:
-        raise ValueError(
-            f"minimum_count must be a positive integer; got {minimum_count!r}"
-        )
+        raise ValueError(f"minimum_count must be a positive integer; got {minimum_count!r}")
 
     if visible_count < minimum_count:
         return SafeGeoPrecision.NONE.value

@@ -22,15 +22,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from contracts.aggregate_policy import (
     DEFAULT_MINIMUM_COUNT,
     PERMISSION_REQUIRED,
     SafeGeoPrecision,
 )
 from contracts.projection import SensitiveSource
-
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Re-export for downstream callers

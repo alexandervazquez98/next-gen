@@ -74,4 +74,3 @@ class TestClusterIdRejection:
         # No cluster label, key, count, geo, location_name in the body.
         for forbidden in ("label", "key", "count", "geo", "location_name"):
             assert forbidden not in body
-

@@ -23,7 +23,6 @@ import json
 import secrets
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -48,9 +47,7 @@ class StaleCursorError(ValueError):
     """The cursor is bound to a revision that no longer matches."""
 
     def __init__(self, stale_revision: str, current_revision: str) -> None:
-        super().__init__(
-            f"stale_cursor: stale={stale_revision!r}, current={current_revision!r}"
-        )
+        super().__init__(f"stale_cursor: stale={stale_revision!r}, current={current_revision!r}")
         self.stale_revision = stale_revision
         self.current_revision = current_revision
 
@@ -194,19 +191,15 @@ def decode_cursor(
     principal_hash = payload["principal_hash"]
 
     # Revision drift -> 409 stale_cursor with current_revision.
-    if current_revision is not None:
-        if str(current_revision.value) != revision_value:
-            raise StaleCursorError(
-                stale_revision=revision_value,
-                current_revision=str(current_revision.value),
-            )
+    if current_revision is not None and str(current_revision.value) != revision_value:
+        raise StaleCursorError(
+            stale_revision=revision_value,
+            current_revision=str(current_revision.value),
+        )
 
     # Principal drift -> 400 stale_cursor / permission_changed.
-    if current_principal_hash is not None:
-        if current_principal_hash != principal_hash:
-            raise PermissionChangedError(
-                "cursor principal_hash does not match current principal"
-            )
+    if current_principal_hash is not None and current_principal_hash != principal_hash:
+        raise PermissionChangedError("cursor principal_hash does not match current principal")
 
     return DecodedCursor(
         cluster_id=cluster_id,

@@ -24,9 +24,9 @@ class TestAggregatePolicy:
 
     def test_policy_default_constants(self):
         from contracts.aggregate_policy import (
-            AggregatePolicy,
             DEFAULT_MINIMUM_COUNT,
             PERMISSION_REQUIRED,
+            AggregatePolicy,
         )
 
         assert DEFAULT_MINIMUM_COUNT == 5
@@ -69,7 +69,6 @@ class TestAggregatePolicy:
     )
     def test_derive_safe_geo_precision_tiered(self, visible, expected):
         from contracts.aggregate_policy import (
-            AggregatePolicy,
             SafeGeoPrecision,
             derive_safe_geo_precision,
         )
@@ -94,4 +93,3 @@ class TestAggregatePolicy:
         assert SafeGeoPrecision.NONE.value == "none"
         assert SafeGeoPrecision.REGION.value == "region"
         assert SafeGeoPrecision.CITY.value == "city"
-

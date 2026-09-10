@@ -3,9 +3,9 @@
 Split out of test_graph_contracts.py so each contract module ships with
 its own focused test file (work-unit commits).
 """
+
 from __future__ import annotations
 
-import pytest
 
 class TestDetailProjectionPolicyProtocol:
     """REQ-2 / REQ-9 — DetailProjectionPolicy interface contract (no impl).
@@ -27,7 +27,6 @@ class TestDetailProjectionPolicyProtocol:
     def test_default_show_sensitive_metadata_is_false(self):
         """A bare principal with no permission requested must NOT see sensitive."""
         from contracts.projection import (
-            PERMISSION_REQUIRED_FOR_SENSITIVE,
             DetailProjectionPolicy,
             SensitiveSource,
         )
@@ -87,7 +86,10 @@ class TestDetailProjectionPolicyProtocol:
         def principal_has_breakdown(p) -> bool:
             return False
 
-        assert _Stub().sensitive_source(principal=None, allowed=True) == SensitiveSource.PRINCIPAL_SCOPE
+        assert (
+            _Stub().sensitive_source(principal=None, allowed=True)
+            == SensitiveSource.PRINCIPAL_SCOPE
+        )
 
     def test_sensitive_source_principal_with_permission_when_allowed(self):
         from contracts.projection import DetailProjectionPolicy, SensitiveSource
@@ -115,11 +117,10 @@ class TestDetailProjectionPolicyProtocol:
         )
 
     def test_protocol_constant_permission_required(self):
-        from contracts.projection import PERMISSION_REQUIRED_FOR_SENSITIVE
-
         # The sensitive-fields gate permission MUST be the same string used
         # by AggregatePolicy (REQ-9).
         from contracts.aggregate_policy import PERMISSION_REQUIRED
+        from contracts.projection import PERMISSION_REQUIRED_FOR_SENSITIVE
 
         assert PERMISSION_REQUIRED_FOR_SENSITIVE == PERMISSION_REQUIRED
 
@@ -138,4 +139,3 @@ class TestDetailProjectionPolicyProtocol:
                 return SensitiveSource.NEVER
 
         assert isinstance(_Stub(), DetailProjectionPolicy)
-

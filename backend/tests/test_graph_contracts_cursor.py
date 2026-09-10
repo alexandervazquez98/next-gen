@@ -3,9 +3,11 @@
 Split out of test_graph_contracts.py so each contract module ships with
 its own focused test file (work-unit commits).
 """
+
 from __future__ import annotations
 
 import pytest
+
 
 class TestCursor:
     """Opaque pagination cursor (REQ-5).
@@ -93,9 +95,11 @@ class TestCursor:
 
         from contracts.cursor import InvalidCursorError, decode_cursor
 
-        bad = base64.urlsafe_b64encode(
-            json.dumps({"v": 99, "cluster_id": "location:dc-1"}).encode()
-        ).rstrip(b"=").decode()
+        bad = (
+            base64.urlsafe_b64encode(json.dumps({"v": 99, "cluster_id": "location:dc-1"}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
         with pytest.raises(InvalidCursorError):
             decode_cursor(bad)
 
@@ -158,4 +162,3 @@ class TestCursor:
 
         h = derive_filters_hash({"ci_type": "router"})
         assert len(h) == 16
-

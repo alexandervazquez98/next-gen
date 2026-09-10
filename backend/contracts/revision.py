@@ -56,7 +56,7 @@ class Revision:
         return hash(self._value)
 
     @staticmethod
-    def derive(snapshot: bytes) -> "Revision":
+    def derive(snapshot: bytes) -> Revision:
         """Derive a Revision from a snapshot payload.
 
         Algorithm (pinned in this slice; impl belongs to #391):

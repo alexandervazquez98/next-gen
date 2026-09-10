@@ -20,7 +20,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -70,9 +69,7 @@ class AxisConflictError(ValueError):
     """
 
     def __init__(self, parsed_axis: str, query_axis: str) -> None:
-        super().__init__(
-            f"axis_conflict: parsed={parsed_axis!r}, query={query_axis!r}"
-        )
+        super().__init__(f"axis_conflict: parsed={parsed_axis!r}, query={query_axis!r}")
         self.parsed_axis = parsed_axis
         self.query_axis = query_axis
 
@@ -126,16 +123,12 @@ def parse_cluster_id(raw: str | None) -> ClusterId:
         raise InvalidClusterIdError(raw, "cluster_id is empty")
 
     if ":" not in raw:
-        raise InvalidClusterIdError(
-            raw, "cluster_id must be in '<axis>:<key>' format"
-        )
+        raise InvalidClusterIdError(raw, "cluster_id must be in '<axis>:<key>' format")
 
     # Reject slashes anywhere — the regex already enforces this, but an early
     # check yields a clearer reason for the most common misuse.
     if "/" in raw:
-        raise InvalidClusterIdError(
-            raw, "cluster_id must not contain '/'"
-        )
+        raise InvalidClusterIdError(raw, "cluster_id must not contain '/'")
 
     match = _CLUSTER_ID_RE.match(raw)
     if match is None:
@@ -143,24 +136,15 @@ def parse_cluster_id(raw: str | None) -> ClusterId:
         # without leaking metadata.
         axis, _, key = raw.partition(":")
         if axis != LOCATION_AXIS:
-            raise InvalidClusterIdError(
-                raw, f"axis must be {LOCATION_AXIS!r}"
-            )
+            raise InvalidClusterIdError(raw, f"axis must be {LOCATION_AXIS!r}")
         if len(key) > _MAX_KEY_LEN:
-            raise InvalidClusterIdError(
-                raw, f"key length exceeds {_MAX_KEY_LEN}"
-            )
-        raise InvalidClusterIdError(
-            raw, "key contains disallowed characters"
-        )
+            raise InvalidClusterIdError(raw, f"key length exceeds {_MAX_KEY_LEN}")
+        raise InvalidClusterIdError(raw, "key contains disallowed characters")
 
     axis = match.group("axis")
     key = match.group("key")
 
-    if key == UNASSIGNED_KEY:
-        display = UNASSIGNED_DISPLAY
-    else:
-        display = key
+    display = UNASSIGNED_DISPLAY if key == UNASSIGNED_KEY else key
 
     return ClusterId(
         axis=axis,

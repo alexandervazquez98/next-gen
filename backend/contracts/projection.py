@@ -17,18 +17,17 @@ Invariants:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from contracts.aggregate_policy import PERMISSION_REQUIRED
-
 
 # Re-export so the projection module is the single import for sensitive
 # metadata gating.
 PERMISSION_REQUIRED_FOR_SENSITIVE = PERMISSION_REQUIRED
 
 
-class SensitiveSource(str, Enum):
+class SensitiveSource(StrEnum):
     """Origin of any sensitive metadata returned on a detail node."""
 
     NEVER = "never"
@@ -51,14 +50,8 @@ class DetailProjectionPolicy(Protocol):
       describes why a (potential) sensitive field is or is not present.
     """
 
-    def apply_to_node(
-        self, node: Any, principal: Any
-    ) -> Any: ...
+    def apply_to_node(self, node: Any, principal: Any) -> Any: ...
 
-    def show_sensitive_metadata(
-        self, principal: Any, requested: bool
-    ) -> bool: ...
+    def show_sensitive_metadata(self, principal: Any, requested: bool) -> bool: ...
 
-    def sensitive_source(
-        self, principal: Any, allowed: bool
-    ) -> SensitiveSource: ...
+    def sensitive_source(self, principal: Any, allowed: bool) -> SensitiveSource: ...
