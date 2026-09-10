@@ -1,0 +1,100 @@
+{
+  "links": [
+    {
+      "relationship": "CONNECTS_TO",
+      "source": "ci-test-1",
+      "target": "ci-test-2"
+    },
+    {
+      "relationship": "CONNECTS_TO",
+      "source": "ci-test-2",
+      "target": "ci-test-3"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ci-test-1",
+      "ip": "10.0.0.1",
+      "label": "Test CI 1",
+      "location": {
+        "lat": 19.4326,
+        "long": -99.1332
+      },
+      "location_name": "dc-1",
+      "metadata": {
+        "id": "ci-test-1",
+        "ip": "10.0.0.1",
+        "layer": "server",
+        "location": {
+          "lat": 19.4326,
+          "long": -99.1332
+        },
+        "location_name": "dc-1",
+        "metrics": [],
+        "name": "Test CI 1",
+        "public_ip": null,
+        "status": "ACTIVE"
+      },
+      "metrics": [],
+      "public_ip": null,
+      "status": "ACTIVE",
+      "type": "server"
+    },
+    {
+      "id": "ci-test-2",
+      "ip": "10.0.0.2",
+      "label": "Test CI 2",
+      "location": {
+        "lat": 19.4326,
+        "long": -99.1332
+      },
+      "location_name": "dc-1",
+      "metadata": {
+        "id": "ci-test-2",
+        "ip": "10.0.0.2",
+        "layer": "server",
+        "location": {
+          "lat": 19.4326,
+          "long": -99.1332
+        },
+        "location_name": "dc-1",
+        "metrics": [],
+        "name": "Test CI 2",
+        "public_ip": null,
+        "status": "ACTIVE"
+      },
+      "metrics": [],
+      "public_ip": null,
+      "status": "ACTIVE",
+      "type": "server"
+    },
+    {
+      "id": "ci-test-3",
+      "ip": "10.0.0.3",
+      "label": "Test CI 3",
+      "location": {
+        "lat": 40.7128,
+        "long": -74.006
+      },
+      "location_name": "dc-1",
+      "metadata": {
+        "id": "ci-test-3",
+        "ip": "10.0.0.3",
+        "layer": "server",
+        "location": {
+          "lat": 40.7128,
+          "long": -74.006
+        },
+        "location_name": "dc-1",
+        "metrics": [],
+        "name": "Test CI 3",
+        "public_ip": null,
+        "status": "ACTIVE"
+      },
+      "metrics": [],
+      "public_ip": null,
+      "status": "ACTIVE",
+      "type": "server"
+    }
+  ]
+}
