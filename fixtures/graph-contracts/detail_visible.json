@@ -1,0 +1,73 @@
+{
+  "boundary_stubs": [
+    {
+      "cluster_id": "location:dc-2",
+      "redacted": false,
+      "redaction_reason": null,
+      "visible_link_count": 2
+    }
+  ],
+  "cluster": {
+    "axis": "location",
+    "cluster_id": "location:dc-1",
+    "display_label": "dc-1",
+    "visible_link_count": 2,
+    "visible_node_count": 3
+  },
+  "empty_reason": "none",
+  "filters": {},
+  "generated_at": "2026-01-15T10:00:00Z",
+  "links": [
+    {
+      "relationship": "CONNECTS_TO",
+      "source_node_id": "ci-1",
+      "target_node_id": "ci-2"
+    },
+    {
+      "relationship": "HOSTED_ON",
+      "source_node_id": "ci-2",
+      "target_node_id": "ci-3"
+    }
+  ],
+  "nodes": [
+    {
+      "allowed_public_axes": [
+        "ci_type",
+        "location_name"
+      ],
+      "ci_type": "router",
+      "display_label": "Router-01",
+      "id": "ci-1",
+      "kind": "CI"
+    },
+    {
+      "allowed_public_axes": [
+        "ci_type",
+        "location_name"
+      ],
+      "ci_type": "switch",
+      "display_label": "Switch-01",
+      "id": "ci-2",
+      "kind": "CI"
+    },
+    {
+      "allowed_public_axes": [
+        "ci_type",
+        "location_name"
+      ],
+      "ci_type": "server",
+      "display_label": "Server-01",
+      "id": "ci-3",
+      "kind": "CI"
+    }
+  ],
+  "page": {
+    "has_more": false,
+    "next_cursor": null
+  },
+  "projection_flags": {
+    "sensitive_source": "never",
+    "show_sensitive_metadata": false
+  },
+  "revision": "test-revision-0007"
+}
