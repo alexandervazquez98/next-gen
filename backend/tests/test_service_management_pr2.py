@@ -233,3 +233,100 @@ def test_repository_update_returns_persisted_description_and_value_stream():
     query = session.run.call_args.args[0]
     assert "sc.description AS description" in query
     assert "sc.value_stream AS value_stream" in query
+
+
+class _FakeNeo4jDateTime:
+    """Stand-in for neo4j.time.DateTime exposed by the Neo4j Python driver."""
+
+    def __init__(self, iso: str) -> None:
+        self._iso = iso
+
+    def iso_format(self) -> str:
+        return self._iso
+
+
+class _FakeNeo4jDateTimeNoIsoFormat:
+    """Stand-in for objects that only expose the stdlib `isoformat` method."""
+
+    def __init__(self, iso: str) -> None:
+        self._iso = iso
+
+    def isoformat(self) -> str:
+        return self._iso
+
+
+class _FakeServiceCatalogRow:
+    """Mimics a Neo4j Record that only exposes `.get()` (driver behavior)."""
+
+    def __init__(self, values: dict) -> None:
+        self._values = values
+
+    def get(self, key: str):
+        return self._values[key]
+
+
+def _full_catalog_row_values(created_at, updated_at):
+    return {
+        "id": "svc-001",
+        "service_id": "svc-001",
+        "name": "Demo",
+        "owner_team": "team-a",
+        "category": "Business",
+        "tier": "Gold",
+        "service_tier": "Gold",
+        "criticality": "High",
+        "sla_target_minutes": 60,
+        "sla_minutes": 60,
+        "description": "Demo service",
+        "service_type": "incident",
+        "value_stream": "operate",
+        "active": True,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "updated_by": "test-user",
+    }
+
+
+def test_repository_record_coerces_neo4j_datetime_to_iso_string():
+    """Regression for #473: _record() must coerce neo4j.time.DateTime to ISO strings."""
+
+    record = ServiceCatalogRepository._record(
+        _FakeServiceCatalogRow(
+            _full_catalog_row_values(
+                _FakeNeo4jDateTime("2026-01-15T10:30:00Z"),
+                _FakeNeo4jDateTime("2026-01-15T10:35:00Z"),
+            )
+        )
+    )
+
+    assert record["created_at"] == "2026-01-15T10:30:00Z"
+    assert record["updated_at"] == "2026-01-15T10:35:00Z"
+
+
+def test_repository_record_coerces_stdlib_datetime_to_iso_string():
+    """_to_iso() falls back to .isoformat() for stdlib datetime objects."""
+
+    from datetime import datetime
+
+    record = ServiceCatalogRepository._record(
+        _FakeServiceCatalogRow(
+            _full_catalog_row_values(
+                datetime(2026, 1, 15, 10, 30, 0),
+                datetime(2026, 1, 15, 10, 35, 0),
+            )
+        )
+    )
+
+    assert record["created_at"] == "2026-01-15T10:30:00"
+    assert record["updated_at"] == "2026-01-15T10:35:00"
+
+
+def test_repository_record_passes_through_none_and_plain_strings():
+    """_to_iso() leaves None, strings, and ints untouched (no-op safety net)."""
+
+    record = ServiceCatalogRepository._record(
+        _FakeServiceCatalogRow(_full_catalog_row_values(None, "2026-01-15T10:35:00Z"))
+    )
+
+    assert record["created_at"] is None
+    assert record["updated_at"] == "2026-01-15T10:35:00Z"
