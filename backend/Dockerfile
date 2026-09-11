@@ -39,4 +39,11 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 COPY engines /app/engines
 COPY . .
 
+# The container layout is FLAT — `WORKDIR /app` is the backend root. But the unit-test
+# suite was written for the NESTED local layout (`from backend.services import ...`),
+# so `from backend.X import Y` resolves to `<rootdir>/backend/X.py`, which doesn't
+# exist in the flat container. Create a self-referential symlink so the nested
+# import path resolves against the flat filesystem (see issue #474 test-infra unblock).
+RUN ln -s /app /app/backend
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
