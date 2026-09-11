@@ -325,9 +325,7 @@ def test_repository_record_passes_through_none_and_plain_strings():
     """_to_iso() leaves None, strings, and ints untouched (no-op safety net)."""
 
     record = ServiceCatalogRepository._record(
-        _FakeServiceCatalogRow(
-            _full_catalog_row_values(None, "2026-01-15T10:35:00Z")
-        )
+        _FakeServiceCatalogRow(_full_catalog_row_values(None, "2026-01-15T10:35:00Z"))
     )
 
     assert record["created_at"] is None
