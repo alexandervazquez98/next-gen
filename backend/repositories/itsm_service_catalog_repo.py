@@ -147,9 +147,28 @@ class ServiceCatalogRepository:
         self._driver = driver if driver is not None else get_db()
 
     @staticmethod
+    def _to_iso(value: Any) -> Any:
+        """Coerce Neo4j temporal types to ISO 8601 strings for JSON serialization.
+
+        Cypher's `datetime($x)` returns `neo4j.time.DateTime` which Pydantic
+        cannot serialize (it falls back to HTTP 500 with
+        `PydanticSerializationError: Unable to serialize unknown type`).
+        We pass anything that is not None and exposes `.iso_format()` (the
+        Neo4j driver convention) or `.isoformat()` (stdlib `datetime`) through
+        its stringifier; everything else (None, plain strings, ints) is left
+        untouched so the call is safe to wrap on every row field.
+        """
+        if value is None:
+            return None
+        iso = getattr(value, "iso_format", None) or getattr(value, "isoformat", None)
+        return iso() if callable(iso) else value
+
+    @staticmethod
     def _record(row: Any) -> dict[str, Any] | None:
         if row is None:
             return None
+        created_at_raw = row.get("created_at") if hasattr(row, "get") else row["created_at"]
+        updated_at_raw = row.get("updated_at") if hasattr(row, "get") else row["updated_at"]
         return {
             "id": row.get("id") if hasattr(row, "get") else row["id"],
             "service_id": row.get("service_id") if hasattr(row, "get") else row["service_id"],
@@ -171,8 +190,8 @@ class ServiceCatalogRepository:
                 row.get("value_stream") if hasattr(row, "get") else row.get("value_stream")
             ),
             "active": row.get("active") if hasattr(row, "get") else row["active"],
-            "created_at": row.get("created_at") if hasattr(row, "get") else row["created_at"],
-            "updated_at": row.get("updated_at") if hasattr(row, "get") else row["updated_at"],
+            "created_at": ServiceCatalogRepository._to_iso(created_at_raw),
+            "updated_at": ServiceCatalogRepository._to_iso(updated_at_raw),
             "updated_by": row.get("updated_by") if hasattr(row, "get") else row["updated_by"],
         }
 

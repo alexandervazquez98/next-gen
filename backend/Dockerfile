@@ -16,9 +16,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt requirements-dev.txt ./
 
-# Install OS tools used by health checks and backups.
+# Install OS tools used by health checks, backups, and pg_dump.
+# postgresql-client provides pg_dump for backup-service tests
+# (see issue #474 test-infra unblock).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     apt-get update \
@@ -28,10 +30,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Note: pip's `--no-cache-dir` flag (previously set here) is removed because
 # it disables the cache mount above. With the mount, BuildKit owns pip's
 # cache lifecycle and writes only happen when wheels change.
+# requirements-dev.txt installs testcontainers[postgres] + pytest plugins
+# needed for the full backend pytest suite to run inside this image
+# (issue #474 test-infra unblock).
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install -r requirements.txt
+    pip install -r requirements.txt -r requirements-dev.txt
 
 COPY engines /app/engines
 COPY . .
+
+# The container layout is FLAT — `WORKDIR /app` is the backend root. But the unit-test
+# suite was written for the NESTED local layout (`from backend.services import ...`),
+# so `from backend.X import Y` resolves to `<rootdir>/backend/X.py`, which doesn't
+# exist in the flat container. Create a self-referential symlink so the nested
+# import path resolves against the flat filesystem (see issue #474 test-infra unblock).
+RUN ln -s /app /app/backend
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
