@@ -18,7 +18,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from config import get_mqtt_runtime_settings, get_time_sync_settings
-from database import get_db, verify_connection
+from database import get_db, verify_connection, verify_cypher_smoke
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -50,6 +50,14 @@ _EVENT_PRUNE_ENABLED = True
 _EVENT_PRUNE_INTERVAL_SECONDS = 3600
 _EVENT_PRUNE_BATCH_SIZE = 500
 _EVENT_PRUNE_STALE_AFTER_SECONDS = 3600
+
+# Metric retention scheduler knobs (issue #457, REQ-MVR-001..006).
+# Mirrors the _EVENT_PRUNE_* module-level globals so the registration
+# function can read a stable snapshot without re-parsing env vars on every
+# tick. Defaults match design.md §Architecture Decisions: enabled, 90-day
+# window, 6h cadence.
+_METRIC_RETENTION_ENABLED = True
+_METRIC_RETENTION_DAYS = 90
 
 
 def _parse_system_status_bool(value: str) -> bool | None:
@@ -157,6 +165,36 @@ def _reload_event_prune_env_settings() -> None:
     )
 
 
+def _reload_metric_retention_env_settings() -> None:
+    """Load metric retention scheduler knobs from environment with safe defaults.
+
+    Issue #457 (REQ-MVR-002, REQ-MVR-003). Mirrors
+    ``_reload_event_prune_env_settings`` — invalid bool/int values fall back
+    to safe defaults rather than crashing the API process.
+    ``METRIC_RETENTION_ENABLED`` follows the same ``_parse_system_status_bool``
+    idiom; invalid input logs a warning and defaults to True so the scheduler
+    stays active by default.
+    """
+    global _METRIC_RETENTION_ENABLED
+    global _METRIC_RETENTION_DAYS
+
+    enabled_raw = os.getenv("METRIC_RETENTION_ENABLED", "true")
+    parsed_enabled = _parse_system_status_bool(enabled_raw)
+    if parsed_enabled is None:
+        logger.warning(
+            "Invalid value for METRIC_RETENTION_ENABLED=%r, using default true",
+            enabled_raw,
+        )
+        parsed_enabled = True
+    _METRIC_RETENTION_ENABLED = parsed_enabled
+
+    _METRIC_RETENTION_DAYS = _parse_system_status_int(
+        "METRIC_RETENTION_DAYS",
+        default_value=90,
+        minimum=1,
+    )
+
+
 def _should_start_embedded_mqtt_subscriber() -> bool:
     """Return whether the API process should own a in-process MQTT subscriber."""
     return get_mqtt_runtime_settings().run_subscriber_in_process
@@ -195,6 +233,10 @@ _reload_system_status_env_settings()
 
 # Initialize auto-prune scheduler knobs from environment (fix-423 PR #2).
 _reload_event_prune_env_settings()
+
+
+# Initialize metric retention scheduler knobs from environment (issue #457).
+_reload_metric_retention_env_settings()
 
 
 def schedule_daily_backup() -> None:
@@ -397,12 +439,27 @@ async def startup_event():
     """
     Application startup event handler.
     1. Verifies database connectivity.
-    2. Initializes default schema/metrics.
-    3. Starts background tasks (e.g., SNMP Collector, Backup Scheduler).
-    4. Seeds default admin user.
+    2. Runs Cypher smoke query against the live driver (issue #459).
+    3. Initializes default schema/metrics.
+    4. Starts background tasks (e.g., SNMP Collector, Backup Scheduler).
+    5. Seeds default admin user.
     """
     logger.info("Starting up... Verifying DB connection")
     verify_connection()
+
+    # Issue #459 / spec ``neo4j-cypher-compatibility``: wire the smoke
+    # ONLY at startup. ``verify_connection()`` is also called from the
+    # /api/system/status polling path, and we MUST NOT re-run the smoke
+    # on every poll (20x traffic multiplier on dashboard refresh). A
+    # ``ClientError`` here propagates so cold start aborts non-zero on
+    # incompatible Cypher. ``DISABLE_NEO4J_SMOKE=true`` short-circuits
+    # the probe for offline / stubbed-driver environments.
+    try:
+        verify_cypher_smoke()
+        logger.info("cypher_smoke ok")
+    except Exception as smoke_exc:
+        logger.error("cypher_smoke failed: %s", smoke_exc, exc_info=True)
+        raise
 
     from services.itsm_bootstrap import run_service_catalog_startup_checks
 
@@ -435,6 +492,30 @@ async def startup_event():
         db = SessionLocal()
         create_hypertable(db)
         db.close()
+
+        # Boot-time retention apply (REQ-MVR-001 scenario 1, issue #457).
+        # Runs only after create_hypertable succeeds; ``apply_metric_retention``
+        # is itself idempotent and defensive (swallows IntegrityError /
+        # ProgrammingError), and the outer try/except is the last-resort guard
+        # so boot never crashes because of a retention-policy hiccup.
+        try:
+            from services.retention_service import (
+                METRIC_RETENTION_DEFAULT_DAYS,
+                apply_metric_retention,
+                get_metric_retention_settings,
+            )
+
+            _metric_settings = get_metric_retention_settings()
+            apply_metric_retention(
+                engine=engine,
+                retention_days=(
+                    _metric_settings.retention_days
+                    if _metric_settings.enabled
+                    else METRIC_RETENTION_DEFAULT_DAYS
+                ),
+            )
+        except Exception as _retention_exc:  # defensive: never break boot
+            logger.warning("Boot-time metric retention apply skipped: %s", _retention_exc)
     except Exception as e:
         logger.error(f"Failed to initialize TimescaleDB: {e}")
 
@@ -511,6 +592,13 @@ async def startup_event():
         _register_event_prune_job()
     except Exception as e:
         logger.error("Failed to schedule auto-prune job: %s", e)
+
+    # Metric retention cleanup (issue #457, REQ-MVR-001..006). Honors
+    # ``_METRIC_RETENTION_ENABLED`` (kill-switch); CronTrigger every 6h.
+    try:
+        _register_metric_retention_job()
+    except Exception as e:
+        logger.error("Failed to schedule metric retention job: %s", e)
 
     backup_scheduler.start()
     logger.info("Backup scheduler started")
@@ -1014,6 +1102,44 @@ def _register_event_prune_job() -> bool:
         "Scheduled event prune recovered events job every %ss",
         _EVENT_PRUNE_INTERVAL_SECONDS,
     )
+    return True
+
+
+def _register_metric_retention_job() -> bool:
+    """Register the metric retention cleanup job on ``backup_scheduler``.
+
+    Issue #457 (REQ-MVR-001..006). Honors ``_METRIC_RETENTION_ENABLED``
+    as a kill-switch (REQ-MVR-003 scenario 'Disabled by env var skips
+    registration'); when disabled, returns False without touching the
+    scheduler so the operator can flip the env var back without a redeploy.
+
+    Knobs match ``_register_event_prune_job`` / ``_register_system_status_snapshot_job``:
+
+    * ``coalesce=True`` — overlapping ticks coalesce into one.
+    * ``max_instances=1`` — never run two retention jobs concurrently.
+    * ``replace_existing=True`` — re-registering is a no-op, never an
+      APScheduler duplicate-job error.
+    * ``CronTrigger.from_crontab("0 */6 * * *")`` — every 6h (00:00, 06:00,
+      12:00, 18:00 UTC). The wrapper only writes if the policy is missing,
+      so 6h cadence is defensive — hourly would be wasteful, daily risks
+      a 24h gap if the boot-time apply failed silently.
+    """
+    if not _METRIC_RETENTION_ENABLED:
+        logger.info("Metric retention auto-scheduler is disabled")
+        return False
+
+    from services.retention_service import run_metric_retention_cleanup
+
+    backup_scheduler.add_job(
+        run_metric_retention_cleanup,
+        trigger=CronTrigger.from_crontab("0 */6 * * *"),
+        id="metric_retention_cleanup",
+        name="Metric Values Retention Cleanup",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("Scheduled metric retention cleanup every 6h")
     return True
 
 

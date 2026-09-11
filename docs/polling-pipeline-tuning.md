@@ -106,7 +106,11 @@ Lease TTL should exceed normal p99 protocol latency plus batch overhead. Too sho
 ## Timescale/PostgreSQL tuning notes
 
 - Keep raw recent telemetry available for forensic investigations.
-- Do not enable retention, compression, or downsampling changes until benchmark and storage-growth evidence exists.
+- **Issue #457 / REQ-MVR-006**: ``metric_values`` retention is now applied
+  forward-looking only via ``add_retention_policy('metric_values', INTERVAL '<N> days')``
+  (default 90 days, kill-switch ``METRIC_RETENTION_ENABLED``). Compression and
+  downsampling remain deferred — see ``openspec/changes/fix-457-metric-values-retention/proposal.md``
+  for the storage-growth evidence that motivated the retention change.
 - Watch DB latency, insert rows/sec, idempotent conflicts, chunk health, and storage growth.
 - The sidecar receipt table protects idempotency; do not purge it before result replay windows close.
 

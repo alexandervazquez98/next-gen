@@ -4,11 +4,11 @@ This file documents the current Python intent inference policy. It is not a runt
 
 ## Event-list triggers
 
-Event-list triggers include concepts such as events, eventos, alertas, incidentes, abiertos/open, activos, console/consola, recuperados/recovered, critical/críticos, warning, and info.
+Event-list triggers include concepts such as events, eventos, alertas, incidentes, abiertos/open, activos, console/consola, recuperados/recovered, critical/críticos, warning, info, and event-list phrasings such as `tengo`, `tenemos`, `cuáles`/`cuales`.
 
 ## Availability follow-up triggers
 
-Availability follow-up triggers include estatus, estado, siguen/sigue, disponibilidad, chequeo/checa, verifica/verificar, revisa/revisar, funcionando, reachable, working, and availability.
+Availability follow-up triggers include estatus, estado, siguen/sigue, disponibilidad, chequeo/checa, verifica/verificar, revisa/revisar, funcionando, reachable, working, availability, plus Spanish verb stems `verific*`, `chequ*`, `monitor*`, `revis*`, `comprob*`, `consult*` (covering variants like `verificación`, `verificando`, `monitoreando`, `chequeando`, `check`).
 
 ## Named-area matching
 
