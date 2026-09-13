@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -38,7 +39,33 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
     "previous_state",
     "next_state",
     "version",
+    # feat-cmdb-ai-handoff — CMDB AI proposal lifecycle context for
+    # `CI_PROPOSAL_*` events. The full redacted manifest is referenced via
+    # `applied_manifest_summary` / `applied_manifest_attributes`; the walker
+    # ``redact_manifest_secrets`` MUST run before these values are persisted.
+    "proposal_id",
+    "proposed_by",
+    "proposed_role",
+    "actor_role",
+    "resulted_ci_id",
+    "applied_manifest_summary",
+    "applied_manifest_attributes",
+    "manifest_diff",
+    "revoke_reason",
 }
+
+# feat-cmdb-ai-handoff (REQ-CMAP-013 / REQ-AUDIT-003) — deny-list pattern for
+# the ``redact_manifest_secrets`` walker. Any KEY whose leaf name (post-dot)
+# matches this pattern MUST be replaced with ``<REDACTED>`` before audit
+# persistence. The walker ALSO checks a hard-coded set of SNMP-specific keys
+# (community, authKey, privKey) so a misspelled field name cannot leak.
+_SECRET_FIELD_PATTERN = re.compile(
+    r"(?i).*(key|token|secret|password).*"
+)
+SECRET_FIELD_PATTERN: re.Pattern[str] = _SECRET_FIELD_PATTERN
+_HARD_CODED_SECRET_LEAVES = frozenset({"community", "authkey", "privkey"})
+
+_REDACTED_VALUE = "<REDACTED>"
 
 SENSITIVE_CONTEXT_KEYS = {
     "authorization",
@@ -295,3 +322,38 @@ def run_audit_retention_cleanup(retention_days: int = AUDIT_RETENTION_DAYS) -> i
         return cleanup_old_events(db, retention_days=retention_days)
     finally:
         db.close()
+
+
+# ── feat-cmdb-ai-handoff: secret redaction walker ────────────────────────────
+
+
+def _is_secret_key(key: Any) -> bool:
+    """Match deny-list keys: hard-coded SNMP leaves OR regex on the leaf name."""
+    leaf = str(key).split(".")[-1].lower()
+    if leaf in _HARD_CODED_SECRET_LEAVES:
+        return True
+    return bool(SECRET_FIELD_PATTERN.match(str(key)))
+
+
+def _redact_value(value: Any) -> Any:
+    """Walk a manifest, replacing secret-shaped leaves with ``<REDACTED>``."""
+    if isinstance(value, dict):
+        return {k: (_REDACTED_VALUE if _is_secret_key(k) else _redact_value(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
+
+
+def redact_manifest_secrets(manifest: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a deep-copied manifest with every secret-shaped leaf redacted.
+
+    The walker uses a DENY list (not the allow-list ``sanitize_context``), so
+    the rest of the manifest (CI fields, metadata, etc.) is preserved verbatim.
+    Inputs are never mutated.
+    """
+    if manifest is None:
+        return {}
+    if not isinstance(manifest, dict):
+        # Defensive: only dict manifests are supported; non-dicts are coerced.
+        return {}
+    return _redact_value(manifest)
