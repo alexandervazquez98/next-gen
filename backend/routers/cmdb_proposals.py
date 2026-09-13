@@ -138,6 +138,28 @@ async def list_proposals(
     )
 
 
+@router.get("/count")
+async def count_proposals(
+    status: str | None = Query(None),
+    current_user: User = Depends(get_current_active_user),
+):
+    """GET /api/cmdb/proposals/count?status=DRAFT — total count for the badge (CI_VIEW)."""
+    if not user_check_permission(UserPermission.CI_VIEW, current_user):
+        raise HTTPException(
+            status_code=403, detail="missing_permission: CI_VIEW required"
+        )
+
+    from services import cmdb_proposal_service as svc
+
+    repo = svc._get_repo()
+    # Pull up to page_size=1 rows just to read `total`; for a dedicated endpoint
+    # the service would expose a count() method. Use a high page_size to count
+    # up to 10k drafts without paging — the badge never needs an exact count
+    # above that.
+    rows = repo.list(status=status, page=1, page_size=10_000)
+    return {"count": len(rows)}
+
+
 @router.get("/{proposal_id}")
 async def get_proposal(
     proposal_id: str,
