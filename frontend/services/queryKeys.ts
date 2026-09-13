@@ -27,4 +27,11 @@ export const queryKeys = {
     owner?: string | string[];
   }) => ["graph-topology", filters ?? {}] as const,
   relatedEvents: (ciId: string) => ["events", "related", ciId] as const,
+  // feat-cmdb-ai-handoff: CMDB proposal cache keys.
+  cmdbProposals: (filters?: object) =>
+    ["cmdb-proposals", filters ?? {}] as const,
+  cmdbProposalDetail: (id: string) =>
+    ["cmdb-proposals", "detail", id] as const,
+  cmdbProposalDraftCount: () =>
+    ["cmdb-proposals", "count", "draft"] as const,
 };

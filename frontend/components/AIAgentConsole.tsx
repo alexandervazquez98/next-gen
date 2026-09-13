@@ -3,13 +3,27 @@ import type React from "react";
 import { useState, useRef, useEffect } from "react";
 import { ApiError } from "../services/api";
 import { chatWithAIAgent } from "../services/geminiService";
+import { ProposalBadge } from "./cmdb/proposals/ProposalBadge";
+import { useAuth } from "../context/AuthContext";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
 }
 
+function useSafeHasPermission(perm: string): boolean {
+  // Defensive: when the console is rendered without an AuthProvider (e.g. legacy
+  // unit tests), bail out as if the user has no permission. This keeps the badge
+  // hidden instead of crashing the chat console.
+  try {
+    return useAuth().hasPermission(perm);
+  } catch {
+    return false;
+  }
+}
+
 const AIAgentConsole: React.FC = () => {
+  const canReviewProposals = useSafeHasPermission("CI_APPROVE_PROPOSAL");
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -119,6 +133,12 @@ const AIAgentConsole: React.FC = () => {
       </div>
 
       <div className="p-4 bg-black/40 border-t border-white/5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+            MODEL: NexCO-Gen1
+          </span>
+          <ProposalBadge canReview={canReviewProposals} />
+        </div>
         <div className="relative">
           <input
             type="text"

@@ -27,6 +27,7 @@ import MetricAnalytics from "./components/MetricAnalytics";
 import VisualRelationshipEditorPage from "./components/VisualRelationshipEditorPage";
 import ItsmServiceCatalogPage from "./components/ItsmServiceCatalogPage";
 import ItsmTicketFolioPage from "./components/ItsmTicketFolioPage";
+import ProposalsCmdbPage from "./pages/ProposalsCmdbPage";
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -256,6 +257,11 @@ const MainLayout: React.FC = () => {
               <Route path="inventory" element={<GlobalInventory />} />
               <Route path="itsm/service-catalog" element={<ItsmServiceCatalogPage />} />
               <Route path="itsm/tickets" element={<ItsmTicketFolioPage />} />
+              <Route path="proposals/cmdb" element={<ProposalsCmdbPage />} />
+              <Route
+                path="proposals/cmdb/:id"
+                element={<ProposalsCmdbPage detailMode />}
+              />
             </Routes>
           </div>
 
