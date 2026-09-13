@@ -21,12 +21,7 @@ describe("ProposalActions", () => {
     const client = makeClient();
     render(
       <QueryClientProvider client={client}>
-        <ProposalActions
-          proposalId="prop-1"
-          version={1}
-          ciId="CI-NEW"
-          canApprove={false}
-        />
+        <ProposalActions proposalId="prop-1" version={1} ciId="CI-NEW" canApprove={false} />
       </QueryClientProvider>,
     );
 
@@ -39,12 +34,7 @@ describe("ProposalActions", () => {
     const client = makeClient();
     render(
       <QueryClientProvider client={client}>
-        <ProposalActions
-          proposalId="prop-1"
-          version={1}
-          ciId="CI-NEW"
-          canApprove
-        />
+        <ProposalActions proposalId="prop-1" version={1} ciId="CI-NEW" canApprove />
       </QueryClientProvider>,
     );
 
@@ -56,13 +46,7 @@ describe("ProposalActions", () => {
     const client = makeClient();
     render(
       <QueryClientProvider client={client}>
-        <ProposalActions
-          proposalId="prop-1"
-          version={1}
-          ciId="CI-NEW"
-          canApprove
-          isRevoked
-        />
+        <ProposalActions proposalId="prop-1" version={1} ciId="CI-NEW" canApprove isRevoked />
       </QueryClientProvider>,
     );
 
@@ -74,13 +58,7 @@ describe("ProposalActions", () => {
     const client = makeClient();
     render(
       <QueryClientProvider client={client}>
-        <ProposalActions
-          proposalId="prop-1"
-          version={1}
-          ciId="CI-NEW"
-          canApprove
-          isApproved
-        />
+        <ProposalActions proposalId="prop-1" version={1} ciId="CI-NEW" canApprove isApproved />
       </QueryClientProvider>,
     );
 

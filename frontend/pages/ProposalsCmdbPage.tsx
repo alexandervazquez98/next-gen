@@ -9,9 +9,7 @@ interface ProposalsCmdbPageProps {
   detailMode?: boolean;
 }
 
-export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({
-  detailMode,
-}) => {
+export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode }) => {
   const { hasPermission } = useAuth();
   const canApprove = hasPermission("CI_APPROVE_PROPOSAL");
   const canView = hasPermission("CI_VIEW");
@@ -40,9 +38,7 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({
     return (
       <div className="p-6">
         <h1 className="text-xl font-bold mb-2">Access denied</h1>
-        <p className="text-sm text-neutral-400">
-          You need CI_VIEW to view CMDB proposals.
-        </p>
+        <p className="text-sm text-neutral-400">You need CI_VIEW to view CMDB proposals.</p>
       </div>
     );
   }
@@ -79,12 +75,8 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({
   return (
     <div className="p-6" data-testid="proposals-cmdb-list">
       <header className="mb-4">
-        <h1 className="text-2xl font-black uppercase tracking-widest text-white">
-          CMDB Proposals
-        </h1>
-        <p className="text-sm text-neutral-400">
-          AI-submitted CI manifests awaiting human review.
-        </p>
+        <h1 className="text-2xl font-black uppercase tracking-widest text-white">CMDB Proposals</h1>
+        <p className="text-sm text-neutral-400">AI-submitted CI manifests awaiting human review.</p>
       </header>
       <ProposalList
         rows={query.data?.rows ?? []}

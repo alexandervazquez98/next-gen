@@ -74,15 +74,9 @@ export const ProposalList: React.FC<ProposalListProps> = ({
 }) => {
   if (loading) {
     return (
-      <div
-        data-testid="proposal-list-skeleton"
-        className="grid gap-2 animate-pulse"
-      >
+      <div data-testid="proposal-list-skeleton" className="grid gap-2 animate-pulse">
         {Array.from({ length: 4 }).map((_, idx) => (
-          <div
-            key={idx}
-            className="h-12 bg-neutral-900/60 border border-white/5 rounded-lg"
-          />
+          <div key={idx} className="h-12 bg-neutral-900/60 border border-white/5 rounded-lg" />
         ))}
       </div>
     );

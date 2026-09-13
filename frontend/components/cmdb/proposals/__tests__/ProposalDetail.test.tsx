@@ -20,9 +20,8 @@ describe("ProposalDetail", () => {
   });
 
   it("renders the manifest view, diff view, and audit timeline", async () => {
-    const useProposalDetailQuery = (
-      await import("../../../../hooks/queries/useProposalsQuery")
-    ).useProposalDetailQuery;
+    const useProposalDetailQuery = (await import("../../../../hooks/queries/useProposalsQuery"))
+      .useProposalDetailQuery;
     vi.mocked(useProposalDetailQuery).mockReturnValue({
       data: {
         id: "prop-1",
@@ -80,9 +79,8 @@ describe("ProposalDetail", () => {
   });
 
   it("renders an error state when the query fails", async () => {
-    const useProposalDetailQuery = (
-      await import("../../../../hooks/queries/useProposalsQuery")
-    ).useProposalDetailQuery;
+    const useProposalDetailQuery = (await import("../../../../hooks/queries/useProposalsQuery"))
+      .useProposalDetailQuery;
     vi.mocked(useProposalDetailQuery).mockReturnValue({
       data: null,
       isLoading: false,

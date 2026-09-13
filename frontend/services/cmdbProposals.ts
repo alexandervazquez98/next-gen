@@ -63,10 +63,7 @@ export const fetchProposals = (
     signal ? { signal } : {},
   );
 
-export const fetchProposal = (
-  id: string,
-  signal?: AbortSignal,
-): Promise<ProposalDetailResponse> =>
+export const fetchProposal = (id: string, signal?: AbortSignal): Promise<ProposalDetailResponse> =>
   api.get<ProposalDetailResponse>(
     `/cmdb/proposals/${encodeURIComponent(id)}`,
     signal ? { signal } : {},

@@ -26,10 +26,7 @@ export const ProposalActions: React.FC<ProposalActionsProps> = ({
 
   if (!canApprove) {
     return (
-      <div
-        data-testid="proposal-actions-no-permission"
-        className="text-xs text-neutral-500 italic"
-      >
+      <div data-testid="proposal-actions-no-permission" className="text-xs text-neutral-500 italic">
         You need CI_APPROVE_PROPOSAL to act on this proposal.
       </div>
     );
@@ -66,7 +63,8 @@ export const ProposalActions: React.FC<ProposalActionsProps> = ({
                   Approve proposal {proposalId}?
                 </h3>
                 <p className="text-xs text-neutral-300 mb-4">
-                  This will create :CI <code>{ciId ?? "(unknown)"}</code> via the existing node write path.
+                  This will create :CI <code>{ciId ?? "(unknown)"}</code> via the existing node
+                  write path.
                 </p>
                 <div className="flex gap-2 justify-end">
                   <button
@@ -85,9 +83,7 @@ export const ProposalActions: React.FC<ProposalActionsProps> = ({
                         { id: proposalId, version },
                         {
                           onSuccess: (data) => {
-                            toast.success(
-                              `Approved — :CI ${data.resulted_ci_id} committed`,
-                            );
+                            toast.success(`Approved — :CI ${data.resulted_ci_id} committed`);
                           },
                           onError: (err) => {
                             toast.error(`Approve failed: ${String(err)}`);

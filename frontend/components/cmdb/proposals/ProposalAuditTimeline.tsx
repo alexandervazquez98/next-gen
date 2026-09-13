@@ -28,19 +28,17 @@ export const ProposalAuditTimeline: React.FC<ProposalAuditTimelineProps> = ({
 }) => {
   if (loading) {
     return (
-      <div data-testid="proposal-audit-loading" className="animate-pulse h-20 bg-neutral-900/40 rounded" />
+      <div
+        data-testid="proposal-audit-loading"
+        className="animate-pulse h-20 bg-neutral-900/40 rounded"
+      />
     );
   }
 
-  const sorted = [...entries].sort((a, b) =>
-    a.created_at.localeCompare(b.created_at),
-  );
+  const sorted = [...entries].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
   return (
-    <ol
-      data-testid="proposal-audit-timeline"
-      className="flex flex-col gap-2"
-    >
+    <ol data-testid="proposal-audit-timeline" className="flex flex-col gap-2">
       {sorted.map((entry, idx) => (
         <li
           key={`${entry.event_type}-${entry.created_at}-${idx}`}

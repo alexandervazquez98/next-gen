@@ -87,11 +87,7 @@ describe("useProposalsQuery hooks", () => {
     });
     function Probe() {
       const m = useApproveProposal();
-      return (
-        <button onClick={() => m.mutate({ id: "prop-1", version: 1 })}>
-          go
-        </button>
-      );
+      return <button onClick={() => m.mutate({ id: "prop-1", version: 1 })}>go</button>;
     }
     withClient(<Probe />, client);
     fireEvent.click(screen.getByText("go"));
@@ -121,9 +117,7 @@ describe("useProposalsQuery hooks", () => {
     function Probe() {
       const m = useRevokeProposal();
       return (
-        <button onClick={() => m.mutate({ id: "prop-1", version: 1, reason: "stale" })}>
-          go
-        </button>
+        <button onClick={() => m.mutate({ id: "prop-1", version: 1, reason: "stale" })}>go</button>
       );
     }
     withClient(<Probe />, client);

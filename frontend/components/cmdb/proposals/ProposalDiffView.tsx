@@ -75,7 +75,8 @@ export const ProposalDiffView: React.FC<ProposalDiffViewProps> = ({
           data-testid="proposal-diff-category-drift"
           className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded text-red-300 text-xs"
         >
-          Category drift: <code>{String(manifestCi["category"])}</code> is no longer in the live Category catalog.
+          Category drift: <code>{String(manifestCi["category"])}</code> is no longer in the live
+          Category catalog.
         </div>
       )}
 
@@ -117,9 +118,7 @@ export const ProposalDiffView: React.FC<ProposalDiffViewProps> = ({
       </section>
 
       <section data-testid="proposal-diff-removed">
-        <h4 className="text-[10px] uppercase tracking-widest text-red-400 mb-1">
-          Removed fields
-        </h4>
+        <h4 className="text-[10px] uppercase tracking-widest text-red-400 mb-1">Removed fields</h4>
         {removed.length === 0 ? (
           <p className="text-xs text-neutral-500">None.</p>
         ) : (

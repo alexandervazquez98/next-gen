@@ -25,11 +25,7 @@ describe("cmdbProposals service", () => {
         "detail",
         "prop-1",
       ]);
-      expect(queryKeys.cmdbProposalDraftCount()).toEqual([
-        "cmdb-proposals",
-        "count",
-        "draft",
-      ]);
+      expect(queryKeys.cmdbProposalDraftCount()).toEqual(["cmdb-proposals", "count", "draft"]);
     });
   });
 

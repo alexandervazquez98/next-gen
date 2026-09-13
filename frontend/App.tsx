@@ -258,10 +258,7 @@ const MainLayout: React.FC = () => {
               <Route path="itsm/service-catalog" element={<ItsmServiceCatalogPage />} />
               <Route path="itsm/tickets" element={<ItsmTicketFolioPage />} />
               <Route path="proposals/cmdb" element={<ProposalsCmdbPage />} />
-              <Route
-                path="proposals/cmdb/:id"
-                element={<ProposalsCmdbPage detailMode />}
-              />
+              <Route path="proposals/cmdb/:id" element={<ProposalsCmdbPage detailMode />} />
             </Routes>
           </div>
 

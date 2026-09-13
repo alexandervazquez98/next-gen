@@ -59,15 +59,8 @@ export const useApproveProposal = () => {
 export const useRevokeProposal = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      id,
-      version,
-      reason,
-    }: {
-      id: string;
-      version: number;
-      reason?: string;
-    }) => revokeProposal(id, { version, reason }),
+    mutationFn: ({ id, version, reason }: { id: string; version: number; reason?: string }) =>
+      revokeProposal(id, { version, reason }),
     onSuccess: () => {
       invalidateProposalRelatedQueries(queryClient);
     },

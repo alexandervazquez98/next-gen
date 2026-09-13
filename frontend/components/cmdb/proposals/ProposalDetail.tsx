@@ -23,7 +23,10 @@ export const ProposalDetail: React.FC<ProposalDetailProps> = ({
 
   if (isLoading) {
     return (
-      <div className="animate-pulse h-40 bg-neutral-900/40 rounded-xl" data-testid="proposal-detail-loading" />
+      <div
+        className="animate-pulse h-40 bg-neutral-900/40 rounded-xl"
+        data-testid="proposal-detail-loading"
+      />
     );
   }
   if (error || !data) {
@@ -49,12 +52,18 @@ export const ProposalDetail: React.FC<ProposalDetailProps> = ({
     <div data-testid="proposal-detail" className="flex flex-col gap-4">
       <header className="flex items-center justify-between gap-4 border-b border-white/5 pb-4">
         <div>
-          <h2 className="text-lg font-black uppercase tracking-widest text-white">
-            {data.id}
-          </h2>
+          <h2 className="text-lg font-black uppercase tracking-widest text-white">{data.id}</h2>
           <p className="text-xs text-neutral-400">
             Proposed by {data.proposed_by} ({data.proposed_role}) — v{data.version}, status{" "}
-            <span className={data.status === "APPROVED" ? "text-emerald-400" : data.status === "REVOKED" ? "text-red-400" : "text-amber-400"}>
+            <span
+              className={
+                data.status === "APPROVED"
+                  ? "text-emerald-400"
+                  : data.status === "REVOKED"
+                    ? "text-red-400"
+                    : "text-amber-400"
+              }
+            >
               {data.status}
             </span>
           </p>

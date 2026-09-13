@@ -59,7 +59,10 @@ test.describe("CMDB proposals happy path", () => {
     // If the feature is disabled or admin lacks AI_PROPOSE_CI, we still
     // get a permission denial. Document this for the on-call:
     if (!seed.ok()) {
-      test.skip(true, `proposal seed returned ${seed.status()}; ensure FEATURE_CMDB_PROPOSALS_ENABLED=true`);
+      test.skip(
+        true,
+        `proposal seed returned ${seed.status()}; ensure FEATURE_CMDB_PROPOSALS_ENABLED=true`,
+      );
       return;
     }
 
