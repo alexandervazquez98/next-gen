@@ -4,6 +4,23 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
+# feat-cmdb-ai-handoff: relocated from services.node_service. Service module
+# re-exports the constant for backward compatibility.
+BLOCKED_AI_UPDATE_FIELDS: frozenset[str] = frozenset(
+    {
+        "id",
+        "label",
+        "type",
+        "brand",
+        "model",
+        "serialNumber",
+        "firmwareVersion",
+        "ip",
+        "snmp",
+        "location",
+    }
+)
+
 # --- Models -->
 
 
