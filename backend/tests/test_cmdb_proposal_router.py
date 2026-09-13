@@ -66,7 +66,7 @@ def _payload():
 class TestCreateProposal:
     def test_post_proposals_201_returns_proposal_id(self):
         """A caller with AI_PROPOSE_CI can submit a manifest; gets 201 + proposal_id."""
-        from models.user import AIPermission, UserPermission
+        from models.user import AIPermission
 
         _override_user(_user("AI_OPERATOR", permissions=[AIPermission.AI_PROPOSE_CI.value]))
 
@@ -121,8 +121,8 @@ class TestCreateProposal:
 
     def test_post_proposals_409_ci_id_collision(self):
         """A ci_id collision MUST surface as 409 ci_id_collision (REQ-CMAP-009)."""
-        from models.user import AIPermission
         from fastapi import HTTPException
+        from models.user import AIPermission
 
         _override_user(_user("AI_OPERATOR", permissions=[AIPermission.AI_PROPOSE_CI.value]))
         with patch(
@@ -287,8 +287,8 @@ class TestApproveProposal:
 
     def test_post_approve_409_version_conflict(self):
         """Stale version MUST surface as 409 version_conflict (REQ-CMAP-008)."""
-        from models.user import UserPermission
         from fastapi import HTTPException
+        from models.user import UserPermission
 
         _override_user(_user("OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value]))
         with patch(
@@ -304,8 +304,8 @@ class TestApproveProposal:
 
     def test_post_approve_409_category_renamed(self):
         """Category renamed between submit and approve MUST surface as 409."""
-        from models.user import UserPermission
         from fastapi import HTTPException
+        from models.user import UserPermission
 
         _override_user(_user("OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value]))
         with patch(
@@ -321,8 +321,8 @@ class TestApproveProposal:
 
     def test_post_approve_409_ci_id_collision_at_approve_time(self):
         """Approve-time collision MUST surface as 409 ci_id_collision."""
-        from models.user import UserPermission
         from fastapi import HTTPException
+        from models.user import UserPermission
 
         _override_user(_user("OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value]))
         with patch(
@@ -372,8 +372,8 @@ class TestRevokeProposal:
 
     def test_post_revoke_409_version_conflict(self):
         """Stale version on revoke MUST surface as 409."""
-        from models.user import UserPermission
         from fastapi import HTTPException
+        from models.user import UserPermission
 
         _override_user(_user("OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value]))
         with patch(

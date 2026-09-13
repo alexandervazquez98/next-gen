@@ -233,7 +233,7 @@ def create_proposal(
 
     # ── 4. Guardrail gate (REQ-AICHG-003 / REQ-CMAP-010/011) ────────────────
     guard = _get_guard()
-    guard_target = f"ci_proposal:new"
+    guard_target = "ci_proposal:new"
     guard_result = guard.check_all_guards(
         ai_agent_id,
         "propose_ci",

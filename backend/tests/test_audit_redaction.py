@@ -10,9 +10,7 @@ REQ-AUDIT-003 / REQ-CMAP-013:
 from __future__ import annotations
 
 import pytest
-
-from services.audit_service import redact_manifest_secrets, SECRET_FIELD_PATTERN
-
+from services.audit_service import SECRET_FIELD_PATTERN, redact_manifest_secrets
 
 REDACTED = "<REDACTED>"
 

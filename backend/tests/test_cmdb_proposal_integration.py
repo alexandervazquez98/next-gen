@@ -11,8 +11,6 @@ Runs against the in-process FastAPI app with mocked Neo4j driver.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +18,6 @@ import pytest
 from fastapi.testclient import TestClient
 from models.user import AIPermission, User, UserPermission
 from services.auth_service import get_current_active_user
-
 
 # Enable feature flag before importing main.
 os.environ.setdefault("FEATURE_CMDB_PROPOSALS_ENABLED", "true")
@@ -67,9 +64,7 @@ def seeded_repo(monkeypatch):
 
     create_draft, get, list, approve, revoke each return deterministic rows.
     """
-    from backend.repositories import cmdb_proposal_repo
-    from services import ai_guard_service
-    from services import audit_service
+    from services import ai_guard_service, audit_service
 
     # Stub the guardrail DB access so check_bulk_detection does not hit Postgres.
     bulk_session = MagicMock()

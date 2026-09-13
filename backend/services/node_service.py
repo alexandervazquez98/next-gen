@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # ── AI Field-Level Validation ─────────────────────────────────────────────────
 
-from models.core import BLOCKED_AI_UPDATE_FIELDS as _BLOCKED_AI_UPDATE_FIELDS
+from models.core import BLOCKED_AI_UPDATE_FIELDS as _BLOCKED_AI_UPDATE_FIELDS  # noqa: E402, I001
 
 ALLOWED_AI_METADATA_FIELDS = {"status", "pollingInterval", "owner", "location_name", "metadata"}
 

@@ -1,6 +1,5 @@
 """Unit tests for AIPermission enum — pure model validation, no external deps."""
 
-import pytest
 from models.user import AIPermission, UserPermission
 
 

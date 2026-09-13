@@ -36,7 +36,7 @@ describe("cmdbProposals service", () => {
   describe("fetchProposals", () => {
     it("passes filters as query string", async () => {
       const mockData = { rows: [], total: 0, page: 1, page_size: 50 };
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -45,7 +45,7 @@ describe("cmdbProposals service", () => {
 
       const result = await fetchProposals({ status: "DRAFT", page: 2, page_size: 25 });
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals?status=DRAFT&page=2&page_size=25",
         expect.objectContaining({ method: "GET" }),
       );
@@ -53,7 +53,7 @@ describe("cmdbProposals service", () => {
     });
 
     it("omits empty filters", async () => {
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -62,7 +62,7 @@ describe("cmdbProposals service", () => {
 
       await fetchProposals({ status: "DRAFT", category: "" });
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals?status=DRAFT",
         expect.any(Object),
       );
@@ -88,7 +88,7 @@ describe("cmdbProposals service", () => {
         proposed_category: "Router",
         ci_id: "CI-NEW",
       };
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -97,7 +97,7 @@ describe("cmdbProposals service", () => {
 
       const result = await fetchProposal("prop-1");
       expect(result.id).toBe("prop-1");
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals/prop-1",
         expect.objectContaining({ method: "GET" }),
       );
@@ -106,7 +106,7 @@ describe("cmdbProposals service", () => {
 
   describe("fetchProposalDraftCount", () => {
     it("returns the badge count", async () => {
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -115,7 +115,7 @@ describe("cmdbProposals service", () => {
 
       const result = await fetchProposalDraftCount();
       expect(result).toEqual({ count: 3 });
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals/count?status=DRAFT",
         expect.objectContaining({ method: "GET" }),
       );
@@ -130,7 +130,7 @@ describe("cmdbProposals service", () => {
         version: 2,
         resulted_ci_id: "CI-NEW",
       };
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -140,7 +140,7 @@ describe("cmdbProposals service", () => {
       const result = await approveProposal("prop-1", { version: 1 });
       expect(result.status).toBe("APPROVED");
       expect(result.resulted_ci_id).toBe("CI-NEW");
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals/prop-1/approve",
         expect.objectContaining({
           method: "POST",
@@ -157,7 +157,7 @@ describe("cmdbProposals service", () => {
         status: "REVOKED",
         version: 2,
       };
-      global.fetch = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -166,7 +166,7 @@ describe("cmdbProposals service", () => {
 
       const result = await revokeProposal("prop-1", { version: 1, reason: "stale" });
       expect(result.status).toBe("REVOKED");
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/cmdb/proposals/prop-1/revoke",
         expect.objectContaining({
           method: "POST",

@@ -20,7 +20,6 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
-
 from models.user import (
     AIPermission,
     User,
@@ -68,8 +67,8 @@ router = APIRouter(
 async def create_proposal(
     request: Request,
     response: Response,
-    manifest: dict[str, Any] = Body(...),
-    current_user: User = Depends(get_current_active_user),
+    manifest: dict[str, Any] = Body(...),  # noqa: B008
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """POST /api/cmdb/proposals — submit a CI manifest (AI_PROPOSE_CI required).
 
@@ -117,7 +116,7 @@ async def list_proposals(
     created_to: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """GET /api/cmdb/proposals — paginated list with filters (CI_VIEW required)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
@@ -141,7 +140,7 @@ async def list_proposals(
 @router.get("/count")
 async def count_proposals(
     status: str | None = Query(None),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """GET /api/cmdb/proposals/count?status=DRAFT — total count for the badge (CI_VIEW)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
@@ -163,7 +162,7 @@ async def count_proposals(
 @router.get("/{proposal_id}")
 async def get_proposal(
     proposal_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """GET /api/cmdb/proposals/{id} — full row + manifest (CI_VIEW required)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
@@ -182,9 +181,9 @@ async def get_proposal(
 @router.post("/{proposal_id}/approve")
 async def approve_proposal(
     proposal_id: str,
-    body: dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),  # noqa: B008
     request: Request = None,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """POST /api/cmdb/proposals/{id}/approve — human approval gate."""
     if not _user_has_ci_approve_proposal(current_user):
@@ -217,9 +216,9 @@ async def approve_proposal(
 @router.post("/{proposal_id}/revoke")
 async def revoke_proposal(
     proposal_id: str,
-    body: dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),  # noqa: B008
     request: Request = None,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
 ):
     """POST /api/cmdb/proposals/{id}/revoke — DRAFT/APPROVED -> REVOKED."""
     if not _user_has_ci_approve_proposal(current_user):

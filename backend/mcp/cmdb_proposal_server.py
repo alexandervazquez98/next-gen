@@ -138,7 +138,7 @@ def _resolve_user_from_bearer(token: str | None) -> Any:
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
     except JWTError:
-        raise credentials_exc
+        raise credentials_exc  # noqa: B904
 
     username = payload.get("sub")
     if not username:

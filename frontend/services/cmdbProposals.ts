@@ -27,7 +27,7 @@ export interface ProposalRow {
   ci_id: string | null;
 }
 
-export interface ProposalDetailResponse extends ProposalRow {}
+export type ProposalDetailResponse = ProposalRow;
 
 export interface ProposalDraftCountResponse {
   count: number;

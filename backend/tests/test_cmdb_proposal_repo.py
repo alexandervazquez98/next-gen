@@ -9,13 +9,11 @@ Uses the in-tree ``MockNeo4jDriver`` from ``backend/tests/conftest.py``.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from repositories.cmdb_proposal_repo import (
-    CI_PROPOSAL_STATUS_DRAFT as CmdbProposalStatus,
-    CmdbProposalNotFoundError,
+    CI_PROPOSAL_STATUS_DRAFT as CmdbProposalStatus,  # noqa: N811
     CmdbProposalRepo,
     CmdbProposalVersionConflictError,
 )
@@ -28,7 +26,7 @@ def repo(mock_neo4j_driver):
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _draft_record(
@@ -126,7 +124,7 @@ class TestGet:
 
 class TestList:
     def test_list_filters_by_status(self, mock_neo4j_driver, repo):
-        """list(status=...) MUST pass status as \$param and return all matching rows."""
+        r"""list(status=...) MUST pass status as \$param and return all matching rows."""
         mock_neo4j_driver.mock_session.set_default_response(
             [_draft_record(proposal_id="a"), _draft_record(proposal_id="b")]
         )
@@ -299,7 +297,7 @@ class TestTtlSweep:
         assert count == 5
 
     def test_ttl_sweep_uses_provided_retention_days(self, mock_neo4j_driver, repo):
-        """ttl_sweep MUST honor the retention_days parameter via \$params."""
+        r"""ttl_sweep MUST honor the retention_days parameter via \$params."""
         mock_neo4j_driver.mock_session.set_default_response([{"count": 0}])
         repo.ttl_sweep(retention_days=7)
         queries = mock_neo4j_driver.mock_session.queries

@@ -10,7 +10,7 @@ The upgrade path is exercised by stubbing the driver so no live Neo4j is needed.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,7 +25,6 @@ def stub_driver():
     import database as _db_module
 
     driver = MagicMock()
-    session = driver.session.return_value.__enter__.return_value
     original = _db_module.driver
     _db_module.driver = driver
     try:

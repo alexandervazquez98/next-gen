@@ -13,15 +13,14 @@ Validation rules mirror REQ-CMAP-001 and REQ-CMAP-013:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
+from models.core import Node
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from models.core import Node
 
-
-class CIProposalStatus(str, Enum):
+class CIProposalStatus(StrEnum):
     """Lifecycle states for a :CIProposal node.
 
     Mirrors the precedent set by ``MqttMetricMapping`` (DRAFT/APPROVED/REVOKED).
@@ -97,9 +96,9 @@ class ManifestPayload(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _reject_blocked_metadata_keys(self) -> "ManifestPayload":
+    def _reject_blocked_metadata_keys(self) -> ManifestPayload:
         metadata = self.ci.metadata or {}
-        blocked = [k for k in metadata.keys() if k in BLOCKED_AI_UPDATE_FIELDS]
+        blocked = [k for k in metadata if k in BLOCKED_AI_UPDATE_FIELDS]
         if blocked:
             raise ValueError(
                 f"metadata must not contain blocked AI fields keys: {blocked}"

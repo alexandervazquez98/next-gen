@@ -13,10 +13,9 @@ preserved through ManifestPayload (the audit layer is what redacts).
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
-from models.core import BLOCKED_AI_UPDATE_FIELDS
 from models.cmdb_proposal import CIProposalStatus, ManifestPayload
+from models.core import BLOCKED_AI_UPDATE_FIELDS
+from pydantic import ValidationError
 
 
 def _manifest_ci(**overrides):

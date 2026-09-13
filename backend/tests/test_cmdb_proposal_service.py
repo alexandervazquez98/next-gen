@@ -15,15 +15,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-
 from models.user import AIPermission, User, UserPermission
 from services import audit_service
-
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -372,8 +369,8 @@ class TestApproveProposal:
 
     def test_approve_from_non_draft_409(self, monkeypatch):
         """Approve of an APPROVED/REVOKED proposal MUST raise 409 (REQ-CMAP-006 scenario 2)."""
-        from services import cmdb_proposal_service as svc
         from repositories.cmdb_proposal_repo import CmdbProposalVersionConflictError
+        from services import cmdb_proposal_service as svc
 
         repo = _RepoStub(
             approve_raises=CmdbProposalVersionConflictError("stale"),

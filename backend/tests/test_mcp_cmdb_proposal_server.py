@@ -19,8 +19,9 @@ Each tool:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 @pytest.fixture
@@ -170,8 +171,8 @@ class TestRevokeProposalTool:
 class TestAuthAndRateLimit:
     def test_mcp_401_without_bearer(self, monkeypatch, fake_service):
         """A missing/invalid bearer MUST raise HTTPException(401)."""
-        from mcp import cmdb_proposal_server as mcp
         from fastapi import HTTPException
+        from mcp import cmdb_proposal_server as mcp
 
         monkeypatch.setattr(
             mcp, "_resolve_user_from_bearer",
@@ -183,8 +184,8 @@ class TestAuthAndRateLimit:
 
     def test_mcp_403_with_wrong_scope(self, monkeypatch, fake_service):
         """A user without the right permission MUST raise HTTPException(403)."""
-        from mcp import cmdb_proposal_server as mcp
         from fastapi import HTTPException
+        from mcp import cmdb_proposal_server as mcp
 
         # The resolver returns a user that lacks AI_PROPOSE_CI.
         monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(

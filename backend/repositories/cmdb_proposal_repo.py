@@ -151,10 +151,7 @@ class CmdbProposalRepo:
             "ci_id": ci_id,
         }
         result = self._run(query, **params)
-        if hasattr(result, "single"):
-            row = result.single()
-        else:
-            row = result
+        row = result.single() if hasattr(result, "single") else result
         record = self._record(row)
         if record is None:
             raise RuntimeError("Failed to create CIProposal draft")
@@ -183,10 +180,7 @@ class CmdbProposalRepo:
             p.ci_id AS ci_id
         """
         result = self._run(query, proposal_id=proposal_id)
-        if hasattr(result, "single"):
-            row = result.single()
-        else:
-            row = result
+        row = result.single() if hasattr(result, "single") else result
         return self._record(row)
 
     def list(
@@ -295,10 +289,7 @@ class CmdbProposalRepo:
             "resulted_ci_id": resulted_ci_id,
         }
         result = self._run(query, **params)
-        if hasattr(result, "single"):
-            row = result.single()
-        else:
-            row = result
+        row = result.single() if hasattr(result, "single") else result
         record = self._record(row)
         if record is None:
             raise CmdbProposalVersionConflictError(
@@ -353,10 +344,7 @@ class CmdbProposalRepo:
             "reason": reason,
         }
         result = self._run(query, **params)
-        if hasattr(result, "single"):
-            row = result.single()
-        else:
-            row = result
+        row = result.single() if hasattr(result, "single") else result
         record = self._record(row)
         if record is None:
             raise CmdbProposalVersionConflictError(

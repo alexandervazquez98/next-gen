@@ -73,7 +73,6 @@ class TestProposeCiBulkThreshold:
     def test_propose_ci_bulk_threshold_escalates_at_six_per_hour(self, monkeypatch):
         """The 6th submit within 60 minutes MUST escalate/deny."""
         from services import ai_guard_service
-        from models.ai_guard_models import GuardResult
 
         # Mock the DB execute to return count=5 (so the 6th submit crosses the threshold).
         session = MagicMock()

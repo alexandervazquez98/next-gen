@@ -13,15 +13,12 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
-
-from sqlalchemy import text
+from datetime import UTC, datetime
 
 from models.ai_guard_models import GuardResult
 from models.ai_operation_log import AIOperationLog
 from postgres_db import SessionLocal
-
+from sqlalchemy import text
 
 # ── Cooldown Configuration ───────────────────────────────────────────────────────
 
@@ -121,7 +118,7 @@ def check_cooldown(ai_agent_id: str, operation: str, target_id: str) -> tuple[bo
         Tuple of (is_blocked: bool, cooldown_remaining_seconds: int)
         is_blocked is True when cooldown is active.
     """
-    cooldown_seconds = COOLDOWNS.get(operation, 60)
+    COOLDOWNS.get(operation, 60)
     remaining = _cooldown_cache.get_remaining(ai_agent_id, operation, target_id)
     is_blocked = remaining > 0
     return is_blocked, remaining
@@ -147,8 +144,8 @@ def record_operation(
     target_id: str,
     target_name: str,
     result: str,
-    blocked_reason: Optional[str] = None,
-    request_context: Optional[dict] = None,
+    blocked_reason: str | None = None,
+    request_context: dict | None = None,
 ) -> None:
     """Record an AI operation to the ai_operation_log table.
 
@@ -178,7 +175,7 @@ def record_operation(
         )
         db.add(entry)
         if result == "success":
-            try:
+            try:  # noqa: SIM105
                 set_cooldown(ai_agent_id, operation, target_id)
             except Exception:
                 pass  # cooldown is best-effort; don't break the operation
@@ -211,10 +208,10 @@ def check_behavioral_guards(
     Returns:
         GuardResult with allowed=True if operation is permitted
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_1h = now.replace(second=0, microsecond=0)
-    cutoff_10m = datetime.fromtimestamp(now.timestamp() - 600, tz=timezone.utc)
-    cutoff_5m = datetime.fromtimestamp(now.timestamp() - 300, tz=timezone.utc)
+    cutoff_10m = datetime.fromtimestamp(now.timestamp() - 600, tz=UTC)
+    cutoff_5m = datetime.fromtimestamp(now.timestamp() - 300, tz=UTC)
 
     db = SessionLocal()
     try:
@@ -337,7 +334,7 @@ def check_bulk_detection(
             reason=f"Bulk operation too large: {len(target_ids)} entities (max 10)",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_1h = now.replace(second=0, microsecond=0)
 
     db = SessionLocal()
@@ -347,7 +344,7 @@ def check_bulk_detection(
         # because proposal churn directly taxes human review capacity.
         if operation == "propose_ci":
             window_cutoff = datetime.fromtimestamp(
-                now.timestamp() - CMDB_PROPOSAL_BULK_WINDOW_SECONDS, tz=timezone.utc
+                now.timestamp() - CMDB_PROPOSAL_BULK_WINDOW_SECONDS, tz=UTC
             )
             propose_count = db.execute(
                 text("""
@@ -439,15 +436,12 @@ def check_all_guards(
         GuardResult with allowed=True if all guards pass
     """
     # 1. Cooldown check (use first target_id for single-target operations)
-    if not target_ids:
-        target_id = ""
-    else:
-        target_id = target_ids[0]
+    target_id = "" if not target_ids else target_ids[0]
     is_blocked, remaining = check_cooldown(ai_agent_id, operation, target_id)
     if is_blocked:
         return GuardResult(
             allowed=False,
-            reason=f"Cooldown active",
+            reason="Cooldown active",
             cooldown_remaining_seconds=remaining,
         )
 

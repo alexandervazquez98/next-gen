@@ -5,7 +5,7 @@ interface ProposalFiltersProps {
   status: string;
   category: string;
   proposedBy: string;
-  onChange: (next: { status: string; category: string; proposed_by: string }) => void;
+  onChange: (_next: { status: string; category: string; proposed_by: string }) => void;
 }
 
 export const ProposalFilters: React.FC<ProposalFiltersProps> = ({
@@ -62,7 +62,7 @@ interface ProposalListProps {
   loading: boolean;
   error: Error | null;
   filters: { status: string; category: string; proposed_by: string };
-  onFiltersChange: (next: { status: string; category: string; proposed_by: string }) => void;
+  onFiltersChange: (_next: { status: string; category: string; proposed_by: string }) => void;
 }
 
 export const ProposalList: React.FC<ProposalListProps> = ({
