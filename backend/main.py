@@ -279,6 +279,7 @@ from routers import (  # noqa: E402
     catalog,
     cis,
     cli,
+    cmdb_proposals,
     dictionaries,
     events,
     itsm_service_catalog,
@@ -420,6 +421,7 @@ app.include_router(cli.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
 app.include_router(rtus.router, prefix="/api/v1")
+app.include_router(cmdb_proposals.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
