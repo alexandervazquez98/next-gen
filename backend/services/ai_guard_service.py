@@ -9,6 +9,7 @@ This module provides:
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -24,13 +25,21 @@ from postgres_db import SessionLocal
 
 # ── Cooldown Configuration ───────────────────────────────────────────────────────
 
-# Per-operation, per-target cooldowns in seconds
+# Per-operation, per-target cooldowns in seconds.
+# feat-cmdb-ai-handoff (T-2.7): ``propose_ci`` mirrors ``ci_metadata_update`` (120s
+# default, overridable via ``CMDB_PROPOSAL_COOLDOWN_SECONDS``).
 COOLDOWNS: dict[str, int] = {
     "diagnose": 300,       # 5 minutes
     "ack": 600,             # 10 minutes
     "close": 900,           # 15 minutes
     "ci_metadata_update": 120,  # 2 minutes
+    "propose_ci": int(os.getenv("CMDB_PROPOSAL_COOLDOWN_SECONDS", "120")),
 }
+
+# feat-cmdb-ai-handoff — bulk threshold for propose_ci; >5 submissions in any
+# rolling 60-minute window from one agent triggers escalation.
+CMDB_PROPOSAL_BULK_THRESHOLD = int(os.getenv("CMDB_PROPOSAL_BULK_THRESHOLD", "5"))
+CMDB_PROPOSAL_BULK_WINDOW_SECONDS = 60 * 60  # 60 minutes
 
 # ── In-Memory Cooldown Cache ─────────────────────────────────────────────────────
 
@@ -309,6 +318,8 @@ def check_bulk_detection(
     - >10 entities per request → BLOCK
     - >50 same op type/hour → require approval (not blocked, but flagged)
     - >30 different CIs/hour → require approval (not blocked, but flagged)
+    - feat-cmdb-ai-handoff (propose_ci): >CMDB_PROPOSAL_BULK_THRESHOLD submissions
+      in any rolling 60-minute window → escalate or deny
 
     Args:
         ai_agent_id: JWT subject of the AI agent
@@ -331,7 +342,41 @@ def check_bulk_detection(
 
     db = SessionLocal()
     try:
-        # Check >50 same op type/hour
+        # feat-cmdb-ai-handoff: propose_ci uses a tighter, configurable threshold
+        # (default 5) before escalating. Tighter than the generic 50/hour for other ops
+        # because proposal churn directly taxes human review capacity.
+        if operation == "propose_ci":
+            window_cutoff = datetime.fromtimestamp(
+                now.timestamp() - CMDB_PROPOSAL_BULK_WINDOW_SECONDS, tz=timezone.utc
+            )
+            propose_count = db.execute(
+                text("""
+                    SELECT COUNT(*) as cnt FROM ai_operation_log
+                    WHERE ai_agent_id = :agent_id
+                      AND operation = :operation
+                      AND timestamp > :cutoff
+                      AND result = 'success'
+                """),
+                {
+                    "agent_id": ai_agent_id,
+                    "operation": operation,
+                    "cutoff": window_cutoff,
+                },
+            ).scalar() or 0
+
+            if propose_count >= CMDB_PROPOSAL_BULK_THRESHOLD:
+                # Escalate — do NOT block outright. Humans must still have a chance to
+                # approve legitimate bursts (e.g. on-call migration).
+                return GuardResult(
+                    allowed=True,
+                    reason=(
+                        f"propose_ci bulk threshold reached: {propose_count} proposals "
+                        f"in the last 60 minutes (limit {CMDB_PROPOSAL_BULK_THRESHOLD})"
+                    ),
+                    escalation_required=True,
+                )
+
+        # Check >50 same op type/hour (generic bulk threshold for non-propose ops)
         same_op_count = db.execute(
             text("""
                 SELECT COUNT(*) as cnt FROM ai_operation_log
