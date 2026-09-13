@@ -62,11 +62,15 @@ class _RateLimiter:
     ) -> bool:
         now = time.monotonic()
         # Re-read env so test-time monkeypatch.setenv takes effect.
-        rpm_token_eff = rpm_token if rpm_token is not None else int(
-            os.getenv("CMDB_PROPOSAL_RPM", str(CMDB_PROPOSAL_RPM))
+        rpm_token_eff = (
+            rpm_token
+            if rpm_token is not None
+            else int(os.getenv("CMDB_PROPOSAL_RPM", str(CMDB_PROPOSAL_RPM)))
         )
-        rpm_user_eff = rpm_user if rpm_user is not None else int(
-            os.getenv("CMDB_PROPOSAL_USER_RPM", str(CMDB_PROPOSAL_USER_RPM))
+        rpm_user_eff = (
+            rpm_user
+            if rpm_user is not None
+            else int(os.getenv("CMDB_PROPOSAL_USER_RPM", str(CMDB_PROPOSAL_USER_RPM)))
         )
         with self._lock:
             for bucket, limit in (
@@ -98,9 +102,7 @@ def _check_tool_rate_limit(
     rpm_user: int | None = None,
 ) -> bool:
     """Allow or block a tool call by sliding-window rate limit."""
-    return _rate_limiter.allow(
-        token=token, user_id=user_id, rpm_token=rpm_token, rpm_user=rpm_user
-    )
+    return _rate_limiter.allow(token=token, user_id=user_id, rpm_token=rpm_token, rpm_user=rpm_user)
 
 
 # ── bearer -> user resolver ───────────────────────────────────────────────────

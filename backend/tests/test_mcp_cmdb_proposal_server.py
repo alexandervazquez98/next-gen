@@ -28,9 +28,7 @@ import pytest
 def fake_service(monkeypatch):
     """Patch cmdb_proposal_service methods with controllable stubs."""
     fake = MagicMock()
-    monkeypatch.setattr(
-        "mcp.cmdb_proposal_server._service", lambda: fake
-    )
+    monkeypatch.setattr("mcp.cmdb_proposal_server._service", lambda: fake)
     return fake
 
 
@@ -52,13 +50,17 @@ class TestProposeCiTool:
         from mcp import cmdb_proposal_server as mcp
 
         # Stub the resolver + rate limit so we exercise the tool's core logic.
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="ai-bot",
-            role="AI_OPERATOR",
-            permissions=["AI_PROPOSE_CI"],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="ai-bot",
+                role="AI_OPERATOR",
+                permissions=["AI_PROPOSE_CI"],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
         monkeypatch.setattr(mcp, "_check_tool_rate_limit", lambda *a, **kw: True)
         fake_service.create_proposal.return_value = {
             "id": "prop-1",
@@ -70,7 +72,12 @@ class TestProposeCiTool:
             token="Bearer.tok",
             manifest={
                 "schema_version": 1,
-                "ci": {"id": "CI-NEW", "label": "Core Router", "category": "Router", "type": "Router"},
+                "ci": {
+                    "id": "CI-NEW",
+                    "label": "Core Router",
+                    "category": "Router",
+                    "type": "Router",
+                },
             },
         )
         assert result["proposal_id"] == "prop-1"
@@ -83,13 +90,17 @@ class TestListProposalsTool:
         """list_proposals tool delegates to service.list_proposals."""
         from mcp import cmdb_proposal_server as mcp
 
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="viewer",
-            role="VIEWER",
-            permissions=["CI_VIEW"],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="viewer",
+                role="VIEWER",
+                permissions=["CI_VIEW"],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
         monkeypatch.setattr(mcp, "_check_tool_rate_limit", lambda *a, **kw: True)
         fake_service.list_proposals.return_value = {
             "rows": [{"id": "prop-1", "status": "DRAFT"}],
@@ -114,13 +125,17 @@ class TestApproveProposalTool:
         """approve_proposal tool delegates to service.approve_proposal."""
         from mcp import cmdb_proposal_server as mcp
 
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="alice",
-            role="OPERATOR",
-            permissions=["CI_APPROVE_PROPOSAL"],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="alice",
+                role="OPERATOR",
+                permissions=["CI_APPROVE_PROPOSAL"],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
         monkeypatch.setattr(mcp, "_check_tool_rate_limit", lambda *a, **kw: True)
         fake_service.approve_proposal.return_value = {
             "id": "prop-1",
@@ -144,13 +159,17 @@ class TestRevokeProposalTool:
         """revoke_proposal tool delegates to service.revoke_proposal."""
         from mcp import cmdb_proposal_server as mcp
 
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="alice",
-            role="OPERATOR",
-            permissions=["CI_APPROVE_PROPOSAL"],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="alice",
+                role="OPERATOR",
+                permissions=["CI_APPROVE_PROPOSAL"],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
         monkeypatch.setattr(mcp, "_check_tool_rate_limit", lambda *a, **kw: True)
         fake_service.revoke_proposal.return_value = {
             "id": "prop-1",
@@ -175,8 +194,11 @@ class TestAuthAndRateLimit:
         from mcp import cmdb_proposal_server as mcp
 
         monkeypatch.setattr(
-            mcp, "_resolve_user_from_bearer",
-            lambda t: (_ for _ in ()).throw(HTTPException(status_code=401, detail="Not authenticated")),
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: (_ for _ in ()).throw(
+                HTTPException(status_code=401, detail="Not authenticated")
+            ),
         )
         with pytest.raises(HTTPException) as exc:
             mcp.tool_propose_ci(token=None, manifest={})
@@ -188,19 +210,26 @@ class TestAuthAndRateLimit:
         from mcp import cmdb_proposal_server as mcp
 
         # The resolver returns a user that lacks AI_PROPOSE_CI.
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="viewer",
-            role="VIEWER",
-            permissions=[],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="viewer",
+                role="VIEWER",
+                permissions=[],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
 
         with pytest.raises(HTTPException) as exc:
-            mcp.tool_propose_ci(token="Bearer.tok", manifest={
-                "schema_version": 1,
-                "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"},
-            })
+            mcp.tool_propose_ci(
+                token="Bearer.tok",
+                manifest={
+                    "schema_version": 1,
+                    "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"},
+                },
+            )
         assert exc.value.status_code == 403
 
 

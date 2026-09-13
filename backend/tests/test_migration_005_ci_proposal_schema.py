@@ -14,16 +14,12 @@ from __future__ import annotations
 from pathlib import Path
 
 MIGRATION_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "migrations"
-    / "005_ci_proposal_schema.cypher"
+    Path(__file__).resolve().parents[1] / "migrations" / "005_ci_proposal_schema.cypher"
 )
 
 
 def _load_migration() -> str:
-    assert MIGRATION_PATH.exists(), (
-        f"Migration file missing: {MIGRATION_PATH}"
-    )
+    assert MIGRATION_PATH.exists(), f"Migration file missing: {MIGRATION_PATH}"
     return MIGRATION_PATH.read_text(encoding="utf-8")
 
 
@@ -35,12 +31,12 @@ def test_migration_file_exists_with_correct_name():
 def test_constraint_and_indexes_present():
     """The migration MUST declare the unique id constraint and 3 indexes."""
     body = _load_migration()
-    assert "CREATE CONSTRAINT ci_proposal_id_unique" in body, (
-        "Migration missing the :CIProposal.id unique constraint"
-    )
-    assert "FOR (p:CIProposal) REQUIRE p.id IS UNIQUE" in body, (
-        "Constraint MUST require p.id IS UNIQUE"
-    )
+    assert (
+        "CREATE CONSTRAINT ci_proposal_id_unique" in body
+    ), "Migration missing the :CIProposal.id unique constraint"
+    assert (
+        "FOR (p:CIProposal) REQUIRE p.id IS UNIQUE" in body
+    ), "Constraint MUST require p.id IS UNIQUE"
     # Indexes
     for idx in ("ci_proposal_status", "ci_proposal_created_at", "ci_proposal_category"):
         assert f"CREATE INDEX {idx}" in body, f"Missing index {idx}"
@@ -55,9 +51,9 @@ def test_all_statements_are_idempotent():
             continue
         if not statement.upper().startswith("CREATE "):
             continue
-        assert "IF NOT EXISTS" in statement, (
-            f"Statement not idempotent (missing IF NOT EXISTS): {statement[:120]}"
-        )
+        assert (
+            "IF NOT EXISTS" in statement
+        ), f"Statement not idempotent (missing IF NOT EXISTS): {statement[:120]}"
 
 
 def test_migration_documents_rollback():

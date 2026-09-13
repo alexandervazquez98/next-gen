@@ -73,9 +73,7 @@ class ManifestPayload(BaseModel):
     @classmethod
     def _validate_schema_version(cls, value: int) -> int:
         if value != 1:
-            raise ValueError(
-                f"unsupported schema_version {value}; the only known version is 1"
-            )
+            raise ValueError(f"unsupported schema_version {value}; the only known version is 1")
         return value
 
     @model_validator(mode="before")
@@ -100,9 +98,7 @@ class ManifestPayload(BaseModel):
         metadata = self.ci.metadata or {}
         blocked = [k for k in metadata if k in BLOCKED_AI_UPDATE_FIELDS]
         if blocked:
-            raise ValueError(
-                f"metadata must not contain blocked AI fields keys: {blocked}"
-            )
+            raise ValueError(f"metadata must not contain blocked AI fields keys: {blocked}")
         return self
 
 

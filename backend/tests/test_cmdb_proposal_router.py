@@ -87,9 +87,7 @@ class TestCreateProposal:
             "proposed_category": "Router",
             "ci_id": "CI-NEW",
         }
-        with (
-            patch("services.cmdb_proposal_service.create_proposal", return_value=fake_row),
-        ):
+        with (patch("services.cmdb_proposal_service.create_proposal", return_value=fake_row),):
             response = client.post("/api/cmdb/proposals", json=_payload())
         assert response.status_code == 201
         body = response.json()
@@ -245,9 +243,7 @@ class TestGetProposalDetail:
         from models.user import UserPermission
 
         _override_user(_user("VIEWER", permissions=[UserPermission.CI_VIEW.value]))
-        with patch(
-            "services.cmdb_proposal_service.get_proposal", return_value=None
-        ):
+        with patch("services.cmdb_proposal_service.get_proposal", return_value=None):
             response = client.get("/api/cmdb/proposals/missing")
         assert response.status_code == 404
 
@@ -280,9 +276,7 @@ class TestApproveProposal:
     def test_post_approve_403_without_ci_approve_proposal(self):
         """Caller without CI_APPROVE_PROPOSAL MUST be denied."""
         _override_user(_user("VIEWER", permissions=[]))
-        response = client.post(
-            "/api/cmdb/proposals/prop-1/approve", json={"version": 1}
-        )
+        response = client.post("/api/cmdb/proposals/prop-1/approve", json={"version": 1})
         assert response.status_code == 403
 
     def test_post_approve_409_version_conflict(self):
@@ -297,9 +291,7 @@ class TestApproveProposal:
                 status_code=409, detail={"reason": "version_conflict", "proposal_id": "prop-1"}
             ),
         ):
-            response = client.post(
-                "/api/cmdb/proposals/prop-1/approve", json={"version": 99}
-            )
+            response = client.post("/api/cmdb/proposals/prop-1/approve", json={"version": 99})
         assert response.status_code == 409
 
     def test_post_approve_409_category_renamed(self):
@@ -314,9 +306,7 @@ class TestApproveProposal:
                 status_code=409, detail={"reason": "category_renamed", "category": "Router"}
             ),
         ):
-            response = client.post(
-                "/api/cmdb/proposals/prop-1/approve", json={"version": 1}
-            )
+            response = client.post("/api/cmdb/proposals/prop-1/approve", json={"version": 1})
         assert response.status_code == 409
 
     def test_post_approve_409_ci_id_collision_at_approve_time(self):
@@ -331,9 +321,7 @@ class TestApproveProposal:
                 status_code=409, detail={"reason": "ci_id_collision", "ci_id": "CI-NEW"}
             ),
         ):
-            response = client.post(
-                "/api/cmdb/proposals/prop-1/approve", json={"version": 1}
-            )
+            response = client.post("/api/cmdb/proposals/prop-1/approve", json={"version": 1})
         assert response.status_code == 409
 
 
@@ -382,17 +370,13 @@ class TestRevokeProposal:
                 status_code=409, detail={"reason": "version_conflict", "proposal_id": "prop-1"}
             ),
         ):
-            response = client.post(
-                "/api/cmdb/proposals/prop-1/revoke", json={"version": 99}
-            )
+            response = client.post("/api/cmdb/proposals/prop-1/revoke", json={"version": 99})
         assert response.status_code == 409
 
     def test_post_revoke_403_without_permission(self):
         """Caller without CI_APPROVE_PROPOSAL MUST be denied."""
         _override_user(_user("VIEWER", permissions=[]))
-        response = client.post(
-            "/api/cmdb/proposals/prop-1/revoke", json={"version": 1}
-        )
+        response = client.post("/api/cmdb/proposals/prop-1/revoke", json={"version": 1})
         assert response.status_code == 403
 
 

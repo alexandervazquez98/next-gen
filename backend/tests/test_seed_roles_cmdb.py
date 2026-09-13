@@ -48,15 +48,11 @@ def test_operator_seed_includes_ci_approve_proposal(stub_driver):
     asyncio.run(seed_roles.seed_roles())
 
     # Find the CREATE call for OPERATOR and assert CI_APPROVE_PROPOSAL is in perms.
-    create_calls = [
-        c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])
-    ]
+    create_calls = [c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])]
     operator_create = [c for c in create_calls if c.kwargs.get("name") == "OPERATOR"]
     assert operator_create, "OPERATOR role was not created"
     perms = operator_create[0].kwargs["perms"]
-    assert "CI_APPROVE_PROPOSAL" in perms, (
-        f"OPERATOR must seed CI_APPROVE_PROPOSAL; got {perms}"
-    )
+    assert "CI_APPROVE_PROPOSAL" in perms, f"OPERATOR must seed CI_APPROVE_PROPOSAL; got {perms}"
 
 
 @pytest.mark.parametrize("role_name", ["AI_DIAGNOSTIC", "AI_OPERATOR"])
@@ -71,15 +67,11 @@ def test_ai_roles_seed_ai_propose_ci(stub_driver, role_name):
 
     asyncio.run(seed_roles.seed_roles())
 
-    create_calls = [
-        c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])
-    ]
+    create_calls = [c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])]
     role_create = [c for c in create_calls if c.kwargs.get("name") == role_name]
     assert role_create, f"{role_name} role was not created"
     perms = role_create[0].kwargs["perms"]
-    assert "AI_PROPOSE_CI" in perms, (
-        f"{role_name} must seed AI_PROPOSE_CI; got {perms}"
-    )
+    assert "AI_PROPOSE_CI" in perms, f"{role_name} must seed AI_PROPOSE_CI; got {perms}"
 
 
 def test_ai_roles_never_get_ci_approve_proposal(stub_driver):
@@ -93,16 +85,14 @@ def test_ai_roles_never_get_ci_approve_proposal(stub_driver):
 
     asyncio.run(seed_roles.seed_roles())
 
-    create_calls = [
-        c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])
-    ]
+    create_calls = [c for c in session.run.call_args_list if "CREATE (r:Role" in str(c.args[0])]
     for ai_role in ("AI_DIAGNOSTIC", "AI_OPERATOR"):
         ai_create = [c for c in create_calls if c.kwargs.get("name") == ai_role]
         assert ai_create, f"{ai_role} role was not created"
         perms = ai_create[0].kwargs["perms"]
-        assert "CI_APPROVE_PROPOSAL" not in perms, (
-            f"{ai_role} must NEVER grant CI_APPROVE_PROPOSAL; got {perms}"
-        )
+        assert (
+            "CI_APPROVE_PROPOSAL" not in perms
+        ), f"{ai_role} must NEVER grant CI_APPROVE_PROPOSAL; got {perms}"
 
 
 def test_upgrade_adds_missing_permissions_to_existing_system_role(stub_driver):
@@ -151,6 +141,6 @@ def test_upgrade_adds_missing_permissions_to_existing_system_role(stub_driver):
     assert upgrade_calls, "Idempotent upgrade path did not issue SET r.permissions for OPERATOR"
 
     last_perms = upgrade_calls[-1].kwargs.get("perms") or []
-    assert "CI_APPROVE_PROPOSAL" in last_perms, (
-        f"Upgrade path must add CI_APPROVE_PROPOSAL; got {last_perms}"
-    )
+    assert (
+        "CI_APPROVE_PROPOSAL" in last_perms
+    ), f"Upgrade path must add CI_APPROVE_PROPOSAL; got {last_perms}"

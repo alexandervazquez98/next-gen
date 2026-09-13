@@ -75,13 +75,15 @@ def seeded_repo(monkeypatch):
 
     # Stub cooldown check so we always pass.
     monkeypatch.setattr(
-        ai_guard_service, "check_cooldown",
+        ai_guard_service,
+        "check_cooldown",
         lambda *a, **kw: (False, 0),
     )
 
     # Stub audit_service.record_critical_change so it doesn't touch a real DB.
     monkeypatch.setattr(
-        audit_service, "record_critical_change",
+        audit_service,
+        "record_critical_change",
         lambda **kwargs: None,
     )
 
@@ -123,9 +125,7 @@ def seeded_repo(monkeypatch):
         if not row or row["version"] != kwargs["expected_version"]:
             from backend.repositories.cmdb_proposal_repo import CmdbProposalVersionConflictError
 
-            raise CmdbProposalVersionConflictError(
-                f"version_conflict for {kwargs['proposal_id']}"
-            )
+            raise CmdbProposalVersionConflictError(f"version_conflict for {kwargs['proposal_id']}")
         row["status"] = "APPROVED"
         row["version"] = kwargs["expected_version"] + 1
         row["reviewed_by"] = kwargs["reviewer_by"]
@@ -138,9 +138,7 @@ def seeded_repo(monkeypatch):
         if not row or row["version"] != kwargs["expected_version"]:
             from backend.repositories.cmdb_proposal_repo import CmdbProposalVersionConflictError
 
-            raise CmdbProposalVersionConflictError(
-                f"version_conflict for {kwargs['proposal_id']}"
-            )
+            raise CmdbProposalVersionConflictError(f"version_conflict for {kwargs['proposal_id']}")
         row["status"] = "REVOKED"
         row["version"] = kwargs["expected_version"] + 1
         row["revoke_reason"] = kwargs.get("reason")
@@ -178,16 +176,23 @@ class TestHttpFullFlow:
         assert proposal_id
 
         # 2. List (CI_VIEW) — list is open to OPERATOR/ADMIN/CI_VIEW holders
-        _override_user(_user("OPERATOR", [UserPermission.CI_VIEW.value, UserPermission.CI_APPROVE_PROPOSAL.value, UserPermission.CI_EDIT.value]))
+        _override_user(
+            _user(
+                "OPERATOR",
+                [
+                    UserPermission.CI_VIEW.value,
+                    UserPermission.CI_APPROVE_PROPOSAL.value,
+                    UserPermission.CI_EDIT.value,
+                ],
+            )
+        )
         resp = client.get("/api/cmdb/proposals")
         assert resp.status_code == 200
         body = resp.json()
         assert body["total"] >= 1
 
         # 3. Approve
-        resp = client.post(
-            f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1}
-        )
+        resp = client.post(f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1})
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "APPROVED"
@@ -199,13 +204,17 @@ class TestMcpFullFlow:
         """propose_ci -> list_proposals -> approve_proposal -> revoke_proposal."""
         from mcp import cmdb_proposal_server as mcp
 
-        monkeypatch.setattr(mcp, "_resolve_user_from_bearer", lambda t: MagicMock(
-            username="alice",
-            role="OPERATOR",
-            permissions=["AI_PROPOSE_CI", "CI_VIEW", "CI_APPROVE_PROPOSAL"],
-            allowed_locations=[],
-            disabled=False,
-        ))
+        monkeypatch.setattr(
+            mcp,
+            "_resolve_user_from_bearer",
+            lambda t: MagicMock(
+                username="alice",
+                role="OPERATOR",
+                permissions=["AI_PROPOSE_CI", "CI_VIEW", "CI_APPROVE_PROPOSAL"],
+                allowed_locations=[],
+                disabled=False,
+            ),
+        )
         monkeypatch.setattr(mcp, "_check_tool_rate_limit", lambda *a, **kw: True)
 
         # propose_ci
@@ -218,9 +227,7 @@ class TestMcpFullFlow:
         assert any(r["id"] == proposal_id for r in listed["rows"])
 
         # approve_proposal
-        approved = mcp.tool_approve_proposal(
-            token="Bearer.tok", proposal_id=proposal_id, version=1
-        )
+        approved = mcp.tool_approve_proposal(token="Bearer.tok", proposal_id=proposal_id, version=1)
         assert approved["status"] == "APPROVED"
 
         # revoke_proposal
@@ -236,7 +243,16 @@ class TestMcpFullFlow:
 class TestConcurrency:
     def test_concurrent_approves_one_wins_one_409(self, seeded_repo):
         """Two near-simultaneous approves: exactly one 200, one 409 (REQ-CMAP-008)."""
-        _override_user(_user("OPERATOR", [UserPermission.CI_APPROVE_PROPOSAL.value, UserPermission.CI_VIEW.value, UserPermission.CI_EDIT.value]))
+        _override_user(
+            _user(
+                "OPERATOR",
+                [
+                    UserPermission.CI_APPROVE_PROPOSAL.value,
+                    UserPermission.CI_VIEW.value,
+                    UserPermission.CI_EDIT.value,
+                ],
+            )
+        )
 
         # Create a proposal
         _override_user(_user("AI_OPERATOR", [AIPermission.AI_PROPOSE_CI.value]))
@@ -245,21 +261,27 @@ class TestConcurrency:
         proposal_id = resp.json()["proposal_id"]
 
         # Switch to an approver.
-        _override_user(_user("OPERATOR", [UserPermission.CI_APPROVE_PROPOSAL.value, UserPermission.CI_VIEW.value, UserPermission.CI_EDIT.value]))
+        _override_user(
+            _user(
+                "OPERATOR",
+                [
+                    UserPermission.CI_APPROVE_PROPOSAL.value,
+                    UserPermission.CI_VIEW.value,
+                    UserPermission.CI_EDIT.value,
+                ],
+            )
+        )
 
         # Two sequential approve calls with the same version=1.
         # The first one wins; the second sees version=2 and the optimistic MATCH fails.
-        resp_a = client.post(
-            f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1}
-        )
-        resp_b = client.post(
-            f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1}
-        )
+        resp_a = client.post(f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1})
+        resp_b = client.post(f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1})
 
         statuses = sorted([resp_a.status_code, resp_b.status_code])
-        assert statuses == [200, 409], (
-            f"expected [200, 409], got {statuses}; body_a={resp_a.json()} body_b={resp_b.json()}"
-        )
+        assert statuses == [
+            200,
+            409,
+        ], f"expected [200, 409], got {statuses}; body_a={resp_a.json()} body_b={resp_b.json()}"
 
     def test_concurrent_approves_exactly_one_audit_row(self, monkeypatch, seeded_repo):
         """Concurrent approves MUST persist exactly ONE CI_PROPOSAL_APPROVE row."""
@@ -279,7 +301,16 @@ class TestConcurrency:
         assert resp.status_code == 201
         proposal_id = resp.json()["proposal_id"]
 
-        _override_user(_user("OPERATOR", [UserPermission.CI_APPROVE_PROPOSAL.value, UserPermission.CI_VIEW.value, UserPermission.CI_EDIT.value]))
+        _override_user(
+            _user(
+                "OPERATOR",
+                [
+                    UserPermission.CI_APPROVE_PROPOSAL.value,
+                    UserPermission.CI_VIEW.value,
+                    UserPermission.CI_EDIT.value,
+                ],
+            )
+        )
 
         client.post(f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1})
         client.post(f"/api/cmdb/proposals/{proposal_id}/approve", json={"version": 1})
@@ -287,9 +318,9 @@ class TestConcurrency:
         approve_audit_calls = [
             c for c in audit_calls if c.get("event_type") == "CI_PROPOSAL_APPROVE"
         ]
-        assert len(approve_audit_calls) == 1, (
-            f"expected exactly 1 CI_PROPOSAL_APPROVE audit row; got {len(approve_audit_calls)}"
-        )
+        assert (
+            len(approve_audit_calls) == 1
+        ), f"expected exactly 1 CI_PROPOSAL_APPROVE audit row; got {len(approve_audit_calls)}"
 
 
 class TestGuardrailDenial:

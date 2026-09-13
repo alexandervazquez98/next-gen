@@ -105,18 +105,32 @@ class _RepoStub:
         }
 
     def _manifest_for_approve(self) -> str:
-        return json.dumps({
-            "schema_version": 1,
-            "ci": {"id": "CI-NEW", "label": "Core Router", "category": "Router", "type": "Router"},
-            "rationale": "Spoke router",
-        })
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "ci": {
+                    "id": "CI-NEW",
+                    "label": "Core Router",
+                    "category": "Router",
+                    "type": "Router",
+                },
+                "rationale": "Spoke router",
+            }
+        )
 
     def _manifest_for_revoke(self) -> str:
-        return json.dumps({
-            "schema_version": 1,
-            "ci": {"id": "CI-NEW", "label": "Core Router", "category": "Router", "type": "Router"},
-            "rationale": "Spoke router",
-        })
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "ci": {
+                    "id": "CI-NEW",
+                    "label": "Core Router",
+                    "category": "Router",
+                    "type": "Router",
+                },
+                "rationale": "Spoke router",
+            }
+        )
 
     def get(self, proposal_id):
         if self.get_returns is not None:
@@ -202,7 +216,9 @@ class TestCreateProposalHappyPath:
         repo = _RepoStub()
         monkeypatch.setattr(svc, "_get_repo", lambda: repo)
         # category resolve — Router is valid
-        monkeypatch.setattr(svc, "_resolve_category", lambda cat: ["Router", "Server"] if cat == "Router" else None)
+        monkeypatch.setattr(
+            svc, "_resolve_category", lambda cat: ["Router", "Server"] if cat == "Router" else None
+        )
         # CI collision check — none
         monkeypatch.setattr(svc, "_ci_id_exists", lambda ci_id: False)
         guard = _GuardStub(allowed=True)
@@ -252,7 +268,15 @@ class TestCreateProposalValidation:
         monkeypatch.setattr(svc, "_get_guard", lambda: _GuardStub(allowed=True))
 
         user = _user(permissions=[AIPermission.AI_PROPOSE_CI.value])
-        manifest = {"schema_version": 1, "ci": {"id": "X", "label": "Y", "category": "FictionalDevice", "type": "FictionalDevice"}}
+        manifest = {
+            "schema_version": 1,
+            "ci": {
+                "id": "X",
+                "label": "Y",
+                "category": "FictionalDevice",
+                "type": "FictionalDevice",
+            },
+        }
 
         with pytest.raises(HTTPException) as exc:
             svc.create_proposal(manifest=manifest, user=user, ai_agent_id="ai", db=object())
@@ -269,7 +293,10 @@ class TestCreateProposalValidation:
         monkeypatch.setattr(svc, "_get_guard", lambda: _GuardStub(allowed=True))
 
         user = _user(permissions=[AIPermission.AI_PROPOSE_CI.value])
-        manifest = {"schema_version": 1, "ci": {"id": "CI-EXISTING", "label": "Y", "category": "Router", "type": "Router"}}
+        manifest = {
+            "schema_version": 1,
+            "ci": {"id": "CI-EXISTING", "label": "Y", "category": "Router", "type": "Router"},
+        }
 
         with pytest.raises(HTTPException) as exc:
             svc.create_proposal(manifest=manifest, user=user, ai_agent_id="ai", db=object())
@@ -286,7 +313,10 @@ class TestCreateProposalValidation:
         monkeypatch.setattr(svc, "_get_guard", lambda: _GuardStub(allowed=True))
 
         user = _user(role="VIEWER", permissions=[])
-        manifest = {"schema_version": 1, "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"}}
+        manifest = {
+            "schema_version": 1,
+            "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"},
+        }
 
         with pytest.raises(HTTPException) as exc:
             svc.create_proposal(manifest=manifest, user=user, ai_agent_id="ai", db=object())
@@ -305,7 +335,10 @@ class TestCreateProposalValidation:
         monkeypatch.setattr(svc, "_get_guard", lambda: guard)
 
         user = _user(permissions=[AIPermission.AI_PROPOSE_CI.value])
-        manifest = {"schema_version": 1, "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"}}
+        manifest = {
+            "schema_version": 1,
+            "ci": {"id": "X", "label": "Y", "category": "Router", "type": "Router"},
+        }
 
         result = svc.create_proposal(manifest=manifest, user=user, ai_agent_id="ai", db=object())
         assert result["harness_result"]["denied"] is True
@@ -353,7 +386,9 @@ class TestApproveProposal:
         monkeypatch.setattr(svc, "node_service", fake_node_service, raising=False)
 
         monkeypatch.setattr(svc, "_resolve_category", lambda cat: ["Router"])
-        monkeypatch.setattr(svc, "_ci_id_exists", lambda ci_id: False)  # collision-free at approve time
+        monkeypatch.setattr(
+            svc, "_ci_id_exists", lambda ci_id: False
+        )  # collision-free at approve time
 
         user = _user(role="OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value])
         result = svc.approve_proposal(
@@ -378,10 +413,17 @@ class TestApproveProposal:
                 "id": "prop-1",
                 "status": "APPROVED",  # not DRAFT
                 "version": 2,
-                "manifest_json": json.dumps({
-                    "schema_version": 1,
-                    "ci": {"id": "CI-NEW", "label": "Core Router", "category": "Router", "type": "Router"},
-                }),
+                "manifest_json": json.dumps(
+                    {
+                        "schema_version": 1,
+                        "ci": {
+                            "id": "CI-NEW",
+                            "label": "Core Router",
+                            "category": "Router",
+                            "type": "Router",
+                        },
+                    }
+                ),
                 "applied_manifest_json": None,
                 "proposed_by": "ai-bot",
                 "proposed_role": "AI_OPERATOR",
@@ -401,9 +443,7 @@ class TestApproveProposal:
 
         user = _user(role="OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value])
         with pytest.raises(HTTPException) as exc:
-            svc.approve_proposal(
-                proposal_id="prop-1", expected_version=99, user=user, db=object()
-            )
+            svc.approve_proposal(proposal_id="prop-1", expected_version=99, user=user, db=object())
         assert exc.value.status_code == 409
         assert "invalid_state" in str(exc.value.detail)
 
@@ -418,9 +458,7 @@ class TestApproveProposal:
 
         user = _user(role="VIEWER", permissions=[])
         with pytest.raises(HTTPException) as exc:
-            svc.approve_proposal(
-                proposal_id="prop-1", expected_version=1, user=user, db=object()
-            )
+            svc.approve_proposal(proposal_id="prop-1", expected_version=1, user=user, db=object())
         assert exc.value.status_code == 403
 
     def test_approve_409_when_category_renamed(self, monkeypatch):
@@ -433,9 +471,7 @@ class TestApproveProposal:
 
         user = _user(role="OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value])
         with pytest.raises(HTTPException) as exc:
-            svc.approve_proposal(
-                proposal_id="prop-1", expected_version=1, user=user, db=object()
-            )
+            svc.approve_proposal(proposal_id="prop-1", expected_version=1, user=user, db=object())
         assert exc.value.status_code == 409
         assert "category_renamed" in str(exc.value.detail)
 
@@ -449,9 +485,7 @@ class TestApproveProposal:
 
         user = _user(role="OPERATOR", permissions=[UserPermission.CI_APPROVE_PROPOSAL.value])
         with pytest.raises(HTTPException) as exc:
-            svc.approve_proposal(
-                proposal_id="prop-1", expected_version=1, user=user, db=object()
-            )
+            svc.approve_proposal(proposal_id="prop-1", expected_version=1, user=user, db=object())
         assert exc.value.status_code == 409
         assert "ci_id_collision" in str(exc.value.detail)
 

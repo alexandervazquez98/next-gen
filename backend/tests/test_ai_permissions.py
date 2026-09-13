@@ -49,9 +49,9 @@ class TestAIPermissionEnum:
     # feat-cmdb-ai-handoff — REQ-CMAP-004
     def test_ai_propose_ci_enum_member(self):
         """AI_PROPOSE_CI must be defined and have the correct string value (REQ-CMAP-004)."""
-        assert hasattr(AIPermission, "AI_PROPOSE_CI"), (
-            "AI_PROPOSE_CI is required by feat-cmdb-ai-handoff to gate POST /api/cmdb/proposals"
-        )
+        assert hasattr(
+            AIPermission, "AI_PROPOSE_CI"
+        ), "AI_PROPOSE_CI is required by feat-cmdb-ai-handoff to gate POST /api/cmdb/proposals"
         assert AIPermission.AI_PROPOSE_CI.value == "AI_PROPOSE_CI"
 
 
@@ -60,9 +60,9 @@ class TestUserPermissionEnum:
 
     def test_ci_approve_proposal_enum_member(self):
         """CI_APPROVE_PROPOSAL must be defined and have the correct string value (REQ-CMAP-005)."""
-        assert hasattr(UserPermission, "CI_APPROVE_PROPOSAL"), (
-            "CI_APPROVE_PROPOSAL is required to gate POST /api/cmdb/proposals/{id}/approve|revoke"
-        )
+        assert hasattr(
+            UserPermission, "CI_APPROVE_PROPOSAL"
+        ), "CI_APPROVE_PROPOSAL is required to gate POST /api/cmdb/proposals/{id}/approve|revoke"
         assert UserPermission.CI_APPROVE_PROPOSAL.value == "CI_APPROVE_PROPOSAL"
 
     def test_all_values_are_strings(self):

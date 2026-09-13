@@ -124,9 +124,7 @@ async def seed_roles():
                 existing_is_system = existing_role.get("is_system")
                 if existing_is_system is True:
                     current_permissions = list(existing_role.get("permissions") or [])
-                    permitted_upgrades = list(
-                        SYSTEM_ROLE_PERMISSION_UPGRADES.get(name, [])
-                    )
+                    permitted_upgrades = list(SYSTEM_ROLE_PERMISSION_UPGRADES.get(name, []))
                     # feat-cmdb-ai-handoff: AI roles get AI-only upgrade grants.
                     if name in AI_ROLE_PERMISSION_UPGRADES:
                         permitted_upgrades.extend(AI_ROLE_PERMISSION_UPGRADES[name])

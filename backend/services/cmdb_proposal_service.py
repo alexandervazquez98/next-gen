@@ -212,7 +212,9 @@ def create_proposal(
     try:
         payload = ManifestPayload.model_validate(manifest)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail={"reason": "invalid_manifest", "errors": str(exc)}) from exc
+        raise HTTPException(
+            status_code=422, detail={"reason": "invalid_manifest", "errors": str(exc)}
+        ) from exc
 
     ci = payload.ci
 
@@ -374,7 +376,9 @@ def approve_proposal(
         raise
     except Exception as exc:
         logger.exception("node_service.create_update_node failed for proposal %s", proposal_id)
-        raise HTTPException(status_code=500, detail={"reason": "ci_commit_failed", "error": str(exc)}) from exc
+        raise HTTPException(
+            status_code=500, detail={"reason": "ci_commit_failed", "error": str(exc)}
+        ) from exc
 
     # Repo transition (optimistic version)
     applied_manifest_json = json.dumps(manifest_obj, default=str)

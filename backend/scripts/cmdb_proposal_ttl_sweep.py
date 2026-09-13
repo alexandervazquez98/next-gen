@@ -51,13 +51,13 @@ def _resolve_retention_days(argv: list[str]) -> int:
         try:
             return int(env_value)
         except ValueError:
-            logger.warning(
-                "Invalid CMDB_PROPOSAL_RETENTION_DAYS=%r, using default 30", env_value
-            )
+            logger.warning("Invalid CMDB_PROPOSAL_RETENTION_DAYS=%r, using default 30", env_value)
     return 30
 
 
-def _emit_audit(*, db: Any, proposal_id: str, proposed_by: str | None, manifest_json: str | None) -> None:
+def _emit_audit(
+    *, db: Any, proposal_id: str, proposed_by: str | None, manifest_json: str | None
+) -> None:
     """Emit one CI_PROPOSAL_REVOKE row with actor_role=SYSTEM, revoke_reason=ttl_expired."""
     from services.audit_service import record_critical_change
 

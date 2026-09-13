@@ -47,9 +47,9 @@ class TestProposeCiCooldown:
         from services.ai_guard_service import COOLDOWNS
 
         assert "propose_ci" in COOLDOWNS, "COOLDOWNS table MUST include propose_ci"
-        assert COOLDOWNS["propose_ci"] >= 120, (
-            f"propose_ci cooldown TTL {COOLDOWNS['propose_ci']} MUST be >= 120s"
-        )
+        assert (
+            COOLDOWNS["propose_ci"] >= 120
+        ), f"propose_ci cooldown TTL {COOLDOWNS['propose_ci']} MUST be >= 120s"
 
     def test_propose_ci_cooldown_honors_env_override(self):
         """CMDB_PROPOSAL_COOLDOWN_SECONDS MUST override the default when present."""
@@ -87,11 +87,8 @@ class TestProposeCiBulkThreshold:
         )
         # The bulk detection layer sets escalation_required OR denies.
         assert (
-            result.escalation_required is True
-            or result.allowed is False
-        ), (
-            "propose_ci bulk threshold MUST escalate/deny at >=5 prior submits"
-        )
+            result.escalation_required is True or result.allowed is False
+        ), "propose_ci bulk threshold MUST escalate/deny at >=5 prior submits"
 
     def test_propose_ci_below_threshold_passes(self, monkeypatch):
         """Below the threshold the check MUST pass without escalation."""

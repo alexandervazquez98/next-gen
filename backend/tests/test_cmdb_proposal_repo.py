@@ -147,9 +147,9 @@ class TestList:
             for q in mock_neo4j_driver.mock_session.queries
             if "match (p:ciproposal)" in q["query"].lower()
         ]
-        assert any(p.get("skip") == 25 for p in params_used), (
-            "list MUST apply pagination via skip/limit params"
-        )
+        assert any(
+            p.get("skip") == 25 for p in params_used
+        ), "list MUST apply pagination via skip/limit params"
 
 
 class TestApprove:
@@ -301,11 +301,7 @@ class TestTtlSweep:
         mock_neo4j_driver.mock_session.set_default_response([{"count": 0}])
         repo.ttl_sweep(retention_days=7)
         queries = mock_neo4j_driver.mock_session.queries
-        sweep_query = next(
-            q
-            for q in queries
-            if "match (p:ciproposal)" in q["query"].lower()
-        )
+        sweep_query = next(q for q in queries if "match (p:ciproposal)" in q["query"].lower())
         assert sweep_query["params"]["retention_days"] == 7
 
 

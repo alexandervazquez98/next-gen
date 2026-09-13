@@ -26,9 +26,9 @@ from sqlalchemy import text
 # feat-cmdb-ai-handoff (T-2.7): ``propose_ci`` mirrors ``ci_metadata_update`` (120s
 # default, overridable via ``CMDB_PROPOSAL_COOLDOWN_SECONDS``).
 COOLDOWNS: dict[str, int] = {
-    "diagnose": 300,       # 5 minutes
-    "ack": 600,             # 10 minutes
-    "close": 900,           # 15 minutes
+    "diagnose": 300,  # 5 minutes
+    "ack": 600,  # 10 minutes
+    "close": 900,  # 15 minutes
     "ci_metadata_update": 120,  # 2 minutes
     "propose_ci": int(os.getenv("CMDB_PROPOSAL_COOLDOWN_SECONDS", "120")),
 }
@@ -44,6 +44,7 @@ CMDB_PROPOSAL_BULK_WINDOW_SECONDS = 60 * 60  # 60 minutes
 @dataclass(frozen=True)
 class CooldownEntry:
     """A single cooldown entry with TTL."""
+
     agent_id: str
     operation: str
     target_id: str
@@ -69,9 +70,7 @@ class _CooldownCache:
         if now - self._last_sweep < self._sweep_period:
             return
         self._entries = {
-            key: entry
-            for key, entry in self._entries.items()
-            if entry.expires_at > now
+            key: entry for key, entry in self._entries.items() if entry.expires_at > now
         }
         self._last_sweep = now
 
@@ -190,9 +189,7 @@ def record_operation(
 # ── Behavioral Guards ───────────────────────────────────────────────────────────
 
 
-def check_behavioral_guards(
-    ai_agent_id: str, operation: str, target_id: str
-) -> GuardResult:
+def check_behavioral_guards(ai_agent_id: str, operation: str, target_id: str) -> GuardResult:
     """Check behavioral guard rules for an AI agent operation.
 
     Guards checked:
@@ -218,28 +215,35 @@ def check_behavioral_guards(
         # Check close-without-diagnostic guard
         if operation == "close":
             # Count closes by this agent in the last hour
-            closes_count = db.execute(
-                text("""
+            closes_count = (
+                db.execute(
+                    text(
+                        """
                     SELECT COUNT(*) as cnt FROM ai_operation_log
                     WHERE ai_agent_id = :agent_id
                       AND operation = 'close'
                       AND target_id = :target_id
                       AND timestamp > :cutoff
                       AND result = 'success'
-                """),
-                {"agent_id": ai_agent_id, "target_id": target_id, "cutoff": cutoff_1h},
-            ).scalar() or 0
+                """
+                    ),
+                    {"agent_id": ai_agent_id, "target_id": target_id, "cutoff": cutoff_1h},
+                ).scalar()
+                or 0
+            )
 
             if closes_count > 3:
                 # Check if there are any diagnoses by this agent in the same period
                 has_diagnostic = db.execute(
-                    text("""
+                    text(
+                        """
                         SELECT 1 FROM ai_operation_log
                         WHERE ai_agent_id = :agent_id
                           AND operation = 'diagnose'
                           AND timestamp > :cutoff
                         LIMIT 1
-                    """),
+                    """
+                    ),
                     {"agent_id": ai_agent_id, "cutoff": cutoff_1h},
                 ).scalar_one_or_none()
 
@@ -251,27 +255,34 @@ def check_behavioral_guards(
 
         # Check ack flood guard
         if operation == "ack":
-            ack_count = db.execute(
-                text("""
+            ack_count = (
+                db.execute(
+                    text(
+                        """
                     SELECT COUNT(*) as cnt FROM ai_operation_log
                     WHERE ai_agent_id = :agent_id
                       AND operation = 'ack'
                       AND timestamp > :cutoff
                       AND result = 'success'
-                """),
-                {"agent_id": ai_agent_id, "cutoff": cutoff_10m},
-            ).scalar() or 0
+                """
+                    ),
+                    {"agent_id": ai_agent_id, "cutoff": cutoff_10m},
+                ).scalar()
+                or 0
+            )
 
             if ack_count > 20:
                 # Check for at least one diagnostic in the same window
                 has_diagnostic = db.execute(
-                    text("""
+                    text(
+                        """
                         SELECT 1 FROM ai_operation_log
                         WHERE ai_agent_id = :agent_id
                           AND operation = 'diagnose'
                           AND timestamp > :cutoff
                         LIMIT 1
-                    """),
+                    """
+                    ),
                     {"agent_id": ai_agent_id, "cutoff": cutoff_10m},
                 ).scalar_one_or_none()
 
@@ -283,16 +294,21 @@ def check_behavioral_guards(
 
         # Check metadata stampede guard
         if operation == "ci_metadata_update":
-            update_count = db.execute(
-                text("""
+            update_count = (
+                db.execute(
+                    text(
+                        """
                     SELECT COUNT(*) as cnt FROM ai_operation_log
                     WHERE ai_agent_id = :agent_id
                       AND operation = 'ci_metadata_update'
                       AND timestamp > :cutoff
                       AND result = 'success'
-                """),
-                {"agent_id": ai_agent_id, "cutoff": cutoff_5m},
-            ).scalar() or 0
+                """
+                    ),
+                    {"agent_id": ai_agent_id, "cutoff": cutoff_5m},
+                ).scalar()
+                or 0
+            )
 
             if update_count > 5:
                 return GuardResult(
@@ -306,9 +322,7 @@ def check_behavioral_guards(
         db.close()
 
 
-def check_bulk_detection(
-    ai_agent_id: str, operation: str, target_ids: list[str]
-) -> GuardResult:
+def check_bulk_detection(ai_agent_id: str, operation: str, target_ids: list[str]) -> GuardResult:
     """Check for bulk operations that require special handling.
 
     Guards checked:
@@ -346,20 +360,25 @@ def check_bulk_detection(
             window_cutoff = datetime.fromtimestamp(
                 now.timestamp() - CMDB_PROPOSAL_BULK_WINDOW_SECONDS, tz=UTC
             )
-            propose_count = db.execute(
-                text("""
+            propose_count = (
+                db.execute(
+                    text(
+                        """
                     SELECT COUNT(*) as cnt FROM ai_operation_log
                     WHERE ai_agent_id = :agent_id
                       AND operation = :operation
                       AND timestamp > :cutoff
                       AND result = 'success'
-                """),
-                {
-                    "agent_id": ai_agent_id,
-                    "operation": operation,
-                    "cutoff": window_cutoff,
-                },
-            ).scalar() or 0
+                """
+                    ),
+                    {
+                        "agent_id": ai_agent_id,
+                        "operation": operation,
+                        "cutoff": window_cutoff,
+                    },
+                ).scalar()
+                or 0
+            )
 
             if propose_count >= CMDB_PROPOSAL_BULK_THRESHOLD:
                 # Escalate — do NOT block outright. Humans must still have a chance to
@@ -374,15 +393,20 @@ def check_bulk_detection(
                 )
 
         # Check >50 same op type/hour (generic bulk threshold for non-propose ops)
-        same_op_count = db.execute(
-            text("""
+        same_op_count = (
+            db.execute(
+                text(
+                    """
                 SELECT COUNT(*) as cnt FROM ai_operation_log
                 WHERE ai_agent_id = :agent_id
                   AND operation = :operation
                   AND timestamp > :cutoff
-            """),
-            {"agent_id": ai_agent_id, "operation": operation, "cutoff": cutoff_1h},
-        ).scalar() or 0
+            """
+                ),
+                {"agent_id": ai_agent_id, "operation": operation, "cutoff": cutoff_1h},
+            ).scalar()
+            or 0
+        )
 
         if same_op_count >= 50:
             return GuardResult(
@@ -394,15 +418,20 @@ def check_bulk_detection(
         # Check >30 different CIs/hour
         if len(target_ids) > 0:
             target_type = "ci"  # assume CI for bulk check
-            diff_ci_count = db.execute(
-                text("""
+            diff_ci_count = (
+                db.execute(
+                    text(
+                        """
                     SELECT COUNT(DISTINCT target_id) as cnt FROM ai_operation_log
                     WHERE ai_agent_id = :agent_id
                       AND target_type = :target_type
                       AND timestamp > :cutoff
-                """),
-                {"agent_id": ai_agent_id, "target_type": target_type, "cutoff": cutoff_1h},
-            ).scalar() or 0
+                """
+                    ),
+                    {"agent_id": ai_agent_id, "target_type": target_type, "cutoff": cutoff_1h},
+                ).scalar()
+                or 0
+            )
 
             if diff_ci_count >= 30:
                 return GuardResult(

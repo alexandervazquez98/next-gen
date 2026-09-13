@@ -120,9 +120,7 @@ async def list_proposals(
 ):
     """GET /api/cmdb/proposals — paginated list with filters (CI_VIEW required)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
-        raise HTTPException(
-            status_code=403, detail="missing_permission: CI_VIEW required"
-        )
+        raise HTTPException(status_code=403, detail="missing_permission: CI_VIEW required")
 
     from services import cmdb_proposal_service as svc
 
@@ -144,9 +142,7 @@ async def count_proposals(
 ):
     """GET /api/cmdb/proposals/count?status=DRAFT — total count for the badge (CI_VIEW)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
-        raise HTTPException(
-            status_code=403, detail="missing_permission: CI_VIEW required"
-        )
+        raise HTTPException(status_code=403, detail="missing_permission: CI_VIEW required")
 
     from services import cmdb_proposal_service as svc
 
@@ -166,9 +162,7 @@ async def get_proposal(
 ):
     """GET /api/cmdb/proposals/{id} — full row + manifest (CI_VIEW required)."""
     if not user_check_permission(UserPermission.CI_VIEW, current_user):
-        raise HTTPException(
-            status_code=403, detail="missing_permission: CI_VIEW required"
-        )
+        raise HTTPException(status_code=403, detail="missing_permission: CI_VIEW required")
 
     from services import cmdb_proposal_service as svc
 

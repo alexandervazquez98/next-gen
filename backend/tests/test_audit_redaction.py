@@ -20,9 +20,9 @@ class TestSecretFieldPattern:
         """The regex MUST be exposed as a module-level constant (REQ-CMAP-013 design)."""
         import re
 
-        assert isinstance(SECRET_FIELD_PATTERN, re.Pattern), (
-            "SECRET_FIELD_PATTERN must be a compiled regex for reuse + performance"
-        )
+        assert isinstance(
+            SECRET_FIELD_PATTERN, re.Pattern
+        ), "SECRET_FIELD_PATTERN must be a compiled regex for reuse + performance"
 
     @pytest.mark.parametrize(
         "key",
@@ -40,9 +40,7 @@ class TestSecretFieldPattern:
     )
     def test_pattern_matches_secret_like_keys(self, key):
         """Keys matching *key|*token|*secret|*password MUST match the regex (case-insensitive)."""
-        assert SECRET_FIELD_PATTERN.search(key), (
-            f"SECRET_FIELD_PATTERN must match {key!r}"
-        )
+        assert SECRET_FIELD_PATTERN.search(key), f"SECRET_FIELD_PATTERN must match {key!r}"
 
     @pytest.mark.parametrize(
         "key",
@@ -69,9 +67,7 @@ class TestSecretFieldPattern:
         # The walker iterates dict keys directly so the leaf name is the original (mixed-case)
         # in the dict iteration; we check the leaf value was redacted.
         # The walker checks ``leaf in _HARD_CODED_SECRET_LEAVES`` with the leaf lowered.
-        assert result["snmp"][key] == REDACTED, (
-            f"snmp.{key} MUST be redacted via hard-coded set"
-        )
+        assert result["snmp"][key] == REDACTED, f"snmp.{key} MUST be redacted via hard-coded set"
 
 
 class TestRedactManifestSecrets:
@@ -182,6 +178,6 @@ class TestRedactManifestSecrets:
             "manifest_diff",
             "revoke_reason",
         ):
-            assert key in AUDIT_CONTEXT_ALLOWED_KEYS, (
-                f"AUDIT_CONTEXT_ALLOWED_KEYS must include {key}"
-            )
+            assert (
+                key in AUDIT_CONTEXT_ALLOWED_KEYS
+            ), f"AUDIT_CONTEXT_ALLOWED_KEYS must include {key}"

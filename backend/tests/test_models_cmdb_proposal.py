@@ -69,9 +69,9 @@ class TestManifestPayload:
             ManifestPayload(**_manifest_payload(ci=ci))
         # Error must mention the missing field path so the API client can fix it.
         flat = exc.value.errors()
-        assert any(err.get("loc") and "id" in err["loc"] for err in flat), (
-            f"ValidationError did not mention 'id' field: {flat}"
-        )
+        assert any(
+            err.get("loc") and "id" in err["loc"] for err in flat
+        ), f"ValidationError did not mention 'id' field: {flat}"
 
     def test_manifest_rejects_missing_ci_label(self):
         """Missing ci.label MUST raise ValidationError (REQ-CMAP-001)."""
@@ -87,12 +87,12 @@ class TestManifestPayload:
         ci = _manifest_ci(metadata={"ip": "1.2.3.4", "rack": "R12"})
         with pytest.raises(ValidationError) as exc:
             ManifestPayload(**_manifest_payload(ci=ci))
-        assert "blocked" in str(exc.value).lower(), (
-            f"ValidationError should mention 'blocked': {exc.value}"
-        )
-        assert "ip" in str(exc.value), (
-            f"ValidationError should mention 'ip' as the offending key: {exc.value}"
-        )
+        assert (
+            "blocked" in str(exc.value).lower()
+        ), f"ValidationError should mention 'blocked': {exc.value}"
+        assert "ip" in str(
+            exc.value
+        ), f"ValidationError should mention 'ip' as the offending key: {exc.value}"
 
     def test_manifest_rejects_unknown_schema_version(self):
         """schema_version != 1 MUST raise ValidationError (REQ-CMAP-001)."""
@@ -121,16 +121,15 @@ class TestBlockedFieldsConstant:
     def test_blocked_ai_update_fields_is_a_frozenset(self):
         """The constant MUST be a frozenset so callers cannot mutate it."""
         from models.core import BLOCKED_AI_UPDATE_FIELDS as F
-        assert isinstance(F, frozenset), (
-            f"BLOCKED_AI_UPDATE_FIELDS should be immutable (frozenset), got {type(F)}"
-        )
+
+        assert isinstance(
+            F, frozenset
+        ), f"BLOCKED_AI_UPDATE_FIELDS should be immutable (frozenset), got {type(F)}"
 
     def test_blocked_includes_security_sensitive_fields(self):
         """Blocked keys MUST include security-sensitive CI fields."""
         for key in ("id", "label", "ip", "snmp", "brand", "model"):
-            assert key in BLOCKED_AI_UPDATE_FIELDS, (
-                f"{key} must be in BLOCKED_AI_UPDATE_FIELDS"
-            )
+            assert key in BLOCKED_AI_UPDATE_FIELDS, f"{key} must be in BLOCKED_AI_UPDATE_FIELDS"
 
 
 class TestCIProposalStatus:

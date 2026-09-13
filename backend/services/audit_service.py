@@ -59,9 +59,7 @@ AUDIT_CONTEXT_ALLOWED_KEYS = {
 # matches this pattern MUST be replaced with ``<REDACTED>`` before audit
 # persistence. The walker ALSO checks a hard-coded set of SNMP-specific keys
 # (community, authKey, privKey) so a misspelled field name cannot leak.
-_SECRET_FIELD_PATTERN = re.compile(
-    r"(?i).*(key|token|secret|password).*"
-)
+_SECRET_FIELD_PATTERN = re.compile(r"(?i).*(key|token|secret|password).*")
 SECRET_FIELD_PATTERN: re.Pattern[str] = _SECRET_FIELD_PATTERN
 _HARD_CODED_SECRET_LEAVES = frozenset({"community", "authkey", "privkey"})
 
@@ -338,7 +336,10 @@ def _is_secret_key(key: Any) -> bool:
 def _redact_value(value: Any) -> Any:
     """Walk a manifest, replacing secret-shaped leaves with ``<REDACTED>``."""
     if isinstance(value, dict):
-        return {k: (_REDACTED_VALUE if _is_secret_key(k) else _redact_value(v)) for k, v in value.items()}
+        return {
+            k: (_REDACTED_VALUE if _is_secret_key(k) else _redact_value(v))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact_value(item) for item in value]
     return value

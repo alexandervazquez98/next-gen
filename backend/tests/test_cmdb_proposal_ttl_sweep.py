@@ -61,9 +61,7 @@ def audit_calls(monkeypatch):
         return None
 
     def _denied(**kwargs):
-        raise AssertionError(
-            "record_denied hardcodes ACCESS_DENIED; use record_critical_change"
-        )
+        raise AssertionError("record_denied hardcodes ACCESS_DENIED; use record_critical_change")
 
     monkeypatch.setattr(audit_service, "record_critical_change", _record)
     monkeypatch.setattr(audit_service, "record_denied", _denied)
