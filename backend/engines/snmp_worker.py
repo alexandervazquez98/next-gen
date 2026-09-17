@@ -1129,6 +1129,51 @@ def _recover_icmp_latency_events(session, updates):
     )
 
 
+def _recover_icmp_jitter_events(session, updates):
+    """Mirror of ``_recover_icmp_latency_events`` for ``ICMP_JITTER_METRIC_ID``.
+
+    Recovers OPEN/ACK THRESHOLD_BREACH events when an OK jitter sample arrives
+    in the same cycle. Recovers PROPAGATED descendants via ``propagated_from``.
+    See design.md AD-1.
+    """
+    recoveries = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_JITTER_METRIC_ID
+        and u.get("status") == "OK"
+    ]
+    if not recoveries:
+        return
+    session.run(
+        """
+        UNWIND $recoveries AS row
+        MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+          AND e.event_type = 'THRESHOLD_BREACH'
+          AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.message = row.message
+        WITH e
+        CALL {
+            WITH e
+            MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE pe.propagated_from = e.id
+              AND pe.root_cause_ci_id = e.ci_id
+              AND pe.correlation_type = 'PROPAGATED'
+              AND pe.status IN ['OPEN', 'ACK']
+              AND coalesce(m.can_propagate, true) = true
+            SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+            RETURN count(pe) AS propagated_recovered
+        }
+        RETURN e
+    """,
+        recoveries=recoveries,
+    )
+
+
 def _inject_synthetic_breaches_for_down_cis(updates, availability_updates, metric_id):
     """Inject a synthetic CRITICAL breach row for every (CI, metric_id) pair where
     the CI is unreachable (availability==0) and the metric has no real sample

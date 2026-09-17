@@ -1801,3 +1801,127 @@ def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
     assert injected == 1
     assert updates[0]["metric_id"] == "packet_loss_pct"
     assert updates[0]["status"] == "CRITICAL"
+
+
+# ---------------------------------------------------------------------------
+# fix-484 — Jitter / PacketLoss recovery writers
+# ---------------------------------------------------------------------------
+
+
+def test_recover_icmp_jitter_events_excludes_propagated_direct_match_and_recovers_descendants():
+    """Mirror of the latency recovery contract for ICMP_JITTER_METRIC_ID.
+
+    Per design AD-1: same Cypher shape as ``_recover_icmp_latency_events``
+    (line 1093) except for the metric id constant. Must keep:
+      - ``coalesce(e.correlation_type, 'ROOT') = 'ROOT'``
+      - ``pe.propagated_from = e.id``
+      - ``pe.root_cause_ci_id = e.ci_id``
+      - ``pe.correlation_type = 'PROPAGATED'``
+      - ``SET pe.status = 'RECOVERED'``
+    """
+    from engines.snmp_worker import _recover_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_jitter_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "Metric Jitter is OK. Value: 5.0",
+            }
+        ],
+    )
+
+    query = session.queries[0]["query"]
+    assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+    assert "pe.propagated_from = e.id" in query
+    assert "pe.root_cause_ci_id = e.ci_id" in query
+    assert "pe.correlation_type = 'PROPAGATED'" in query
+    assert "SET pe.status = 'RECOVERED'" in query
+    # Uses ICMP_JITTER_METRIC_ID, not latency.
+    assert session.queries[0]["params"]["recoveries"][0]["metric_id"] == "icmp_jitter_ms"
+
+
+def test_recover_icmp_jitter_events_filters_by_metric_id():
+    """A latency row must NOT be processed by the jitter recovery writer."""
+    from engines.snmp_worker import _recover_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "latency OK",
+            }
+        ],
+    )
+
+    assert session.queries == [], "jitter recovery must ignore latency rows"
+
+
+def test_recover_icmp_jitter_events_filters_by_status_ok():
+    """Only OK-status rows are recoverable; WARNING/CRITICAL rows must be ignored."""
+    from engines.snmp_worker import _recover_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_jitter_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "CRITICAL",
+                "message": "still degraded",
+            }
+        ],
+    )
+
+    assert session.queries == [], "non-OK rows must not trigger recovery"
+
+
+def test_recover_icmp_jitter_events_no_op_when_no_candidates():
+    from engines.snmp_worker import _recover_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_jitter_events(session, [])
+
+    assert session.queries == []
+
+
+def test_recover_icmp_jitter_events_sets_recovered_at_datetime():
+    from engines.snmp_worker import _recover_icmp_jitter_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_jitter_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_jitter_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "all good",
+            }
+        ],
+    )
+
+    query = session.queries[0]["query"]
+    assert "e.recovered_at = datetime()" in query
+    assert "e.status = 'RECOVERED'" in query
+
+
+# Packet-loss recovery tests live below — they are added in Phase 3
+# (test_recover_icmp_packet_loss_events_*) once the packet_loss recovery
+# writer exists.
