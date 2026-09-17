@@ -1945,8 +1945,7 @@ def poll_snmp():
                 icmp_packet_loss_metric_id=ICMP_PACKET_LOSS_METRIC_ID,
             )
             configured_metrics_by_ci: set[tuple[str, str]] = {
-                (record["ci_id"], record["metric_id"])
-                for record in configured_metrics_records
+                (record["ci_id"], record["metric_id"]) for record in configured_metrics_records
             }
             _inject_synthetic_breaches_for_down_cis(
                 jitter_updates,

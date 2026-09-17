@@ -1883,9 +1883,7 @@ def test_inject_synthetic_breaches_skips_when_has_metric_relationship_missing():
 def test_inject_synthetic_breaches_returns_zero_on_empty_inputs():
     from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
 
-    assert (
-        _inject_synthetic_breaches_for_down_cis([], [], "icmp_jitter_ms", set()) == 0
-    )
+    assert _inject_synthetic_breaches_for_down_cis([], [], "icmp_jitter_ms", set()) == 0
 
 
 def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
