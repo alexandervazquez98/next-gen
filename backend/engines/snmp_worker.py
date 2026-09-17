@@ -1129,6 +1129,60 @@ def _recover_icmp_latency_events(session, updates):
     )
 
 
+def _inject_synthetic_breaches_for_down_cis(updates, availability_updates, metric_id):
+    """Inject a synthetic CRITICAL breach row for every (CI, metric_id) pair where
+    the CI is unreachable (availability==0) and the metric has no real sample
+    in ``updates`` for this cycle.
+
+    The helper walks ``availability_updates`` (the ICMP availability companion
+    samples produced earlier in the same ``poll_snmp()`` cycle), filters by an
+    ICMP availability source (PING / ICMP), drops samples with ``value != 0``,
+    and appends a synthetic ``THRESHOLD_BREACH`` row to ``updates`` when the
+    (CI, metric_id) pair is missing from ``updates``. The synthetic rows flow
+    through the existing ``_refresh_icmp_jitter_events`` /
+    ``_refresh_icmp_packet_loss_events`` writers — no special persistence path.
+
+    Pure Python; no Neo4j access. Returns the number of rows injected.
+    """
+    existing_keys = {
+        (u.get("node_id"), u.get("metric_id"))
+        for u in updates
+        if u.get("node_id") and u.get("metric_id")
+    }
+    availability_by_ci = {}
+    for sample in availability_updates:
+        node_id = sample.get("node_id")
+        if not node_id:
+            continue
+        if _availability_source(sample.get("availability_source")) is None:
+            continue
+        availability_by_ci[node_id] = sample
+
+    injected = 0
+    for node_id, sample in availability_by_ci.items():
+        if float(sample.get("value") or 0.0) != 0.0:
+            continue
+        if (node_id, metric_id) in existing_keys:
+            continue
+        updates.append(
+            {
+                "node_id": node_id,
+                "metric_id": metric_id,
+                "protocol": SOURCE_PROTOCOL_ICMP,
+                "source_protocol": SOURCE_PROTOCOL_ICMP,
+                "event_type": EVENT_TYPE_THRESHOLD_BREACH,
+                "status": "CRITICAL",
+                "severity": "CRITICAL",
+                "value": None,
+                "message": "Unable to measure: CI unreachable (availability=0)",
+                "is_synthetic": True,
+            }
+        )
+        existing_keys.add((node_id, metric_id))
+        injected += 1
+    return injected
+
+
 def _recover_snmp_collection_failures(session, updates):
     recoveries = [
         u for u in updates if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_SNMP

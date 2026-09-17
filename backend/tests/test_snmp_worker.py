@@ -1580,3 +1580,224 @@ def test_refresh_icmp_packet_loss_events_ignores_other_metric_ids():
     )
 
     assert session.queries == [], "packet_loss refresh must ignore latency rows"
+
+
+# ---------------------------------------------------------------------------
+# fix-484 — Synthetic breach injection helper
+# ---------------------------------------------------------------------------
+
+
+def test_inject_synthetic_breaches_injects_when_availability_zero_and_metric_configured():
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        }
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+
+    assert injected == 1
+    assert len(updates) == 1
+    row = updates[0]
+    assert row["node_id"] == "ci-001"
+    assert row["metric_id"] == "icmp_jitter_ms"
+    assert row["event_type"] == "THRESHOLD_BREACH"
+    assert row["status"] == "CRITICAL"
+    assert row["value"] is None
+    assert row["message"] == "Unable to measure: CI unreachable (availability=0)"
+    assert row["source_protocol"] == "ICMP"
+    assert row["protocol"] == "ICMP"
+
+
+def test_inject_synthetic_breaches_skips_when_availability_one():
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 1.0,
+            "status": "OK",
+        }
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+
+    assert injected == 0
+    assert updates == []
+
+
+def test_inject_synthetic_breaches_skips_when_metric_already_in_updates():
+    """A real sample already exists for (CI, metric) — synthetic must not double-inject."""
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    existing_row = {
+        "node_id": "ci-001",
+        "metric_id": "icmp_jitter_ms",
+        "protocol": "ICMP",
+        "source_protocol": "ICMP",
+        "event_type": "THRESHOLD_BREACH",
+        "status": "WARNING",
+        "message": "jitter warning",
+        "value": 75.0,
+    }
+    updates = [existing_row]
+    availability_updates = [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        }
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+
+    assert injected == 0
+    assert updates == [existing_row], "existing row must remain untouched"
+
+
+def test_inject_synthetic_breaches_skips_non_icmp_availability_source():
+    """Non-ICMP availability sources (e.g. SNMP) MUST NOT trigger synthetic breach."""
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "SNMP",
+            "source_protocol": "SNMP",
+            "availability_source": "SNMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        }
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+
+    assert injected == 0
+    assert updates == []
+
+
+def test_inject_synthetic_breaches_mixed_scenario():
+    """3 CIs DOWN, 1 UP, 1 missing HAS_METRIC → only 2 injected."""
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    # ci-existing already has a real jitter row → no synthetic.
+    updates = [
+        {
+            "node_id": "ci-existing",
+            "metric_id": "icmp_jitter_ms",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "event_type": "THRESHOLD_BREACH",
+            "status": "WARNING",
+            "message": "real jitter sample",
+            "value": 75.0,
+        }
+    ]
+    availability_updates = [
+        # ci-down-1: DOWN, no metric row → inject.
+        {
+            "node_id": "ci-down-1",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        },
+        # ci-down-2: DOWN, no metric row → inject.
+        {
+            "node_id": "ci-down-2",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        },
+        # ci-up: availability=1, no metric row → skip.
+        {
+            "node_id": "ci-up",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 1.0,
+            "status": "OK",
+        },
+        # ci-existing: DOWN but already has metric row → skip.
+        {
+            "node_id": "ci-existing",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        },
+        # ci-no-metric: DOWN but availability_source empty (no HAS_METRIC) → skip.
+        {
+            "node_id": "ci-no-metric",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": None,
+            "value": 0.0,
+            "status": "CRITICAL",
+        },
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+
+    assert injected == 2
+    injected_ids = {u["node_id"] for u in updates[1:]}
+    assert injected_ids == {"ci-down-1", "ci-down-2"}
+
+
+def test_inject_synthetic_breaches_returns_zero_on_empty_inputs():
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    assert _inject_synthetic_breaches_for_down_cis([], [], "icmp_jitter_ms") == 0
+
+
+def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
+    """The helper MUST be metric-id-parameterized so it works for packet_loss too."""
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-001",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        }
+    ]
+
+    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "packet_loss_pct")
+
+    assert injected == 1
+    assert updates[0]["metric_id"] == "packet_loss_pct"
+    assert updates[0]["status"] == "CRITICAL"
