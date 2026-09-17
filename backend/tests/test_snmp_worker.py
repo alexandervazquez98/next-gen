@@ -1705,7 +1705,16 @@ def test_inject_synthetic_breaches_skips_non_icmp_availability_source():
 
 
 def test_inject_synthetic_breaches_mixed_scenario():
-    """3 CIs DOWN, 1 UP, 1 missing HAS_METRIC → only 2 injected."""
+    """3 CIs DOWN, 1 UP, 1 already has a real sample → only 2 injected.
+
+    The ``ci-no-metric`` proxy (which used ``availability_source=None``) was
+    removed: it exercised a DIFFERENT branch of the helper
+    (``_availability_source(...) is None``) and was NOT the spec scenario for
+    "metric not configured". The spec scenario is covered by
+    ``test_inject_synthetic_breaches_skips_when_metric_not_configured_on_ci``
+    below, which uses an explicit ``configured_metrics_by_ci`` set to assert
+    the REQ-SYNTHETIC-BREACH-SCOPE guard.
+    """
     from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
 
     # ci-existing already has a real jitter row → no synthetic.
@@ -1762,16 +1771,6 @@ def test_inject_synthetic_breaches_mixed_scenario():
             "value": 0.0,
             "status": "CRITICAL",
         },
-        # ci-no-metric: DOWN but availability_source empty (no HAS_METRIC) → skip.
-        {
-            "node_id": "ci-no-metric",
-            "metric_id": "PING-CHECK",
-            "protocol": "ICMP",
-            "source_protocol": "ICMP",
-            "availability_source": None,
-            "value": 0.0,
-            "status": "CRITICAL",
-        },
     ]
 
     injected = _inject_synthetic_breaches_for_down_cis(
@@ -1781,6 +1780,95 @@ def test_inject_synthetic_breaches_mixed_scenario():
     assert injected == 2
     injected_ids = {u["node_id"] for u in updates[1:]}
     assert injected_ids == {"ci-down-1", "ci-down-2"}
+
+
+def test_inject_synthetic_breaches_skips_when_metric_not_configured_on_ci():
+    """REQ-SYNTHETIC-BREACH-SCOPE — spec scenario.
+
+    Mirrors ``Synthetic breach skipped when metric is not configured``:
+
+        GIVEN a CI has availability=0 for the current cycle
+        AND the CI has icmp.availability configured but NOT icmp.jitter
+        WHEN poll_snmp() runs the ICMP update fan-out
+        THEN no synthetic row is appended to jitter_updates for that CI
+        AND no Event is created for jitter on that CI
+
+    The CI in this fixture has ``availability_source="ICMP"`` (so the
+    availability branch of the helper is taken — NOT skipped) and ``value=0``
+    (so the "DOWN" condition is met). The gate that must skip the injection
+    is the new ``configured_metrics_by_ci`` set: the CI is absent from that
+    set, so the helper MUST skip. The pre-fix code would inject because it
+    used the inverted ``existing_keys`` check (a CI without a real sample is
+    also absent from ``updates``).
+    """
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-no-jitter",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",  # availability IS configured
+            "value": 0.0,  # CI is DOWN
+            "status": "CRITICAL",
+        }
+    ]
+    # The CI has icmp.availability configured but NOT icmp.jitter — the
+    # configured-metrics set carries no (ci, icmp_jitter_ms) entry.
+    configured_metrics_by_ci: set[tuple[str, str]] = set()
+
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates,
+        availability_updates,
+        "icmp_jitter_ms",
+        configured_metrics_by_ci,
+    )
+
+    assert injected == 0, "must not inject for a CI without HAS_METRIC(ci, jitter)"
+    assert updates == [], "must not append any row when metric is not configured"
+
+
+def test_inject_synthetic_breaches_skips_when_has_metric_relationship_missing():
+    """REQ-SYNTHETIC-BREACH-SCOPE — spec scenario (HAS_METRIC deleted).
+
+    Mirrors ``Synthetic breach skipped when HAS_METRIC relationship is
+    missing``: the CI used to have ``icmp.jitter`` configured, the row was
+    deleted between cycles, and ``poll_snmp()`` still has an availability=0
+    sample for that CI. The helper MUST NOT inject because the configured-
+    metrics set no longer contains the (CI, metric) pair.
+    """
+    from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
+
+    updates: list[dict] = []
+    availability_updates = [
+        {
+            "node_id": "ci-just-deleted",
+            "metric_id": "PING-CHECK",
+            "protocol": "ICMP",
+            "source_protocol": "ICMP",
+            "availability_source": "ICMP",
+            "value": 0.0,
+            "status": "CRITICAL",
+        }
+    ]
+    # A different CI is configured (proves the set is consulted per-pair, not
+    # globally empty), but the affected CI is absent — the HAS_METRIC row
+    # was just deleted.
+    configured_metrics_by_ci: set[tuple[str, str]] = {
+        ("ci-other", "icmp_jitter_ms"),
+    }
+
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates,
+        availability_updates,
+        "icmp_jitter_ms",
+        configured_metrics_by_ci,
+    )
+
+    assert injected == 0, "must not inject when HAS_METRIC was just deleted"
+    assert updates == [], "must not append any row when HAS_METRIC is missing"
 
 
 def test_inject_synthetic_breaches_returns_zero_on_empty_inputs():
