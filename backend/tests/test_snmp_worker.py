@@ -1925,3 +1925,107 @@ def test_recover_icmp_jitter_events_sets_recovered_at_datetime():
 # Packet-loss recovery tests live below — they are added in Phase 3
 # (test_recover_icmp_packet_loss_events_*) once the packet_loss recovery
 # writer exists.
+
+
+def test_recover_icmp_packet_loss_events_excludes_propagated_direct_match_and_recovers_descendants():
+    """Mirror of the latency recovery contract for ICMP_PACKET_LOSS_METRIC_ID."""
+    from engines.snmp_worker import _recover_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "packet_loss_pct",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "Metric Packet Loss is OK. Value: 0.0",
+            }
+        ],
+    )
+
+    query = session.queries[0]["query"]
+    assert "coalesce(e.correlation_type, 'ROOT') = 'ROOT'" in query
+    assert "pe.propagated_from = e.id" in query
+    assert "pe.root_cause_ci_id = e.ci_id" in query
+    assert "pe.correlation_type = 'PROPAGATED'" in query
+    assert "SET pe.status = 'RECOVERED'" in query
+    assert session.queries[0]["params"]["recoveries"][0]["metric_id"] == "packet_loss_pct"
+
+
+def test_recover_icmp_packet_loss_events_filters_by_metric_id():
+    """A latency row must NOT be processed by the packet-loss recovery writer."""
+    from engines.snmp_worker import _recover_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "icmp_latency_ms",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "latency OK",
+            }
+        ],
+    )
+
+    assert session.queries == [], "packet_loss recovery must ignore latency rows"
+
+
+def test_recover_icmp_packet_loss_events_filters_by_status_ok():
+    """Only OK-status rows are recoverable."""
+    from engines.snmp_worker import _recover_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "packet_loss_pct",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "WARNING",
+                "message": "still degraded",
+            }
+        ],
+    )
+
+    assert session.queries == [], "non-OK rows must not trigger recovery"
+
+
+def test_recover_icmp_packet_loss_events_no_op_when_no_candidates():
+    from engines.snmp_worker import _recover_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_packet_loss_events(session, [])
+
+    assert session.queries == []
+
+
+def test_recover_icmp_packet_loss_events_sets_recovered_at_datetime():
+    from engines.snmp_worker import _recover_icmp_packet_loss_events
+
+    session = MockNeo4jSession()
+    _recover_icmp_packet_loss_events(
+        session,
+        [
+            {
+                "node_id": "ci-001",
+                "metric_id": "packet_loss_pct",
+                "protocol": "ICMP",
+                "source_protocol": "ICMP",
+                "status": "OK",
+                "message": "all good",
+            }
+        ],
+    )
+
+    query = session.queries[0]["query"]
+    assert "e.recovered_at = datetime()" in query
+    assert "e.status = 'RECOVERED'" in query
