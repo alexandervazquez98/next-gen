@@ -1895,6 +1895,24 @@ def poll_snmp():
                         session, packet_loss_root_rows, cache={}, lock_db=db
                     )
 
+            # ── fix-484 synthetic breach (CI DOWN → CRITICAL event) ────────
+            # When a CI is unreachable (availability=0) the ICMP sidecar
+            # produces no jitter/packet-loss sample for that cycle, so the
+            # refresh helpers see nothing to act on and the per-metric
+            # HAS_METRIC row keeps the last OK value (stale display).
+            # Inject one CRITICAL synthetic THRESHOLD_BREACH row per
+            # (CI, metric) pair where availability=0 and the metric is
+            # configured; the rows flow through the same Pass 3 refresh
+            # path as real samples — no special persistence.
+            # (design.md §Data Flow; AD-2/AD-3; spec fix-484 §Synthetic
+            # Threshold Breach on CI DOWN for Jitter/PacketLoss.)
+            _inject_synthetic_breaches_for_down_cis(
+                jitter_updates, availability_updates, ICMP_JITTER_METRIC_ID
+            )
+            _inject_synthetic_breaches_for_down_cis(
+                packet_loss_updates, availability_updates, ICMP_PACKET_LOSS_METRIC_ID
+            )
+
             # ── Recovery passes (unchanged from the pre-fix flow) ─────────
             # The design places them between Pass 2 and Pass 3 so a parent
             # that recovers in the same cycle cannot accept new dependent
@@ -1902,6 +1920,10 @@ def poll_snmp():
             _recover_snmp_collection_failures(session, latest_updates)
             _recover_icmp_availability_events(session, availability_updates)
             _recover_icmp_latency_events(session, latency_updates)
+            # fix-484 — close the symmetry that #431 deliberately deferred.
+            # Both writers mirror _recover_icmp_latency_events (see above).
+            _recover_icmp_jitter_events(session, jitter_updates)
+            _recover_icmp_packet_loss_events(session, packet_loss_updates)
 
             # Pass 3: rebuild the cache now that Pass 2's ROOT events are
             # persisted, then route the NON-candidate rows through the
