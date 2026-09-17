@@ -247,9 +247,9 @@ class TestRecoveryWriterPredicatesContainRecovered:
         primary_marker = (
             "def _refresh_icmp_jitter_events(session, updates, cache=None, lock_db=None):"
         )
-        assert primary_marker in source, (
-            "_refresh_icmp_jitter_events definition not found — regression test is stale"
-        )
+        assert (
+            primary_marker in source
+        ), "_refresh_icmp_jitter_events definition not found — regression test is stale"
 
         primary_start = source.find(primary_marker)
         assert primary_start != -1
@@ -259,9 +259,7 @@ class TestRecoveryWriterPredicatesContainRecovered:
         # ``run_with_cypher_param_fallback`` call; assert that both kept
         # RECOVERED in their predicate.
         primary_match = _METRIC_EVENT_OPTIONAL_MATCH_RE.search(writer_source)
-        assert primary_match, (
-            "_refresh_icmp_jitter_events primary OPTIONAL MATCH shape not found"
-        )
+        assert primary_match, "_refresh_icmp_jitter_events primary OPTIONAL MATCH shape not found"
         primary_list = primary_match.group("list")
         for required in ("'OPEN'", "'ACK'", "'RECOVERED'"):
             assert required in primary_list, (
@@ -282,18 +280,18 @@ class TestRecoveryWriterPredicatesContainRecovered:
         primary_marker = (
             "def _refresh_icmp_packet_loss_events(session, updates, cache=None, lock_db=None):"
         )
-        assert primary_marker in source, (
-            "_refresh_icmp_packet_loss_events definition not found — regression test is stale"
-        )
+        assert (
+            primary_marker in source
+        ), "_refresh_icmp_packet_loss_events definition not found — regression test is stale"
 
         primary_start = source.find(primary_marker)
         assert primary_start != -1
         writer_source = source[primary_start:]
 
         primary_match = _METRIC_EVENT_OPTIONAL_MATCH_RE.search(writer_source)
-        assert primary_match, (
-            "_refresh_icmp_packet_loss_events primary OPTIONAL MATCH shape not found"
-        )
+        assert (
+            primary_match
+        ), "_refresh_icmp_packet_loss_events primary OPTIONAL MATCH shape not found"
         primary_list = primary_match.group("list")
         for required in ("'OPEN'", "'ACK'", "'RECOVERED'"):
             assert required in primary_list, (
@@ -316,9 +314,7 @@ class TestRecoveryWriterPredicatesContainRecovered:
             "icmp_jitter_events_predicate_site",
             "icmp_packet_loss_events_predicate_site",
         ):
-            assert required in site_labels, (
-                f"PREDICATE_SITES must include {required!r} per fix-484"
-            )
+            assert required in site_labels, f"PREDICATE_SITES must include {required!r} per fix-484"
 
 
 class TestRecoveryWritersDoNotRegressToOpenAckOnly:

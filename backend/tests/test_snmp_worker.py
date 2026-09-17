@@ -1603,7 +1603,9 @@ def test_inject_synthetic_breaches_injects_when_availability_zero_and_metric_con
         }
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "icmp_jitter_ms"
+    )
 
     assert injected == 1
     assert len(updates) == 1
@@ -1634,7 +1636,9 @@ def test_inject_synthetic_breaches_skips_when_availability_one():
         }
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "icmp_jitter_ms"
+    )
 
     assert injected == 0
     assert updates == []
@@ -1667,7 +1671,9 @@ def test_inject_synthetic_breaches_skips_when_metric_already_in_updates():
         }
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "icmp_jitter_ms"
+    )
 
     assert injected == 0
     assert updates == [existing_row], "existing row must remain untouched"
@@ -1690,7 +1696,9 @@ def test_inject_synthetic_breaches_skips_non_icmp_availability_source():
         }
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "icmp_jitter_ms"
+    )
 
     assert injected == 0
     assert updates == []
@@ -1766,7 +1774,9 @@ def test_inject_synthetic_breaches_mixed_scenario():
         },
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "icmp_jitter_ms")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "icmp_jitter_ms"
+    )
 
     assert injected == 2
     injected_ids = {u["node_id"] for u in updates[1:]}
@@ -1796,7 +1806,9 @@ def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
         }
     ]
 
-    injected = _inject_synthetic_breaches_for_down_cis(updates, availability_updates, "packet_loss_pct")
+    injected = _inject_synthetic_breaches_for_down_cis(
+        updates, availability_updates, "packet_loss_pct"
+    )
 
     assert injected == 1
     assert updates[0]["metric_id"] == "packet_loss_pct"
@@ -2084,21 +2096,21 @@ def test_poll_snmp_emits_synthetic_breach_on_ci_down(monkeypatch):
             poll_snmp,
         )
 
-        with patch(
-            "engines.snmp_worker._inject_synthetic_breaches_for_down_cis",
-            side_effect=_inject_synthetic_breaches_for_down_cis,
-        ) as mock_inject:
-            with (
-                patch(
-                    "engines.snmp_worker._recover_icmp_jitter_events",
-                    side_effect=_recover_icmp_jitter_events,
-                ) as mock_jitter_recover,
-                patch(
-                    "engines.snmp_worker._recover_icmp_packet_loss_events",
-                    side_effect=_recover_icmp_packet_loss_events,
-                ) as mock_pl_recover,
-            ):
-                poll_snmp()
+        with (
+            patch(
+                "engines.snmp_worker._inject_synthetic_breaches_for_down_cis",
+                side_effect=_inject_synthetic_breaches_for_down_cis,
+            ) as mock_inject,
+            patch(
+                "engines.snmp_worker._recover_icmp_jitter_events",
+                side_effect=_recover_icmp_jitter_events,
+            ) as mock_jitter_recover,
+            patch(
+                "engines.snmp_worker._recover_icmp_packet_loss_events",
+                side_effect=_recover_icmp_packet_loss_events,
+            ) as mock_pl_recover,
+        ):
+            poll_snmp()
 
     # The synthetic-breach injection MUST have been called twice: once each
     # for jitter and packet_loss. The exact payload is tested in the unit
