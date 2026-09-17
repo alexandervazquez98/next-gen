@@ -7,13 +7,23 @@ SYSTEM_ROLE_PERMISSION_UPGRADES = {
     "ADMIN": [
         UserPermission.MQTT_READ.value,
         UserPermission.MQTT_MAPPING_MANAGE.value,
+        UserPermission.CI_APPROVE_PROPOSAL.value,
     ],
     "OPERATOR": [
         UserPermission.MQTT_READ.value,
         UserPermission.MQTT_MAPPING_MANAGE.value,
         UserPermission.ITSM_VIEW.value,
         UserPermission.ITSM_EDIT.value,
+        # feat-cmdb-ai-handoff: OPERATOR can approve/revoke AI-submitted proposals.
+        UserPermission.CI_APPROVE_PROPOSAL.value,
     ],
+}
+
+
+# feat-cmdb-ai-handoff — AI roles only gain AI_PROPOSE_CI; never CI_APPROVE_PROPOSAL.
+AI_ROLE_PERMISSION_UPGRADES = {
+    "AI_DIAGNOSTIC": [AIPermission.AI_PROPOSE_CI.value],
+    "AI_OPERATOR": [AIPermission.AI_PROPOSE_CI.value],
 }
 
 
@@ -43,6 +53,7 @@ async def seed_roles():
                 UserPermission.MQTT_MAPPING_MANAGE.value,
                 UserPermission.ITSM_VIEW.value,
                 UserPermission.ITSM_EDIT.value,
+                UserPermission.CI_APPROVE_PROPOSAL.value,
             ],
             "is_system": True,
         },
@@ -63,6 +74,7 @@ async def seed_roles():
                 AIPermission.AI_EVENT_COMMENT.value,
                 AIPermission.AI_CI_UPDATE_METADATA.value,
                 AIPermission.AI_DICTIONARY_PREVIEW.value,
+                AIPermission.AI_PROPOSE_CI.value,
             ],
             "is_system": True,
         },
@@ -76,6 +88,7 @@ async def seed_roles():
                 AIPermission.AI_EVENT_CLOSE.value,
                 AIPermission.AI_CI_UPDATE_METADATA.value,
                 AIPermission.AI_DICTIONARY_PREVIEW.value,
+                AIPermission.AI_PROPOSE_CI.value,
             ],
             "is_system": True,
         },
@@ -111,7 +124,10 @@ async def seed_roles():
                 existing_is_system = existing_role.get("is_system")
                 if existing_is_system is True:
                     current_permissions = list(existing_role.get("permissions") or [])
-                    permitted_upgrades = SYSTEM_ROLE_PERMISSION_UPGRADES.get(name, [])
+                    permitted_upgrades = list(SYSTEM_ROLE_PERMISSION_UPGRADES.get(name, []))
+                    # feat-cmdb-ai-handoff: AI roles get AI-only upgrade grants.
+                    if name in AI_ROLE_PERMISSION_UPGRADES:
+                        permitted_upgrades.extend(AI_ROLE_PERMISSION_UPGRADES[name])
                     missing_permissions = [
                         permission
                         for permission in permitted_upgrades

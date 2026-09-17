@@ -1,16 +1,15 @@
 """Unit tests for AIPermission enum — pure model validation, no external deps."""
 
-import pytest
-from models.user import AIPermission
+from models.user import AIPermission, UserPermission
 
 
 class TestAIPermissionEnum:
     """Tests for AIPermission enum completeness and string values."""
 
-    def test_enum_has_7_values(self):
-        """AIPermission enum must have exactly 7 defined values."""
+    def test_enum_has_8_values(self):
+        """AIPermission enum must have exactly 8 defined values after feat-cmdb-ai-handoff."""
         members = list(AIPermission)
-        assert len(members) == 7, f"Expected 7 AIPermission values, got {len(members)}: {members}"
+        assert len(members) == 8, f"Expected 8 AIPermission values, got {len(members)}: {members}"
 
     def test_ai_run_diagnostic_value(self):
         """AI_RUN_DIAGNOSTIC must be defined and have the correct string value."""
@@ -46,6 +45,25 @@ class TestAIPermissionEnum:
         """AI_DICTIONARY_PREVIEW must be defined and have the correct string value."""
         assert hasattr(AIPermission, "AI_DICTIONARY_PREVIEW")
         assert AIPermission.AI_DICTIONARY_PREVIEW.value == "AI_DICTIONARY_PREVIEW"
+
+    # feat-cmdb-ai-handoff — REQ-CMAP-004
+    def test_ai_propose_ci_enum_member(self):
+        """AI_PROPOSE_CI must be defined and have the correct string value (REQ-CMAP-004)."""
+        assert hasattr(
+            AIPermission, "AI_PROPOSE_CI"
+        ), "AI_PROPOSE_CI is required by feat-cmdb-ai-handoff to gate POST /api/cmdb/proposals"
+        assert AIPermission.AI_PROPOSE_CI.value == "AI_PROPOSE_CI"
+
+
+class TestUserPermissionEnum:
+    """Tests for UserPermission additions for feat-cmdb-ai-handoff (REQ-CMAP-005)."""
+
+    def test_ci_approve_proposal_enum_member(self):
+        """CI_APPROVE_PROPOSAL must be defined and have the correct string value (REQ-CMAP-005)."""
+        assert hasattr(
+            UserPermission, "CI_APPROVE_PROPOSAL"
+        ), "CI_APPROVE_PROPOSAL is required to gate POST /api/cmdb/proposals/{id}/approve|revoke"
+        assert UserPermission.CI_APPROVE_PROPOSAL.value == "CI_APPROVE_PROPOSAL"
 
     def test_all_values_are_strings(self):
         """All AIPermission values must be strings (str enum)."""

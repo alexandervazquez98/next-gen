@@ -41,6 +41,7 @@ OPTIONAL_PROMPT_SOURCE_FILES = (
     "tools/event-list.md",
     "tools/network-basic.md",
     "tools/visualization.md",
+    "tools/cmdb_proposals.md",
 )
 MAX_SYSTEM_PROMPT_CHARS = 10_000
 MAX_AI_MARKDOWN_CHARS = 20_000
