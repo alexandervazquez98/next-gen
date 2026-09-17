@@ -1602,9 +1602,10 @@ def test_inject_synthetic_breaches_injects_when_availability_zero_and_metric_con
             "status": "CRITICAL",
         }
     ]
+    configured_metrics_by_ci = {("ci-001", "icmp_jitter_ms")}
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "icmp_jitter_ms"
+        updates, availability_updates, "icmp_jitter_ms", configured_metrics_by_ci
     )
 
     assert injected == 1
@@ -1635,9 +1636,10 @@ def test_inject_synthetic_breaches_skips_when_availability_one():
             "status": "OK",
         }
     ]
+    configured_metrics_by_ci = {("ci-001", "icmp_jitter_ms")}
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "icmp_jitter_ms"
+        updates, availability_updates, "icmp_jitter_ms", configured_metrics_by_ci
     )
 
     assert injected == 0
@@ -1670,9 +1672,10 @@ def test_inject_synthetic_breaches_skips_when_metric_already_in_updates():
             "status": "CRITICAL",
         }
     ]
+    configured_metrics_by_ci = {("ci-001", "icmp_jitter_ms")}
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "icmp_jitter_ms"
+        updates, availability_updates, "icmp_jitter_ms", configured_metrics_by_ci
     )
 
     assert injected == 0
@@ -1695,9 +1698,10 @@ def test_inject_synthetic_breaches_skips_non_icmp_availability_source():
             "status": "CRITICAL",
         }
     ]
+    configured_metrics_by_ci = {("ci-001", "icmp_jitter_ms")}
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "icmp_jitter_ms"
+        updates, availability_updates, "icmp_jitter_ms", configured_metrics_by_ci
     )
 
     assert injected == 0
@@ -1772,9 +1776,14 @@ def test_inject_synthetic_breaches_mixed_scenario():
             "status": "CRITICAL",
         },
     ]
+    configured_metrics_by_ci = {
+        ("ci-down-1", "icmp_jitter_ms"),
+        ("ci-down-2", "icmp_jitter_ms"),
+        ("ci-existing", "icmp_jitter_ms"),
+    }
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "icmp_jitter_ms"
+        updates, availability_updates, "icmp_jitter_ms", configured_metrics_by_ci
     )
 
     assert injected == 2
@@ -1874,7 +1883,9 @@ def test_inject_synthetic_breaches_skips_when_has_metric_relationship_missing():
 def test_inject_synthetic_breaches_returns_zero_on_empty_inputs():
     from engines.snmp_worker import _inject_synthetic_breaches_for_down_cis
 
-    assert _inject_synthetic_breaches_for_down_cis([], [], "icmp_jitter_ms") == 0
+    assert (
+        _inject_synthetic_breaches_for_down_cis([], [], "icmp_jitter_ms", set()) == 0
+    )
 
 
 def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
@@ -1893,9 +1904,13 @@ def test_inject_synthetic_breaches_works_for_packet_loss_metric_id():
             "status": "CRITICAL",
         }
     ]
+    configured_metrics_by_ci = {("ci-001", "packet_loss_pct")}
 
     injected = _inject_synthetic_breaches_for_down_cis(
-        updates, availability_updates, "packet_loss_pct"
+        updates,
+        availability_updates,
+        "packet_loss_pct",
+        configured_metrics_by_ci,
     )
 
     assert injected == 1

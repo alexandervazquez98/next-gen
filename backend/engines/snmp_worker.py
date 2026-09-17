@@ -1217,17 +1217,34 @@ def _recover_icmp_packet_loss_events(session, updates):
     )
 
 
-def _inject_synthetic_breaches_for_down_cis(updates, availability_updates, metric_id):
+def _inject_synthetic_breaches_for_down_cis(
+    updates,
+    availability_updates,
+    metric_id,
+    configured_metrics_by_ci,
+):
     """Inject a synthetic CRITICAL breach row for every (CI, metric_id) pair where
-    the CI is unreachable (availability==0) and the metric has no real sample
-    in ``updates`` for this cycle.
+    the CI is unreachable (availability==0), the ``(ci_id, metric_id)`` pair is
+    configured on the CI (via ``:HAS_METRIC`` from Neo4j), and the metric has
+    no real sample in ``updates`` for this cycle.
+
+    The gate order is:
+      1. SKIP if the availability source is not ICMP (non-ICMP families are out
+         of scope — the synthetic breach is an ICMP-only signal).
+      2. SKIP if ``value != 0`` (the CI is UP).
+      3. SKIP if ``(ci_id, metric_id)`` is NOT in ``configured_metrics_by_ci``
+         — the metric is not configured on the CI
+         (REQ-SYNTHETIC-BREACH-SCOPE). This is the bug-fixed gate: it must be
+         evaluated against the Neo4j `:HAS_METRIC` set, not against the
+         in-memory ``updates`` list (a CI without the metric is also absent
+         from ``updates``, which would invert the gate).
+      4. SKIP if ``(ci_id, metric_id)`` is already represented in ``updates``
+         (real sample this cycle — avoid double-injection).
+      5. Otherwise append a synthetic row.
 
     The helper walks ``availability_updates`` (the ICMP availability companion
-    samples produced earlier in the same ``poll_snmp()`` cycle), filters by an
-    ICMP availability source (PING / ICMP), drops samples with ``value != 0``,
-    and appends a synthetic ``THRESHOLD_BREACH`` row to ``updates`` when the
-    (CI, metric_id) pair is missing from ``updates``. The synthetic rows flow
-    through the existing ``_refresh_icmp_jitter_events`` /
+    samples produced earlier in the same ``poll_snmp()`` cycle). The synthetic
+    rows flow through the existing ``_refresh_icmp_jitter_events`` /
     ``_refresh_icmp_packet_loss_events`` writers — no special persistence path.
 
     Pure Python; no Neo4j access. Returns the number of rows injected.
@@ -1250,6 +1267,12 @@ def _inject_synthetic_breaches_for_down_cis(updates, availability_updates, metri
     for node_id, sample in availability_by_ci.items():
         if float(sample.get("value") or 0.0) != 0.0:
             continue
+        # REQ-SYNTHETIC-BREACH-SCOPE gate: the (CI, metric) MUST be configured
+        # before any synthetic row is appended. The configured set is built
+        # once per cycle by ``poll_snmp()`` from `:HAS_METRIC`.
+        if (node_id, metric_id) not in configured_metrics_by_ci:
+            continue
+        # De-dup against real samples already in `updates` for this cycle.
         if (node_id, metric_id) in existing_keys:
             continue
         updates.append(
@@ -1906,11 +1929,36 @@ def poll_snmp():
             # path as real samples — no special persistence.
             # (design.md §Data Flow; AD-2/AD-3; spec fix-484 §Synthetic
             # Threshold Breach on CI DOWN for Jitter/PacketLoss.)
+            #
+            # REQ-SYNTHETIC-BREACH-SCOPE gate: the (CI, metric) pair MUST
+            # have an active :HAS_METRIC relationship before injection. The
+            # configured set is built here, once per cycle, so the helper
+            # can do a single O(1) set lookup per (CI, metric) pair without
+            # an extra Neo4j roundtrip per candidate.
+            configured_metrics_records = session.run(
+                """
+                MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
+                WHERE m.id IN [$icmp_jitter_metric_id, $icmp_packet_loss_metric_id]
+                RETURN ci.id AS ci_id, m.id AS metric_id
+                """,
+                icmp_jitter_metric_id=ICMP_JITTER_METRIC_ID,
+                icmp_packet_loss_metric_id=ICMP_PACKET_LOSS_METRIC_ID,
+            )
+            configured_metrics_by_ci: set[tuple[str, str]] = {
+                (record["ci_id"], record["metric_id"])
+                for record in configured_metrics_records
+            }
             _inject_synthetic_breaches_for_down_cis(
-                jitter_updates, availability_updates, ICMP_JITTER_METRIC_ID
+                jitter_updates,
+                availability_updates,
+                ICMP_JITTER_METRIC_ID,
+                configured_metrics_by_ci,
             )
             _inject_synthetic_breaches_for_down_cis(
-                packet_loss_updates, availability_updates, ICMP_PACKET_LOSS_METRIC_ID
+                packet_loss_updates,
+                availability_updates,
+                ICMP_PACKET_LOSS_METRIC_ID,
+                configured_metrics_by_ci,
             )
 
             # ── Recovery passes (unchanged from the pre-fix flow) ─────────
