@@ -32,6 +32,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-09-17
+
+### Added
+
+- **HITL CI proposal workflow for AI agents (#467, PR #483)**: AI agents can now propose Configuration Item (CI) creation in the CMDB without writing directly to the Neo4j graph. Agents emit a structured manifest, the system validates it, and a human operator approves or revokes before any CI touches the active topology. Mirrors the optimistic-version lifecycle used by `MqttMetricMapping` (DRAFT → APPROVED / REVOKED), and reuses the two-layer AI chat guard pattern. 36 spec REQs / 44 scenarios delivered across two new canonical capabilities and deltas to two existing ones. Closes #467.
+
+  - **Manifest model & lifecycle** (`backend/models/cmdb_proposal.py`): `ManifestPayload`, `CIProposalStatus`, and `ProposeCiRequest`/`ProposalResponse` payloads with optimistic version. `BLOCKED_AI_UPDATE_FIELDS` relocated to the new module to scope AI-update denials to the CMDB surface.
+
+  - **Neo4j schema** (`backend/migrations/005_ci_proposal_schema.cypher`): new `:CIProposal` label, 3 supporting indexes, and one uniqueness constraint. Regression test in `backend/tests/test_migration_005_ci_proposal_schema.py`.
+
+  - **Permission system**: two new enum members `AI_PROPOSE_CI` and `CI_APPROVE_PROPOSAL` (`backend/models/user.py`) seeded on the relevant system roles via the additive `SYSTEM_ROLE_PERMISSION_UPGRADES` pattern (`backend/seed_roles.py`). New `backend/tests/test_seed_roles_cmdb.py` locks the seeding contract.
+
+  - **Service layer** (`backend/services/cmdb_proposal_service.py`, 540 lines): orchestrates `validate → DRAFT → approve → commit → audit`, with idempotent revoke and 30-day TTL semantics. 566 tests in `test_cmdb_proposal_service.py`.
+
+  - **Repository layer** (`backend/repositories/cmdb_proposal_repo.py`, 408 lines): Neo4j operations with optimistic version control. 313 tests in `test_cmdb_proposal_repo.py`.
+
+  - **HTTP API** (`backend/routers/cmdb_proposals.py`, 241 lines, 6 endpoints): create, list, get, approve, revoke, count. Wired through `backend/main.py` router registration. 397 tests in `test_cmdb_proposal_router.py`. `POST /api/nodes` regression suite untouched and green (42 tests).
+
+  - **MCP server** (`backend/mcp/cmdb_proposal_server.py`, 379 lines, 4 tools): `propose_ci`, `list_proposals`, `approve_proposal`, `revoke_proposal`, with bearer auth. Delegation is in-process (same service layer as HTTP endpoints, no loopback). 257 tests in `test_mcp_cmdb_proposal_server.py`.
+
+  - **AI guard extension** (`backend/services/ai_guard_service.py`): `propose_ci` arm added with cooldown + bulk threshold to prevent runaway proposal storms. The `bulk-threshold` counter is in-memory per process (follow-up: shared state for horizontal scale). 132 tests in `test_ai_guard_propose_ci.py`.
+
+  - **Audit redactor** (`backend/services/audit_service.py`): new deny-list walker `redact_manifest_secrets` strips sensitive keys from manifests before persistence. `AUDIT_CONTEXT_ALLOWED_KEYS` extended with proposal keys; existing `sanitize_context` allow-list preserved unchanged. 183 tests in `test_audit_redaction.py`.
+
+  - **TTL sweep** (`backend/scripts/cmdb_proposal_ttl_sweep.py`, 174 lines): 30-day revoke job for DRAFT proposals that never received human review. 189 tests in `test_cmdb_proposal_ttl_sweep.py`.
+
+  - **Integration test** (`test_cmdb_proposal_integration.py`, 350 tests): full lifecycle end-to-end against the testcontainers Neo4j instance.
+
+  - **Frontend review UI** (`/proposals/cmdb`):
+    - `frontend/pages/ProposalsCmdbPage.tsx` — list + detail review surface with route registered in `frontend/App.tsx`.
+    - `frontend/components/cmdb/proposals/ProposalList.tsx` — sortable list of pending proposals (149 tests).
+    - `frontend/components/cmdb/proposals/ProposalDetail.tsx` — single-proposal view (107 tests).
+    - `frontend/components/cmdb/proposals/ProposalDiffView.tsx` — manifest-aware diff between proposal and current CMDB state (70 tests).
+    - `frontend/components/cmdb/proposals/ProposalActions.tsx` — approve / revoke buttons with confirm modals (68 tests).
+    - `frontend/components/cmdb/proposals/ProposalAuditTimeline.tsx` — full audit history per proposal (50 tests).
+    - `frontend/components/cmdb/proposals/ProposalBadge.tsx` — count badge for the AIAgentConsole header (35 tests).
+    - `frontend/hooks/queries/useProposalsQuery.ts` — React Query hooks for list / detail / count (133 tests).
+    - `frontend/services/cmdbProposals.ts` — typed API client + shared query keys (174 tests).
+    - Badge integrated into `frontend/components/AIAgentConsole.tsx`.
+
+  - **AI system-prompt contract** (`backend/ai/tools/cmdb_proposals.md`, 235 lines): optional source file registered in `OPTIONAL_PROMPT_SOURCE_FILES`, injects the HITL manifest contract into every AI chat session. 3 regression tests pin the loader behavior.
+
+  - **E2E contract** (`frontend/e2e/cmdb-proposals.spec.ts`): Playwright happy-path spec for the approve flow, tagged per `openspec/config.yaml:11-14`.
+
+  - **Canonical specs** (`openspec/specs/`):
+    - NEW `cmdb-ai-proposals/spec.md` — 16 REQs / 22 scenarios.
+    - NEW `cmdb-proposal-review-ui/spec.md` — 10 REQs / 12 scenarios.
+    - MODIFIED `ai-chat-harness-guardrails/spec.md` — delta +5 REQs / +10 scenarios.
+    - MODIFIED `audit-logging/spec.md` — delta +5 REQs / +10 scenarios.
+
+### Fixed
+
+- **`test_auth_extended.py::TestPermissionSecurity::test_permission_enum_completeness` now includes `CI_APPROVE_PROPOSAL`** (commit 2ec6510, PR #483): the regression test enumerate-then-assert-all-listed pattern needed an explicit allowlist update when the new permission shipped. Without this, branches that added `CI_APPROVE_PROPOSAL` but did not revisit the allowlist would see this test fail at PR-open.
+
+### Documentation
+
+- **AI agent guide for CMDB proposals** (`docs/ai/cmdb-proposals.md`): teaches an AI agent how to construct a valid manifest, which CI categories are allowed, which fields to redact before submission, and what each error code means — with a worked JSON template and a Python prompt template the AIAgentConsole can pass through. Linked from `docs/AI_AGENT_GUIDE.md`.
+- **CMDB proposals smoke runbook** (`docs/runbooks/cmdb-proposals-slice1-smoke.md`): step-by-step manual validation against a real Neo4j instance, mirroring the slice-by-slice delivery model.
+
 ## [1.16.0] — 2026-08-30
 
 ### Added
