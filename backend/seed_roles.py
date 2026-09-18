@@ -2,6 +2,7 @@ import asyncio
 
 from database import close_db, get_db
 from models.user import AIPermission, UserPermission
+from postgres_db import SessionLocal  # feat-489 Phase 3: PG backfill session factory
 
 SYSTEM_ROLE_PERMISSION_UPGRADES = {
     "ADMIN": [
@@ -160,6 +161,116 @@ async def seed_roles():
 
     print("Roles Seeded.")
     close_db()
+
+
+async def backfill_user_permissions_from_roles() -> None:
+    """feat-489 Phase 3: propagate each Role's permissions into every
+    User row that holds that role. ``fill-missing`` semantics — the
+    user's existing permissions are preserved, and any role permission
+    that is missing on the user is added. Per-user revocations are NOT
+    overridden (the role is the floor, not the ceiling).
+
+    Mirrors the precedent set by ``SYSTEM_ROLE_PERMISSION_UPGRADES``:
+    re-running on every boot guarantees that OPERATORs created before
+    ``CI_APPROVE_PROPOSAL`` existed pick it up automatically, without
+    an admin having to manually edit ``User.permissions``.
+
+    Both stores are kept in parity:
+
+    * **Postgres** (``users.permissions``) — primary auth store; this
+      is what ``auth_service.check_permission`` reads. Idempotent fill
+      via a single UPDATE that unions role perms onto existing user
+      perms.
+    * **Neo4j** (``:User.permissions``) — graph store used by some
+      read paths (e.g. ``User`` nodes traversed from CI topology).
+      Idempotent fill via MATCH/SET with a Cypher list-comprehension.
+
+    The backfill is a no-op on roles that have no users, on users with
+    a role that has no matching ``:Role`` row, and on users whose
+    permissions already cover the role's permission set. Errors are
+    logged but do not block startup — if the backfill fails, the role
+    upgrade that ``seed_roles`` already committed still applies to
+    future users created with that role.
+    """
+    print("Backfilling User.permissions from Role.permissions...")
+
+    # ── Postgres backfill ────────────────────────────────────────────────────
+    try:
+        from sqlalchemy import text
+
+        db = SessionLocal()
+        try:
+            # Single round-trip: UPDATE … FROM with a per-row union.
+            # The CTE inlines the role's permissions as a Postgres array
+            # so the UPDATE only needs one statement instead of looping
+            # in Python.
+            rows = db.execute(
+                text(
+                    """
+                    UPDATE users u
+                    SET permissions = (
+                        SELECT ARRAY(
+                            SELECT DISTINCT unnest(u.permissions || r.permissions)
+                        )
+                    )
+                    FROM roles r
+                    WHERE u.role = r.name
+                    RETURNING u.username, u.role, u.permissions
+                    """
+                )
+            ).fetchall()
+            db.commit()
+            for username, role_name, perms in rows:
+                print(f"  PG: user '{username}' ({role_name}) → {len(perms)} permissions")
+        finally:
+            db.close()
+    except Exception:
+        # Non-fatal: log and continue. The role upgrade itself is already
+        # committed; this is a best-effort backfill for users created
+        # before the new permissions existed.
+        import traceback
+
+        print("  PG backfill skipped:")
+        traceback.print_exc()
+
+    # ── Neo4j backfill ───────────────────────────────────────────────────────
+    try:
+        driver = get_db()
+        with driver.session() as session:
+            result = session.run(
+                """
+                MATCH (u:User), (r:Role {name: u.role})
+                WITH u, r,
+                     [p IN r.permissions WHERE NOT p IN coalesce(u.permissions, [])] AS missing
+                WHERE size(missing) > 0
+                SET u.permissions = coalesce(u.permissions, []) + missing
+                RETURN u.username AS username, u.role AS role, missing AS added
+                """
+            )
+            counts = {"users_updated": 0, "perms_added": 0}
+            for record in result:
+                added = record["added"] or []
+                counts["users_updated"] += 1
+                counts["perms_added"] += len(added)
+                print(
+                    f"  NEO4J: user '{record['username']}' ({record['role']}) "
+                    f"+{len(added)} perm(s): {added}"
+                )
+            if counts["users_updated"] == 0:
+                print("  NEO4J: no users needed backfill (all up to date)")
+            else:
+                print(
+                    f"  NEO4J: {counts['users_updated']} user(s) updated, "
+                    f"{counts['perms_added']} permission(s) added"
+                )
+        close_db()
+    except Exception:
+        import traceback
+
+        print("  NEO4J backfill skipped:")
+        traceback.print_exc()
+
+    print("User.permissions backfill complete.")
 
 
 if __name__ == "__main__":
