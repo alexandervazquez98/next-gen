@@ -260,7 +260,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         ORDER BY p.created_at DESC, p.id
         SKIP $skip LIMIT $limit
         """
