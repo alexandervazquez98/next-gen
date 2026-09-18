@@ -86,10 +86,12 @@ def _ci_id_exists(ci_id: str | None) -> bool:
     if not ci_id:
         return False
     try:
-        from repositories import topology_repo
+        from database import get_db
 
-        nodes = topology_repo.get_nodes(allowed_locations=None, is_admin=True)
-        return any(n.get("id") == ci_id for n in nodes)
+        driver = get_db()
+        with driver.session() as session:
+            result = session.run("MATCH (n:CI {id: $id}) RETURN n.id AS id LIMIT 1", id=ci_id)
+            return result.single() is not None
     except Exception:
         # Conservative: when we cannot confirm absence, treat as collision-free
         # so the proposal can be queued; approve-time check covers the race.
