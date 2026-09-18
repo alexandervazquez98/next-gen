@@ -356,19 +356,14 @@ def create_proposal(
 # ── bulk import (feat-489 Slice 1B) ─────────────────────────────────────
 
 
-# feat-489: secret REJECTION (not redaction) for the CSV bulk path.
-# Matches the deny-list used by ``redact_manifest_secrets`` in audit_service
-# PLUS the hard-coded leaf names so a column like ``snmp.community`` is
-# caught even when it lives under a non-secret-looking parent key.
+# feat-489: secret REJECTION (not redaction) for non-SNMP credential columns.
+# SNMP credentials (community/read/write) are allowed in the CSV; they are
+# encapsulated into node.snmp and redacted in audit and UI logs automatically.
+# We block arbitrary password/token/key/secret leakages outside of SNMP configuration.
 _BULK_SECRET_COLUMN_DENYLIST = frozenset(
     {
-        # leaf-name matches (the audit walker does this too)
-        "community",
         "authkey",
         "privkey",
-        # substring matches on key (case-insensitive) — mirrors
-        # ``_SECRET_FIELD_PATTERN`` from audit_service so admin guidance
-        # matches what gets redacted in MCP / chat paths.
         "key",
         "token",
         "secret",
@@ -383,13 +378,24 @@ _CSV_INJECTION_CHARS = ("=", "+", "-", "@")
 
 
 def _secret_column_match(column_name: str) -> str | None:
-    """Return the matched deny-list token if ``column_name`` looks like a
-    secret column. Match is case-insensitive; checks both substring on the
-    whole key and equality on the trailing leaf after the last ``.``.
+    """Return the matched deny-list token if ``column_name`` looks like an
+    unauthorized secret column. SNMP configuration columns (snmp_community,
+    snmp_read, etc.) are explicitly allowed and handled securely.
     """
     if not column_name:
         return None
-    lower = column_name.lower()
+    lower = column_name.lower().replace("-", "_")
+    # Allow SNMP community / read / write fields
+    if lower in {
+        "snmp_community",
+        "snmp_read",
+        "snmp_write",
+        "snmp_version",
+        "snmp_port",
+        "community",
+    }:
+        return None
+
     leaf = lower.split(".")[-1]
     if leaf in _BULK_SECRET_COLUMN_DENYLIST:
         return leaf
@@ -535,17 +541,57 @@ def bulk_import_proposals(
     for idx, raw in enumerate(rows, start=2):  # start=2 to match CSV row numbers (header=1)
         row_errors: list[str] = []
 
-        ci_id = (raw.get("id") or "").strip()
-        label = (raw.get("label") or "").strip()
-        category = (raw.get("category") or "").strip() or (default_category or "").strip()
-        owner = (raw.get("owner") or "").strip() or (default_owner or "").strip()
-        brand = (raw.get("brand") or "").strip() or None
-        model = (raw.get("model") or "").strip() or None
-        serial = (raw.get("serialNumber") or "").strip() or None
-        firmware = (raw.get("firmwareVersion") or "").strip() or None
-        ip = (raw.get("ip") or "").strip() or None
-        location_name = (raw.get("location_name") or "").strip() or None
-        status_val = (raw.get("status") or "").strip() or "OK"
+        ci_id = (raw.get("id") or raw.get("ID") or "").strip()
+        # If the template contains placeholder instructions, clear it to trigger missing id error
+        if ci_id.startswith("(") and "Auto-ID" in ci_id:
+            ci_id = ""
+        label = (raw.get("label") or raw.get("Label") or "").strip()
+        category = (
+            (raw.get("category") or raw.get("NetworkLayer") or raw.get("Category") or "").strip()
+            or (default_category or "").strip()
+        )
+        owner = (raw.get("owner") or raw.get("Owner") or "").strip() or (default_owner or "").strip()
+        brand = (raw.get("brand") or raw.get("Brand") or "").strip() or None
+        model = (raw.get("model") or raw.get("Model") or "").strip() or None
+        serial = (raw.get("serialNumber") or raw.get("SerialNumber") or "").strip() or None
+        firmware = (raw.get("firmwareVersion") or raw.get("Firmware") or "").strip() or None
+        ip = (raw.get("ip") or raw.get("IP") or "").strip() or None
+        location_name = (raw.get("location_name") or raw.get("Location") or "").strip() or None
+        status_val = (raw.get("status") or raw.get("OperationalStatus") or "").strip() or "OK"
+        if status_val.upper() in {"ACTIVE", "UP", "ONLINE"}:
+            status_val = "OK"
+
+        # SNMP Configuration extraction from standard or template columns
+        snmp_comm = (
+            raw.get("snmp_community")
+            or raw.get("SNMP_Read")
+            or raw.get("SNMP_Community")
+            or raw.get("community")
+            or ""
+        ).strip()
+        snmp_ver = (raw.get("snmp_version") or raw.get("SNMP_Version") or "v2c").strip()
+        snmp_port_raw = (raw.get("snmp_port") or raw.get("SNMP_Port") or "161").strip()
+        snmp_dict = None
+        if snmp_comm:
+            try:
+                snmp_port = int(snmp_port_raw)
+            except ValueError:
+                snmp_port = 161
+            snmp_dict = {
+                "version": snmp_ver,
+                "community": snmp_comm,
+                "port": snmp_port,
+            }
+
+        # Geographical coordinates if provided in template
+        lat_raw = (raw.get("Latitude") or raw.get("latitude") or "").strip()
+        lon_raw = (raw.get("Longitude") or raw.get("longitude") or "").strip()
+        loc_dict = None
+        if lat_raw and lon_raw:
+            try:
+                loc_dict = {"lat": float(lat_raw), "long": float(lon_raw)}
+            except ValueError:
+                loc_dict = None
 
         if not ci_id:
             row_errors.append("missing id")
@@ -631,11 +677,15 @@ def bulk_import_proposals(
                 id=ci_id,
                 type=category,
                 label=label,
+                status=status_val,
                 brand=brand,
                 model=model,
                 serialNumber=serial,
                 firmwareVersion=firmware,
                 ip=ip,
+                location_name=location_name,
+                location=loc_dict,
+                snmp=snmp_dict,
                 metadata=metadata or None,
             )
         except Exception as exc:
