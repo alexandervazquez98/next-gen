@@ -131,14 +131,33 @@ export const ProposalList: React.FC<ProposalListProps> = ({
         </thead>
         <tbody>
           {rows.map((row) => {
-            // feat-489: heuristic source detection. Phase 4 will replace this
-            // with a real ``source: 'chat' | 'csv' | 'mcp'`` field on
-            // :CIProposal; until then we infer from proposed_by so reviewers
-            // can visually distinguish AI-suggested proposals from manual
-            // ones.
-            const isAiSourced =
+            // feat-489 Slice 1B: derive source from manifest_mode (set on
+            // :CIProposal at create time) + proposed_by. Bulk CSV always
+            // means "Bulk CSV"; single + AI agent means "AI chat"; single
+            // + MCP / human means "MCP tool".
+            const isAiAgent =
               row.proposed_by.toLowerCase().startsWith("ai-") ||
               row.proposed_by.toLowerCase() === "ai-bot";
+            let sourceBadge: { label: string; icon: string; cls: string };
+            if (row.manifest_mode === "bulk") {
+              sourceBadge = {
+                label: "Bulk CSV",
+                icon: "upload_file",
+                cls: "bg-amber-500/10 text-amber-300 border-amber-500/30",
+              };
+            } else if (isAiAgent) {
+              sourceBadge = {
+                label: "AI chat",
+                icon: "smart_toy",
+                cls: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30",
+              };
+            } else {
+              sourceBadge = {
+                label: "MCP tool",
+                icon: "terminal",
+                cls: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+              };
+            }
             return (
               <tr
                 key={row.id}
@@ -148,20 +167,20 @@ export const ProposalList: React.FC<ProposalListProps> = ({
                 <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
                 <td className="py-2 px-3">{row.proposed_by}</td>
                 <td className="py-2 px-3">
-                  {isAiSourced ? (
-                    <span
-                      data-testid={`proposal-source-ai-${row.id}`}
-                      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30"
-                      title={`Proposed by AI agent (${row.proposed_by})`}
-                    >
-                      <span className="material-symbols-outlined text-[12px]">smart_toy</span>
-                      AI chat
+                  <span
+                    data-testid={`proposal-source-${row.id}`}
+                    className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full border ${sourceBadge.cls}`}
+                  >
+                    <span className="material-symbols-outlined text-[12px]">
+                      {sourceBadge.icon}
                     </span>
-                  ) : (
-                    <span className="text-[10px] uppercase tracking-widest text-neutral-500">
-                      Manual
-                    </span>
-                  )}
+                    {sourceBadge.label}
+                    {row.manifest_mode === "bulk" && row.ci_count && row.ci_count > 1 && (
+                      <span className="ml-1 text-amber-200/80 font-mono">
+                        ×{row.ci_count}
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <td className="py-2 px-3">{row.proposed_category ?? row.ci_id ?? "—"}</td>
                 <td className="py-2 px-3">

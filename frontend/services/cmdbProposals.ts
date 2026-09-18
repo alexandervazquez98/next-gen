@@ -25,6 +25,11 @@ export interface ProposalRow {
   revoke_reason: string | null;
   proposed_category: string | null;
   ci_id: string | null;
+  // feat-489 Slice 1B: ``manifest_mode`` is "single" (chat / MCP) or
+  // "bulk" (admin CSV import). ``ci_count`` is the number of CIs in the
+  // manifest (always 1 for single, len(cis[]) for bulk).
+  manifest_mode?: "single" | "bulk" | null;
+  ci_count?: number | null;
 }
 
 export type ProposalDetailResponse = ProposalRow;
@@ -88,3 +93,85 @@ export const revokeProposal = (
   body: { version: number; reason?: string },
 ): Promise<{ proposal_id: string; status: "REVOKED"; version: number }> =>
   api.post(`/cmdb/proposals/${encodeURIComponent(id)}/revoke`, body);
+
+// ── bulk CSV import (feat-489 Slice 1B) ────────────────────────────────────────
+
+
+export interface BulkValidationError {
+  row: number;
+  errors: string[];
+}
+
+export interface BulkValidationResponse {
+  dry_run: true;
+  cis_count: number;
+  categories: string[];
+  manifest: Record<string, unknown>;
+}
+
+export interface BulkImportResponse {
+  proposal_id: string;
+  status: "DRAFT";
+  version: number;
+  cis_count: number;
+  manifest_mode: "bulk";
+  created_at: string | null;
+}
+
+export interface BulkImportDenial {
+  harness_result: {
+    denied: true;
+    status: "denied";
+    reason: string;
+    reason_code: "cooldown_active" | "bulk_threshold";
+  };
+}
+
+export interface BulkImportError {
+  reason:
+    | "bulk_validation_failed"
+    | "file_too_large"
+    | "not_a_csv"
+    | "too_many_rows"
+    | "empty_csv"
+    | "csv_parse_failed";
+  errors?: BulkValidationError[];
+  bytes?: number;
+  max_bytes?: number;
+  rows?: number;
+  max_rows?: number;
+  hint?: string;
+  error?: string;
+}
+
+export const bulkValidateProposals = (
+  file: File,
+  defaultCategory?: string,
+  defaultOwner?: string,
+): Promise<BulkValidationResponse | BulkImportError> => {
+  const form = new FormData();
+  form.append("file", file);
+  if (defaultCategory) form.append("default_category", defaultCategory);
+  if (defaultOwner) form.append("default_owner", defaultOwner);
+  return api.post<BulkValidationResponse | BulkImportError>(
+    "/cmdb/proposals/bulk-validate",
+    form,
+    // multipart/form-data — let the browser set the boundary; do NOT
+    // set Content-Type manually.
+  );
+};
+
+export const bulkImportProposals = (
+  file: File,
+  defaultCategory?: string,
+  defaultOwner?: string,
+): Promise<BulkImportResponse | BulkImportDenial | BulkImportError> => {
+  const form = new FormData();
+  form.append("file", file);
+  if (defaultCategory) form.append("default_category", defaultCategory);
+  if (defaultOwner) form.append("default_owner", defaultOwner);
+  return api.post<BulkImportResponse | BulkImportDenial | BulkImportError>(
+    "/cmdb/proposals/bulk-import",
+    form,
+  );
+};

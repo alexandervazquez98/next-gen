@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { useProposalsQuery } from "../hooks/queries/useProposalsQuery";
 import { ProposalList } from "../components/cmdb/proposals/ProposalList";
 import { ProposalDetail } from "../components/cmdb/proposals/ProposalDetail";
+import BulkImportPanel from "../components/cmdb/proposals/BulkImportPanel";
 
 interface ProposalsCmdbPageProps {
   detailMode?: boolean;
@@ -14,6 +15,7 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   const canApprove = hasPermission("CI_APPROVE_PROPOSAL");
   const canView = hasPermission("CI_VIEW");
   const canViewAudit = hasPermission("AUDIT_VIEW");
+  const canBulkImport = hasPermission("CI_BULK_IMPORT");
 
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(
@@ -73,11 +75,23 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   }
 
   return (
-    <div className="p-6" data-testid="proposals-cmdb-list">
-      <header className="mb-4">
+    <div className="p-6 flex flex-col gap-6" data-testid="proposals-cmdb-list">
+      <header>
         <h1 className="text-2xl font-black uppercase tracking-widest text-white">CMDB Proposals</h1>
         <p className="text-sm text-neutral-400">AI-submitted CI manifests awaiting human review.</p>
       </header>
+      {canBulkImport && (
+        <BulkImportPanel
+          onCreated={(proposalId) => {
+            // Refresh the list and jump to the new proposal.
+            query.refetch?.();
+            setSelectedId(proposalId);
+            const next = new URLSearchParams(searchParams);
+            next.set("id", proposalId);
+            setSearchParams(next);
+          }}
+        />
+      )}
       <ProposalList
         rows={query.data?.rows ?? []}
         loading={query.isLoading}
