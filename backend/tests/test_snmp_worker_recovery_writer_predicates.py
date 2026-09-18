@@ -1,26 +1,28 @@
-"""Strict-TDD regression test for the four existing recovery writers.
+"""Strict-TDD regression test for the six recovery-writer predicate sites.
 
-PR #2 of fix-423 / REQ-PRUNE-005 / AD-7. The collection-failures
-(``engines/snmp_worker.py:405,451``) and ICMP-availability
-(``:558,603``) recovery writers already include ``RECOVERED`` in their
-``existing.status IN [...]`` predicate in HEAD. Issue #423's narrative
-incorrectly said they only had ``'OPEN', 'ACK'``. PR #2 must NOT widen
-these four (they already work) — but it MUST lock their contract with a
-regression test so a future contributor doesn't narrow them.
+REQ-PRUNE-005 / AD-7 (fix-423) and REQ-RECOVERY-002 (fix-484). The
+collection-failures (``engines/snmp_worker.py``), ICMP-availability,
+ICMP-jitter, and ICMP-packet-loss writers MUST keep ``RECOVERED`` in
+their ``existing.status IN [...]`` predicate (and their respective
+``event_type`` discriminator) so a subsequent failure reopens the
+existing ROOT Event rather than creating a new ROOT.
 
-This test parses ``engines/snmp_worker.py`` and asserts:
+The test parses ``engines/snmp_worker.py`` and asserts:
 
-* All four predicate sites (collection-failures primary+fallback at
-  ``:405,451`` and ICMP-availability primary+fallback at ``:558,603``)
-  include ``'OPEN'``, ``'ACK'``, AND ``'RECOVERED'`` in the status list.
-* The PRECEDING ``OPTIONAL MATCH`` line is anchored on the right key
-  (``ci_id, metric_id`` for collection-failures / ICMP-availability;
-  ``metric_id, event_type='THRESHOLD_BREACH'`` for ICMP-latency). This
-  guards against accidental re-binding of the predicate to a different
-  writer that already excludes RECOVERED.
+* All six predicate sites (collection-failures primary+fallback keyed
+  on ``(ci_id, metric_id)``; ICMP-availability primary+fallback keyed
+  on ``(ci_id, metric_id)``; ICMP-jitter primary+fallback keyed on
+  ``(metric_id, event_type='THRESHOLD_BREACH')``; ICMP-packet-loss
+  primary+fallback keyed on
+  ``(metric_id, event_type='THRESHOLD_BREACH')``) include ``'OPEN'``,
+  ``'ACK'``, AND ``'RECOVERED'`` in the status list.
+* The preceding ``OPTIONAL MATCH`` line is anchored on the right key:
+  - ``ci_id, metric_id`` for collection-failures / ICMP-availability
+  - ``metric_id, event_type='THRESHOLD_BREACH'`` for the three ICMP
+    refresh writers (latency, jitter, packet-loss).
 
 If you change ``engines/snmp_worker.py`` to drop ``RECOVERED`` from any
-of these four status lists, this test fails — fix-423 / REQ-PRUNE-005.
+of these six status lists, this test fails.
 """
 
 from __future__ import annotations
@@ -29,6 +31,21 @@ import re
 from pathlib import Path
 
 SNMP_WORKER_PATH = Path(__file__).resolve().parents[1] / "engines" / "snmp_worker.py"
+
+# Regex matches the (ci_id, metric_id)-keyed OPTIONAL MATCH used by the
+# collection-failures and ICMP-availability refresh helpers. The status
+# list is captured as a named group ``list``.
+_CI_METRIC_OPTIONAL_MATCH_RE = re.compile(
+    r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n"
+    r"\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]"
+)
+
+# Regex matches the (metric_id, event_type)-keyed OPTIONAL MATCH used by
+# the three ICMP refresh writers (latency, jitter, packet-loss).
+_METRIC_EVENT_OPTIONAL_MATCH_RE = re.compile(
+    r"OPTIONAL MATCH \(n\)-\[:HAS_EVENT\]->\(existing:Event \{metric_id: row\.metric_id, event_type: 'THRESHOLD_BREACH'\}\)\s*\n"
+    r"\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]"
+)
 
 
 def _read_snmp_worker_source() -> str:
@@ -50,10 +67,9 @@ def _extract_block(source: str, *, start_marker: str, end_marker: str) -> str:
     return source[start:end]
 
 
-# Each entry pins ONE of the four existing predicate sites.
+# Each entry pins ONE of the six existing predicate sites.
 # ``start_marker`` identifies the OPTIONAL MATCH line; ``end_marker``
-# closes at the next ``WITH row, n, m`` boundary so the regex pulls only
-# the predicate line itself.
+# closes at the next boundary.
 PREDICATE_SITES: tuple[tuple[str, str, str], ...] = (
     (
         "collection_failure_primary",
@@ -93,20 +109,41 @@ PREDICATE_SITES: tuple[tuple[str, str, str], ...] = (
         "AND existing.event_type = 'AVAILABILITY'\n"
         "              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'",
     ),
+    # ── fix-484 (REQ-RECOVERY-002 / AD-7) ──────────────────────────────
+    # ICMP-jitter and ICMP-packet-loss use the metric_id+event_type keyed
+    # OPTIONAL MATCH (different from collection-failures / availability).
+    # Each entry's primary / fallback distinction is anchored via the
+    # anchor marker on the ``UNWIND`` line and the named metric_id arg
+    # check.
+    (
+        "icmp_jitter_events_predicate_site",
+        "UNWIND $breaches AS row\n"
+        "            MATCH (n:CI {id: row.node_id})\n"
+        "            MATCH (m:MetricDef {id: row.metric_id})\n"
+        "            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n"
+        "            WHERE existing.status IN",
+        "AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'",
+    ),
+    (
+        "icmp_packet_loss_events_predicate_site",
+        "UNWIND $breaches AS row\n"
+        "            MATCH (n:CI {id: row.node_id})\n"
+        "            MATCH (m:MetricDef {id: row.metric_id})\n"
+        "            OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id, event_type: 'THRESHOLD_BREACH'})\n"
+        "            WHERE existing.status IN",
+        "AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'",
+    ),
 )
 
 
 class TestRecoveryWriterPredicatesContainRecovered:
-    """REQ-PRUNE-005 / AD-7 — lock contract on the four existing writers."""
+    """REQ-PRUNE-005 / REQ-RECOVERY-002 — lock contract on the six writers."""
 
     def test_collection_failure_primary_includes_recovered(self):
         source = _read_snmp_worker_source()
         # The first occurrence in source order is the collection-failures
         # primary query — it's the first OPTIONAL MATCH in the file.
-        all_blocks = re.findall(
-            r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]",
-            source,
-        )
+        all_blocks = _CI_METRIC_OPTIONAL_MATCH_RE.findall(source)
         assert all_blocks, "collection-failures predicate blocks not found"
         # First occurrence is the collection-failures primary; second is
         # its fallback. Verify the primary.
@@ -119,10 +156,7 @@ class TestRecoveryWriterPredicatesContainRecovered:
 
     def test_collection_failure_fallback_includes_recovered(self):
         source = _read_snmp_worker_source()
-        all_blocks = re.findall(
-            r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]",
-            source,
-        )
+        all_blocks = _CI_METRIC_OPTIONAL_MATCH_RE.findall(source)
         assert len(all_blocks) >= 2, (
             "expected at least 2 OPTIONAL MATCH (ci_id, metric_id) blocks "
             "(collection-failures primary + fallback)"
@@ -148,10 +182,7 @@ class TestRecoveryWriterPredicatesContainRecovered:
         # failures fallback, ICMP-availability primary, ICMP-availability
         # fallback. So the ICMP-availability primary is the third block
         # and its fallback is the fourth.
-        all_blocks = re.findall(
-            r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]",
-            source,
-        )
+        all_blocks = _CI_METRIC_OPTIONAL_MATCH_RE.findall(source)
         assert len(all_blocks) >= 4, (
             f"expected at least 4 ci_id-keyed OPTIONAL MATCH blocks "
             f"(collection-failures primary+fallback, ICMP-availability primary+fallback); "
@@ -200,21 +231,102 @@ class TestRecoveryWriterPredicatesContainRecovered:
             "comparing the wrong pair."
         )
 
+    # ── fix-484 (REQ-RECOVERY-002) — extend the lock to six sites ─────
+
+    def test_icmp_jitter_events_predicate_includes_recovered(self):
+        """REQ-RECOVERY-002 / fix-484: ICMP-jitter RECOVERED eligibility.
+
+        The ``_refresh_icmp_jitter_events`` writer MUST keep ``'RECOVERED'``
+        in its existing-event ``status IN [...]`` predicate so a subsequent
+        failure reopens the existing ROOT Event rather than creating a new
+        ROOT. Locks the 5th predicate site in the regression contract.
+        """
+        source = _read_snmp_worker_source()
+        # Lock the writer's primary + fallback by anchoring on the
+        # call site (``_refresh_icmp_jitter_events`` function).
+        primary_marker = (
+            "def _refresh_icmp_jitter_events(session, updates, cache=None, lock_db=None):"
+        )
+        assert (
+            primary_marker in source
+        ), "_refresh_icmp_jitter_events definition not found — regression test is stale"
+
+        primary_start = source.find(primary_marker)
+        assert primary_start != -1
+        writer_source = source[primary_start:]
+
+        # Primary block + fallback block both live inside the writer's
+        # ``run_with_cypher_param_fallback`` call; assert that both kept
+        # RECOVERED in their predicate.
+        primary_match = _METRIC_EVENT_OPTIONAL_MATCH_RE.search(writer_source)
+        assert primary_match, "_refresh_icmp_jitter_events primary OPTIONAL MATCH shape not found"
+        primary_list = primary_match.group("list")
+        for required in ("'OPEN'", "'ACK'", "'RECOVERED'"):
+            assert required in primary_list, (
+                f"_refresh_icmp_jitter_events primary predicate MUST include "
+                f"{required}; got list={primary_list!r}"
+            )
+
+    def test_icmp_packet_loss_events_predicate_includes_recovered(self):
+        """REQ-RECOVERY-002 / fix-484: ICMP-packet-loss RECOVERED eligibility.
+
+        The ``_refresh_icmp_packet_loss_events`` writer MUST keep
+        ``'RECOVERED'`` in its existing-event ``status IN [...]`` predicate
+        so a subsequent failure reopens the existing ROOT Event rather than
+        creating a new ROOT. Locks the 6th predicate site in the regression
+        contract.
+        """
+        source = _read_snmp_worker_source()
+        primary_marker = (
+            "def _refresh_icmp_packet_loss_events(session, updates, cache=None, lock_db=None):"
+        )
+        assert (
+            primary_marker in source
+        ), "_refresh_icmp_packet_loss_events definition not found — regression test is stale"
+
+        primary_start = source.find(primary_marker)
+        assert primary_start != -1
+        writer_source = source[primary_start:]
+
+        primary_match = _METRIC_EVENT_OPTIONAL_MATCH_RE.search(writer_source)
+        assert (
+            primary_match
+        ), "_refresh_icmp_packet_loss_events primary OPTIONAL MATCH shape not found"
+        primary_list = primary_match.group("list")
+        for required in ("'OPEN'", "'ACK'", "'RECOVERED'"):
+            assert required in primary_list, (
+                f"_refresh_icmp_packet_loss_events primary predicate MUST include "
+                f"{required}; got list={primary_list!r}"
+            )
+
+    def test_predicate_sites_registry_extends_to_six_entries(self):
+        """REQ-RECOVERY-002: the test author extended PREDICATE_SITES from
+        4 to 6 entries; this test asserts the registry shape so a future
+        contributor doesn't accidentally narrow it back to 4.
+        """
+        assert len(PREDICATE_SITES) == 6, (
+            f"PREDICATE_SITES must enumerate six predicate sites "
+            f"(collection-failures ×2, ICMP-availability ×2, ICMP-jitter ×1, "
+            f"ICMP-packet-loss ×1) — got {len(PREDICATE_SITES)}"
+        )
+        site_labels = {site[0] for site in PREDICATE_SITES}
+        for required in (
+            "icmp_jitter_events_predicate_site",
+            "icmp_packet_loss_events_predicate_site",
+        ):
+            assert required in site_labels, f"PREDICATE_SITES must include {required!r} per fix-484"
+
 
 class TestRecoveryWritersDoNotRegressToOpenAckOnly:
-    """REQ-PRUNE-005 contract: the four existing recovery writers MUST NOT
-    be narrowed to ``['OPEN', 'ACK']`` only. Issue #423's narrative said
-    they were, but HEAD includes RECOVERED. This test asserts the IN
-    list is NOT the ``['OPEN', 'ACK']`` shape that would be a regression
-    of the post-fix-423 contract.
+    """REQ-PRUNE-005 contract: the six recovery writers MUST NOT be
+    narrowed to ``['OPEN', 'ACK']`` only. Issue #423's narrative said the
+    first four were, but HEAD includes RECOVERED. fix-484 extends the
+    contract to the two ICMP-writer predicates that followed in #432.
     """
 
     def test_collection_failures_primary_is_not_open_ack_only(self):
         source = _read_snmp_worker_source()
-        all_blocks = re.findall(
-            r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]",
-            source,
-        )
+        all_blocks = _CI_METRIC_OPTIONAL_MATCH_RE.findall(source)
         primary = all_blocks[0]
         normalized = re.sub(r"\s+", "", primary)
         assert normalized != "'OPEN','ACK'", (
@@ -224,10 +336,7 @@ class TestRecoveryWritersDoNotRegressToOpenAckOnly:
 
     def test_collection_failures_fallback_is_not_open_ack_only(self):
         source = _read_snmp_worker_source()
-        all_blocks = re.findall(
-            r"OPTIONAL MATCH \(existing:Event \{ci_id: row\.node_id, metric_id: row\.metric_id\}\)\s*\n\s*WHERE existing\.status IN \[(?P<list>[^\]]+)\]",
-            source,
-        )
+        all_blocks = _CI_METRIC_OPTIONAL_MATCH_RE.findall(source)
         fallback = all_blocks[1]
         normalized = re.sub(r"\s+", "", fallback)
         assert normalized != "'OPEN','ACK'", (
