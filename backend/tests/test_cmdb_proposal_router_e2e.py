@@ -122,8 +122,8 @@ def stub_repo_and_guards(monkeypatch):
     These never run on the real graph in unit tests. The audit service
     is intentionally NOT stubbed — that's the whole point of this test.
     """
-    from services import ai_guard_service, cmdb_proposal_service, node_service
     from repositories import cmdb_proposal_repo
+    from services import ai_guard_service, cmdb_proposal_service, node_service
 
     # ai_guard_service.SessionLocal — guardrail DB access.
     bulk_session = MagicMock()
