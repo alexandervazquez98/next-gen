@@ -63,6 +63,7 @@ interface ProposalListProps {
   error: Error | null;
   filters: { status: string; category: string; proposed_by: string };
   onFiltersChange: (_next: { status: string; category: string; proposed_by: string }) => void;
+  onSelectRow?: (_rowId: string) => void;
 }
 
 export const ProposalList: React.FC<ProposalListProps> = ({
@@ -71,6 +72,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
   error,
   filters,
   onFiltersChange,
+  onSelectRow,
 }) => {
   if (loading) {
     return (
@@ -162,7 +164,8 @@ export const ProposalList: React.FC<ProposalListProps> = ({
               <tr
                 key={row.id}
                 data-testid={`proposal-row-${row.id}`}
-                className="border-b border-white/5 hover:bg-white/5"
+                onClick={() => onSelectRow?.(row.id)}
+                className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
               >
                 <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
                 <td className="py-2 px-3">{row.proposed_by}</td>

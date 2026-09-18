@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useProposalsQuery } from "../hooks/queries/useProposalsQuery";
 import { ProposalList } from "../components/cmdb/proposals/ProposalList";
@@ -28,6 +28,8 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const routeParams = useParams<{ id?: string }>();
+  const activeDetailId = routeParams.id || searchParams.get("id") || selectedId;
 
   const query = useProposalsQuery({
     status: (filters.status as "DRAFT" | "APPROVED" | "REVOKED" | undefined) || undefined,
@@ -53,18 +55,23 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
     setSearchParams(params);
   };
 
-  if (detailMode && selectedId) {
+  if ((detailMode || searchParams.has("id")) && activeDetailId) {
     return (
       <div className="p-6" data-testid="proposals-cmdb-detail">
         <button
           type="button"
-          onClick={() => setSelectedId(null)}
-          className="text-xs uppercase tracking-widest text-neutral-400 hover:text-white"
+          onClick={() => {
+            setSelectedId(null);
+            const next = new URLSearchParams(searchParams);
+            next.delete("id");
+            setSearchParams(next);
+          }}
+          className="text-xs uppercase tracking-widest text-neutral-400 hover:text-white mb-4"
         >
           ← Back to list
         </button>
         <ProposalDetail
-          proposalId={selectedId}
+          proposalId={activeDetailId}
           canApprove={canApprove}
           canViewAudit={canViewAudit}
           auditEntries={[]}
@@ -98,6 +105,12 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
         error={query.error}
         filters={filters}
         onFiltersChange={onFiltersChange}
+        onSelectRow={(rowId) => {
+          setSelectedId(rowId);
+          const next = new URLSearchParams(searchParams);
+          next.set("id", rowId);
+          setSearchParams(next);
+        }}
       />
     </div>
   );
