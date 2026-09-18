@@ -67,10 +67,10 @@ def _get_guard():
     return guard
 
 
-def _resolve_category(category: str | None) -> list[str] | None:
-    """Return live Category names from Neo4j. None on failure."""
-    if not category:
-        return None
+def _resolve_category(category: str | None = None) -> list[str] | None:
+    """Return live Category names from Neo4j. None on failure.
+    If category is provided, returns names only if category is present or returns all if category is None.
+    """
     try:
         import services.catalog_service as catalog
 
