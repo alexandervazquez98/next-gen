@@ -19,7 +19,18 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from models.user import (
     AIPermission,
     User,
@@ -268,7 +279,7 @@ async def bulk_validate_proposals(
     default_category: str | None = Form(default=None),  # noqa: B008
     default_owner: str | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_active_user),  # noqa: B008
-    db: "Session" = Depends(get_pg_db),  # noqa: B008  # noqa: F821
+    db: Session = Depends(get_pg_db),  # noqa: B008  # noqa: F821
 ):
     """POST /api/cmdb/proposals/bulk-validate (CI_BULK_IMPORT required).
 
@@ -306,7 +317,7 @@ async def bulk_import_proposals(
     default_category: str | None = Form(default=None),  # noqa: B008
     default_owner: str | None = Form(default=None),  # noqa: B008
     current_user: User = Depends(get_current_active_user),  # noqa: B008
-    db: "Session" = Depends(get_pg_db),  # noqa: B008  # noqa: F821
+    db: Session = Depends(get_pg_db),  # noqa: B008  # noqa: F821
 ):
     """POST /api/cmdb/proposals/bulk-import (CI_BULK_IMPORT required).
 

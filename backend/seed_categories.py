@@ -23,7 +23,6 @@ from services.category_icons import (
     resolve_category_icon,
 )
 
-
 # Default category set seeded on every fresh boot.
 # Names are operator-facing — do not localize here, the API returns them
 # verbatim and ProposalsCmdbPage renders them as-is.
