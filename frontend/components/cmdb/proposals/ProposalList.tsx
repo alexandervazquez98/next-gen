@@ -66,6 +66,19 @@ interface ProposalListProps {
   onSelectRow?: (_rowId: string) => void;
 }
 
+function formatDateTime(val: unknown): string {
+  if (!val) return "—";
+  if (typeof val === "string") return val;
+  if (typeof val === "object") {
+    try {
+      return JSON.stringify(val);
+    } catch {
+      return String(val);
+    }
+  }
+  return String(val);
+}
+
 export const ProposalList: React.FC<ProposalListProps> = ({
   rows,
   loading,
@@ -200,7 +213,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
                   </span>
                 </td>
                 <td className="py-2 px-3 font-mono">{row.version}</td>
-                <td className="py-2 px-3 text-xs text-neutral-400">{row.created_at}</td>
+                <td className="py-2 px-3 text-xs text-neutral-400">{formatDateTime(row.created_at)}</td>
               </tr>
             );
           })}

@@ -75,18 +75,37 @@ class CmdbProposalRepo:
         return session(query, **params) if callable(session) else session.run(query, **params)
 
     @staticmethod
+    def _to_iso(value: Any) -> Any:
+        """Coerce Neo4j temporal types (e.g. neo4j.time.DateTime) to ISO 8601 strings.
+        Prevents frontend React crashes when rendering created_at/updated_at.
+        """
+        if value is None:
+            return None
+        iso = getattr(value, "iso_format", None) or getattr(value, "isoformat", None)
+        return iso() if callable(iso) else str(value) if not isinstance(value, (int, float, bool, dict, list)) else value
+
+    @staticmethod
     def _record(row: Any) -> dict[str, Any] | None:
         if row is None:
             return None
+        res: dict[str, Any] = {}
         if isinstance(row, dict):
-            return {key: row.get(key) for key in _RETURN_FIELDS if key in row}
-        try:
-            return {key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row}
-        except Exception:
+            res = {key: row.get(key) for key in _RETURN_FIELDS if key in row}
+        else:
             try:
-                return {key: row.get(key) for key in _RETURN_FIELDS}
+                res = {key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row}
             except Exception:
-                return None
+                try:
+                    res = {key: row.get(key) for key in _RETURN_FIELDS}
+                except Exception:
+                    return None
+
+        # Coerce temporal fields to ISO string
+        for temp_key in ("created_at", "updated_at", "reviewed_at"):
+            if temp_key in res and res[temp_key] is not None:
+                res[temp_key] = CmdbProposalRepo._to_iso(res[temp_key])
+
+        return res
 
     @staticmethod
     def _now_iso() -> str:
