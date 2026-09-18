@@ -32,6 +32,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from fastapi import HTTPException
+from postgres_db import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -199,13 +200,22 @@ def tool_propose_ci(*, token: str | None, manifest: dict[str, Any]) -> dict[str,
 
     _require_permission(user, "AI_PROPOSE_CI")
 
-    result = _service().create_proposal(
-        manifest=manifest,
-        user=user,
-        ai_agent_id=user.username,
-        db=None,
-        request=None,
-    )
+    # feat-cmdb-ai-handoff (fix #487) — the MCP wrapper has no request scope,
+    # so it must open and close its own SQLAlchemy session for the audit row
+    # that ``create_proposal`` will persist via ``_record`` ->
+    # ``audit_service.record_critical_change`` -> ``_persist_event``.
+    # See the same pattern in backend/scripts/cmdb_proposal_ttl_sweep.py.
+    db = SessionLocal()
+    try:
+        result = _service().create_proposal(
+            manifest=manifest,
+            user=user,
+            ai_agent_id=user.username,
+            db=db,
+            request=None,
+        )
+    finally:
+        db.close()
     if isinstance(result, dict) and result.get("harness_result", {}).get("denied"):
         return result
     return {
@@ -254,14 +264,19 @@ def tool_approve_proposal(
 
     _require_permission(user, "CI_APPROVE_PROPOSAL")
 
-    row = _service().approve_proposal(
-        proposal_id=proposal_id,
-        expected_version=version,
-        user=user,
-        db=None,
-        expected_category=expected_category,
-        request=None,
-    )
+    # feat-cmdb-ai-handoff (fix #487) — open/close own session, see tool_propose_ci.
+    db = SessionLocal()
+    try:
+        row = _service().approve_proposal(
+            proposal_id=proposal_id,
+            expected_version=version,
+            user=user,
+            db=db,
+            expected_category=expected_category,
+            request=None,
+        )
+    finally:
+        db.close()
     return {
         "proposal_id": row["id"],
         "status": row["status"],
@@ -284,14 +299,19 @@ def tool_revoke_proposal(
 
     _require_permission(user, "CI_APPROVE_PROPOSAL")
 
-    row = _service().revoke_proposal(
-        proposal_id=proposal_id,
-        expected_version=version,
-        user=user,
-        reason=reason,
-        db=None,
-        request=None,
-    )
+    # feat-cmdb-ai-handoff (fix #487) — open/close own session, see tool_propose_ci.
+    db = SessionLocal()
+    try:
+        row = _service().revoke_proposal(
+            proposal_id=proposal_id,
+            expected_version=version,
+            user=user,
+            reason=reason,
+            db=db,
+            request=None,
+        )
+    finally:
+        db.close()
     return {
         "proposal_id": row["id"],
         "status": row["status"],
