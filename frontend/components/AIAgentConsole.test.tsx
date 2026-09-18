@@ -1,11 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AIAgentConsole from './AIAgentConsole';
-import { chatWithAIAgent } from '../services/geminiService';
+import { chatWithAIAgent, type AIChatResponse } from '../services/geminiService';
 
-vi.mock('../services/geminiService', () => ({
-  chatWithAIAgent: vi.fn(),
-}));
+vi.mock('../services/geminiService', async () => {
+  const actual = await vi.importActual<typeof import('../services/geminiService')>(
+    '../services/geminiService',
+  );
+  return {
+    chatWithAIAgent: vi.fn(actual.chatWithAIAgent),
+  };
+});
 
 describe('AIAgentConsole', () => {
   beforeEach(() => {
@@ -13,9 +18,10 @@ describe('AIAgentConsole', () => {
   });
 
   it('preserves multiline deterministic harness responses in the chat bubble', async () => {
-    vi.mocked(chatWithAIAgent).mockResolvedValueOnce(
-      'Eventos observados:\n- [INFO / OPEN] SWITCH C2: Service/Host Down\n\nLímites:\n- No confirma causa raíz.',
-    );
+    vi.mocked(chatWithAIAgent).mockResolvedValueOnce({
+      answer:
+        'Eventos observados:\n- [INFO / OPEN] SWITCH C2: Service/Host Down\n\nLímites:\n- No confirma causa raíz.',
+    } satisfies AIChatResponse);
 
     render(<AIAgentConsole />);
 

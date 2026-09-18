@@ -75,14 +75,27 @@ export type AIChatIntent =
 			limit?: number;
 	  }
 	| { type: "availability_check"; ci_ref: string }
-	| { type: "availability_check_batch"; ci_refs: string[] };
+	| { type: "availability_check_batch"; ci_refs: string[] }
+	| {
+			type: "propose_ci";
+			manifest: Record<string, unknown>;
+			rationale?: string;
+			source_refs?: string[];
+	  };
+
+export interface AIChatResponse {
+	answer: string;
+	model?: string | null;
+	message_id?: number | null;
+	harness_result?: Record<string, unknown> | null;
+}
 
 export const chatWithAIAgent = async (
 	query: string,
 	context: string,
 	intent?: AIChatIntent,
 	signal?: AbortSignal,
-) => {
+): Promise<AIChatResponse> => {
 	const body: { query: string; context: string; intent?: AIChatIntent } = {
 		query,
 		context,
@@ -90,10 +103,10 @@ export const chatWithAIAgent = async (
 	if (intent) {
 		body.intent = intent;
 	}
-	const response = await api.post<{ answer: string }>(
+	const response = await api.post<AIChatResponse>(
 		"/ai/chat",
 		body,
 		{ signal },
 	);
-	return response.answer;
+	return response;
 };

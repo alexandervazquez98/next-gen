@@ -122,6 +122,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
           <tr>
             <th className="text-left py-2 px-3">ID</th>
             <th className="text-left py-2 px-3">Proposer</th>
+            <th className="text-left py-2 px-3">Source</th>
             <th className="text-left py-2 px-3">Category</th>
             <th className="text-left py-2 px-3">Status</th>
             <th className="text-left py-2 px-3">Version</th>
@@ -129,32 +130,58 @@ export const ProposalList: React.FC<ProposalListProps> = ({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              data-testid={`proposal-row-${row.id}`}
-              className="border-b border-white/5 hover:bg-white/5"
-            >
-              <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
-              <td className="py-2 px-3">{row.proposed_by}</td>
-              <td className="py-2 px-3">{row.proposed_category ?? row.ci_id ?? "—"}</td>
-              <td className="py-2 px-3">
-                <span
-                  className={
-                    row.status === "DRAFT"
-                      ? "text-amber-400"
-                      : row.status === "APPROVED"
-                        ? "text-emerald-400"
-                        : "text-red-400"
-                  }
-                >
-                  {row.status}
-                </span>
-              </td>
-              <td className="py-2 px-3 font-mono">{row.version}</td>
-              <td className="py-2 px-3 text-xs text-neutral-400">{row.created_at}</td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            // feat-489: heuristic source detection. Phase 4 will replace this
+            // with a real ``source: 'chat' | 'csv' | 'mcp'`` field on
+            // :CIProposal; until then we infer from proposed_by so reviewers
+            // can visually distinguish AI-suggested proposals from manual
+            // ones.
+            const isAiSourced =
+              row.proposed_by.toLowerCase().startsWith("ai-") ||
+              row.proposed_by.toLowerCase() === "ai-bot";
+            return (
+              <tr
+                key={row.id}
+                data-testid={`proposal-row-${row.id}`}
+                className="border-b border-white/5 hover:bg-white/5"
+              >
+                <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
+                <td className="py-2 px-3">{row.proposed_by}</td>
+                <td className="py-2 px-3">
+                  {isAiSourced ? (
+                    <span
+                      data-testid={`proposal-source-ai-${row.id}`}
+                      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30"
+                      title={`Proposed by AI agent (${row.proposed_by})`}
+                    >
+                      <span className="material-symbols-outlined text-[12px]">smart_toy</span>
+                      AI chat
+                    </span>
+                  ) : (
+                    <span className="text-[10px] uppercase tracking-widest text-neutral-500">
+                      Manual
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 px-3">{row.proposed_category ?? row.ci_id ?? "—"}</td>
+                <td className="py-2 px-3">
+                  <span
+                    className={
+                      row.status === "DRAFT"
+                        ? "text-amber-400"
+                        : row.status === "APPROVED"
+                          ? "text-emerald-400"
+                          : "text-red-400"
+                    }
+                  >
+                    {row.status}
+                  </span>
+                </td>
+                <td className="py-2 px-3 font-mono">{row.version}</td>
+                <td className="py-2 px-3 text-xs text-neutral-400">{row.created_at}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
