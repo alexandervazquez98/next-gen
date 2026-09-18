@@ -17,8 +17,12 @@ this module never modifies that function (REQ-CMAP-006, design.md §Approach).
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
+import os
+import re
 import uuid
 from typing import Any
 
@@ -124,6 +128,15 @@ def _enforce_approve_permission(user: User) -> None:
         raise HTTPException(
             status_code=403,
             detail="missing_permission: CI_APPROVE_PROPOSAL required",
+        )
+
+
+def _enforce_bulk_import_permission(user: User) -> None:
+    """HTTP 403 when caller lacks CI_BULK_IMPORT (or is not Admin)."""
+    if not _has_user_permission(UserPermission.CI_BULK_IMPORT, user):
+        raise HTTPException(
+            status_code=403,
+            detail="missing_permission: CI_BULK_IMPORT required to bulk-import CIs",
         )
 
 
@@ -336,6 +349,429 @@ def create_proposal(
         logger.exception("Failed to record AIOperationLog for propose_ci success")
 
     return row
+
+
+# ── bulk import (feat-489 Slice 1B) ─────────────────────────────────────
+
+
+# feat-489: secret REJECTION (not redaction) for the CSV bulk path.
+# Matches the deny-list used by ``redact_manifest_secrets`` in audit_service
+# PLUS the hard-coded leaf names so a column like ``snmp.community`` is
+# caught even when it lives under a non-secret-looking parent key.
+_BULK_SECRET_COLUMN_DENYLIST = frozenset(
+    {
+        # leaf-name matches (the audit walker does this too)
+        "community",
+        "authkey",
+        "privkey",
+        # substring matches on key (case-insensitive) — mirrors
+        # ``_SECRET_FIELD_PATTERN`` from audit_service so admin guidance
+        # matches what gets redacted in MCP / chat paths.
+        "key",
+        "token",
+        "secret",
+        "password",
+    }
+)
+
+# CSV-injection guard — a cell that starts with one of these chars is a
+# classic Excel / Sheets / Numbers formula-injection vector if the CSV is
+# later rendered in a spreadsheet. Reject at submit time.
+_CSV_INJECTION_CHARS = ("=", "+", "-", "@")
+
+
+def _secret_column_match(column_name: str) -> str | None:
+    """Return the matched deny-list token if ``column_name`` looks like a
+    secret column. Match is case-insensitive; checks both substring on the
+    whole key and equality on the trailing leaf after the last ``.``.
+    """
+    if not column_name:
+        return None
+    lower = column_name.lower()
+    leaf = lower.split(".")[-1]
+    if leaf in _BULK_SECRET_COLUMN_DENYLIST:
+        return leaf
+    for token in _BULK_SECRET_COLUMN_DENYLIST:
+        if token in lower:
+            return token
+    return None
+
+
+def _csv_injection_risk(cell_value: str) -> bool:
+    if not cell_value:
+        return False
+    first = cell_value[0]
+    return first in _CSV_INJECTION_CHARS
+
+
+_BULK_MAX_BYTES = int(os.getenv("CMDB_PROPOSAL_BULK_MAX_BYTES", str(5 * 1024 * 1024)))
+_BULK_MAX_ROWS = int(os.getenv("CMDB_PROPOSAL_BULK_MAX_ROWS", "1000"))
+
+
+def _looks_like_csv(file_bytes: bytes) -> bool:
+    """Cheap magic-byte sniff — real CSV starts with printable ASCII (or
+    a UTF-8 BOM ``\\xef\\xbb\\xbf``). Reject anything else (PE binary,
+    Office OOXML, etc.) regardless of the client-supplied Content-Type."""
+    if not file_bytes:
+        return False
+    # Strip BOM if present.
+    sample = file_bytes[:4096]
+    if sample.startswith(b"\xef\xbb\xbf"):
+        sample = sample[3:]
+    if not sample:
+        return False
+    try:
+        text = sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    # Reject if any non-printable / non-CSV control char appears.
+    for ch in text:
+        if ch in ("\n", "\r", "\t"):
+            continue
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            return False
+    return True
+
+
+def bulk_import_proposals(
+    *,
+    file_bytes: bytes,
+    default_category: str | None,
+    default_owner: str | None,
+    user: User,
+    db: Any,
+    request: Any | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """feat-489 Slice 1B: parse a CSV, validate every row, persist ONE
+    bulk proposal covering every CI. The HITL review at
+    ``/#/proposals/cmdb?id=<id>`` stays the only place where CIs land in
+    the active CMDB.
+
+    Validation chain (each is its own line in the response ``errors[]``
+    when it fires so the operator can fix the file):
+
+    1. **File-level**: byte cap (default 5 MB), CSV magic-byte sniff,
+       row cap (default 1000).
+    2. **Per-row schema**: ``id``, ``label``, ``category`` (or
+       ``default_category``) present and non-empty.
+    3. **Idempotency**: ``id`` unique across the file AND not colliding
+       with existing ``:CI`` nodes.
+    4. **Category drift**: each ``category`` (or ``default_category``)
+       must exist live at submit time.
+    5. **CSV-injection guard**: cells in ``id`` / ``label`` / ``category``
+       starting with ``=`` / ``+`` / ``-`` / ``@`` are rejected.
+    6. **Secret REJECTION** (not redaction): columns matching
+       ``*key|*token|*secret|*password|*community|*authkey|*privkey``
+       cause the whole row to be rejected with a hint pointing at
+       ``snmp_community_ref`` / ``secret://...``.
+
+    Atomicity: any single row's failure means the WHOLE file is
+    rejected with HTTP 422 listing every offending row. No partial
+    success — the operator fixes the CSV and resubmits.
+
+    ``dry_run=True`` runs all validators up to (but not including) the
+    repo write + audit row + op log + guard counter increment, so the
+    admin UI can preview before committing.
+    """
+    _enforce_bulk_import_permission(user)
+
+    # ── File-level guards ────────────────────────────────────────────────────
+    if len(file_bytes) > _BULK_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "reason": "file_too_large",
+                "bytes": len(file_bytes),
+                "max_bytes": _BULK_MAX_BYTES,
+            },
+        )
+
+    if not _looks_like_csv(file_bytes):
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "reason": "not_a_csv",
+                "hint": "file must be a UTF-8 CSV (optionally with BOM); rejected at magic-byte sniff",
+            },
+        )
+
+    # ── CSV parse ────────────────────────────────────────────────────────────
+    try:
+        text = file_bytes.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        rows = list(reader)
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "csv_parse_failed", "error": str(exc)},
+        ) from exc
+
+    if not rows:
+        raise HTTPException(
+            status_code=422, detail={"reason": "empty_csv", "hint": "CSV has no data rows"}
+        )
+
+    if len(rows) > _BULK_MAX_ROWS:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "reason": "too_many_rows",
+                "rows": len(rows),
+                "max_rows": _BULK_MAX_ROWS,
+            },
+        )
+
+    # ── Per-row validation ───────────────────────────────────────────────────
+    errors: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    categories_live = _resolve_category(None) or []
+    categories_set = set(categories_live)
+    nodes: list[Node] = []
+    proposed_categories: list[str] = []
+
+    for idx, raw in enumerate(rows, start=2):  # start=2 to match CSV row numbers (header=1)
+        row_errors: list[str] = []
+
+        ci_id = (raw.get("id") or "").strip()
+        label = (raw.get("label") or "").strip()
+        category = (raw.get("category") or "").strip() or (default_category or "").strip()
+        owner = (raw.get("owner") or "").strip() or (default_owner or "").strip()
+        brand = (raw.get("brand") or "").strip() or None
+        model = (raw.get("model") or "").strip() or None
+        serial = (raw.get("serialNumber") or "").strip() or None
+        firmware = (raw.get("firmwareVersion") or "").strip() or None
+        ip = (raw.get("ip") or "").strip() or None
+        location_name = (raw.get("location_name") or "").strip() or None
+        status_val = (raw.get("status") or "").strip() or "OK"
+
+        if not ci_id:
+            row_errors.append("missing id")
+        if not label:
+            row_errors.append("missing label")
+        if not category:
+            row_errors.append(
+                "missing category (column empty and no default_category provided)"
+            )
+
+        # CSV-injection guard.
+        for field_name, value in (
+            ("id", ci_id),
+            ("label", label),
+            ("category", category),
+        ):
+            if value and _csv_injection_risk(value):
+                row_errors.append(
+                    f"{field_name} starts with '{value[0]}' (CSV-injection risk)"
+                )
+
+        # Secret REJECTION (not redaction). Any column that looks like a
+        # secret is rejected with a hint pointing at the secret:// form.
+        secret_match_column: str | None = None
+        secret_match_token: str | None = None
+        for col_name, col_value in raw.items():
+            if col_value is None or col_value == "":
+                continue
+            token = _secret_column_match(col_name)
+            if token:
+                secret_match_column = col_name
+                secret_match_token = token
+                break
+        if secret_match_column:
+            row_errors.append(
+                f"column '{secret_match_column}' matches secret deny-list "
+                f"('{secret_match_token}'); use '<field>_ref' with a secret:// URL instead"
+            )
+
+        # Idempotency — duplicate within file.
+        if ci_id and ci_id in seen_ids:
+            row_errors.append(f"duplicate id '{ci_id}' inside the file")
+        # Idempotency — collision with existing :CI.
+        if ci_id and not any(e.startswith("duplicate") for e in row_errors):
+            if _ci_id_exists(ci_id):
+                row_errors.append(f"id '{ci_id}' collides with an existing :CI")
+
+        # Category drift.
+        if category and category not in categories_set:
+            row_errors.append(f"category '{category}' does not exist (live :Category required)")
+
+        if row_errors:
+            errors.append({"row": idx, "errors": row_errors})
+            continue
+
+        seen_ids.add(ci_id)
+        proposed_categories.append(category)
+
+        # Build the Node-shaped CI. Snmp lives under ``metadata.snmp`` so
+        # it doesn't collide with the top-level CI fields; the audit
+        # walker redacts any plain-text community that slips through.
+        metadata: dict[str, Any] = {}
+        if owner:
+            metadata["owner"] = owner
+        if location_name:
+            metadata["location_name"] = location_name
+        if raw.get("metadata_json"):
+            try:
+                extra = json.loads(raw["metadata_json"])
+                if isinstance(extra, dict):
+                    metadata.update(extra)
+            except json.JSONDecodeError:
+                row_errors.append("metadata_json is not valid JSON")
+
+        # Re-check after metadata_json parse — the same row may have failed
+        # for multiple reasons.
+        if row_errors:
+            errors.append({"row": idx, "errors": row_errors})
+            continue
+
+        try:
+            node = Node(
+                id=ci_id,
+                type=category,
+                label=label,
+                brand=brand,
+                model=model,
+                serialNumber=serial,
+                firmwareVersion=firmware,
+                ip=ip,
+                metadata=metadata or None,
+            )
+        except Exception as exc:
+            errors.append({"row": idx, "errors": [f"node validation failed: {exc}"]})
+            continue
+
+        nodes.append(node)
+
+    if errors:
+        # Atomicity: NO partial success. All errors collected, file rejected.
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "bulk_validation_failed", "errors": errors},
+        )
+
+    # ── Manifest build + persistence ─────────────────────────────────────────
+    manifest_dict: dict[str, Any] = {
+        "schema_version": 1,
+        "cis": [n.model_dump(mode="json", exclude_none=True) for n in nodes],
+        "mode": "bulk",
+        "rationale": f"Bulk CSV import: {len(nodes)} CI(s) by {user.username}",
+        "source_refs": [f"csv:upload:{user.username}"],
+    }
+    manifest_json = json.dumps(manifest_dict, default=str)
+
+    # Validate via the schema one more time so the operator sees the
+    # Pydantic error if anything slipped past the per-row checks.
+    from models.cmdb_proposal import ManifestPayload
+
+    try:
+        payload = ManifestPayload.model_validate(manifest_dict)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422, detail={"reason": "invalid_manifest", "errors": str(exc)}
+        ) from exc
+
+    # Guard gate — one propose_ci tick regardless of cis.length.
+    guard = _get_guard()
+    guard_target = "ci_proposal:bulk"
+    guard_result = guard.check_all_guards(
+        user.username, "propose_ci", [guard_target]
+    )
+    if not guard_result.allowed:
+        try:
+            guard.record_operation(
+                ai_persona=user.role or "OPERATOR",
+                ai_agent_id=user.username,
+                operation="propose_ci",
+                target_type="ci_proposal",
+                target_id=guard_target,
+                target_name=f"bulk:{len(nodes)}",
+                result="blocked",
+                blocked_reason=getattr(guard_result, "reason", None),
+            )
+        except Exception:
+            logger.exception("Failed to record AIOperationLog for bulk propose_ci block")
+        return {
+            "harness_result": {
+                "denied": True,
+                "status": "denied",
+                "reason": getattr(guard_result, "reason", "") or "",
+                "reason_code": (
+                    "bulk_threshold"
+                    if "bulk" in (getattr(guard_result, "reason", "") or "").lower()
+                    else "cooldown_active"
+                ),
+            }
+        }
+
+    if dry_run:
+        # Return the parsed manifest + counts so the UI can preview
+        # without writing to the graph or incrementing guards.
+        return {
+            "dry_run": True,
+            "cis_count": len(nodes),
+            "categories": sorted(set(proposed_categories)),
+            "manifest": manifest_dict,
+        }
+
+    # Persist the draft.
+    proposal_id = str(uuid.uuid4())
+    repo = _get_repo()
+    primary_category = proposed_categories[0] if proposed_categories else None
+    primary_ci_id = nodes[0].id if nodes else None
+    row = repo.create_draft(
+        proposal_id=proposal_id,
+        manifest_json=manifest_json,
+        proposed_by=user.username,
+        proposed_role=user.role or "OPERATOR",
+        proposed_category=primary_category,
+        ci_id=primary_ci_id,
+        manifest_mode="bulk",
+        ci_count=len(nodes),
+    )
+
+    # Audit + op log.
+    redacted_summary = redact_manifest_secrets(manifest_dict)
+    context = _audit_context(
+        proposal_id=proposal_id,
+        proposed_by=user.username,
+        actor_role=user.role or "OPERATOR",
+        previous_state=None,
+        next_state="DRAFT",
+        version=1,
+        applied_manifest_summary=redacted_summary,
+    )
+    _record(
+        db=db,
+        request=request,
+        actor=user,
+        event_type=AUDIT_EVENT_CREATE,
+        outcome=OUTCOME_SUCCESS,
+        target_id=proposal_id,
+        reason="proposal_created_bulk_csv",
+        context=context,
+    )
+
+    try:
+        guard.record_operation(
+            ai_persona=user.role or "OPERATOR",
+            ai_agent_id=user.username,
+            operation="propose_ci",
+            target_type="ci_proposal",
+            target_id=proposal_id,
+            target_name=f"bulk:{len(nodes)}",
+            result="success",
+        )
+    except Exception:
+        logger.exception("Failed to record AIOperationLog for bulk propose_ci success")
+
+    return {
+        "proposal_id": proposal_id,
+        "status": row.get("status", "DRAFT"),
+        "version": row.get("version", 1),
+        "cis_count": len(nodes),
+        "manifest_mode": "bulk",
+        "created_at": row.get("created_at"),
+    }
 
 
 def approve_proposal(

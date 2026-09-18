@@ -9,6 +9,9 @@ SYSTEM_ROLE_PERMISSION_UPGRADES = {
         UserPermission.MQTT_READ.value,
         UserPermission.MQTT_MAPPING_MANAGE.value,
         UserPermission.CI_APPROVE_PROPOSAL.value,
+        # feat-489 Slice 1B: admins can drive the bulk CSV importer
+        # (POST /api/cmdb/proposals/bulk-import).
+        UserPermission.CI_BULK_IMPORT.value,
     ],
     "OPERATOR": [
         UserPermission.MQTT_READ.value,
@@ -17,6 +20,9 @@ SYSTEM_ROLE_PERMISSION_UPGRADES = {
         UserPermission.ITSM_EDIT.value,
         # feat-cmdb-ai-handoff: OPERATOR can approve/revoke AI-submitted proposals.
         UserPermission.CI_APPROVE_PROPOSAL.value,
+        # feat-489 Slice 1B: operators can drive the bulk CSV importer too
+        # (same review surface, distinct audit profile).
+        UserPermission.CI_BULK_IMPORT.value,
     ],
 }
 
@@ -55,6 +61,8 @@ async def seed_roles():
                 UserPermission.ITSM_VIEW.value,
                 UserPermission.ITSM_EDIT.value,
                 UserPermission.CI_APPROVE_PROPOSAL.value,
+                # feat-489 Slice 1B: bulk CSV importer.
+                UserPermission.CI_BULK_IMPORT.value,
             ],
             "is_system": True,
         },
