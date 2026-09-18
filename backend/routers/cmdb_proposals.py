@@ -26,7 +26,9 @@ from models.user import (
     UserPermission,
     UserRole,
 )
+from postgres_db import get_pg_db
 from services.auth_service import check_permission as user_check_permission, get_current_active_user
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ async def create_proposal(
     response: Response,
     manifest: dict[str, Any] = Body(...),  # noqa: B008
     current_user: User = Depends(get_current_active_user),  # noqa: B008
+    db: Session = Depends(get_pg_db),  # noqa: B008  # feat-cmdb-ai-handoff (fix #487)
 ):
     """POST /api/cmdb/proposals — submit a CI manifest (AI_PROPOSE_CI required).
 
@@ -88,7 +91,7 @@ async def create_proposal(
         manifest=manifest,
         user=current_user,
         ai_agent_id=current_user.username,
-        db=None,
+        db=db,
         request=request,
     )
 
@@ -178,6 +181,7 @@ async def approve_proposal(
     body: dict[str, Any] = Body(default_factory=dict),  # noqa: B008
     request: Request = None,
     current_user: User = Depends(get_current_active_user),  # noqa: B008
+    db: Session = Depends(get_pg_db),  # noqa: B008  # feat-cmdb-ai-handoff (fix #487)
 ):
     """POST /api/cmdb/proposals/{id}/approve — human approval gate."""
     if not _user_has_ci_approve_proposal(current_user):
@@ -195,7 +199,7 @@ async def approve_proposal(
         proposal_id=proposal_id,
         expected_version=expected_version,
         user=current_user,
-        db=None,
+        db=db,
         expected_category=expected_category,
         request=request,
     )
@@ -213,6 +217,7 @@ async def revoke_proposal(
     body: dict[str, Any] = Body(default_factory=dict),  # noqa: B008
     request: Request = None,
     current_user: User = Depends(get_current_active_user),  # noqa: B008
+    db: Session = Depends(get_pg_db),  # noqa: B008  # feat-cmdb-ai-handoff (fix #487)
 ):
     """POST /api/cmdb/proposals/{id}/revoke — DRAFT/APPROVED -> REVOKED."""
     if not _user_has_ci_approve_proposal(current_user):
@@ -231,7 +236,7 @@ async def revoke_proposal(
         expected_version=expected_version,
         user=current_user,
         reason=reason,
-        db=None,
+        db=db,
         request=request,
     )
     return {
