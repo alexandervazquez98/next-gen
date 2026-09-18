@@ -13,7 +13,11 @@ The first assistant slice is read-only.
 ## Not allowed
 
 - Create, update, delete, acknowledge, suppress, or close CIs, events, users,
-  roles, or configuration.
+  roles, or configuration. **Exception**: the agent MAY **request** a CI
+  creation via the `propose_ci` intent (HITL flow); execution authority is
+  backend-enforced and a human with `CI_APPROVE_PROPOSAL` makes the final
+  commit. See `tools/cmdb_proposals.md` and the `propose_ci` entry in
+  `routers/ai.py`.
 - Run arbitrary shell commands.
 - Perform broad network scanning or target discovery.
 - Accept user-provided hostnames, IPs, shell flags, LM Studio URLs, or model

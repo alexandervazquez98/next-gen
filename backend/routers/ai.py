@@ -7,11 +7,11 @@ from typing import Any, Literal
 
 from config import get_lm_studio_settings
 from database import get_db
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from models.user import AIPermission, User, UserPermission
 from postgres_db import get_pg_db
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from services import ai_chat_service
+from services import ai_chat_service, cmdb_proposal_service
 from services.ai_chat_service import (
     LMStudioError,
     LMStudioRequestRejected,
@@ -69,7 +69,27 @@ class AvailabilityBatchIntent(BaseModel):
         return cleaned
 
 
-AIChatIntent = AvailabilityIntent | AvailabilityBatchIntent | EventListIntent
+class ProposeCIIntent(BaseModel):
+    """feat-489: chat-side HITL entry point. Agent (or explicit client
+    intent) submits a CMDB proposal manifest; backend validates via
+    ``ManifestPayload.model_validate`` and persists as DRAFT.
+
+    The manifest shape is intentionally a free-form dict here so the LLM
+    can produce it; the strict Pydantic shape is enforced at the service
+    boundary in ``cmdb_proposal_service.create_proposal``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["propose_ci"]
+    manifest: dict[str, Any]
+    rationale: str = Field(default="", max_length=1024)
+    source_refs: list[str] = Field(default_factory=list, max_length=16)
+
+
+AIChatIntent = (
+    AvailabilityIntent | AvailabilityBatchIntent | EventListIntent | ProposeCIIntent
+)
 
 
 class AIChatRequest(BaseModel):
@@ -104,11 +124,21 @@ def _can_run_event_list_harness(user: User) -> bool:
     )
 
 
+def _can_run_propose_ci_harness(user: User) -> bool:
+    # feat-489: AI_PROPOSE_CI is the chat-side gate for HITL CI proposals.
+    # ADMIN bypasses the per-permission check via auth_service.check_permission.
+    return user.role == "ADMIN" or (
+        AIPermission.AI_PROPOSE_CI.value in user.permissions
+    )
+
+
 def _can_run_intent_harness(intent: AIChatIntent, user: User) -> bool:
     if intent.type in {"availability_check", "availability_check_batch"}:
         return _can_run_availability_harness(user)
     if intent.type in {"event_list", "active_events"}:
         return _can_run_event_list_harness(user)
+    if intent.type == "propose_ci":
+        return _can_run_propose_ci_harness(user)
     return False
 
 
@@ -227,6 +257,15 @@ def _build_guard_request_context(intent: AIChatIntent) -> dict[str, Any]:
         context["ci_refs_count"] = 1
     elif isinstance(intent, AvailabilityBatchIntent):
         context["ci_refs_count"] = len(intent.ci_refs)
+    elif isinstance(intent, ProposeCIIntent):
+        # feat-489: include manifest summary in guard context so the audit
+        # row carries the proposed ci_id and category without storing the
+        # full manifest (which the audit walker already redacts).
+        ci_block = intent.manifest.get("ci") if isinstance(intent.manifest, dict) else None
+        if isinstance(ci_block, dict):
+            context["proposed_ci_id"] = ci_block.get("id")
+            context["proposed_category"] = ci_block.get("type") or ci_block.get("category")
+        context["source_refs_count"] = len(intent.source_refs)
     else:
         context["status"] = intent.status
         context["severity"] = intent.severity
@@ -308,6 +347,7 @@ def _record_chat_operation(
 @router.post("/chat", response_model=AIChatResponse)
 async def chat_with_ai(
     body: AIChatRequest,
+    request: Request,
     current_user: User = CurrentUserDep,
     db=PgDbDep,
     neo4j_driver=Neo4jDriverDep,
@@ -327,11 +367,14 @@ async def chat_with_ai(
             current_user.username,
         )
     if intent is not None and not _can_run_intent_harness(intent, current_user):
-        detail = (
-            "Not authorized to run diagnostics"
-            if intent.type in {"availability_check", "availability_check_batch"}
-            else "Not authorized to view events"
-        )
+        if intent.type in {"availability_check", "availability_check_batch"}:
+            detail = "Not authorized to run diagnostics"
+        elif intent.type in {"event_list", "active_events"}:
+            detail = "Not authorized to view events"
+        elif intent.type == "propose_ci":
+            detail = "missing_permission: AI_PROPOSE_CI required to propose a CI"
+        else:  # pragma: no cover — defensive, all branches covered above
+            detail = "Not authorized to run this harness"
         raise HTTPException(status_code=403, detail=detail)
 
     harness_result: dict[str, Any] | None = None
@@ -551,6 +594,58 @@ async def chat_with_ai(
                                 target_name=target_names.get(canonical_id, canonical_id),
                                 result="success",
                             )
+        elif intent.type == "propose_ci":
+            # feat-489: chat-side HITL proposal submission. The service does
+            # the heavy lifting (manifest validation, guard gate, repo write,
+            # audit, op-log). We translate its return shape into the
+            # provider-neutral harness_result so the LLM completion can use
+            # it as chat context.
+            try:
+                result = await asyncio.to_thread(
+                    cmdb_proposal_service.create_proposal,
+                    manifest=intent.manifest,
+                    user=current_user,
+                    ai_agent_id=current_user.username,
+                    db=db,
+                    request=request,
+                )
+            except HTTPException as exc:
+                # Surface service-layer errors (422 invalid_manifest,
+                # 409 ci_id_collision, 404, 403 missing_permission) as a
+                # conversationally-stable harness_result instead of a 4xx,
+                # so the chat agent can quote the reason verbatim to the
+                # operator (cf. tools/cmdb_proposals.md error cheat-sheet).
+                detail = exc.detail
+                reason = (
+                    detail.get("reason") if isinstance(detail, dict) else str(detail)
+                )
+                harness_result = {
+                    "type": "propose_ci",
+                    "status": "error",
+                    "reason": reason or f"http_{exc.status_code}",
+                    "errors": detail if isinstance(detail, dict) else {"detail": str(detail)},
+                    "http_status": exc.status_code,
+                }
+            else:
+                # create_proposal returns either {"harness_result": {denied: ...}}
+                # (guardrail denial) or the created proposal row.
+                if isinstance(result, dict) and "harness_result" in result:
+                    harness_result = {
+                        "type": "propose_ci",
+                        **result["harness_result"],
+                    }
+                else:
+                    harness_result = {
+                        "type": "propose_ci",
+                        "status": "DRAFT",
+                        "proposal_id": result.get("id"),
+                        "version": result.get("version", 1),
+                        "ci_id": result.get("resulted_ci_id") or (
+                            intent.manifest.get("ci", {}).get("id")
+                            if isinstance(intent.manifest, dict)
+                            else None
+                        ),
+                    }
         else:
             harness_result = await asyncio.to_thread(
                 maybe_run_harness, intent, neo4j_driver, current_user
