@@ -89,8 +89,12 @@ describe("BulkImportPanel", () => {
       expect(screen.getByTestId("bulk-import-validation-errors")).toBeTruthy();
     });
     expect(screen.getByText(/2 row\(s\) failed — fix and resubmit/)).toBeTruthy();
-    expect(screen.getByText(/row 2: missing label; category 'Unknown' does not exist/)).toBeTruthy();
-    expect(screen.getByText(/row 3: column 'snmp_community' matches secret deny-list/)).toBeTruthy();
+    expect(
+      screen.getByText(/row 2: missing label; category 'Unknown' does not exist/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/row 3: column 'snmp_community' matches secret deny-list/),
+    ).toBeTruthy();
   });
 
   it("calls onCreated and renders link on successful submit", async () => {

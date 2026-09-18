@@ -96,7 +96,6 @@ export const revokeProposal = (
 
 // ── bulk CSV import (feat-489 Slice 1B) ────────────────────────────────────────
 
-
 export interface BulkValidationError {
   row: number;
   errors: string[];

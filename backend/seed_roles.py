@@ -1,8 +1,11 @@
 import asyncio
+import logging
 
 from database import close_db, get_db
 from models.user import AIPermission, UserPermission
 from postgres_db import SessionLocal  # feat-489 Phase 3: PG backfill session factory
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_ROLE_PERMISSION_UPGRADES = {
     "ADMIN": [

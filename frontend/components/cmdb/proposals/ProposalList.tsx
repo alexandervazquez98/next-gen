@@ -192,9 +192,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
                     </span>
                     {sourceBadge.label}
                     {row.manifest_mode === "bulk" && row.ci_count && row.ci_count > 1 && (
-                      <span className="ml-1 text-amber-200/80 font-mono">
-                        ×{row.ci_count}
-                      </span>
+                      <span className="ml-1 text-amber-200/80 font-mono">×{row.ci_count}</span>
                     )}
                   </span>
                 </td>
@@ -213,7 +211,9 @@ export const ProposalList: React.FC<ProposalListProps> = ({
                   </span>
                 </td>
                 <td className="py-2 px-3 font-mono">{row.version}</td>
-                <td className="py-2 px-3 text-xs text-neutral-400">{formatDateTime(row.created_at)}</td>
+                <td className="py-2 px-3 text-xs text-neutral-400">
+                  {formatDateTime(row.created_at)}
+                </td>
               </tr>
             );
           })}

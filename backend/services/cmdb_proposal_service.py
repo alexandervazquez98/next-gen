@@ -22,7 +22,6 @@ import io
 import json
 import logging
 import os
-import re
 import uuid
 from typing import Any
 
@@ -635,9 +634,12 @@ def bulk_import_proposals(
         if ci_id and ci_id in seen_ids:
             row_errors.append(f"duplicate id '{ci_id}' inside the file")
         # Idempotency — collision with existing :CI.
-        if ci_id and not any(e.startswith("duplicate") for e in row_errors):
-            if _ci_id_exists(ci_id):
-                row_errors.append(f"id '{ci_id}' collides with an existing :CI")
+        if (
+            ci_id
+            and not any(e.startswith("duplicate") for e in row_errors)
+            and _ci_id_exists(ci_id)
+        ):
+            row_errors.append(f"id '{ci_id}' collides with an existing :CI")
 
         # Category drift.
         if category and category not in categories_set:
@@ -716,7 +718,7 @@ def bulk_import_proposals(
     from models.cmdb_proposal import ManifestPayload
 
     try:
-        payload = ManifestPayload.model_validate(manifest_dict)
+        ManifestPayload.model_validate(manifest_dict)
     except Exception as exc:
         raise HTTPException(
             status_code=422, detail={"reason": "invalid_manifest", "errors": str(exc)}

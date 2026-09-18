@@ -82,10 +82,16 @@ export const ProposalDiffView: React.FC<ProposalDiffViewProps> = ({
             <tbody>
               {bulkCis.map((ci, idx) => (
                 <tr key={idx} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-1.5 px-2 font-mono text-emerald-300">{String(ci["id"] ?? "")}</td>
+                  <td className="py-1.5 px-2 font-mono text-emerald-300">
+                    {String(ci["id"] ?? "")}
+                  </td>
                   <td className="py-1.5 px-2">{String(ci["label"] ?? "")}</td>
-                  <td className="py-1.5 px-2 text-neutral-300">{String(ci["type"] ?? ci["category"] ?? "")}</td>
-                  <td className="py-1.5 px-2 font-mono text-neutral-400">{String(ci["ip"] ?? "—")}</td>
+                  <td className="py-1.5 px-2 text-neutral-300">
+                    {String(ci["type"] ?? ci["category"] ?? "")}
+                  </td>
+                  <td className="py-1.5 px-2 font-mono text-neutral-400">
+                    {String(ci["ip"] ?? "—")}
+                  </td>
                   <td className="py-1.5 px-2 text-neutral-400">
                     {[ci["brand"], ci["model"]].filter(Boolean).join(" ") || "—"}
                   </td>

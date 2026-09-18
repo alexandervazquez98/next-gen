@@ -128,8 +128,7 @@ const AIAgentConsole: React.FC = () => {
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
         {messages.map((m, i) => {
-          const proposalLink =
-            m.role === "assistant" ? extractProposalLink(m.harnessResult) : null;
+          const proposalLink = m.role === "assistant" ? extractProposalLink(m.harnessResult) : null;
           return (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className="flex flex-col gap-2 max-w-[85%]">

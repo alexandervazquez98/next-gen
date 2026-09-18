@@ -93,21 +93,16 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
       data-testid="bulk-import-panel"
       className="p-4 bg-neutral-900/40 border border-white/5 rounded-xl flex flex-col gap-3"
     >
-      <h3 className="text-sm font-black uppercase tracking-widest text-white">
-        Bulk CSV import
-      </h3>
+      <h3 className="text-sm font-black uppercase tracking-widest text-white">Bulk CSV import</h3>
       <p className="text-xs text-neutral-400">
-        Upload a UTF-8 CSV with header row. Columns: <code>id</code>,{" "}
-        <code>label</code>, <code>category</code>, <code>brand</code>,{" "}
-        <code>model</code>, <code>serialNumber</code>,{" "}
+        Upload a UTF-8 CSV with header row. Columns: <code>id</code>, <code>label</code>,{" "}
+        <code>category</code>, <code>brand</code>, <code>model</code>, <code>serialNumber</code>,{" "}
         <code>firmwareVersion</code>, <code>ip</code>, <code>owner</code>,{" "}
-        <code>location_name</code>, <code>status</code>,{" "}
-        <code>pollingInterval</code>, <code>metadata_json</code>. Up to{" "}
-        {MAX_ROWS.toLocaleString()} rows and {Math.round(MAX_BYTES / 1024 / 1024)}{" "}
-        MB per upload. Secret columns (anything matching{" "}
-        <code>*key|*token|*secret|*password|*community</code>) are
-        rejected; use <code>{"<field>"}_ref</code> with a{" "}
-        <code>secret://</code> URL instead.
+        <code>location_name</code>, <code>status</code>, <code>pollingInterval</code>,{" "}
+        <code>metadata_json</code>. Up to {MAX_ROWS.toLocaleString()} rows and{" "}
+        {Math.round(MAX_BYTES / 1024 / 1024)} MB per upload. Secret columns (anything matching{" "}
+        <code>*key|*token|*secret|*password|*community</code>) are rejected; use{" "}
+        <code>{"<field>"}_ref</code> with a <code>secret://</code> URL instead.
       </p>
 
       <div className="flex flex-col gap-2">
@@ -127,11 +122,7 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
           </p>
         )}
         {tooLarge && (
-          <p
-            data-testid="bulk-import-file-too-large"
-            role="alert"
-            className="text-xs text-red-400"
-          >
+          <p data-testid="bulk-import-file-too-large" role="alert" className="text-xs text-red-400">
             File exceeds the {Math.round(MAX_BYTES / 1024 / 1024)} MB cap.
           </p>
         )}
@@ -172,12 +163,7 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
         <button
           data-testid="bulk-import-submit"
           onClick={submit}
-          disabled={
-            !file ||
-            submitting ||
-            tooLarge ||
-            (validationErrors.length > 0 && !validation)
-          }
+          disabled={!file || submitting || tooLarge || (validationErrors.length > 0 && !validation)}
           className="px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-50"
         >
           {submitting ? "Submitting…" : "Submit draft"}
@@ -189,10 +175,9 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
           data-testid="bulk-import-validation-ok"
           className="text-xs text-emerald-300 border border-emerald-500/30 rounded-lg p-2 bg-emerald-500/10"
         >
-          ✓ Validation OK — {validation.cis_count} CI(s) ready across{" "}
-          {validation.categories.length} categor
-          {validation.categories.length === 1 ? "y" : "ies"}:{" "}
-          {validation.categories.join(", ")}
+          ✓ Validation OK — {validation.cis_count} CI(s) ready across {validation.categories.length}{" "}
+          categor
+          {validation.categories.length === 1 ? "y" : "ies"}: {validation.categories.join(", ")}
         </div>
       )}
 
@@ -202,8 +187,8 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
           className="text-xs text-red-300 border border-red-500/30 rounded-lg p-2 bg-red-500/10"
         >
           <p className="font-bold mb-1">
-            {validationErrors.length} row(s) failed — fix and resubmit
-            (atomicity: no partial success):
+            {validationErrors.length} row(s) failed — fix and resubmit (atomicity: no partial
+            success):
           </p>
           <ul className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
             {validationErrors.map((e) => (
@@ -231,10 +216,7 @@ const BulkImportPanel: React.FC<BulkImportPanelProps> = ({ onCreated }) => {
           className="text-xs text-emerald-300 border border-emerald-500/30 rounded-lg p-2 bg-emerald-500/10"
         >
           ✓ Created DRAFT proposal{" "}
-          <a
-            href={`/#/proposals/cmdb?id=${submitted.proposal_id}`}
-            className="font-mono underline"
-          >
+          <a href={`/#/proposals/cmdb?id=${submitted.proposal_id}`} className="font-mono underline">
             {submitted.proposal_id}
           </a>{" "}
           ({submitted.cis_count} CIs). Review and approve at{" "}

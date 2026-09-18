@@ -101,7 +101,7 @@ def _stub_lm_studio(monkeypatch, content="Proposal submitted."):
 
     monkeypatch.setattr(
         "services.ai_chat_service._post_lm_studio_chat_completion",
-        side_effect=fake_completion,
+        fake_completion,
     )
 
 

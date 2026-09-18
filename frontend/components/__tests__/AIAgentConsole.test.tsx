@@ -129,9 +129,7 @@ describe("AIAgentConsole", () => {
     fireEvent.change(input, { target: { value: "add edge router" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const link = await waitFor(() =>
-      screen.getByTestId("proposal-link-prop-abc-123"),
-    );
+    const link = await waitFor(() => screen.getByTestId("proposal-link-prop-abc-123"));
     expect(link.getAttribute("href")).toBe("/#/proposals/cmdb?id=prop-abc-123");
     expect(link.textContent).toMatch(/edge-router-bogota-01/);
   });

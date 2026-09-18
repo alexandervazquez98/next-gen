@@ -161,10 +161,7 @@ test.describe("CMDB proposals happy path", () => {
     // BulkImportPanel should be visible for admin with CI_BULK_IMPORT.
     const panel = page.getByTestId("bulk-import-panel");
     if (!(await panel.isVisible())) {
-      test.skip(
-        true,
-        "BulkImportPanel not visible; ensure user has CI_BULK_IMPORT permission",
-      );
+      test.skip(true, "BulkImportPanel not visible; ensure user has CI_BULK_IMPORT permission");
       return;
     }
 
@@ -188,9 +185,7 @@ test.describe("CMDB proposals happy path", () => {
     await expect(page.getByTestId("bulk-import-validation-ok")).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByTestId("bulk-import-validation-ok")).toContainText(
-      "2 CI(s) ready",
-    );
+    await expect(page.getByTestId("bulk-import-validation-ok")).toContainText("2 CI(s) ready");
 
     // Submit draft proposal.
     await page.getByTestId("bulk-import-submit").click();
