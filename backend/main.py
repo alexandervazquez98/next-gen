@@ -220,6 +220,7 @@ def _start_embedded_mqtt_subscriber(*, task_factory=asyncio.create_task) -> None
 
 from middleware.rate_limit import RateLimitMiddleware  # noqa: E402
 from seed_admin import seed_admin  # noqa: E402
+from seed_categories import seed_categories  # noqa: E402  # feat-489 pre-flight
 from seed_roles import seed_roles  # noqa: E402
 from services.snmp_service import get_collector_status, snmp_collector_loop  # noqa: E402
 
@@ -536,6 +537,13 @@ async def startup_event():
         await seed_roles()
     except Exception as e:
         logger.error(f"Failed to seed roles: {e}")
+
+    # Seed default CMDB Categories (feat-489 pre-flight: avoid 422 unknown_category
+    # on the first AI-driven proposal by guaranteeing Router/Switch/Server/etc.)
+    try:
+        await seed_categories()
+    except Exception as e:
+        logger.error(f"Failed to seed categories: {e}")
 
     # Seed AI Prompts (frozen user-override folder; non-fatal, bundled fallback applies)
     try:
