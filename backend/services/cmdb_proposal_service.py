@@ -216,6 +216,21 @@ def create_proposal(
             status_code=422, detail={"reason": "invalid_manifest", "errors": str(exc)}
         ) from exc
 
+    # feat-489 Slice 1B: bulk manifests must use ``bulk_import_proposals``
+    # so the per-row validators (id uniqueness, secret rejection, CSV
+    # injection guard, MIME check) get a chance to run. The legacy
+    # single-CI create_proposal path is preserved exactly as-is for the
+    # chat + MCP ``propose_ci`` tool — no behavioural drift on the hot
+    # path.
+    if payload.mode == "bulk" or payload.cis:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "reason": "bulk_manifest_requires_bulk_import",
+                "hint": "POST /api/cmdb/proposals/bulk-import",
+            },
+        )
+
     ci = payload.ci
 
     # ── 2. Category resolve (REQ-CMAP-002) ───────────────────────────────────
@@ -348,6 +363,123 @@ def approve_proposal(
 
     # Re-resolve category (REQ-CMAP-002 scenario 2)
     manifest_obj = json.loads(proposal["manifest_json"])
+    # feat-489 Slice 1B: dispatch on manifest_mode. Legacy rows without
+    # ``manifest_mode`` default to ``"single"`` (see migration 006).
+    manifest_mode = manifest_obj.get("mode") or proposal.get("manifest_mode") or "single"
+    if manifest_mode == "bulk":
+        cis_raw = manifest_obj.get("cis") or []
+        if not cis_raw:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason": "empty_bulk_manifest", "ci_count": 0},
+            )
+        cis: list[Node] = [Node.model_validate(entry) for entry in cis_raw]
+
+        # Bulk-mode does not accept a single expected_category (the operator
+        # would have to pick one). Reject if the caller supplies one for a
+        # bulk proposal so the audit trail stays honest.
+        if expected_category is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "reason": "expected_category_not_supported_for_bulk",
+                    "expected": expected_category,
+                },
+            )
+
+        # Category drift + collision check for every CI in cis[].
+        all_categories = _resolve_category(None) or []
+        collision_ids: list[str] = []
+        renamed_cis: list[str] = []
+        for entry in cis:
+            if entry.type not in all_categories:
+                renamed_cis.append(entry.type)
+                continue
+            if _ci_id_exists(entry.id):
+                collision_ids.append(entry.id)
+        if renamed_cis:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason": "category_renamed", "categories": renamed_cis},
+            )
+        if collision_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason": "ci_id_collision", "ci_ids": collision_ids},
+            )
+
+        # Commit every CI in cis[].
+        commit_errors: list[dict[str, Any]] = []
+        for entry in cis:
+            try:
+                node_service.create_update_node(entry, user)
+            except HTTPException as exc:
+                commit_errors.append({"ci_id": entry.id, "detail": exc.detail})
+            except Exception as exc:
+                logger.exception(
+                    "node_service.create_update_node failed for bulk ci %s in proposal %s",
+                    entry.id,
+                    proposal_id,
+                )
+                commit_errors.append(
+                    {"ci_id": entry.id, "detail": {"reason": "ci_commit_failed", "error": str(exc)}}
+                )
+        if commit_errors:
+            raise HTTPException(
+                status_code=500,
+                detail={"reason": "ci_commit_failed", "errors": commit_errors},
+            )
+
+        applied_manifest_json = json.dumps(manifest_obj, default=str)
+        # For bulk we record the FIRST CI's id in the legacy resulted_ci_id
+        # column so existing audit reads stay consistent; reviewers should
+        # read the manifest_json / applied_manifest_json for the full list.
+        primary_ci_id = cis[0].id
+
+        try:
+            row = repo.approve(
+                proposal_id=proposal_id,
+                expected_version=expected_version,
+                reviewer_by=user.username,
+                applied_manifest_json=applied_manifest_json,
+                resulted_ci_id=primary_ci_id,
+            )
+        except Exception as exc:
+            from repositories.cmdb_proposal_repo import CmdbProposalVersionConflictError
+
+            if isinstance(exc, CmdbProposalVersionConflictError):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"reason": "version_conflict", "proposal_id": proposal_id},
+                ) from exc
+            raise
+
+        redacted_summary = redact_manifest_secrets(manifest_obj)
+        context = _audit_context(
+            proposal_id=proposal_id,
+            proposed_by=proposal.get("proposed_by"),
+            actor_role=user.role or "OPERATOR",
+            previous_state="DRAFT",
+            next_state="APPROVED",
+            version=row["version"],
+            applied_manifest_summary=redacted_summary,
+            applied_manifest_attributes=redacted_summary,
+            resulted_ci_id=primary_ci_id,
+        )
+        _record(
+            db=db,
+            request=request,
+            actor=user,
+            event_type=AUDIT_EVENT_APPROVE,
+            outcome=OUTCOME_SUCCESS,
+            target_id=proposal_id,
+            reason="proposal_approved_bulk",
+            context=context,
+        )
+
+        return row
+
+    # Single-mode (legacy path).
     ci_dict = manifest_obj["ci"]
     ci = Node.model_validate(ci_dict)
     if expected_category is not None and ci.type != expected_category:
