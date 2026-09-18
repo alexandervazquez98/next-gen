@@ -203,35 +203,48 @@ async def backfill_user_permissions_from_roles() -> None:
     print("Backfilling User.permissions from Role.permissions...")
 
     # ── Postgres backfill ────────────────────────────────────────────────────
+    # Note: in this architecture, Roles live in Neo4j (:Role nodes), while
+    # Users live in both Postgres (primary auth) and Neo4j. We query the
+    # canonical role definitions from Neo4j first, then update Postgres users.
     try:
         from sqlalchemy import text
 
-        db = SessionLocal()
+        # 1. Fetch current role permissions from Neo4j
+        role_perms_map: dict[str, list[str]] = {}
         try:
-            # Single round-trip: UPDATE … FROM with a per-row union.
-            # The CTE inlines the role's permissions as a Postgres array
-            # so the UPDATE only needs one statement instead of looping
-            # in Python.
-            rows = db.execute(
-                text(
-                    """
-                    UPDATE users u
-                    SET permissions = (
-                        SELECT ARRAY(
-                            SELECT DISTINCT unnest(u.permissions || r.permissions)
-                        )
-                    )
-                    FROM roles r
-                    WHERE u.role = r.name
-                    RETURNING u.username, u.role, u.permissions
-                    """
-                )
-            ).fetchall()
-            db.commit()
-            for username, role_name, perms in rows:
-                print(f"  PG: user '{username}' ({role_name}) → {len(perms)} permissions")
-        finally:
-            db.close()
+            driver = get_db()
+            with driver.session() as neo_session:
+                res = neo_session.run("MATCH (r:Role) RETURN r.name AS name, r.permissions AS perms")
+                for rec in res:
+                    if rec["name"] and rec["perms"]:
+                        role_perms_map[rec["name"]] = list(rec["perms"])
+        except Exception:
+            logger.warning("Could not read roles from Neo4j for Postgres backfill")
+
+        if role_perms_map:
+            db = SessionLocal()
+            try:
+                for role_name, role_perms in role_perms_map.items():
+                    rows = db.execute(
+                        text(
+                            """
+                            UPDATE users
+                            SET permissions = (
+                                SELECT ARRAY(
+                                    SELECT DISTINCT unnest(coalesce(permissions, '{}') || :role_perms)
+                                )
+                            )
+                            WHERE role = :role_name
+                            RETURNING username, role, permissions
+                            """
+                        ),
+                        {"role_name": role_name, "role_perms": role_perms},
+                    ).fetchall()
+                    for username, r_name, perms in rows:
+                        print(f"  PG: user '{username}' ({r_name}) → {len(perms)} permissions")
+                db.commit()
+            finally:
+                db.close()
     except Exception:
         # Non-fatal: log and continue. The role upgrade itself is already
         # committed; this is a best-effort backfill for users created

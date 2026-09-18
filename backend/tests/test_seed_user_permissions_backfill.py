@@ -55,23 +55,25 @@ def test_postgres_backfill_issues_union_update(monkeypatch, stub_neo4j_driver):
     import seed_roles
 
     session = _empty_pg_session()
-    # Force the import inside backfill_user_permissions_from_roles to
-    # resolve to our stub session.
     monkeypatch.setattr("seed_roles.SessionLocal", lambda: session)
     monkeypatch.setattr("seed_roles.close_db", lambda: None)
 
+    # Mock Neo4j to return roles
+    neo_session = stub_neo4j_driver.session.return_value.__enter__.return_value
+    neo_session.run.return_value = [
+        {"name": "OPERATOR", "perms": ["CI_VIEW", "CI_BULK_IMPORT"]}
+    ]
+
     asyncio.run(seed_roles.backfill_user_permissions_from_roles())
 
-    # The UPDATE statement must reference both the user and role tables
-    # and use unnest for the union (fill-missing semantics).
+    # The UPDATE statement must union permissions with unnest and coalesce
     update_call = session.execute.call_args_list[0]
     sql = update_call.args[0]
     sql_text = str(sql)
-    assert "UPDATE users u" in sql_text, sql_text
-    assert "FROM roles r" in sql_text, sql_text
-    assert "u.permissions || r.permissions" in sql_text, sql_text
+    assert "UPDATE users" in sql_text, sql_text
+    assert "coalesce(permissions, '{}') || :role_perms" in sql_text, sql_text
     assert "SELECT DISTINCT unnest" in sql_text, sql_text
-    assert "WHERE u.role = r.name" in sql_text, sql_text
+    assert "WHERE role = :role_name" in sql_text, sql_text
     assert "RETURNING" in sql_text, sql_text
 
 
