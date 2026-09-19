@@ -99,6 +99,25 @@ WHERE e.status IN ['OPEN', 'ACK']
 RETURN count(e) AS count
 """
 
+# Pre-mutation read: PROPAGATED descendants of cascade-target ROOTs that
+# will be cascade-recovered. Mirrors the inner CALL block of
+# ``_QUERY_CASCADE_ROOT``. Used to include these rows in the apply-progress
+# snapshot so ``--rollback`` can restore them.
+_QUERY_SELECT_PROPAGATED_CASCADE_TARGETS = """
+MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+WHERE pe.propagated_from IN $root_event_ids
+  AND pe.root_cause_ci_id IN $root_ci_ids
+  AND pe.correlation_type = 'PROPAGATED'
+  AND pe.status IN ['OPEN', 'ACK']
+  AND coalesce(m.can_propagate, true) = true
+RETURN pe.id AS event_id,
+       pe.ci_id AS ci_id,
+       pe.metric_id AS metric_id,
+       pe.status AS status,
+       pe.recovered_at AS recovered_at,
+       pe.event_type AS event_type
+"""
+
 # CI availability snapshot. Captures the latest sample per CI in a single
 # query so the cascade makes decisions against a frozen state.
 _QUERY_CI_SNAPSHOT = """
@@ -326,6 +345,39 @@ def select_cascade_targets(session) -> list[dict]:
     return targets
 
 
+def select_propagated_cascade_targets(
+    session, root_event_ids: list, root_ci_ids: list
+) -> list[dict]:
+    """Pre-mutation read of PROPAGATED descendants that the cascade will
+    recover. Mirrors the inner CALL block predicate of
+    ``_QUERY_CASCADE_ROOT``.
+
+    Including these rows in ``apply-progress.json`` is what makes
+    ``--rollback`` restore the PROPAGATED mutations; without it, the
+    snapshot would only contain ROOT rows and the PROPAGATED events
+    would stay RECOVERED after rollback.
+    """
+    if not root_event_ids:
+        return []
+    result = session.run(
+        _QUERY_SELECT_PROPAGATED_CASCADE_TARGETS,
+        root_event_ids=list(root_event_ids),
+        root_ci_ids=list(root_ci_ids),
+    )
+    return [
+        {
+            "event_id": record["event_id"],
+            "ci_id": record["ci_id"],
+            "metric_id": record["metric_id"],
+            "bucket": "propagated_cascade",
+            "status_pre": record["status"],
+            "recovered_at_pre": _isoformat_or_none(record["recovered_at"]),
+            "event_type_pre": record["event_type"],
+        }
+        for record in result
+    ]
+
+
 def select_legacy_nulls(session) -> list[dict]:
     """Pre-mutation read of legacy NULL-discriminator events.
 
@@ -390,6 +442,7 @@ def close_legacy_nulls(session, event_ids: list) -> int:
 def _write_snapshot(
     snapshot_path: str,
     cascade_targets: list[dict],
+    propagated_targets: list[dict],
     legacy_nulls: list[dict],
     confirm_target: str,
 ) -> None:
@@ -398,6 +451,11 @@ def _write_snapshot(
     The snapshot is the rollback anchor: it MUST exist before any
     mutation. Atomic write (temp + rename) guarantees no partial file
     is left behind if the write is interrupted.
+
+    Includes three row groups so ``--rollback`` restores every mutated row:
+      - ``cascade_targets`` (ROOT events in down_ci / deleted_ci bucket)
+      - ``propagated_targets`` (PROPAGATED descendants of those ROOTs)
+      - ``legacy_nulls`` (legacy NULL-discriminator events)
     """
     rows = []
     for t in cascade_targets:
@@ -410,6 +468,18 @@ def _write_snapshot(
                 "status_pre": t["status_pre"],
                 "recovered_at_pre": _isoformat_or_none(t["recovered_at_pre"]),
                 "event_type_pre": t["event_type_pre"],
+            }
+        )
+    for p in propagated_targets:
+        rows.append(
+            {
+                "event_id": p["event_id"],
+                "ci_id": p["ci_id"],
+                "metric_id": p["metric_id"],
+                "bucket": "propagated_cascade",
+                "status_pre": p["status_pre"],
+                "recovered_at_pre": _isoformat_or_none(p["recovered_at_pre"]),
+                "event_type_pre": p["event_type_pre"],
             }
         )
     for n in legacy_nulls:
@@ -453,27 +523,40 @@ def execute_cascade(
 
     Flow:
       1. ``select_cascade_targets`` — read ROOT cascade targets.
-      2. ``select_legacy_nulls`` — read legacy NULL-discriminator events.
-      3. ``_write_snapshot`` — write ``apply-progress.json`` atomically.
-      4. ``cascade_root_events`` — cascade ROOT + PROPAGATED.
-      5. ``close_legacy_nulls`` — close legacy NULL events.
-      6. Return the report dict.
+      2. ``select_propagated_cascade_targets`` — read PROPAGATED descendants
+         of those ROOTs so they can be included in the snapshot.
+      3. ``select_legacy_nulls`` — read legacy NULL-discriminator events.
+      4. ``_write_snapshot`` — write ``apply-progress.json`` atomically,
+         including ROOT + PROPAGATED + legacy rows so rollback restores all.
+      5. ``cascade_root_events`` — cascade ROOT + PROPAGATED.
+      6. ``close_legacy_nulls`` — close legacy NULL events.
+      7. Return the report dict.
     """
     cascade_targets = select_cascade_targets(session)
     legacy_nulls = select_legacy_nulls(session)
+    propagated_targets = select_propagated_cascade_targets(
+        session,
+        [t["event_id"] for t in cascade_targets],
+        [t["ci_id"] for t in cascade_targets],
+    )
 
-    # Step 3: snapshot BEFORE any mutation.
-    _write_snapshot(snapshot_path, cascade_targets, legacy_nulls, confirm_target)
+    # Step 4: snapshot BEFORE any mutation. All three row groups must be
+    # included so --rollback restores PROPAGATED mutations and legacy
+    # event_type restorations.
+    _write_snapshot(
+        snapshot_path, cascade_targets, propagated_targets, legacy_nulls, confirm_target
+    )
 
-    # Step 4: cascade ROOT + PROPAGATED.
+    # Step 5: cascade ROOT + PROPAGATED.
     cascade_root_events(session, [t["event_id"] for t in cascade_targets])
 
-    # Step 5: close legacy NULLs.
+    # Step 6: close legacy NULLs.
     close_legacy_nulls(session, [n["event_id"] for n in legacy_nulls])
 
     return {
         "mode": "execute",
         "cascade_root_count": len(cascade_targets),
+        "cascade_propagated_count": len(propagated_targets),
         "legacy_null_count": len(legacy_nulls),
         "snapshot_path": str(snapshot_path),
         "confirm_target": confirm_target,
