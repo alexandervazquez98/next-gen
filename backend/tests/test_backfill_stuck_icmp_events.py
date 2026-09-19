@@ -305,6 +305,66 @@ class TestInventoryBuckets:
         # the CI is UP and the event was incorrectly targeted).
         assert None not in buckets
 
+    def test_select_propagated_cascade_targets_returns_empty_for_empty_root_list(self):
+        """No ROOTs means no PROPAGATED cascade targets."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        result = script.select_propagated_cascade_targets(session, [], [])
+        assert result == []
+        # The function should not issue any Neo4j query when there's nothing
+        # to look up.
+        assert session.queries == []
+
+    def test_select_propagated_cascade_targets_returns_required_keys(self):
+        """Each returned row carries the keys needed by the snapshot."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_response(
+            "correlation_type",
+            [
+                {
+                    "event_id": 300,
+                    "ci_id": "ci-descendant",
+                    "metric_id": "icmp_jitter_ms",
+                    "status": "OPEN",
+                    "recovered_at": None,
+                    "event_type": "THRESHOLD_BREACH",
+                },
+            ],
+        )
+
+        result = script.select_propagated_cascade_targets(session, [100], ["ci-down"])
+
+        assert len(result) == 1
+        row = result[0]
+        for key in (
+            "event_id", "ci_id", "metric_id", "bucket",
+            "status_pre", "recovered_at_pre", "event_type_pre",
+        ):
+            assert key in row, f"Missing key {key!r} in propagated row"
+        assert row["bucket"] == "propagated_cascade"
+
+    def test_select_propagated_cascade_targets_uses_inner_call_predicates(self):
+        """The query mirrors the inner CALL block of _QUERY_CASCADE_ROOT.
+
+        Guards against drift between the pre-capture query and the cascade
+        mutation predicate. If the cascade predicate changes, both must
+        change in lockstep, otherwise rollback will mismatch.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_response("correlation_type", [])
+
+        script.select_propagated_cascade_targets(session, [100], ["ci-down"])
+
+        query = session.queries[0]["query"]
+        # Mirrors the inner CALL block of _QUERY_CASCADE_ROOT:
+        assert "propagated_from" in query
+        assert "root_cause_ci_id" in query
+        assert "correlation_type" in query
+        assert "TRIGGERED_BY" in query.upper()
+        assert "can_propagate" in query
+
 
 class TestDryRun:
     """RED -> GREEN: ``dry_run(session)`` is read-only and self-contained."""
