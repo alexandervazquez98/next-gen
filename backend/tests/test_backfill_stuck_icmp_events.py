@@ -371,6 +371,83 @@ class TestDryRun:
         finally:
             os.environ.pop("BACKFILL_ALLOWED_TARGETS", None)
 
+    def test_dry_run_writes_report_to_output_path(self, tmp_path, monkeypatch):
+        """``--dry-run --output=<path>`` must write the JSON report to disk.
+
+        Without this, operators running the dry-run over SSH cannot easily
+        capture the report for review without re-running.
+        """
+        script = _load_script()
+        output_path = tmp_path / "dry-run.json"
+
+        # Build a fake session + driver and patch the lazy GraphDatabase
+        # import inside _main by replacing it on the script module.
+        fake_session = _FakeNeo4jSession()
+        fake_session.set_sequence(
+            [
+                [],  # capture_ci_snapshot
+                [{"count": 1}],  # bucket 1
+                [{"count": 2}],  # bucket 2
+                [{"count": 3}],  # bucket 3
+                [{"count": 4}],  # bucket 4
+            ]
+        )
+
+        class _FakeSessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            def __enter__(self):
+                return self._session
+
+            def __exit__(self, *args):
+                return False
+
+        class _FakeDriver:
+            def session(self):
+                return _FakeSessionContext(fake_session)
+
+            def close(self):
+                pass
+
+        class _FakeGraphDatabase:
+            @staticmethod
+            def driver(uri, auth=None):
+                return _FakeDriver()
+
+        # Patch the lazy-imported GraphDatabase reference inside _main.
+        # _main does ``from neo4j import GraphDatabase`` at call time, so
+        # we patch the real neo4j module's GraphDatabase attribute.
+        import neo4j as real_neo4j
+
+        original = real_neo4j.GraphDatabase
+        real_neo4j.GraphDatabase = _FakeGraphDatabase
+        try:
+            monkeypatch.setattr("os.environ", {**script.os.environ, "NEO4J_URI": "bolt://x", "NEO4J_USER": "x", "NEO4J_PASSWORD": "x"})
+            # _main reads os.environ directly; setting via os.environ is fine.
+            import os as _os
+            saved = {k: _os.environ.get(k) for k in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "BACKFILL_ALLOWED_TARGETS")}
+            _os.environ["NEO4J_URI"] = "bolt://x"
+            _os.environ["NEO4J_USER"] = "x"
+            _os.environ["NEO4J_PASSWORD"] = "x"
+            _os.environ.pop("BACKFILL_ALLOWED_TARGETS", None)
+            try:
+                script._main(["--dry-run", "--output", str(output_path)])
+            finally:
+                for k, v in saved.items():
+                    if v is None:
+                        _os.environ.pop(k, None)
+                    else:
+                        _os.environ[k] = v
+        finally:
+            real_neo4j.GraphDatabase = original
+
+        assert output_path.exists(), "dry-run --output must write the JSON report"
+        report = json.loads(output_path.read_text())
+        assert report["mode"] == "dry-run"
+        assert "buckets" in report
+        assert "ci_snapshot" in report
+
 
 class TestCISnapshot:
     """RED -> GREEN: CI availability snapshot is captured once, not per bucket.
