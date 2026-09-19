@@ -24,10 +24,8 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-from unittest.mock import MagicMock
 
 import pytest
-
 
 # Metric IDs mirror those in ``backend/polling/icmp_measurements.py``.
 ICMP_JITTER_METRIC_ID = "icmp_jitter_ms"
@@ -479,9 +477,8 @@ class TestDryRun:
         """
         script = _load_script()
         buf = io.StringIO()
-        with contextlib.suppress(SystemExit):
-            with contextlib.redirect_stdout(buf):
-                script.build_parser().print_help()
+        with contextlib.suppress(SystemExit), contextlib.redirect_stdout(buf):
+            script.build_parser().print_help()
 
         help_text = buf.getvalue()
         assert "--dry-run" in help_text
@@ -648,7 +645,6 @@ class TestCISnapshot:
         )
 
         call_count = 0
-        original = script.capture_ci_snapshot
 
         def spy(session):
             nonlocal call_count

@@ -35,7 +35,7 @@ import argparse
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Metric IDs mirror those in ``backend/polling/icmp_measurements.py``.
@@ -315,7 +315,7 @@ def dry_run(session) -> dict:
         "mode": "dry-run",
         "buckets": buckets,
         "ci_snapshot": snapshot,
-        "ran_at": datetime.now(timezone.utc).isoformat(),
+        "ran_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -496,9 +496,9 @@ def _write_snapshot(
         )
     snapshot = {
         "run_id": str(uuid.uuid4()),
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "confirm_target": confirm_target,
-        "ci_snapshot_at": datetime.now(timezone.utc).isoformat(),
+        "ci_snapshot_at": datetime.now(UTC).isoformat(),
         "rows": rows,
     }
     target = Path(snapshot_path)
@@ -560,7 +560,7 @@ def execute_cascade(
         "legacy_null_count": len(legacy_nulls),
         "snapshot_path": str(snapshot_path),
         "confirm_target": confirm_target,
-        "ran_at": datetime.now(timezone.utc).isoformat(),
+        "ran_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -579,7 +579,7 @@ def rollback(session, snapshot_path: str, confirm_target: str) -> dict:
             "rolled_back": 0,
             "snapshot_path": str(snapshot_path),
             "confirm_target": confirm_target,
-            "ran_at": datetime.now(timezone.utc).isoformat(),
+            "ran_at": datetime.now(UTC).isoformat(),
         }
     result = session.run(_QUERY_ROLLBACK, rows=rows)
     rolled_back = 0
@@ -594,7 +594,7 @@ def rollback(session, snapshot_path: str, confirm_target: str) -> dict:
         "rolled_back": rolled_back,
         "snapshot_path": str(snapshot_path),
         "confirm_target": confirm_target,
-        "ran_at": datetime.now(timezone.utc).isoformat(),
+        "ran_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -654,7 +654,6 @@ def _main(argv=None):
 
     Accepts ``argv`` for testability; falls back to ``sys.argv[1:]`` when None.
     """
-    import argparse as _argparse
     import sys as _sys
 
     args = build_parser().parse_args(argv if argv is not None else _sys.argv[1:])
@@ -675,7 +674,7 @@ def _main(argv=None):
             elif args.execute:
                 snapshot_path = (
                     args.output
-                    or f"apply-progress-{datetime.now(timezone.utc).isoformat()}.json"
+                    or f"apply-progress-{datetime.now(UTC).isoformat()}.json"
                 )
                 report = execute_cascade(session, snapshot_path, args.confirm_target)
             elif args.rollback:
