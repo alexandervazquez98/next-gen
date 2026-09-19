@@ -238,6 +238,78 @@ class TestInventoryBuckets:
             "(subquery form) to detect deleted CIs."
         )
 
+    def test_select_cascade_targets_excludes_up_ci_events(self):
+        """Regression guard: cascade targets must exclude events whose CI is UP.
+
+        Discovered during E2E mock testing on dev server: the original
+        CASE expression labeled every non-deleted event as 'down_ci',
+        which caused the cascade to mutate events whose CI was actually
+        UP. The fix uses EXISTS { ... WHERE s.value = 0 } to confirm the
+        CI is DOWN before labeling it 'down_ci'. Events whose CI is UP
+        produce bucket = NULL and are filtered out by
+        ``WHERE bucket IS NOT NULL``.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_response("metric_id IN", [])
+
+        script.select_cascade_targets(session)
+
+        select_query = session.queries[0]["query"]
+        # The fix uses EXISTS to check the down_ci condition.
+        assert "EXISTS" in select_query.upper(), (
+            "select_cascade_targets must use EXISTS { ... WHERE s.value = 0 } "
+            "to label a CI as 'down_ci'; the previous CASE labeled every "
+            "non-deleted event as 'down_ci', causing the cascade to mutate "
+            "events on UP CIs."
+        )
+        # The bucket = NULL branch + WHERE bucket IS NOT NULL filter
+        # excludes UP CIs. Check case-insensitively because Cypher keywords
+        # are normalized to uppercase when sent over Bolt.
+        assert "bucket is not null" in select_query.lower(), (
+            "select_cascade_targets must filter out bucket = NULL "
+            "(CI is UP) so natural recovery handles those events."
+        )
+
+    def test_select_cascade_targets_returns_only_down_or_deleted(self):
+        """Mocked select returns only events with bucket 'down_ci' or 'deleted_ci'."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # Two cascade targets: one down_ci, one deleted_ci.
+        session.set_response(
+            "metric_id IN",
+            [
+                {
+                    "event_id": 100,
+                    "ci_id": "ci-down",
+                    "metric_id": "icmp_jitter_ms",
+                    "bucket": "down_ci",
+                    "status": "OPEN",
+                    "recovered_at": None,
+                    "event_type": "THRESHOLD_BREACH",
+                },
+                {
+                    "event_id": 200,
+                    "ci_id": "ci-deleted",
+                    "metric_id": "packet_loss_pct",
+                    "bucket": "deleted_ci",
+                    "status": "OPEN",
+                    "recovered_at": None,
+                    "event_type": "THRESHOLD_BREACH",
+                },
+            ],
+        )
+
+        targets = script.select_cascade_targets(session)
+
+        assert len(targets) == 2
+        # The cascade execution paths downstream rely on bucket being set.
+        buckets = {t["bucket"] for t in targets}
+        assert buckets == {"down_ci", "deleted_ci"}
+        # Critical: no event with bucket=None should appear (would mean
+        # the CI is UP and the event was incorrectly targeted).
+        assert None not in buckets
+
 
 class TestDryRun:
     """RED -> GREEN: ``dry_run(session)`` is read-only and self-contained."""
