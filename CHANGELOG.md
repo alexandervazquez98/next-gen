@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.4] — 2026-09-19
+
 ### Added
 
 - **Default CMDB `:Category` nodes now seed automatically on backend boot (#489 pre-flight)**: a fresh stack used to return `[]` from `GET /api/categories`, so every AI-driven HITL CI proposal short-circuited at `422 unknown_category` and the AI chat workflow from PR #483 was effectively unbootstrappable without manual `POST /api/categories` per type. New `backend/seed_categories.py` (mirrors `seed_roles.py` shape: idempotent MERGE on `:Category.name`, async entrypoint, wired into `main.py` startup right after `seed_roles()`) seeds `Router`, `Switch`, `Server`, `Sensor`, `Firewall`, `Other` on every boot and backfills `icon_key` from `category_icons.resolve_category_icon` if a row exists without one. `docs/USER_GUIDE.md` §10.4 rewritten to reflect auto-seed (curl still works for adding extras). New `backend/tests/test_seed_categories.py` (mirrors `test_seed_roles_cmdb.py` stub-driver pattern): fresh graph → 6 MERGEs with correct icon_keys; existing rows → skip; existing rows with `icon_key=NULL` → backfill; second run on a populated graph → identical call count (idempotency contract).
