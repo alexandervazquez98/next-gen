@@ -553,11 +553,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _main():
-    """CLI entry point. Lazy-imports the Neo4j driver to keep module importable without it."""
-    import argparse as _argparse
+def _main(argv=None):
+    """CLI entry point. Lazy-imports the Neo4j driver to keep module importable without it.
 
-    args = build_parser().parse_args()
+    Accepts ``argv`` for testability; falls back to ``sys.argv[1:]`` when None.
+    """
+    import argparse as _argparse
+    import sys as _sys
+
+    args = build_parser().parse_args(argv if argv is not None else _sys.argv[1:])
 
     # Lazy import: keeps the module importable in test contexts that stub
     # the neo4j module via conftest.
@@ -584,7 +588,12 @@ def _main():
                 report = rollback(session, args.output, args.confirm_target)
             else:
                 raise SystemExit("No mode selected; use --dry-run, --execute, or --rollback")
-            print(json.dumps(report, indent=2, default=str))
+
+            serialized = json.dumps(report, indent=2, default=str)
+            if args.dry_run and args.output:
+                Path(args.output).write_text(serialized)
+            else:
+                print(serialized)
     finally:
         driver.close()
 
