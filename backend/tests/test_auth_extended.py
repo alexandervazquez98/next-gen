@@ -620,6 +620,7 @@ class TestPermissionSecurity:
             UserPermission.ITSM_VIEW,
             UserPermission.ITSM_EDIT,
             UserPermission.CI_APPROVE_PROPOSAL,
+            UserPermission.CI_BULK_IMPORT,
         }
 
         defined_permissions = set(UserPermission)
