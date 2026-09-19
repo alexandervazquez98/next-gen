@@ -338,8 +338,13 @@ class TestInventoryBuckets:
         assert len(result) == 1
         row = result[0]
         for key in (
-            "event_id", "ci_id", "metric_id", "bucket",
-            "status_pre", "recovered_at_pre", "event_type_pre",
+            "event_id",
+            "ci_id",
+            "metric_id",
+            "bucket",
+            "status_pre",
+            "recovered_at_pre",
+            "event_type_pre",
         ):
             assert key in row, f"Missing key {key!r} in propagated row"
         assert row["bucket"] == "propagated_cascade"
@@ -555,10 +560,22 @@ class TestDryRun:
         original = real_neo4j.GraphDatabase
         real_neo4j.GraphDatabase = _FakeGraphDatabase
         try:
-            monkeypatch.setattr("os.environ", {**script.os.environ, "NEO4J_URI": "bolt://x", "NEO4J_USER": "x", "NEO4J_PASSWORD": "x"})
+            monkeypatch.setattr(
+                "os.environ",
+                {
+                    **script.os.environ,
+                    "NEO4J_URI": "bolt://x",
+                    "NEO4J_USER": "x",
+                    "NEO4J_PASSWORD": "x",
+                },
+            )
             # _main reads os.environ directly; setting via os.environ is fine.
             import os as _os
-            saved = {k: _os.environ.get(k) for k in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "BACKFILL_ALLOWED_TARGETS")}
+
+            saved = {
+                k: _os.environ.get(k)
+                for k in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "BACKFILL_ALLOWED_TARGETS")
+            }
             _os.environ["NEO4J_URI"] = "bolt://x"
             _os.environ["NEO4J_USER"] = "x"
             _os.environ["NEO4J_PASSWORD"] = "x"
@@ -710,9 +727,17 @@ class TestExecuteCascade:
         # select + cascade root + cascade propagated (CALL inner)
         session.set_sequence(
             [
-                [{"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
-                  "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
-                  "event_type": "THRESHOLD_BREACH"}],
+                [
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    }
+                ],
                 [],  # cascade root run, returns mutated event
                 [],  # propagated descendants run
             ]
@@ -728,8 +753,7 @@ class TestExecuteCascade:
         cascade_queries = [
             q
             for q in session.queries
-            if "SET" in q["query"].upper()
-            and "backfill_origin" in q["query"]
+            if "SET" in q["query"].upper() and "backfill_origin" in q["query"]
         ]
         assert cascade_queries, "Expected at least one cascade SET clause"
         cascade_query = cascade_queries[0]["query"]
@@ -829,9 +853,17 @@ class TestExecuteCascade:
         session.set_sequence(
             [
                 [],  # select cascade targets (none)
-                [{"event_id": 300, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
-                  "bucket": "null_discriminator", "status": "OPEN",
-                  "recovered_at": None, "event_type": None}],  # select legacy nulls
+                [
+                    {
+                        "event_id": 300,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "null_discriminator",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": None,
+                    }
+                ],  # select legacy nulls
                 [],  # close legacy nulls
             ]
         )
@@ -843,15 +875,12 @@ class TestExecuteCascade:
         )
 
         null_queries = [
-            q
-            for q in session.queries
-            if "event_type = 'legacy-no-relevant'" in q["query"]
+            q for q in session.queries if "event_type = 'legacy-no-relevant'" in q["query"]
         ]
         assert null_queries, "Expected at least one legacy-null SET clause"
         null_query = null_queries[0]["query"]
         assert (
-            "backfill_origin = 'chore-events-backfill-486-legacy-null-discriminator'"
-            in null_query
+            "backfill_origin = 'chore-events-backfill-486-legacy-null-discriminator'" in null_query
         )
         assert "recovery_source = 'backfill'" in null_query
         assert "status = 'RECOVERED'" in null_query
@@ -885,9 +914,7 @@ class TestExecuteCascade:
         )
 
         null_queries = [
-            q
-            for q in session.queries
-            if "event_type = 'legacy-no-relevant'" in q["query"]
+            q for q in session.queries if "event_type = 'legacy-no-relevant'" in q["query"]
         ]
         assert null_queries
         null_query = null_queries[0]["query"]
@@ -946,18 +973,36 @@ class TestExecuteCascade:
             [
                 # select cascade targets: 2 events
                 [
-                    {"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
-                     "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
-                     "event_type": "THRESHOLD_BREACH"},
-                    {"event_id": 200, "ci_id": "ci-2", "metric_id": "packet_loss_pct",
-                     "bucket": "deleted_ci", "status": "OPEN", "recovered_at": None,
-                     "event_type": "THRESHOLD_BREACH"},
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    },
+                    {
+                        "event_id": 200,
+                        "ci_id": "ci-2",
+                        "metric_id": "packet_loss_pct",
+                        "bucket": "deleted_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    },
                 ],
                 # select legacy nulls: 1 event
                 [
-                    {"event_id": 300, "ci_id": "ci-3", "metric_id": "icmp_jitter_ms",
-                     "bucket": "null_discriminator", "status": "OPEN",
-                     "recovered_at": None, "event_type": None},
+                    {
+                        "event_id": 300,
+                        "ci_id": "ci-3",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "null_discriminator",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": None,
+                    },
                 ],
                 # cascade root
                 [],
@@ -993,9 +1038,15 @@ class TestExecuteCascade:
         session.set_sequence(
             [
                 [
-                    {"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
-                     "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
-                     "event_type": "THRESHOLD_BREACH"},
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    },
                 ],
                 [],
                 [],
@@ -1058,9 +1109,7 @@ class TestRollback:
         )
 
         # Find the rollback SET clause.
-        rollback_queries = [
-            q for q in session.queries if "SET" in q["query"].upper()
-        ]
+        rollback_queries = [q for q in session.queries if "SET" in q["query"].upper()]
         assert rollback_queries
         rollback_query = rollback_queries[0]["query"]
         # Status is reset to the pre-state value (parameterized).
@@ -1101,9 +1150,7 @@ class TestRollback:
             confirm_target="staging",
         )
 
-        rollback_queries = [
-            q for q in session.queries if "SET" in q["query"].upper()
-        ]
+        rollback_queries = [q for q in session.queries if "SET" in q["query"].upper()]
         assert rollback_queries
         rollback_query = rollback_queries[0]["query"]
         assert "backfill_origin = NULL" in rollback_query
@@ -1141,11 +1188,8 @@ class TestRollback:
             confirm_target="staging",
         )
 
-        rollback_queries = [
-            q for q in session.queries if "SET" in q["query"].upper()
-        ]
+        rollback_queries = [q for q in session.queries if "SET" in q["query"].upper()]
         assert rollback_queries
         rollback_query = rollback_queries[0]["query"]
         # The MATCH clause must gate on backfill_origin IS NOT NULL.
         assert "backfill_origin IS NOT NULL" in rollback_query
-

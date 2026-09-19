@@ -340,9 +340,7 @@ def select_cascade_targets(session) -> list[dict]:
     CI has been deleted from the CMDB. Bucket classification is
     re-determined inline so the cascade query can re-filter idempotently.
     """
-    result = session.run(
-        _QUERY_SELECT_CASCADE_TARGETS, icmp_metric_ids=ICMP_METRIC_IDS
-    )
+    result = session.run(_QUERY_SELECT_CASCADE_TARGETS, icmp_metric_ids=ICMP_METRIC_IDS)
     targets = []
     for record in result:
         targets.append(
@@ -530,9 +528,7 @@ def _isoformat_or_none(value):
     return str(value)
 
 
-def execute_cascade(
-    session, snapshot_path: str, confirm_target: str
-) -> dict:
+def execute_cascade(session, snapshot_path: str, confirm_target: str) -> dict:
     """Run the cascade. Returns a structured report.
 
     Flow:
@@ -687,8 +683,7 @@ def _main(argv=None):
                 report = dry_run(session)
             elif args.execute:
                 snapshot_path = (
-                    args.output
-                    or f"apply-progress-{datetime.now(UTC).isoformat()}.json"
+                    args.output or f"apply-progress-{datetime.now(UTC).isoformat()}.json"
                 )
                 report = execute_cascade(session, snapshot_path, args.confirm_target)
             elif args.rollback:
@@ -709,4 +704,3 @@ def _main(argv=None):
 
 if __name__ == "__main__":
     _main()
-
