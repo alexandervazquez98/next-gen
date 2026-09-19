@@ -15,6 +15,7 @@ Reference: ``backend/services/catalog_service.py::create_category`` uses
 the same MERGE pattern; this script mirrors it but is invoked from
 ``main.py`` startup so the seed is automatic.
 """
+
 import asyncio
 
 from database import close_db, get_db
@@ -105,8 +106,7 @@ async def seed_categories() -> None:
                     print(f"  . Skipped Category '{name}' (already present)")
 
     print(
-        f"Categories seeded: {created} created, "
-        f"{updated} updated, {skipped} already present."
+        f"Categories seeded: {created} created, " f"{updated} updated, {skipped} already present."
     )
     close_db()
 

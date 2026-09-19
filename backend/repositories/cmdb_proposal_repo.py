@@ -82,7 +82,11 @@ class CmdbProposalRepo:
         if value is None:
             return None
         iso = getattr(value, "iso_format", None) or getattr(value, "isoformat", None)
-        return iso() if callable(iso) else str(value) if not isinstance(value, (int, float, bool, dict, list)) else value
+        return (
+            iso()
+            if callable(iso)
+            else str(value) if not isinstance(value, (int, float, bool, dict, list)) else value
+        )
 
     @staticmethod
     def _record(row: Any) -> dict[str, Any] | None:
@@ -93,7 +97,9 @@ class CmdbProposalRepo:
             res = {key: row.get(key) for key in _RETURN_FIELDS if key in row}
         else:
             try:
-                res = {key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row}
+                res = {
+                    key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row
+                }
             except Exception:
                 try:
                     res = {key: row.get(key) for key in _RETURN_FIELDS}

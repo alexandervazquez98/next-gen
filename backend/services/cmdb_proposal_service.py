@@ -546,10 +546,11 @@ def bulk_import_proposals(
             ci_id = ""
         label = (raw.get("label") or raw.get("Label") or "").strip()
         category = (
-            (raw.get("category") or raw.get("NetworkLayer") or raw.get("Category") or "").strip()
-            or (default_category or "").strip()
-        )
-        owner = (raw.get("owner") or raw.get("Owner") or "").strip() or (default_owner or "").strip()
+            raw.get("category") or raw.get("NetworkLayer") or raw.get("Category") or ""
+        ).strip() or (default_category or "").strip()
+        owner = (raw.get("owner") or raw.get("Owner") or "").strip() or (
+            default_owner or ""
+        ).strip()
         brand = (raw.get("brand") or raw.get("Brand") or "").strip() or None
         model = (raw.get("model") or raw.get("Model") or "").strip() or None
         serial = (raw.get("serialNumber") or raw.get("SerialNumber") or "").strip() or None
@@ -597,9 +598,7 @@ def bulk_import_proposals(
         if not label:
             row_errors.append("missing label")
         if not category:
-            row_errors.append(
-                "missing category (column empty and no default_category provided)"
-            )
+            row_errors.append("missing category (column empty and no default_category provided)")
 
         # CSV-injection guard.
         for field_name, value in (
@@ -608,9 +607,7 @@ def bulk_import_proposals(
             ("category", category),
         ):
             if value and _csv_injection_risk(value):
-                row_errors.append(
-                    f"{field_name} starts with '{value[0]}' (CSV-injection risk)"
-                )
+                row_errors.append(f"{field_name} starts with '{value[0]}' (CSV-injection risk)")
 
         # Secret REJECTION (not redaction). Any column that looks like a
         # secret is rejected with a hint pointing at the secret:// form.
@@ -727,9 +724,7 @@ def bulk_import_proposals(
     # Guard gate — one propose_ci tick regardless of cis.length.
     guard = _get_guard()
     guard_target = "ci_proposal:bulk"
-    guard_result = guard.check_all_guards(
-        user.username, "propose_ci", [guard_target]
-    )
+    guard_result = guard.check_all_guards(user.username, "propose_ci", [guard_target])
     if not guard_result.allowed:
         try:
             guard.record_operation(

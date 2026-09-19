@@ -67,9 +67,7 @@ def _default_ai_chat_guard(monkeypatch):
     propose_ci tests override this per-test as needed."""
     from models.ai_guard_models import GuardResult
 
-    monkeypatch.setattr(
-        "routers.ai.check_all_guards", lambda *a, **kw: GuardResult(allowed=True)
-    )
+    monkeypatch.setattr("routers.ai.check_all_guards", lambda *a, **kw: GuardResult(allowed=True))
     monkeypatch.setattr("routers.ai.record_operation", lambda *a, **kw: None)
 
 
@@ -96,6 +94,7 @@ def _enable_lm_studio(monkeypatch):
 def _stub_lm_studio(monkeypatch, content="Proposal submitted."):
     """Bypass LM Studio with a fixed response so we can assert on the
     backend's harness_result instead of the LLM's free-text answer."""
+
     def fake_completion(payload, settings):
         return {"content": content, "model": settings.model}
 

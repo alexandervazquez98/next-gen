@@ -60,9 +60,7 @@ def test_postgres_backfill_issues_union_update(monkeypatch, stub_neo4j_driver):
 
     # Mock Neo4j to return roles
     neo_session = stub_neo4j_driver.session.return_value.__enter__.return_value
-    neo_session.run.return_value = [
-        {"name": "OPERATOR", "perms": ["CI_VIEW", "CI_BULK_IMPORT"]}
-    ]
+    neo_session.run.return_value = [{"name": "OPERATOR", "perms": ["CI_VIEW", "CI_BULK_IMPORT"]}]
 
     asyncio.run(seed_roles.backfill_user_permissions_from_roles())
 
@@ -101,9 +99,7 @@ def test_postgres_backfill_survives_db_failure(monkeypatch, stub_neo4j_driver, c
 
     # Mock Neo4j to return at least one role so it reaches the Postgres block
     neo_session = stub_neo4j_driver.session.return_value.__enter__.return_value
-    neo_session.run.return_value = [
-        {"name": "OPERATOR", "perms": ["CI_VIEW"]}
-    ]
+    neo_session.run.return_value = [{"name": "OPERATOR", "perms": ["CI_VIEW"]}]
 
     def broken_session():
         s = MagicMock()
@@ -141,7 +137,8 @@ def test_neo4j_backfill_uses_fill_missing_cypher(monkeypatch, stub_neo4j_driver)
 
     # Find the Cypher call.
     cypher_calls = [
-        c for c in session.run.call_args_list
+        c
+        for c in session.run.call_args_list
         if "MATCH (u:User)" in str(c.args[0]) and "r:Role" in str(c.args[0])
     ]
     assert cypher_calls, "No Neo4j MATCH call issued"
@@ -165,8 +162,8 @@ def test_neo4j_backfill_survives_neo4j_failure(monkeypatch, stub_neo4j_driver, c
     import seed_roles
 
     driver = MagicMock()
-    driver.session.return_value.__enter__.return_value.run.side_effect = (
-        RuntimeError("neo4j unreachable")
+    driver.session.return_value.__enter__.return_value.run.side_effect = RuntimeError(
+        "neo4j unreachable"
     )
     monkeypatch.setattr("seed_roles.get_db", lambda: driver)
     monkeypatch.setattr("seed_roles.SessionLocal", _empty_pg_session)

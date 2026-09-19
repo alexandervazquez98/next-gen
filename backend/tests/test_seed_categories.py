@@ -58,19 +58,17 @@ def test_fresh_graph_creates_all_default_categories(stub_driver):
     asyncio.run(seed_categories.seed_categories())
 
     # Collect every MERGE call on :Category — there should be one per default.
-    merge_calls = [
-        c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])
-    ]
+    merge_calls = [c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])]
     seeded_names = {c.kwargs.get("name") for c in merge_calls}
-    assert seeded_names == set(seed_categories.DEFAULT_CATEGORIES), (
-        f"Expected all DEFAULT_CATEGORIES to be MERGE'd; got {seeded_names}"
-    )
+    assert seeded_names == set(
+        seed_categories.DEFAULT_CATEGORIES
+    ), f"Expected all DEFAULT_CATEGORIES to be MERGE'd; got {seeded_names}"
 
     # Router must resolve to icon_key='router' (canonical mapping in category_icons).
     router_call = next(c for c in merge_calls if c.kwargs.get("name") == "Router")
-    assert router_call.kwargs.get("icon_key") == "router", (
-        f"Router should resolve to icon_key='router'; got {router_call.kwargs.get('icon_key')}"
-    )
+    assert (
+        router_call.kwargs.get("icon_key") == "router"
+    ), f"Router should resolve to icon_key='router'; got {router_call.kwargs.get('icon_key')}"
 
 
 def test_existing_category_with_icon_is_skipped(stub_driver):
@@ -89,12 +87,10 @@ def test_existing_category_with_icon_is_skipped(stub_driver):
     asyncio.run(seed_categories.seed_categories())
 
     # No MERGE should fire — every category already exists with an icon.
-    merge_calls = [
-        c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])
-    ]
-    assert merge_calls == [], (
-        f"Existing categories must not be re-MERGE'd; got {len(merge_calls)} calls"
-    )
+    merge_calls = [c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])]
+    assert (
+        merge_calls == []
+    ), f"Existing categories must not be re-MERGE'd; got {len(merge_calls)} calls"
 
 
 def test_existing_category_with_null_icon_is_backfilled(stub_driver):
@@ -118,9 +114,12 @@ def test_existing_category_with_null_icon_is_backfilled(stub_driver):
     # All defaults except 'Other' have a canonical icon mapping; 'Other' falls
     # back to 'generic'. Either is acceptable as long as backfill fired.
     icon_keys = {c.kwargs.get("icon_key") for c in backfill_calls}
-    assert icon_keys <= {None, "router", "server", "generic"}, (
-        f"Unexpected icon_keys in backfill: {icon_keys}"
-    )
+    assert icon_keys <= {
+        None,
+        "router",
+        "server",
+        "generic",
+    }, f"Unexpected icon_keys in backfill: {icon_keys}"
 
 
 def test_seed_is_idempotent_across_two_runs(stub_driver):
@@ -142,20 +141,26 @@ def test_seed_is_idempotent_across_two_runs(stub_driver):
     # Run 1
     stub_driver.session.return_value.__enter__.return_value = fresh_session()
     asyncio.run(seed_categories.seed_categories())
-    first_calls = [str(c.args[0]) for c in stub_driver.session.return_value.__enter__.return_value.run.call_args_list]
+    first_calls = [
+        str(c.args[0])
+        for c in stub_driver.session.return_value.__enter__.return_value.run.call_args_list
+    ]
 
     # Run 2 on the same (populated) graph state
     stub_driver.session.return_value.__enter__.return_value = fresh_session()
     asyncio.run(seed_categories.seed_categories())
-    second_calls = [str(c.args[0]) for c in stub_driver.session.return_value.__enter__.return_value.run.call_args_list]
+    second_calls = [
+        str(c.args[0])
+        for c in stub_driver.session.return_value.__enter__.return_value.run.call_args_list
+    ]
 
     for label, calls in (("first", first_calls), ("second", second_calls)):
-        assert all("MERGE (c:Category" not in q for q in calls), (
-            f"{label} run issued MERGEs on a populated graph: {calls}"
-        )
-        assert all("SET c.icon_key" not in q for q in calls), (
-            f"{label} run issued icon_key SETs on a populated graph: {calls}"
-        )
+        assert all(
+            "MERGE (c:Category" not in q for q in calls
+        ), f"{label} run issued MERGEs on a populated graph: {calls}"
+        assert all(
+            "SET c.icon_key" not in q for q in calls
+        ), f"{label} run issued icon_key SETs on a populated graph: {calls}"
         match_calls = [q for q in calls if "MATCH (c:Category" in q]
         assert len(match_calls) == len(seed_categories.DEFAULT_CATEGORIES), (
             f"{label} run: expected {len(seed_categories.DEFAULT_CATEGORIES)} MATCH calls; "

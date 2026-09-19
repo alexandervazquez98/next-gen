@@ -217,7 +217,9 @@ async def backfill_user_permissions_from_roles() -> None:
         try:
             driver = get_db()
             with driver.session() as neo_session:
-                res = neo_session.run("MATCH (r:Role) RETURN r.name AS name, r.permissions AS perms")
+                res = neo_session.run(
+                    "MATCH (r:Role) RETURN r.name AS name, r.permissions AS perms"
+                )
                 for rec in res:
                     if rec["name"] and rec["perms"]:
                         role_perms_map[rec["name"]] = list(rec["perms"])

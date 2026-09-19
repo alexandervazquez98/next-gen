@@ -126,16 +126,12 @@ class ManifestPayload(BaseModel):
         has_ci = self.ci is not None
         has_cis = self.cis is not None and len(self.cis) > 0
         if has_ci and has_cis:
-            raise ValueError(
-                "manifest must set either 'ci' (single) or 'cis' (bulk), not both"
-            )
+            raise ValueError("manifest must set either 'ci' (single) or 'cis' (bulk), not both")
         if not has_ci and not has_cis:
             raise ValueError("manifest must set either 'ci' (single) or 'cis' (bulk)")
         if has_cis:
             if self.mode != "bulk":
-                raise ValueError(
-                    f"manifest has cis[] but mode={self.mode!r}; expected 'bulk'"
-                )
+                raise ValueError(f"manifest has cis[] but mode={self.mode!r}; expected 'bulk'")
             for idx, ci in enumerate(self.cis or []):
                 metadata = ci.metadata or {}
                 blocked = [k for k in metadata if k in BLOCKED_AI_UPDATE_FIELDS]
@@ -151,9 +147,7 @@ class ManifestPayload(BaseModel):
             metadata = (self.ci.metadata if self.ci else {}) or {}
             blocked = [k for k in metadata if k in BLOCKED_AI_UPDATE_FIELDS]
             if blocked:
-                raise ValueError(
-                    f"metadata must not contain blocked AI fields keys: {blocked}"
-                )
+                raise ValueError(f"metadata must not contain blocked AI fields keys: {blocked}")
         return self
 
 

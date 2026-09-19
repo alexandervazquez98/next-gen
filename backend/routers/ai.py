@@ -87,9 +87,7 @@ class ProposeCIIntent(BaseModel):
     source_refs: list[str] = Field(default_factory=list, max_length=16)
 
 
-AIChatIntent = (
-    AvailabilityIntent | AvailabilityBatchIntent | EventListIntent | ProposeCIIntent
-)
+AIChatIntent = AvailabilityIntent | AvailabilityBatchIntent | EventListIntent | ProposeCIIntent
 
 
 class AIChatRequest(BaseModel):
@@ -127,9 +125,7 @@ def _can_run_event_list_harness(user: User) -> bool:
 def _can_run_propose_ci_harness(user: User) -> bool:
     # feat-489: AI_PROPOSE_CI is the chat-side gate for HITL CI proposals.
     # ADMIN bypasses the per-permission check via auth_service.check_permission.
-    return user.role == "ADMIN" or (
-        AIPermission.AI_PROPOSE_CI.value in user.permissions
-    )
+    return user.role == "ADMIN" or (AIPermission.AI_PROPOSE_CI.value in user.permissions)
 
 
 def _can_run_intent_harness(intent: AIChatIntent, user: User) -> bool:
@@ -616,9 +612,7 @@ async def chat_with_ai(
                 # so the chat agent can quote the reason verbatim to the
                 # operator (cf. tools/cmdb_proposals.md error cheat-sheet).
                 detail = exc.detail
-                reason = (
-                    detail.get("reason") if isinstance(detail, dict) else str(detail)
-                )
+                reason = detail.get("reason") if isinstance(detail, dict) else str(detail)
                 harness_result = {
                     "type": "propose_ci",
                     "status": "error",
@@ -640,7 +634,8 @@ async def chat_with_ai(
                         "status": "DRAFT",
                         "proposal_id": result.get("id"),
                         "version": result.get("version", 1),
-                        "ci_id": result.get("resulted_ci_id") or (
+                        "ci_id": result.get("resulted_ci_id")
+                        or (
                             intent.manifest.get("ci", {}).get("id")
                             if isinstance(intent.manifest, dict)
                             else None
