@@ -113,6 +113,15 @@ RETURN ci.id AS ci_id, latest.value AS latest_value
 
 # Pre-mutation read: events that will be cascade targets. Bucket is
 # re-determined inline so the cascade query can re-filter idempotently.
+#
+# Buckets:
+#   - 'deleted_ci'   — the CI is gone from the CMDB.
+#   - 'down_ci'     — the CI exists AND has a recent availability=0 sample.
+#   - NULL          — the CI is UP. Not a cascade target; natural recovery
+#                     will close the event when the next OK sample arrives.
+#
+# The bucket = NULL branch is filtered out by ``WHERE bucket IS NOT NULL``
+# so events on UP CIs are NOT included in the cascade.
 _QUERY_SELECT_CASCADE_TARGETS = """
 MATCH (e:Event)
 WHERE e.status IN ['OPEN', 'ACK']
@@ -124,9 +133,13 @@ WITH e,
        WHEN NOT EXISTS {
          MATCH (:CI {id: e.ci_id})
        } THEN 'deleted_ci'
-       ELSE 'down_ci'
+       WHEN EXISTS {
+         MATCH (:CI {id: e.ci_id})-[:HAS_AVAILABILITY_SAMPLE]->(s)
+         WHERE s.value = 0
+       } THEN 'down_ci'
+       ELSE NULL
      END AS bucket
-WHERE bucket IN ['down_ci', 'deleted_ci']
+WHERE bucket IS NOT NULL
 RETURN e.id AS event_id,
        e.ci_id AS ci_id,
        e.metric_id AS metric_id,
