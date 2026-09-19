@@ -735,6 +735,7 @@ def get_availability_report(
             WHERE e.created_at IS NOT NULL
               AND e.recovered_at IS NOT NULL
               AND e.event_type = 'AVAILABILITY'
+              AND e.event_type <> 'legacy-no-relevant'
               AND e.availability_source IN ['PING', 'ICMP']
               AND toUpper(coalesce(e.correlation_type, 'ROOT')) <> 'PROPAGATED'
               AND NOT e.status IN ['OPEN', 'ACK']

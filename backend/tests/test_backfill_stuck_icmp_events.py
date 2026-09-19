@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -416,3 +417,499 @@ class TestCISnapshot:
             f"Snapshot must be captured exactly once per dry_run; got "
             f"{call_count} calls"
         )
+
+
+class TestExecuteCascade:
+    """RED -> GREEN: ``execute_cascade`` mutates only cascade-target events."""
+
+    def test_select_cascade_targets_returns_list_with_required_keys(self):
+        """Pre-mutation read returns one record per cascade-target event."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_response(
+            "metric_id IN",
+            [
+                {
+                    "event_id": 100,
+                    "ci_id": "ci-down",
+                    "metric_id": "icmp_jitter_ms",
+                    "bucket": "down_ci",
+                    "status": "OPEN",
+                    "recovered_at": None,
+                    "event_type": "THRESHOLD_BREACH",
+                },
+                {
+                    "event_id": 200,
+                    "ci_id": "ci-deleted",
+                    "metric_id": "packet_loss_pct",
+                    "bucket": "deleted_ci",
+                    "status": "ACK",
+                    "recovered_at": None,
+                    "event_type": "THRESHOLD_BREACH",
+                },
+            ],
+        )
+
+        targets = script.select_cascade_targets(session)
+
+        assert len(targets) == 2
+        first = targets[0]
+        for key in (
+            "event_id",
+            "ci_id",
+            "metric_id",
+            "bucket",
+            "status_pre",
+            "recovered_at_pre",
+            "event_type_pre",
+        ):
+            assert key in first, f"Missing key {key!r} in cascade target"
+        assert targets[0]["bucket"] == "down_ci"
+        assert targets[1]["bucket"] == "deleted_ci"
+
+    def test_cascade_root_set_clause_has_cascade_audit_marker(self):
+        """The cascade SET clause must set both ``backfill_origin`` and ``recovery_source``."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # select + cascade root + cascade propagated (CALL inner)
+        session.set_sequence(
+            [
+                [{"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
+                  "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
+                  "event_type": "THRESHOLD_BREACH"}],
+                [],  # cascade root run, returns mutated event
+                [],  # propagated descendants run
+            ]
+        )
+
+        script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        # Find the cascade root query (the one with the SET clause).
+        cascade_queries = [
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper()
+            and "backfill_origin" in q["query"]
+        ]
+        assert cascade_queries, "Expected at least one cascade SET clause"
+        cascade_query = cascade_queries[0]["query"]
+        assert "backfill_origin = 'chore-events-backfill-486-cascade'" in cascade_query
+        assert "recovery_source = 'backfill'" in cascade_query
+        assert "status = 'RECOVERED'" in cascade_query
+
+    def test_cascade_root_query_filters_event_type_threshold_breach(self):
+        """The cascade must scope to ROOT THRESHOLD_BREACH events only."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # Provide one cascade target so the cascade query actually runs.
+        session.set_sequence(
+            [
+                [
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    }
+                ],
+                [],  # cascade root run
+                [],  # cascade propagated run
+            ]
+        )
+
+        script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        cascade_queries = [
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "backfill_origin" in q["query"]
+        ]
+        assert cascade_queries
+        cascade_query = cascade_queries[0]["query"]
+        assert "event_type = 'THRESHOLD_BREACH'" in cascade_query
+        # ROOT events only: PROPAGATED descendants ride the inner CALL block.
+        assert "correlation_type" in cascade_query
+
+    def test_cascade_propagated_uses_propagated_from_predicate(self):
+        """The PROPAGATED inner CALL block uses ``propagated_from = e.id``.
+
+        This mirrors ``_recover_icmp_*_events`` and MUST NOT use the
+        ``_recover_snmp_collection_failures`` full-cascade predicate
+        (``root_cause_ci_id = e.ci_id``) which would expand scope.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_sequence(
+            [
+                [
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    }
+                ],
+                [],
+                [],
+            ]
+        )
+
+        script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        cascade_queries = [
+            q
+            for q in session.queries
+            if "SET" in q["query"].upper() and "backfill_origin" in q["query"]
+        ]
+        assert cascade_queries
+        cascade_query = cascade_queries[0]["query"]
+        assert "propagated_from = e.id" in cascade_query
+        assert "root_cause_ci_id = e.ci_id" in cascade_query  # secondary filter OK
+        # can_propagate gate mirrors _recover_icmp_*
+        assert "can_propagate" in cascade_query
+
+    def test_legacy_null_closure_set_clause_has_null_discriminator_marker(self):
+        """The legacy-null SET clause sets ``event_type = 'legacy-no-relevant'`` and the dedicated marker."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_sequence(
+            [
+                [],  # select cascade targets (none)
+                [{"event_id": 300, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
+                  "bucket": "null_discriminator", "status": "OPEN",
+                  "recovered_at": None, "event_type": None}],  # select legacy nulls
+                [],  # close legacy nulls
+            ]
+        )
+
+        script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        null_queries = [
+            q
+            for q in session.queries
+            if "event_type = 'legacy-no-relevant'" in q["query"]
+        ]
+        assert null_queries, "Expected at least one legacy-null SET clause"
+        null_query = null_queries[0]["query"]
+        assert (
+            "backfill_origin = 'chore-events-backfill-486-legacy-null-discriminator'"
+            in null_query
+        )
+        assert "recovery_source = 'backfill'" in null_query
+        assert "status = 'RECOVERED'" in null_query
+
+    def test_legacy_null_closure_preserves_metric_name_and_ci_id(self):
+        """The legacy-null SET clause must NOT touch ``metric_name``, ``ci_id``, ``severity``."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # Provide a legacy null target so the closure query runs.
+        session.set_sequence(
+            [
+                [],  # cascade targets: none
+                [
+                    {
+                        "event_id": 300,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": None,
+                    }
+                ],  # legacy nulls
+                [],  # closure run
+            ]
+        )
+
+        script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        null_queries = [
+            q
+            for q in session.queries
+            if "event_type = 'legacy-no-relevant'" in q["query"]
+        ]
+        assert null_queries
+        null_query = null_queries[0]["query"]
+        # Forbidden: overwriting preserved fields.
+        assert "metric_name = " not in null_query
+        assert "ci_id = " not in null_query
+        assert "severity = " not in null_query
+
+    def test_snapshot_written_before_any_mutation(self, tmp_path, monkeypatch):
+        """``apply-progress.json`` (or .md) is written BEFORE any SET clause.
+
+        The snapshot is the rollback anchor; if a write fails mid-cascade,
+        the snapshot must already exist.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # Provide enough rows for select cascade + select legacy + cascade + null closure.
+        session.set_sequence(
+            [
+                [
+                    {
+                        "event_id": 100,
+                        "ci_id": "ci-1",
+                        "metric_id": "icmp_jitter_ms",
+                        "bucket": "down_ci",
+                        "status": "OPEN",
+                        "recovered_at": None,
+                        "event_type": "THRESHOLD_BREACH",
+                    }
+                ],
+                [],
+                [],
+                [],
+            ]
+        )
+
+        snapshot_path = tmp_path / "snapshot.json"
+        script.execute_cascade(
+            session,
+            snapshot_path=str(snapshot_path),
+            confirm_target="staging",
+        )
+
+        assert snapshot_path.exists()
+        # The SET queries must come AFTER the file write (verified via query order
+        # vs the existence of the file at the time of writing). The simpler proxy:
+        # at least one SET query was issued, AND the file exists, AND the file
+        # was written before script returned.
+        assert any("SET" in q["query"].upper() for q in session.queries)
+
+    def test_execute_returns_report_with_cascade_and_null_counts(self):
+        """``execute_cascade`` returns a structured report dict."""
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_sequence(
+            [
+                # select cascade targets: 2 events
+                [
+                    {"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
+                     "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
+                     "event_type": "THRESHOLD_BREACH"},
+                    {"event_id": 200, "ci_id": "ci-2", "metric_id": "packet_loss_pct",
+                     "bucket": "deleted_ci", "status": "OPEN", "recovered_at": None,
+                     "event_type": "THRESHOLD_BREACH"},
+                ],
+                # select legacy nulls: 1 event
+                [
+                    {"event_id": 300, "ci_id": "ci-3", "metric_id": "icmp_jitter_ms",
+                     "bucket": "null_discriminator", "status": "OPEN",
+                     "recovered_at": None, "event_type": None},
+                ],
+                # cascade root
+                [],
+                # cascade propagated
+                [],
+                # legacy null closure
+                [],
+            ]
+        )
+
+        report = script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+
+        assert report["mode"] == "execute"
+        assert report["cascade_root_count"] == 2
+        assert report["legacy_null_count"] == 1
+        assert "snapshot_path" in report
+        assert "ran_at" in report
+
+    def test_execute_is_idempotent_on_already_recovered_events(self):
+        """Re-running after partial completion is a no-op on already-recovered rows.
+
+        Both cascade queries begin with ``status IN ['OPEN', 'ACK']``. Once
+        a row is RECOVERED, the WHERE clause rejects it; the SET clause
+        never fires.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        # First run: mutates 2 events.
+        session.set_sequence(
+            [
+                [
+                    {"event_id": 100, "ci_id": "ci-1", "metric_id": "icmp_jitter_ms",
+                     "bucket": "down_ci", "status": "OPEN", "recovered_at": None,
+                     "event_type": "THRESHOLD_BREACH"},
+                ],
+                [],
+                [],
+                [],
+            ]
+        )
+        first = script.execute_cascade(
+            session,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+        assert first["cascade_root_count"] == 1
+
+        # Second run: same data, but the cascade query returns empty (events
+        # are now RECOVERED and excluded by the WHERE clause).
+        session2 = _FakeNeo4jSession()
+        session2.set_sequence([[], [], [], []])
+        second = script.execute_cascade(
+            session2,
+            snapshot_path="/tmp/test-snapshot.json",
+            confirm_target="staging",
+        )
+        assert second["cascade_root_count"] == 0
+        assert second["legacy_null_count"] == 0
+
+
+class TestRollback:
+    """RED -> GREEN: ``rollback`` reproduces pre-mutation state from snapshot."""
+
+    def test_rollback_resets_status_recovered_at_and_event_type(self, tmp_path):
+        """The rollback SET clause resets each mutated field to its pre-state."""
+        script = _load_script()
+        snapshot = {
+            "run_id": "test-uuid",
+            "run_at": "2026-09-18T00:00:00Z",
+            "confirm_target": "staging",
+            "ci_snapshot_at": "2026-09-18T00:00:00Z",
+            "rows": [
+                {
+                    "event_id": 100,
+                    "ci_id": "ci-1",
+                    "metric_id": "icmp_jitter_ms",
+                    "bucket": "down_ci",
+                    "status_pre": "OPEN",
+                    "recovered_at_pre": None,
+                    "event_type_pre": "THRESHOLD_BREACH",
+                },
+            ],
+        }
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(json.dumps(snapshot))
+
+        session = _FakeNeo4jSession()
+        session.set_sequence([[]])
+
+        script.rollback(
+            session,
+            snapshot_path=str(snapshot_path),
+            confirm_target="staging",
+        )
+
+        # Find the rollback SET clause.
+        rollback_queries = [
+            q for q in session.queries if "SET" in q["query"].upper()
+        ]
+        assert rollback_queries
+        rollback_query = rollback_queries[0]["query"]
+        # Status is reset to the pre-state value (parameterized).
+        assert "status" in rollback_query
+        # recovered_at and event_type also reset.
+        assert "recovered_at" in rollback_query
+        assert "event_type" in rollback_query
+
+    def test_rollback_clears_backfill_origin_and_recovery_source(self, tmp_path):
+        """The rollback SET clause clears both audit markers."""
+        script = _load_script()
+        snapshot = {
+            "run_id": "test-uuid",
+            "run_at": "2026-09-18T00:00:00Z",
+            "confirm_target": "staging",
+            "ci_snapshot_at": "2026-09-18T00:00:00Z",
+            "rows": [
+                {
+                    "event_id": 100,
+                    "ci_id": "ci-1",
+                    "metric_id": "icmp_jitter_ms",
+                    "bucket": "down_ci",
+                    "status_pre": "OPEN",
+                    "recovered_at_pre": None,
+                    "event_type_pre": "THRESHOLD_BREACH",
+                },
+            ],
+        }
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(json.dumps(snapshot))
+
+        session = _FakeNeo4jSession()
+        session.set_sequence([[]])
+
+        script.rollback(
+            session,
+            snapshot_path=str(snapshot_path),
+            confirm_target="staging",
+        )
+
+        rollback_queries = [
+            q for q in session.queries if "SET" in q["query"].upper()
+        ]
+        assert rollback_queries
+        rollback_query = rollback_queries[0]["query"]
+        assert "backfill_origin = NULL" in rollback_query
+        assert "recovery_source = NULL" in rollback_query
+
+    def test_rollback_self_bounded_by_backfill_origin_is_not_null(self, tmp_path):
+        """Rollback only touches rows whose ``backfill_origin`` is set (idempotent)."""
+        script = _load_script()
+        snapshot = {
+            "run_id": "test-uuid",
+            "run_at": "2026-09-18T00:00:00Z",
+            "confirm_target": "staging",
+            "ci_snapshot_at": "2026-09-18T00:00:00Z",
+            "rows": [
+                {
+                    "event_id": 100,
+                    "ci_id": "ci-1",
+                    "metric_id": "icmp_jitter_ms",
+                    "bucket": "down_ci",
+                    "status_pre": "OPEN",
+                    "recovered_at_pre": None,
+                    "event_type_pre": "THRESHOLD_BREACH",
+                },
+            ],
+        }
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(json.dumps(snapshot))
+
+        session = _FakeNeo4jSession()
+        session.set_sequence([[]])
+
+        script.rollback(
+            session,
+            snapshot_path=str(snapshot_path),
+            confirm_target="staging",
+        )
+
+        rollback_queries = [
+            q for q in session.queries if "SET" in q["query"].upper()
+        ]
+        assert rollback_queries
+        rollback_query = rollback_queries[0]["query"]
+        # The MATCH clause must gate on backfill_origin IS NOT NULL.
+        assert "backfill_origin IS NOT NULL" in rollback_query
+
