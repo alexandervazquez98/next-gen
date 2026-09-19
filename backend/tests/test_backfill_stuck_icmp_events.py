@@ -196,6 +196,43 @@ class TestInventoryBuckets:
         # Cypher keyword check; case-insensitive.
         assert "NOT EXISTS" in fourth_query.upper()
 
+    def test_deleted_ci_query_uses_subquery_form_not_inline_pattern(self):
+        """Regression guard for Neo4j 5.x Cypher syntax.
+
+        The valid form is ``NOT EXISTS { MATCH ... }`` (subquery). The
+        invalid form ``NOT EXISTS ((:CI {id: ...}))`` (inline pattern
+        with double parens) raises CypherSyntaxError against Neo4j 5.x.
+        This test catches regressions to the invalid form.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_sequence([[{"count": 0}], [{"count": 0}], [{"count": 0}], [{"count": 0}]])
+
+        script.inventory_buckets(session)
+
+        fourth_query = session.queries[3]["query"]
+        assert "NOT EXISTS (" not in fourth_query, (
+            "NOT EXISTS inline pattern is invalid Cypher 5; use "
+            "NOT EXISTS { MATCH ... } (subquery form)."
+        )
+
+    def test_select_cascade_targets_uses_subquery_form_for_deleted_ci_check(self):
+        """Regression guard for ``_QUERY_SELECT_CASCADE_TARGETS``.
+
+        Same Neo4j 5.x subquery-form constraint as bucket 4.
+        """
+        script = _load_script()
+        session = _FakeNeo4jSession()
+        session.set_response("metric_id IN", [])
+
+        script.select_cascade_targets(session)
+
+        select_query = session.queries[0]["query"]
+        assert "NOT EXISTS (" not in select_query, (
+            "select_cascade_targets must use NOT EXISTS { MATCH ... } "
+            "(subquery form) to detect deleted CIs."
+        )
+
 
 class TestDryRun:
     """RED -> GREEN: ``dry_run(session)`` is read-only and self-contained."""
