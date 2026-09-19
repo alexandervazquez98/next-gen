@@ -19,7 +19,18 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from models.user import (
     AIPermission,
     User,
@@ -56,6 +67,12 @@ def _user_has_ci_approve_proposal(user: User) -> bool:
     if user.role == UserRole.ADMIN.value or user.role == "ADMIN":
         return True
     return UserPermission.CI_APPROVE_PROPOSAL.value in (user.permissions or [])
+
+
+def _user_has_ci_bulk_import(user: User) -> bool:
+    if user.role == UserRole.ADMIN.value or user.role == "ADMIN":
+        return True
+    return UserPermission.CI_BULK_IMPORT.value in (user.permissions or [])
 
 
 router = APIRouter(
@@ -244,3 +261,98 @@ async def revoke_proposal(
         "status": row["status"],
         "version": row["version"],
     }
+
+
+# ── bulk CSV import (feat-489 Slice 1B) ────────────────────────────────────────
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    """Read the entire upload into memory. The bulk service enforces the
+    byte cap so this can be unbounded without OOM risk."""
+    return await file.read()
+
+
+@router.post("/bulk-validate")
+async def bulk_validate_proposals(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008
+    default_category: str | None = Form(default=None),  # noqa: B008
+    default_owner: str | None = Form(default=None),  # noqa: B008
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    db: Session = Depends(get_pg_db),  # noqa: B008  # noqa: F821
+):
+    """POST /api/cmdb/proposals/bulk-validate (CI_BULK_IMPORT required).
+
+    Dry-run: runs every per-row validator and returns the parsed manifest
+    + counts WITHOUT writing the draft or incrementing guard counters.
+    The admin UI uses this for the \"preview\" step before submit.
+    """
+    if not _user_has_ci_bulk_import(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="missing_permission: CI_BULK_IMPORT required to bulk-import CIs",
+        )
+
+    file_bytes = await _read_upload(file)
+
+    from services import cmdb_proposal_service as svc
+
+    result = svc.bulk_import_proposals(
+        file_bytes=file_bytes,
+        default_category=default_category,
+        default_owner=default_owner,
+        user=current_user,
+        db=db,
+        request=request,
+        dry_run=True,
+    )
+    return result
+
+
+@router.post("/bulk-import")
+async def bulk_import_proposals(
+    request: Request,
+    response: Response,
+    file: UploadFile = File(...),  # noqa: B008
+    default_category: str | None = Form(default=None),  # noqa: B008
+    default_owner: str | None = Form(default=None),  # noqa: B008
+    current_user: User = Depends(get_current_active_user),  # noqa: B008
+    db: Session = Depends(get_pg_db),  # noqa: B008  # noqa: F821
+):
+    """POST /api/cmdb/proposals/bulk-import (CI_BULK_IMPORT required).
+
+    multipart/form-data: one .csv file + optional default_category and
+    default_owner. The whole file becomes ONE DRAFT proposal with
+    ``cis[]``; per-row errors return HTTP 422 with the offending rows
+    listed (atomicity: NO partial success). Cooldown / bulk threshold
+    apply once per file regardless of cis.length.
+    """
+    if not _user_has_ci_bulk_import(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="missing_permission: CI_BULK_IMPORT required to bulk-import CIs",
+        )
+
+    file_bytes = await _read_upload(file)
+
+    from services import cmdb_proposal_service as svc
+
+    result = svc.bulk_import_proposals(
+        file_bytes=file_bytes,
+        default_category=default_category,
+        default_owner=default_owner,
+        user=current_user,
+        db=db,
+        request=request,
+        dry_run=False,
+    )
+
+    # Guardrail denial comes back as {harness_result: {denied: true}};
+    # forward as 200 with the denial so the LLM / UI can react without
+    # a 4xx.
+    if isinstance(result, dict) and result.get("harness_result", {}).get("denied"):
+        response.status_code = 200
+        return result
+
+    response.status_code = 201
+    return result

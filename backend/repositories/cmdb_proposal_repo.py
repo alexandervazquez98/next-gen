@@ -50,6 +50,8 @@ _RETURN_FIELDS: tuple[str, ...] = (
     "revoke_reason",
     "proposed_category",
     "ci_id",
+    "manifest_mode",
+    "ci_count",
 )
 
 
@@ -73,18 +75,43 @@ class CmdbProposalRepo:
         return session(query, **params) if callable(session) else session.run(query, **params)
 
     @staticmethod
+    def _to_iso(value: Any) -> Any:
+        """Coerce Neo4j temporal types (e.g. neo4j.time.DateTime) to ISO 8601 strings.
+        Prevents frontend React crashes when rendering created_at/updated_at.
+        """
+        if value is None:
+            return None
+        iso = getattr(value, "iso_format", None) or getattr(value, "isoformat", None)
+        return (
+            iso()
+            if callable(iso)
+            else str(value) if not isinstance(value, (int, float, bool, dict, list)) else value
+        )
+
+    @staticmethod
     def _record(row: Any) -> dict[str, Any] | None:
         if row is None:
             return None
+        res: dict[str, Any] = {}
         if isinstance(row, dict):
-            return {key: row.get(key) for key in _RETURN_FIELDS if key in row}
-        try:
-            return {key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row}
-        except Exception:
+            res = {key: row.get(key) for key in _RETURN_FIELDS if key in row}
+        else:
             try:
-                return {key: row.get(key) for key in _RETURN_FIELDS}
+                res = {
+                    key: row[key] for key in _RETURN_FIELDS if row[key] is not None or key in row
+                }
             except Exception:
-                return None
+                try:
+                    res = {key: row.get(key) for key in _RETURN_FIELDS}
+                except Exception:
+                    return None
+
+        # Coerce temporal fields to ISO string
+        for temp_key in ("created_at", "updated_at", "reviewed_at"):
+            if temp_key in res and res[temp_key] is not None:
+                res[temp_key] = CmdbProposalRepo._to_iso(res[temp_key])
+
+        return res
 
     @staticmethod
     def _now_iso() -> str:
@@ -101,8 +128,33 @@ class CmdbProposalRepo:
         proposed_category: str | None = None,
         ci_id: str | None = None,
         applied_manifest_json: str | None = None,
+        manifest_mode: str | None = None,
+        ci_count: int | None = None,
     ) -> dict[str, Any]:
         now = self._now_iso()
+        # feat-489 Slice 1B: derive manifest_mode and ci_count from the
+        # manifest itself when the caller didn't supply them explicitly.
+        # Single-mode defaults keep the legacy single-CI path unchanged.
+        if manifest_mode is None or ci_count is None:
+            import json as _json
+
+            try:
+                manifest_obj = _json.loads(manifest_json)
+            except Exception:
+                manifest_obj = {}
+            if manifest_mode is None:
+                manifest_mode = (
+                    "bulk"
+                    if isinstance(manifest_obj, dict) and manifest_obj.get("cis")
+                    else "single"
+                )
+            if ci_count is None:
+                if manifest_mode == "bulk" and isinstance(manifest_obj, dict):
+                    cis = manifest_obj.get("cis") or []
+                    ci_count = len(cis) if isinstance(cis, list) else 1
+                else:
+                    ci_count = 1
+
         query = """
         CREATE (p:CIProposal)
         SET
@@ -120,7 +172,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id = NULL,
             p.revoke_reason = NULL,
             p.proposed_category = $proposed_category,
-            p.ci_id = $ci_id
+            p.ci_id = $ci_id,
+            p.manifest_mode = $manifest_mode,
+            p.ci_count = $ci_count
         RETURN
             p.id AS id,
             p.manifest_json AS manifest_json,
@@ -136,7 +190,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         """
         params = {
             "proposal_id": proposal_id,
@@ -149,6 +205,8 @@ class CmdbProposalRepo:
             "updated_at": now,
             "proposed_category": proposed_category,
             "ci_id": ci_id,
+            "manifest_mode": manifest_mode,
+            "ci_count": ci_count,
         }
         result = self._run(query, **params)
         row = result.single() if hasattr(result, "single") else result
@@ -177,7 +235,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         """
         result = self._run(query, proposal_id=proposal_id)
         row = result.single() if hasattr(result, "single") else result
@@ -225,7 +285,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         ORDER BY p.created_at DESC, p.id
         SKIP $skip LIMIT $limit
         """
@@ -275,7 +337,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         """
         params = {
             "proposal_id": proposal_id,
@@ -330,7 +394,9 @@ class CmdbProposalRepo:
             p.resulted_ci_id AS resulted_ci_id,
             p.revoke_reason AS revoke_reason,
             p.proposed_category AS proposed_category,
-            p.ci_id AS ci_id
+            p.ci_id AS ci_id,
+            p.manifest_mode AS manifest_mode,
+            p.ci_count AS ci_count
         """
         params = {
             "proposal_id": proposal_id,

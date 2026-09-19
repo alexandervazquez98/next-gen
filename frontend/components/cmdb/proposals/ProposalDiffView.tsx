@@ -51,6 +51,59 @@ export const ProposalDiffView: React.FC<ProposalDiffViewProps> = ({
   liveCategories,
   liveCiExists,
 }) => {
+  const isBulk = manifest?.["mode"] === "bulk" || Array.isArray(manifest?.["cis"]);
+  const bulkCis = (manifest?.["cis"] ?? []) as Array<Record<string, unknown>>;
+
+  if (isBulk) {
+    return (
+      <div
+        data-testid="proposal-diff-view"
+        className="grid gap-3 p-4 bg-neutral-900/40 border border-white/5 rounded-xl"
+      >
+        <div className="flex items-center justify-between border-b border-white/5 pb-2">
+          <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+            Bulk Proposal ({bulkCis.length} CIs)
+          </span>
+          <span className="text-[10px] text-neutral-400 font-mono">
+            {manifest?.["rationale"] ? String(manifest["rationale"]) : ""}
+          </span>
+        </div>
+        <div className="max-h-80 overflow-y-auto custom-scrollbar">
+          <table className="w-full text-xs text-left">
+            <thead className="text-[10px] uppercase tracking-widest text-neutral-500 border-b border-white/5">
+              <tr>
+                <th className="py-1.5 px-2">ID</th>
+                <th className="py-1.5 px-2">Label</th>
+                <th className="py-1.5 px-2">Type / Category</th>
+                <th className="py-1.5 px-2">IP</th>
+                <th className="py-1.5 px-2">Brand / Model</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bulkCis.map((ci, idx) => (
+                <tr key={idx} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-1.5 px-2 font-mono text-emerald-300">
+                    {String(ci["id"] ?? "")}
+                  </td>
+                  <td className="py-1.5 px-2">{String(ci["label"] ?? "")}</td>
+                  <td className="py-1.5 px-2 text-neutral-300">
+                    {String(ci["type"] ?? ci["category"] ?? "")}
+                  </td>
+                  <td className="py-1.5 px-2 font-mono text-neutral-400">
+                    {String(ci["ip"] ?? "—")}
+                  </td>
+                  <td className="py-1.5 px-2 text-neutral-400">
+                    {[ci["brand"], ci["model"]].filter(Boolean).join(" ") || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   const manifestCi = (manifest?.["ci"] ?? {}) as Record<string, unknown>;
   const { added, changed, removed } = classify(manifestCi, liveCi ?? undefined);
   const categoryDrift = !liveCategories.includes(String(manifestCi["category"] ?? ""));

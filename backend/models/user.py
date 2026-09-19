@@ -64,6 +64,10 @@ class UserPermission(str, Enum):  # noqa: UP042
     # AI-submitted CI proposals. Admin already receives this permission via
     # the spread of all UserPermission values in seed_roles.py.
     CI_APPROVE_PROPOSAL = "CI_APPROVE_PROPOSAL"
+    # feat-489 Slice 1B: gates admin bulk CSV import (POST /cmdb/proposals/
+    # bulk-import). Distinct from CI_APPROVE_PROPOSAL so chat-vs-bulk audit
+    # stays separable; admins receive it via the spread in seed_roles.py.
+    CI_BULK_IMPORT = "CI_BULK_IMPORT"
 
 
 class Role(BaseModel):

@@ -63,6 +63,20 @@ interface ProposalListProps {
   error: Error | null;
   filters: { status: string; category: string; proposed_by: string };
   onFiltersChange: (_next: { status: string; category: string; proposed_by: string }) => void;
+  onSelectRow?: (_rowId: string) => void;
+}
+
+function formatDateTime(val: unknown): string {
+  if (!val) return "—";
+  if (typeof val === "string") return val;
+  if (typeof val === "object") {
+    try {
+      return JSON.stringify(val);
+    } catch {
+      return String(val);
+    }
+  }
+  return String(val);
 }
 
 export const ProposalList: React.FC<ProposalListProps> = ({
@@ -71,6 +85,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
   error,
   filters,
   onFiltersChange,
+  onSelectRow,
 }) => {
   if (loading) {
     return (
@@ -122,6 +137,7 @@ export const ProposalList: React.FC<ProposalListProps> = ({
           <tr>
             <th className="text-left py-2 px-3">ID</th>
             <th className="text-left py-2 px-3">Proposer</th>
+            <th className="text-left py-2 px-3">Source</th>
             <th className="text-left py-2 px-3">Category</th>
             <th className="text-left py-2 px-3">Status</th>
             <th className="text-left py-2 px-3">Version</th>
@@ -129,32 +145,78 @@ export const ProposalList: React.FC<ProposalListProps> = ({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              data-testid={`proposal-row-${row.id}`}
-              className="border-b border-white/5 hover:bg-white/5"
-            >
-              <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
-              <td className="py-2 px-3">{row.proposed_by}</td>
-              <td className="py-2 px-3">{row.proposed_category ?? row.ci_id ?? "—"}</td>
-              <td className="py-2 px-3">
-                <span
-                  className={
-                    row.status === "DRAFT"
-                      ? "text-amber-400"
-                      : row.status === "APPROVED"
-                        ? "text-emerald-400"
-                        : "text-red-400"
-                  }
-                >
-                  {row.status}
-                </span>
-              </td>
-              <td className="py-2 px-3 font-mono">{row.version}</td>
-              <td className="py-2 px-3 text-xs text-neutral-400">{row.created_at}</td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            // feat-489 Slice 1B: derive source from manifest_mode (set on
+            // :CIProposal at create time) + proposed_by. Bulk CSV always
+            // means "Bulk CSV"; single + AI agent means "AI chat"; single
+            // + MCP / human means "MCP tool".
+            const isAiAgent =
+              row.proposed_by.toLowerCase().startsWith("ai-") ||
+              row.proposed_by.toLowerCase() === "ai-bot";
+            let sourceBadge: { label: string; icon: string; cls: string };
+            if (row.manifest_mode === "bulk") {
+              sourceBadge = {
+                label: "Bulk CSV",
+                icon: "upload_file",
+                cls: "bg-amber-500/10 text-amber-300 border-amber-500/30",
+              };
+            } else if (isAiAgent) {
+              sourceBadge = {
+                label: "AI chat",
+                icon: "smart_toy",
+                cls: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30",
+              };
+            } else {
+              sourceBadge = {
+                label: "MCP tool",
+                icon: "terminal",
+                cls: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+              };
+            }
+            return (
+              <tr
+                key={row.id}
+                data-testid={`proposal-row-${row.id}`}
+                onClick={() => onSelectRow?.(row.id)}
+                className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
+              >
+                <td className="py-2 px-3 font-mono text-xs">{row.id}</td>
+                <td className="py-2 px-3">{row.proposed_by}</td>
+                <td className="py-2 px-3">
+                  <span
+                    data-testid={`proposal-source-${row.id}`}
+                    className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full border ${sourceBadge.cls}`}
+                  >
+                    <span className="material-symbols-outlined text-[12px]">
+                      {sourceBadge.icon}
+                    </span>
+                    {sourceBadge.label}
+                    {row.manifest_mode === "bulk" && row.ci_count && row.ci_count > 1 && (
+                      <span className="ml-1 text-amber-200/80 font-mono">×{row.ci_count}</span>
+                    )}
+                  </span>
+                </td>
+                <td className="py-2 px-3">{row.proposed_category ?? row.ci_id ?? "—"}</td>
+                <td className="py-2 px-3">
+                  <span
+                    className={
+                      row.status === "DRAFT"
+                        ? "text-amber-400"
+                        : row.status === "APPROVED"
+                          ? "text-emerald-400"
+                          : "text-red-400"
+                    }
+                  >
+                    {row.status}
+                  </span>
+                </td>
+                <td className="py-2 px-3 font-mono">{row.version}</td>
+                <td className="py-2 px-3 text-xs text-neutral-400">
+                  {formatDateTime(row.created_at)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

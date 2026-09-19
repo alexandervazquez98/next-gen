@@ -2,11 +2,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import AIAgentConsole from "../AIAgentConsole";
-import { chatWithAIAgent } from "../../services/geminiService";
+import { chatWithAIAgent, type AIChatResponse } from "../../services/geminiService";
 
-vi.mock("../../services/geminiService", () => ({
-  chatWithAIAgent: vi.fn(),
-}));
+vi.mock("../../services/geminiService", async () => {
+  const actual = await vi.importActual<typeof import("../../services/geminiService")>(
+    "../../services/geminiService",
+  );
+  return {
+    chatWithAIAgent: vi.fn(actual.chatWithAIAgent),
+  };
+});
 
 describe("AIAgentConsole", () => {
   beforeEach(() => {
@@ -18,7 +23,9 @@ describe("AIAgentConsole", () => {
   });
 
   it("passes an AbortSignal to chatWithAIAgent", async () => {
-    const mockChat = vi.mocked(chatWithAIAgent).mockResolvedValue("response");
+    const mockChat = vi
+      .mocked(chatWithAIAgent)
+      .mockResolvedValue({ answer: "response" } satisfies AIChatResponse);
     render(<AIAgentConsole />);
     const input = screen.getByPlaceholderText(/Describe action/i);
     fireEvent.change(input, { target: { value: "test message" } });
@@ -55,11 +62,11 @@ describe("AIAgentConsole", () => {
   });
 
   it("aborts previous request when sending a new message", async () => {
-    const firstCall = new Promise<string>(() => undefined);
+    const firstCall = new Promise<AIChatResponse>(() => undefined);
     const mockChat = vi
       .mocked(chatWithAIAgent)
       .mockImplementationOnce(() => firstCall)
-      .mockResolvedValueOnce("second response");
+      .mockResolvedValueOnce({ answer: "second response" } satisfies AIChatResponse);
 
     render(<AIAgentConsole />);
     const input = screen.getByPlaceholderText(/Describe action/i);
@@ -88,7 +95,9 @@ describe("AIAgentConsole", () => {
   });
 
   it("renders message bubbles with text-base after sending a message", async () => {
-    vi.mocked(chatWithAIAgent).mockResolvedValue("assistant reply");
+    vi.mocked(chatWithAIAgent).mockResolvedValue({
+      answer: "assistant reply",
+    } satisfies AIChatResponse);
     render(<AIAgentConsole />);
     const input = screen.getByPlaceholderText(/Describe action/i);
     fireEvent.change(input, { target: { value: "hello" } });
@@ -100,5 +109,84 @@ describe("AIAgentConsole", () => {
     const bubble = screen.getByText("assistant reply").closest('div[class*="rounded-2xl"]');
     expect(bubble).not.toBeNull();
     expect(bubble!.className).toMatch(/text-base/);
+  });
+
+  // --- feat-489 propose_ci link rendering ---
+
+  it("renders a per-message proposal link when harness_result is a successful propose_ci", async () => {
+    vi.mocked(chatWithAIAgent).mockResolvedValue({
+      answer: "Proposal drafted for review.",
+      harness_result: {
+        type: "propose_ci",
+        status: "DRAFT",
+        proposal_id: "prop-abc-123",
+        ci_id: "edge-router-bogota-01",
+        version: 1,
+      },
+    } satisfies AIChatResponse);
+    render(<AIAgentConsole />);
+    const input = screen.getByPlaceholderText(/Describe action/i);
+    fireEvent.change(input, { target: { value: "add edge router" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const link = await waitFor(() => screen.getByTestId("proposal-link-prop-abc-123"));
+    expect(link.getAttribute("href")).toBe("/#/proposals/cmdb?id=prop-abc-123");
+    expect(link.textContent).toMatch(/edge-router-bogota-01/);
+  });
+
+  it("does NOT render a proposal link when harness_result is denied", async () => {
+    vi.mocked(chatWithAIAgent).mockResolvedValue({
+      answer: "Rate-limited, retry later.",
+      harness_result: {
+        type: "propose_ci",
+        denied: true,
+        reason_code: "cooldown_active",
+      },
+    } satisfies AIChatResponse);
+    render(<AIAgentConsole />);
+    const input = screen.getByPlaceholderText(/Describe action/i);
+    fireEvent.change(input, { target: { value: "add CI" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByText("Rate-limited, retry later.")).toBeTruthy();
+    });
+    // No proposal-link testid present
+    expect(screen.queryByTestId(/^proposal-link-/)).toBeNull();
+  });
+
+  it("does NOT render a proposal link when harness_result is an error", async () => {
+    vi.mocked(chatWithAIAgent).mockResolvedValue({
+      answer: "Could not create proposal: ci_id_collision.",
+      harness_result: {
+        type: "propose_ci",
+        status: "error",
+        reason: "ci_id_collision",
+      },
+    } satisfies AIChatResponse);
+    render(<AIAgentConsole />);
+    const input = screen.getByPlaceholderText(/Describe action/i);
+    fireEvent.change(input, { target: { value: "add CI" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByText(/ci_id_collision/)).toBeTruthy();
+    });
+    expect(screen.queryByTestId(/^proposal-link-/)).toBeNull();
+  });
+
+  it("does NOT render a proposal link when harness_result is null or absent", async () => {
+    vi.mocked(chatWithAIAgent).mockResolvedValue({
+      answer: "Just an answer, no harness result.",
+    } satisfies AIChatResponse);
+    render(<AIAgentConsole />);
+    const input = screen.getByPlaceholderText(/Describe action/i);
+    fireEvent.change(input, { target: { value: "hello" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByText("Just an answer, no harness result.")).toBeTruthy();
+    });
+    expect(screen.queryByTestId(/^proposal-link-/)).toBeNull();
   });
 });

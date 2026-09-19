@@ -91,4 +91,112 @@ test.describe("CMDB proposals happy path", () => {
       timeout: 10_000,
     });
   });
+
+  test("chat propose_ci intent creates draft and renders proposal link in console (T2.10)", async ({
+    page,
+    request,
+  }) => {
+    // Sign in as admin.
+    await page.goto("/#/login");
+    await page.locator('input[name="username"]').fill("admin");
+    await page.locator('input[name="password"]').fill("admin");
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL(/\/$|#\/$/, { timeout: 10_000 });
+
+    const uniqueId = `CI-CHAT-${Date.now()}`;
+    // Post to /api/ai/chat with explicit propose_ci intent.
+    const chatResp = await request.post("/api/ai/chat", {
+      data: {
+        query: `Add core switch ${uniqueId}`,
+        intent: {
+          type: "propose_ci",
+          manifest: {
+            schema_version: 1,
+            ci: {
+              id: uniqueId,
+              label: `Core Switch ${uniqueId}`,
+              category: "Switch",
+              ip: "10.10.10.1",
+            },
+            rationale: "Playwright T2.10 test",
+            source_refs: ["playwright:chat"],
+          },
+        },
+      },
+      failOnStatusCode: false,
+    });
+
+    if (!chatResp.ok()) {
+      test.skip(
+        true,
+        `/api/ai/chat returned ${chatResp.status()}; ensure LM Studio / AI chat is enabled`,
+      );
+      return;
+    }
+
+    const chatData = await chatResp.json();
+    const proposalId = chatData.harness_result?.proposal_id;
+    expect(proposalId).toBeTruthy();
+
+    // Verify the proposal is in DRAFT on the review page with AI badge.
+    await page.goto(`/#/proposals/cmdb?status=DRAFT`);
+    await expect(page.getByTestId(`proposal-row-${proposalId}`)).toBeVisible();
+    await expect(page.getByTestId(`proposal-source-${proposalId}`)).toContainText("AI chat");
+  });
+
+  test("admin can upload bulk CSV, preview validation, and submit proposal (T4.12)", async ({
+    page,
+  }) => {
+    // Sign in as admin (has CI_BULK_IMPORT).
+    await page.goto("/#/login");
+    await page.locator('input[name="username"]').fill("admin");
+    await page.locator('input[name="password"]').fill("admin");
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL(/\/$|#\/$/, { timeout: 10_000 });
+
+    // Navigate to proposals list page.
+    await page.goto("/#/proposals/cmdb");
+    await expect(page.getByTestId("proposals-cmdb-list")).toBeVisible();
+
+    // BulkImportPanel should be visible for admin with CI_BULK_IMPORT.
+    const panel = page.getByTestId("bulk-import-panel");
+    if (!(await panel.isVisible())) {
+      test.skip(true, "BulkImportPanel not visible; ensure user has CI_BULK_IMPORT permission");
+      return;
+    }
+
+    // Prepare a dynamic 2-row valid CSV.
+    const id1 = `CI-BULK-A-${Date.now()}`;
+    const id2 = `CI-BULK-B-${Date.now()}`;
+    const csvContent = `id,label,category,brand,model,ip\n${id1},Router Alpha,Router,Cisco,ASR-1000,10.0.1.1\n${id2},Switch Beta,Switch,Juniper,EX4300,10.0.1.2\n`;
+
+    // Upload via file input.
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByTestId("bulk-import-file").click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      name: "bulk-test.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csvContent, "utf-8"),
+    });
+
+    // Run dry-run validation first.
+    await page.getByTestId("bulk-import-validate").click();
+    await expect(page.getByTestId("bulk-import-validation-ok")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("bulk-import-validation-ok")).toContainText("2 CI(s) ready");
+
+    // Submit draft proposal.
+    await page.getByTestId("bulk-import-submit").click();
+    await expect(page.getByTestId("bulk-import-submitted")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The proposal row should now be visible in DRAFT with Bulk CSV badge and ×2 count.
+    await page.goto("/#/proposals/cmdb?status=DRAFT");
+    const sourceCell = page.locator(`tr:has-text("${id1}")`).getByTestId(/^proposal-source-/);
+    await expect(sourceCell).toContainText("Bulk CSV");
+    await expect(sourceCell).toContainText("×2");
+  });
 });

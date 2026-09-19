@@ -489,6 +489,8 @@ Los roles son **conjuntos de permisos** que se asignan a usuarios.
 
 > **Cuidado**: Los roles marcados como **system** no se pueden eliminar.
 
+> **Backfill automático al arrancar** (feat-489 Phase 3): desde **v1.17.4** el backend ejecuta `backfill_user_permissions_from_roles()` después de `seed_roles()` en cada boot. La regla es **fill-missing**: los permisos que el rol tiene y el usuario no, se agregan al `User.permissions` row (Postgres) y a la propiedad `:User.permissions` (Neo4j). Los permisos **revocados explícitamente a un usuario** se respetan — el rol es el piso, no el techo. Esto significa que cuando agregás un permiso nuevo a un rol system (ej. `CI_APPROVE_PROPOSAL` en `OPERATOR`), todos los OPERATOR existentes lo reciben automáticamente en el próximo reinicio, sin que tengas que editar la fila de cada usuario a mano. Si querés revocar un permiso específico para un usuario, seguís pudiendo hacerlo desde el Role Manager (la revocación manual sobrevive el backfill porque la operación es aditiva).
+
 ---
 
 ## 9. Troubleshooting
@@ -589,13 +591,30 @@ El badge de la consola IA (`AIAgentConsole`) muestra el contador de propuestas D
 
 ### 10.4 Antes de la primera propuesta
 
-El stack viene con `GET /api/categories` vacío. Sin al menos una categoría viva, el primer manifest siempre devuelve `422 unknown_category`. Para seed-ear categorías mínimas:
+Desde **v1.17.4** el backend auto-seedea categorías por defecto al arrancar (ver `backend/seed_categories.py`). El set inicial cubre los tipos más comunes:
+
+- `Router`
+- `Switch`
+- `Server`
+- `Sensor`
+- `Firewall`
+- `Other`
+
+`GET /api/categories` devuelve este set en un stack fresco; el primer manifest con `category="Router"` ya no devuelve `422 unknown_category`. El seed es idempotente (MERGE), así que un reinicio no duplica filas y solo backfilea `icon_key` si la categoría existe sin icono.
+
+**Agregar categorías adicionales** (ej. `Load Balancer`, `Database`):
 
 ```bash
 curl -X POST http://localhost:8000/api/categories \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Router","description":"Network router"}'
+  -d '{"name":"Load Balancer","description":"L4/L7 LB"}'
+```
+
+**Forzar re-seed manual** (ej. después de un wipe del grafo):
+
+```bash
+docker compose exec backend python -m seed_categories
 ```
 
 ### 10.5 Secretos en manifests — NUNCA

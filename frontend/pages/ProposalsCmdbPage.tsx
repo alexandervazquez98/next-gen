@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useProposalsQuery } from "../hooks/queries/useProposalsQuery";
 import { ProposalList } from "../components/cmdb/proposals/ProposalList";
 import { ProposalDetail } from "../components/cmdb/proposals/ProposalDetail";
+import BulkImportPanel from "../components/cmdb/proposals/BulkImportPanel";
 
 interface ProposalsCmdbPageProps {
   detailMode?: boolean;
@@ -14,6 +15,7 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   const canApprove = hasPermission("CI_APPROVE_PROPOSAL");
   const canView = hasPermission("CI_VIEW");
   const canViewAudit = hasPermission("AUDIT_VIEW");
+  const canBulkImport = hasPermission("CI_BULK_IMPORT");
 
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(
@@ -26,6 +28,8 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const routeParams = useParams<{ id?: string }>();
+  const activeDetailId = routeParams.id || searchParams.get("id") || selectedId;
 
   const query = useProposalsQuery({
     status: (filters.status as "DRAFT" | "APPROVED" | "REVOKED" | undefined) || undefined,
@@ -51,18 +55,23 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
     setSearchParams(params);
   };
 
-  if (detailMode && selectedId) {
+  if ((detailMode || searchParams.has("id")) && activeDetailId) {
     return (
       <div className="p-6" data-testid="proposals-cmdb-detail">
         <button
           type="button"
-          onClick={() => setSelectedId(null)}
-          className="text-xs uppercase tracking-widest text-neutral-400 hover:text-white"
+          onClick={() => {
+            setSelectedId(null);
+            const next = new URLSearchParams(searchParams);
+            next.delete("id");
+            setSearchParams(next);
+          }}
+          className="text-xs uppercase tracking-widest text-neutral-400 hover:text-white mb-4"
         >
           ← Back to list
         </button>
         <ProposalDetail
-          proposalId={selectedId}
+          proposalId={activeDetailId}
           canApprove={canApprove}
           canViewAudit={canViewAudit}
           auditEntries={[]}
@@ -73,17 +82,35 @@ export const ProposalsCmdbPage: React.FC<ProposalsCmdbPageProps> = ({ detailMode
   }
 
   return (
-    <div className="p-6" data-testid="proposals-cmdb-list">
-      <header className="mb-4">
+    <div className="p-6 flex flex-col gap-6" data-testid="proposals-cmdb-list">
+      <header>
         <h1 className="text-2xl font-black uppercase tracking-widest text-white">CMDB Proposals</h1>
         <p className="text-sm text-neutral-400">AI-submitted CI manifests awaiting human review.</p>
       </header>
+      {canBulkImport && (
+        <BulkImportPanel
+          onCreated={(proposalId) => {
+            // Refresh the list and jump to the new proposal.
+            query.refetch?.();
+            setSelectedId(proposalId);
+            const next = new URLSearchParams(searchParams);
+            next.set("id", proposalId);
+            setSearchParams(next);
+          }}
+        />
+      )}
       <ProposalList
         rows={query.data?.rows ?? []}
         loading={query.isLoading}
         error={query.error}
         filters={filters}
         onFiltersChange={onFiltersChange}
+        onSelectRow={(rowId) => {
+          setSelectedId(rowId);
+          const next = new URLSearchParams(searchParams);
+          next.set("id", rowId);
+          setSearchParams(next);
+        }}
       />
     </div>
   );

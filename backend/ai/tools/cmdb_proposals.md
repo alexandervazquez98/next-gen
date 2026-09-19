@@ -190,12 +190,60 @@ because a human must validate AI-generated topology changes.
    `errors[]` or `detail.reason`, quote the message back to the operator
    in plain language. Do not paraphrase or hide the reason.
 5. **Respect the cooldown.** `propose_ci` is rate-limited via
-   `ai_guard_service.propose_ci` (60s cooldown per agent, ≥5/h escalates
-   to soft block). Wait and retry — do not spin in a tight loop.
+   `ai_guard_service.propose_ci` (default `CMDB_PROPOSAL_COOLDOWN_SECONDS=120s`
+   per agent; ≥5 proposals/60min returns `escalation_required=true` — the
+   proposal is created but flagged for human review). Wait and retry —
+   do not spin in a tight loop.
 6. **Version conflicts are expected.** When `approve_proposal` returns
    `409 version_conflict`, the operator or another reviewer updated the
    proposal. Refetch via `list_proposals` and ask the operator to
    reconfirm with the new version.
+
+## Conversational use (feat-489 chat path)
+
+When the operator describes new CIs in chat (e.g. *"add a new edge router
+for Bogotá DC, brand Cisco, model ASR-1000, IP 10.20.30.1, owner NOC-LATAM"*),
+the agent must:
+
+1. **Ask before inventing.** If the description is ambiguous (no category,
+   no IP, no location), ASK. Never fabricate CI attributes. Especially:
+   do not invent plausible `firmwareVersion` or `serialNumber` values.
+2. **Resolve `category` against `GET /api/categories`** before emitting
+   the manifest. If the category does not exist (fresh stack, or
+   renamed), surface that and refuse to submit — do not guess.
+3. **Set `schema_version: 1`** in the manifest (REQ-CMAP-001).
+4. **One proposal per operator request.** If the operator describes
+   multiple CIs, emit ONE manifest. The current `propose_ci` MCP tool
+   takes a single CI per call (the `ManifestPayload.ci` field is
+   singular); the chat path mirrors this. Bulk `cis[]` arrays are the
+   Phase-4 admin CSV importer, NOT the chat path.
+5. **Always set `source_refs: ["chat:msg-<conversation-or-message-id>", ...]`.**
+   The audit trail links back to the conversation, not to a free-floating
+   JSON blob.
+6. **Cite errors verbatim.** When the service returns
+   `422 invalid_manifest` / `409 ci_id_collision` / `409 category_drift`,
+   the chat response must quote `detail.reason` and any `errors[]` /
+   offending field back to the operator in plain language. Do not
+   paraphrase, do not hide the reason.
+7. **On `409 id_collision`** propose an alternative id (suffix `-2`,
+   `-new`, or rename) and ask the operator to confirm before resubmitting.
+8. **Separation of duties is unconditional.** If the agent token also
+   carries `CI_APPROVE_PROPOSAL`, the agent MUST NOT call
+   `approve_proposal` for any proposal it submitted itself via the chat
+   path. The HITL gate exists so a human validates AI-generated topology.
+9. **On guardrail denial** (`harness_result.denied=true` with
+   `reason_code="cooldown_active"` or `"bulk_threshold"`), tell the
+   operator the chat will be rate-limited and to retry after the cooldown
+   window. Do not retry in a tight loop.
+10. **Do NOT bypass to `POST /api/nodes`.** Direct graph writes return
+    `403` for AI tokens. The HITL path is the only legal way to add a CI
+    from the chat.
+
+The chat handler (`routers/ai.py::chat_with_ai`) translates
+`propose_ci` intent submissions into the same backend service call as
+the MCP tool. The operator-facing surface in `AIAgentConsole.tsx` renders
+a per-message link to `/#/proposals/cmdb?id=<proposal_id>` when the
+harness result carries a `proposal_id`.
 
 ## Error handling cheat-sheet
 
