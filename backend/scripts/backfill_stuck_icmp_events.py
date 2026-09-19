@@ -295,8 +295,12 @@ def capture_ci_snapshot(session) -> dict[str, float]:
 
 def inventory_buckets(session) -> dict[str, int]:
     """Return the four residual-bucket counts via four read-only queries."""
-    proper = session.run(_QUERY_PROPER_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
-    nulls = session.run(_QUERY_NULL_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
+    proper = session.run(_QUERY_PROPER_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()[
+        "count"
+    ]
+    nulls = session.run(_QUERY_NULL_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()[
+        "count"
+    ]
     down = session.run(_QUERY_DOWN_CI, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
     deleted = session.run(_QUERY_DELETED_CI, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
     return {
@@ -326,9 +330,7 @@ def select_cascade_targets(session) -> list[dict]:
     CI has been deleted from the CMDB. Bucket classification is
     re-determined inline so the cascade query can re-filter idempotently.
     """
-    result = session.run(
-        _QUERY_SELECT_CASCADE_TARGETS, icmp_metric_ids=ICMP_METRIC_IDS
-    )
+    result = session.run(_QUERY_SELECT_CASCADE_TARGETS, icmp_metric_ids=ICMP_METRIC_IDS)
     targets = []
     for record in result:
         targets.append(
@@ -516,9 +518,7 @@ def _isoformat_or_none(value):
     return str(value)
 
 
-def execute_cascade(
-    session, snapshot_path: str, confirm_target: str
-) -> dict:
+def execute_cascade(session, snapshot_path: str, confirm_target: str) -> dict:
     """Run the cascade. Returns a structured report.
 
     Flow:
@@ -673,8 +673,7 @@ def _main(argv=None):
                 report = dry_run(session)
             elif args.execute:
                 snapshot_path = (
-                    args.output
-                    or f"apply-progress-{datetime.now(UTC).isoformat()}.json"
+                    args.output or f"apply-progress-{datetime.now(UTC).isoformat()}.json"
                 )
                 report = execute_cascade(session, snapshot_path, args.confirm_target)
             elif args.rollback:
@@ -695,4 +694,3 @@ def _main(argv=None):
 
 if __name__ == "__main__":
     _main()
-
