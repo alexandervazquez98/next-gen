@@ -93,7 +93,9 @@ MATCH (e:Event)
 WHERE e.status IN ['OPEN', 'ACK']
   AND e.metric_id IN $icmp_metric_ids
   AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
-  AND NOT EXISTS ((:CI {id: e.ci_id}))
+  AND NOT EXISTS {
+    MATCH (:CI {id: e.ci_id})
+  }
 RETURN count(e) AS count
 """
 
@@ -119,7 +121,9 @@ WHERE e.status IN ['OPEN', 'ACK']
   AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
 WITH e,
      CASE
-       WHEN NOT EXISTS ((:CI {id: e.ci_id})) THEN 'deleted_ci'
+       WHEN NOT EXISTS {
+         MATCH (:CI {id: e.ci_id})
+       } THEN 'deleted_ci'
        ELSE 'down_ci'
      END AS bucket
 WHERE bucket IN ['down_ci', 'deleted_ci']
