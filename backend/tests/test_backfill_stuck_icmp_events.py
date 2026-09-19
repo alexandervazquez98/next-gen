@@ -23,10 +23,8 @@ from __future__ import annotations
 
 import contextlib
 import io
-from unittest.mock import MagicMock
 
 import pytest
-
 
 # Metric IDs mirror those in ``backend/polling/icmp_measurements.py``.
 ICMP_JITTER_METRIC_ID = "icmp_jitter_ms"
@@ -172,10 +170,7 @@ class TestInventoryBuckets:
 
         second_query = session.queries[1]["query"]
         assert "event_type IS NULL" in second_query or "event_type is null" in second_query.lower()
-        assert (
-            "metric_id IS NULL" in second_query
-            or "metric_id is null" in second_query.lower()
-        )
+        assert "metric_id IS NULL" in second_query or "metric_id is null" in second_query.lower()
 
     def test_down_ci_query_joins_latest_availability_sample(self):
         """Bucket 3 query must consult :HAS_AVAILABILITY_SAMPLE."""
@@ -270,9 +265,7 @@ class TestDryRun:
 
         script.dry_run(session)
 
-        delete_queries = [
-            q for q in session.queries if "DELETE" in q["query"].upper()
-        ]
+        delete_queries = [q for q in session.queries if "DELETE" in q["query"].upper()]
         assert delete_queries == [], (
             f"Dry-run must not delete; got DELETE-bearing queries: "
             f"{[q['query'] for q in delete_queries]!r}"
@@ -309,9 +302,8 @@ class TestDryRun:
         """
         script = _load_script()
         buf = io.StringIO()
-        with contextlib.suppress(SystemExit):
-            with contextlib.redirect_stdout(buf):
-                script.build_parser().print_help()
+        with contextlib.suppress(SystemExit), contextlib.redirect_stdout(buf):
+            script.build_parser().print_help()
 
         help_text = buf.getvalue()
         assert "--dry-run" in help_text
@@ -401,7 +393,6 @@ class TestCISnapshot:
         )
 
         call_count = 0
-        original = script.capture_ci_snapshot
 
         def spy(session):
             nonlocal call_count
@@ -413,6 +404,5 @@ class TestCISnapshot:
         script.dry_run(session)
 
         assert call_count == 1, (
-            f"Snapshot must be captured exactly once per dry_run; got "
-            f"{call_count} calls"
+            f"Snapshot must be captured exactly once per dry_run; got " f"{call_count} calls"
         )

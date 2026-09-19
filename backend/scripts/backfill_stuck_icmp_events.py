@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Metric IDs mirror those in ``backend/polling/icmp_measurements.py``.
 ICMP_JITTER_METRIC_ID = "icmp_jitter_ms"
@@ -155,8 +155,12 @@ def inventory_buckets(session) -> dict[str, int]:
         ``availability=0`` in the latest :HAS_AVAILABILITY_SAMPLE.
       * ``stuck_on_deleted_ci`` — ROOT events whose CI no longer exists.
     """
-    proper = session.run(_QUERY_PROPER_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
-    nulls = session.run(_QUERY_NULL_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
+    proper = session.run(_QUERY_PROPER_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()[
+        "count"
+    ]
+    nulls = session.run(_QUERY_NULL_DISCRIMINATORS, icmp_metric_ids=ICMP_METRIC_IDS).single()[
+        "count"
+    ]
     down = session.run(_QUERY_DOWN_CI, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
     deleted = session.run(_QUERY_DELETED_CI, icmp_metric_ids=ICMP_METRIC_IDS).single()["count"]
     return {
@@ -186,7 +190,7 @@ def dry_run(session) -> dict:
         "mode": "dry-run",
         "buckets": buckets,
         "ci_snapshot": snapshot,
-        "ran_at": datetime.now(timezone.utc).isoformat(),
+        "ran_at": datetime.now(UTC).isoformat(),
     }
 
 
