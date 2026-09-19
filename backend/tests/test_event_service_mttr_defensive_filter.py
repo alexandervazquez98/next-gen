@@ -23,9 +23,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-EVENT_SERVICE_PATH = (
-    Path(__file__).resolve().parents[1] / "services" / "event_service.py"
-)
+EVENT_SERVICE_PATH = Path(__file__).resolve().parents[1] / "services" / "event_service.py"
 
 
 def _read_event_service_source() -> str:
@@ -67,7 +65,7 @@ def test_get_availability_report_clause_is_within_availabilty_window_query():
     # Heuristic window: 200 lines from the function definition. This keeps
     # the assertion local to the MTTR query without coupling to exact line
     # numbers (which drift across edits).
-    window = source[fn_start:fn_start + 200 * 80]  # ~200 lines @ avg 80 chars
+    window = source[fn_start : fn_start + 200 * 80]  # ~200 lines @ avg 80 chars
 
     assert "event_type <> 'legacy-no-relevant'" in window, (
         "The defensive clause must be co-located with the MTTR window "
