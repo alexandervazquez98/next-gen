@@ -20,19 +20,17 @@ graph to "see if a cluster should be hidden".
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.aggregate_policy import (
     DEFAULT_MINIMUM_COUNT,
     PERMISSION_REQUIRED,
-    AggregatePolicy,
     derive_safe_geo_precision,
 )
 from repositories import graph_lod_repo
 from schemas.graph import (
     AggregatePolicyDTO,
-    InterClusterLink,
     Legend,
     OverviewCluster,
     OverviewResponse,
@@ -155,8 +153,8 @@ def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
         safe_geo_precision=SafeGeoPrecision(safe_geo_precision),
     )
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    revision = f"revision-{int(datetime.now(timezone.utc).timestamp())}"
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    revision = f"revision-{int(datetime.now(UTC).timestamp())}"
 
     return OverviewResponse(
         axis="location",

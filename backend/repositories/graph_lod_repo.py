@@ -39,9 +39,8 @@ def aggregate_overview_clusters(
     graph (no WHERE clause on location).
     """
     # Hard rule: no auth -> no DB query. See test_graph_consumer_authorization.
-    if not is_admin:
-        if not allowed_locations:
-            return []
+    if not is_admin and not allowed_locations:
+        return []
     driver = get_db()
     query = _build_query(is_admin=is_admin)
     params: dict[str, Any] = {}
