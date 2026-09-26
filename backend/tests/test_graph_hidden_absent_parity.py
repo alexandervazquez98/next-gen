@@ -16,12 +16,11 @@ graph) MUST be externally indistinguishable on the wire:
 This file is the single source of truth for the parity invariant; any
 regression in the overview or detail endpoints surfaces here.
 """
+
 from __future__ import annotations
 
 import json
 from unittest.mock import MagicMock
-
-import pytest
 
 
 def _principal(*, is_admin: bool = False, allowed_locations=None):
@@ -75,8 +74,6 @@ def test_detail_hidden_response_is_byte_equivalent_to_absent(monkeypatch):
     """The response body for hidden ≡ absent (after JSON serialization)."""
     import repositories.graph_lod_repo as repo_module
     from services import graph_lod_service
-
-    responses = {}
 
     def _hidden(**kwargs):
         return {
@@ -189,9 +186,9 @@ def test_detail_parity_omits_metadata_leak_fields(monkeypatch):
 
     # No "exists" or "absent" or "exists_in_graph" discriminator
     for forbidden_key in ("exists", "absent", "exists_in_graph", "is_hidden", "is_absent"):
-        assert forbidden_key not in body, (
-            f"parity invariant violated: {forbidden_key!r} discriminator leaked"
-        )
+        assert (
+            forbidden_key not in body
+        ), f"parity invariant violated: {forbidden_key!r} discriminator leaked"
 
 
 # ---------------------------------------------------------------------------
@@ -208,18 +205,20 @@ def test_overview_omits_hidden_clusters(monkeypatch):
     monkeypatch.setattr(
         repo_module,
         "aggregate_overview_clusters",
-        lambda allowed_locations=None, is_admin=False: [
-            {
-                "cluster_id": "location:DC-East",
-                "display_label": "DC-East",
-                "visible_node_count": 50,
-                "visible_link_count": 0,
-                "aggregate_redacted": False,
-                "suppression_reason": None,
-            }
-        ]
-        if allowed_locations
-        else [],
+        lambda allowed_locations=None, is_admin=False: (
+            [
+                {
+                    "cluster_id": "location:DC-East",
+                    "display_label": "DC-East",
+                    "visible_node_count": 50,
+                    "visible_link_count": 0,
+                    "aggregate_redacted": False,
+                    "suppression_reason": None,
+                }
+            ]
+            if allowed_locations
+            else []
+        ),
     )
 
     resp = graph_lod_service.get_overview(
@@ -283,8 +282,8 @@ def test_graph_full_endpoint_byte_equality_preserved():
     import os
 
     snapshot_test = "tests/test_graph_full_snapshot.py"
-    assert os.path.exists(snapshot_test), (
-        "Frozen /graph/full snapshot test missing — parity regression cannot be detected"
-    )
+    assert os.path.exists(
+        snapshot_test
+    ), "Frozen /graph/full snapshot test missing — parity regression cannot be detected"
     # The snapshot test asserts byte-equality of the response. If the test
     # exists, the regression coverage is in place.

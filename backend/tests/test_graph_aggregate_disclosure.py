@@ -16,6 +16,7 @@ Tests:
 - Silent downgrade to ``REGION`` when scope excludes all high-count clusters
 - Per-cluster ``aggregate_redacted`` marker for low-cardinality clusters
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
