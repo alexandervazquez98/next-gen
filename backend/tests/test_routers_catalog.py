@@ -14,21 +14,21 @@ Strategy:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+# Imports below need to come before patching so ruff does not flag E402.
+# The Neo4j patch must be active before `from main import app` because
+# main.py touches database.py at import time.
+from models.user import User, UserPermission  # noqa: E402
+from services.auth_service import get_current_active_user  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
 # ---------------------------------------------------------------------------
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
-    from main import app
-
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
-
+    from main import app  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # TestClient
@@ -149,9 +149,7 @@ class TestCategoriesRouter:
             ("delete", "/api/categories/Router", None, UserPermission.CI_DELETE),
         ],
     )
-    def test_category_mutations_require_permissions(
-        self, method, url, json, permission
-    ):
+    def test_category_mutations_require_permissions(self, method, url, json, permission):
         _override_current_user(_make_pydantic_user())
 
         response = _request(method, url, json=json)
@@ -172,9 +170,7 @@ class TestCategoriesRouter:
         assert success_response.status_code == 200
 
     def test_create_category_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.create_category.return_value = {"message": "Category created"}
 
@@ -186,9 +182,7 @@ class TestCategoriesRouter:
         assert sent_category.name == "Router"
 
     def test_create_category_saves_icon_key_when_provided(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.create_category.return_value = {"message": "Category created"}
 
@@ -202,9 +196,7 @@ class TestCategoriesRouter:
         assert sent_category.icon_key == "router"
 
     def test_create_category_conflict(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.create_category.side_effect = HTTPException(
                 status_code=409,
@@ -217,17 +209,13 @@ class TestCategoriesRouter:
         assert response.json()["detail"] == "Category already exists"
 
     def test_create_category_validation_error(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         response = client.post("/api/categories", json={})
 
         assert response.status_code == 422
 
     def test_create_category_rejects_invalid_icon_key(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.create_category.side_effect = HTTPException(
                 status_code=400, detail="Invalid icon_key"
@@ -242,9 +230,7 @@ class TestCategoriesRouter:
         assert response.json()["detail"] == "Invalid icon_key"
 
     def test_delete_category_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_DELETE])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_DELETE]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.delete_category.return_value = {"message": "Category deleted"}
 
@@ -255,9 +241,7 @@ class TestCategoriesRouter:
         mock_service.delete_category.assert_called_once_with("Router")
 
     def test_update_category_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.update_category.return_value = {"message": "Category updated"}
 
@@ -271,9 +255,7 @@ class TestCategoriesRouter:
         mock_service.update_category.assert_called_once_with("Router", "Edge Router", None)
 
     def test_update_category_accepts_icon_key(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.update_category.return_value = {"message": "Category updated"}
 
@@ -286,9 +268,7 @@ class TestCategoriesRouter:
         mock_service.update_category.assert_called_once_with("Router", "Router", "router")
 
     def test_update_category_rejects_invalid_icon_key(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.update_category.side_effect = HTTPException(
                 status_code=400, detail="Invalid icon_key"
@@ -428,9 +408,7 @@ class TestHardwareRouter:
             ),
         ],
     )
-    def test_hardware_mutations_require_permissions(
-        self, method, url, json, params, permission
-    ):
+    def test_hardware_mutations_require_permissions(self, method, url, json, params, permission):
         _override_current_user(_make_pydantic_user())
 
         response = _request(method, url, json=json, params=params)
@@ -450,13 +428,9 @@ class TestHardwareRouter:
         assert success_response.status_code == 200
 
     def test_create_hardware_model_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.create_hardware_model.return_value = {
-                "message": "Hardware Model saved"
-            }
+            mock_service.create_hardware_model.return_value = {"message": "Hardware Model saved"}
 
             response = client.post(
                 "/api/hardware",
@@ -477,21 +451,15 @@ class TestHardwareRouter:
         assert sent_item.owner == "NetOps"
 
     def test_create_hardware_model_validation_error(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         response = client.post("/api/hardware", json={"brand": "Cisco"})
 
         assert response.status_code == 422
 
     def test_delete_hardware_model_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_DELETE])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_DELETE]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.delete_hardware_model.return_value = {
-                "message": "Hardware Model deleted"
-            }
+            mock_service.delete_hardware_model.return_value = {"message": "Hardware Model deleted"}
 
             response = client.delete("/api/hardware/Cisco/ASR-1000")
 
@@ -500,13 +468,9 @@ class TestHardwareRouter:
         mock_service.delete_hardware_model.assert_called_once_with("Cisco", "ASR-1000")
 
     def test_update_hardware_model_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.update_hardware_model.return_value = {
-                "message": "Hardware Model updated"
-            }
+            mock_service.update_hardware_model.return_value = {"message": "Hardware Model updated"}
 
             response = client.put(
                 "/api/hardware/Cisco/ASR-1000",
@@ -520,9 +484,7 @@ class TestHardwareRouter:
 
         assert response.status_code == 200
         assert response.json()["message"] == "Hardware Model updated"
-        old_brand, old_model, hw_update = (
-            mock_service.update_hardware_model.call_args.args
-        )
+        old_brand, old_model, hw_update = mock_service.update_hardware_model.call_args.args
         assert old_brand == "Cisco"
         assert old_model == "ASR-1000"
         assert hw_update.brand == "Cisco"
@@ -531,13 +493,9 @@ class TestHardwareRouter:
         assert hw_update.owner == "CoreOps"
 
     def test_update_hardware_model_uses_path_defaults(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.update_hardware_model.return_value = {
-                "message": "Hardware Model updated"
-            }
+            mock_service.update_hardware_model.return_value = {"message": "Hardware Model updated"}
 
             response = client.put(
                 "/api/hardware/Cisco/ASR-1000",
@@ -552,9 +510,7 @@ class TestHardwareRouter:
         assert hw_update.owner is None
 
     def test_update_hardware_model_not_found(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.update_hardware_model.side_effect = HTTPException(
                 status_code=404,
@@ -580,9 +536,7 @@ class TestHardwareRouter:
         mock_service.get_hardware_usage.assert_called_once_with("Cisco", "ASR-1000")
 
     def test_assign_metric_to_model_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.assign_metric_to_model.return_value = {
                 "message": "Metric assigned to model"
@@ -595,14 +549,10 @@ class TestHardwareRouter:
 
         assert response.status_code == 200
         assert response.json()["message"] == "Metric assigned to model"
-        mock_service.assign_metric_to_model.assert_called_once_with(
-            "Cisco", "ASR-1000", "cpu-load"
-        )
+        mock_service.assign_metric_to_model.assert_called_once_with("Cisco", "ASR-1000", "cpu-load")
 
     def test_unassign_metric_from_model_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.unassign_metric_from_model.return_value = {
                 "message": "Metric unassigned from model"
@@ -620,9 +570,7 @@ class TestHardwareRouter:
         )
 
     def test_assign_metric_requires_query_params(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         response = client.post("/api/hardware/assign_metric", params={"brand": "Cisco"})
 
         assert response.status_code == 422
@@ -741,9 +689,7 @@ class TestOwnersRouter:
         assert success_response.status_code == 200
 
     def test_create_owner_group_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.create_owner_group.return_value = {
                 "message": "Owner Group created/updated"
@@ -770,13 +716,9 @@ class TestOwnersRouter:
         assert sent_group.users[0]["name"] == "alice"
 
     def test_delete_owner_group_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_DELETE])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_DELETE]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.delete_owner_group.return_value = {
-                "message": "Owner Group deleted"
-            }
+            mock_service.delete_owner_group.return_value = {"message": "Owner Group deleted"}
 
             response = client.delete("/api/owners/NetOps")
 
@@ -785,13 +727,9 @@ class TestOwnersRouter:
         mock_service.delete_owner_group.assert_called_once_with("NetOps")
 
     def test_update_owner_group_success_with_users(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.update_owner_group.return_value = {
-                "message": "Owner Group updated"
-            }
+            mock_service.update_owner_group.return_value = {"message": "Owner Group updated"}
 
             response = client.put(
                 "/api/owners/NetOps",
@@ -815,13 +753,9 @@ class TestOwnersRouter:
         assert owner_update.users[0]["name"] == "bob"
 
     def test_update_owner_group_preserves_users_as_none_when_omitted(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.update_owner_group.return_value = {
-                "message": "Owner Group updated"
-            }
+            mock_service.update_owner_group.return_value = {"message": "Owner Group updated"}
 
             response = client.put(
                 "/api/owners/NetOps",
@@ -844,13 +778,9 @@ class TestOwnersRouter:
         mock_service.get_owner_usage.assert_called_once_with("NetOps")
 
     def test_link_user_to_group_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
-            mock_service.link_user_to_group.return_value = {
-                "message": "User linked to group"
-            }
+            mock_service.link_user_to_group.return_value = {"message": "User linked to group"}
 
             response = client.post(
                 "/api/owners/NetOps/users",
@@ -877,15 +807,14 @@ class TestOwnersRouter:
                 "phone": "+541100000000",
                 "email": "alice@example.com",
                 "tier": "T1",
+                "aggregate_breakdown_regions": [],
                 "disabled": False,
                 "force_password_change": False,
             },
         )
 
     def test_link_user_to_group_validation_error(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         response = client.post(
             "/api/owners/NetOps/users",
             json={"role": "VIEWER"},
@@ -894,9 +823,7 @@ class TestOwnersRouter:
         assert response.status_code == 422
 
     def test_link_user_to_group_not_found(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_EDIT])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_EDIT]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.link_user_to_group.side_effect = HTTPException(
                 status_code=404,
@@ -917,9 +844,7 @@ class TestOwnersRouter:
         assert response.json()["detail"] == "Owner group not found"
 
     def test_unlink_user_from_group_success(self):
-        _override_current_user(
-            _make_pydantic_user(permissions=[UserPermission.CI_DELETE])
-        )
+        _override_current_user(_make_pydantic_user(permissions=[UserPermission.CI_DELETE]))
         with patch("routers.catalog.catalog_service") as mock_service:
             mock_service.unlink_user_from_group.return_value = {
                 "message": "User unlinked from group"

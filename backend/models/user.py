@@ -60,6 +60,11 @@ class UserPermission(str, Enum):  # noqa: UP042
     MQTT_READ = "MQTT_READ"
     MQTT_MAPPING_MANAGE = "MQTT_MAPPING_MANAGE"
 
+    # #391 PR1: gates city-level aggregate breakdown in /graph/overview.
+    # The capability is the global gate; per-user scope is held on
+    # ``User.aggregate_breakdown_regions``. Default: not seeded to any role.
+    GRAPH_AGGREGATE_BREAKDOWN_READ = "graph:aggregate_breakdown:read"
+
     # feat-cmdb-ai-handoff (REQ-CMAP-005): gates human-side approve/revoke on
     # AI-submitted CI proposals. Admin already receives this permission via
     # the spread of all UserPermission values in seed_roles.py.
@@ -97,6 +102,11 @@ class UserBase(BaseModel):
     phone: str | None = None
     email: str | None = None
     tier: Literal["T1", "T2", "T3"] = "T1"
+    # #391 PR1: per-user scope for the graph:aggregate_breakdown:read capability.
+    # Empty list = global breakdown (any visible cluster can be city tier).
+    # Populated list = scoped breakdown (only listed regions can be city tier;
+    # others silently downgrade to region tier preserving hidden-absent parity).
+    aggregate_breakdown_regions: list[str] = []
 
 
 class UserCreate(UserBase):
@@ -110,6 +120,7 @@ class UserUpdate(BaseModel):
     permissions: list[str] | None = None
     allowed_locations: list[str] | None = None
     allowed_ci_types: list[str] | None = None
+    aggregate_breakdown_regions: list[str] | None = None
 
 
 class User(UserBase):
