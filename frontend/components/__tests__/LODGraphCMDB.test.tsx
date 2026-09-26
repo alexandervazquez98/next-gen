@@ -64,12 +64,6 @@ vi.mock("../../hooks/queries/useGraphOverviewQuery", () => ({
 vi.mock("../../hooks/queries/useGraphTopologyQuery", () => ({
   useGraphTopologyQuery: () => mockUseGraphTopologyQuery(),
 }));
-vi.mock("../../hooks/queries/useCategoriesQuery", () => ({
-  useCategoriesQuery: () => mockUseCategoriesQuery(),
-}));
-vi.mock("../../hooks/queries/useOwnersQuery", () => ({
-  useOwnersQuery: () => mockUseOwnersQuery(),
-}));
 
 const createWrapper = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -144,7 +138,6 @@ describe("LODGraphCMDB (#392 PR4)", () => {
 
     expect(handleClick).toHaveBeenCalledTimes(1);
     expect(handleClick).toHaveBeenCalledWith(
-      "location:HQ-Madrid",
       expect.objectContaining({
         cluster_id: "location:HQ-Madrid",
         display_label: "HQ-Madrid",

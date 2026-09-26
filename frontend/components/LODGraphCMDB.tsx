@@ -18,19 +18,16 @@
 // them to detail hydration; PR4 leaves the handler a no-op).
 
 import { useCallback } from "react";
-import {
-  type OverviewCluster,
-  type OverviewResponse,
-} from "../types/graph";
+import { type OverviewCluster } from "../types/graph";
 import { useGraphOverviewQuery } from "../hooks/queries/useGraphOverviewQuery";
 import { useGraphTopologyQuery } from "../hooks/queries/useGraphTopologyQuery";
 import { useCategoriesQuery } from "../hooks/queries/useCategoriesQuery";
 import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
 
 export interface LODGraphCMDBProps {
-  // Forwarded to the parent. In PR4 the cluster-id payload is a
-  // thin wrapper; PR5 wires the actual detail fetch.
-  onClusterClick?(clusterId: string, cluster: OverviewCluster): void;
+  // Forwarded to the parent. The full cluster object is forwarded;
+  // the parent decides what to do with it (PR5 wires detail fetch).
+  onClusterClick?(_cluster: OverviewCluster): void;
 }
 
 function ClusterCard({
@@ -38,13 +35,14 @@ function ClusterCard({
   onClick,
 }: {
   cluster: OverviewCluster;
-  onClick(clusterId: string, cluster: OverviewCluster): void;
+  onClick: (_cluster: OverviewCluster) => void;
 }) {
   const isRedacted = cluster.aggregate_redacted;
   return (
     <button
       type="button"
-      onClick={() => onClick(cluster.cluster_id, cluster)}
+      onClick={() => onClick(cluster)}
+      data-testid={`cluster-card-${cluster.cluster_id}`}
       data-testid={`cluster-card-${cluster.cluster_id}`}
       className={`group text-left p-4 rounded-xl border transition-all ${
         isRedacted
@@ -91,9 +89,9 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
   const { data: owners } = useOwnersQuery();
 
   const handleClusterClick = useCallback(
-    (clusterId: string, cluster: OverviewCluster) => {
+    (cluster: OverviewCluster) => {
       if (onClusterClick) {
-        onClusterClick(clusterId, cluster);
+        onClusterClick(cluster);
       }
       // PR5 wires this to fetchGraphDetail + setSelectedClusterId.
     },
@@ -206,7 +204,4 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
 export default LODGraphCMDB;
 
 // Helper for downstream tests / Storybook stories.
-export const __testing__ = {
-  formatOverviewSummary: (overview: OverviewResponse | undefined): string =>
-    `${overview?.clusters.length ?? 0} clusters`,
-};
+// (Removed: PR4 keeps the module side-effect-free for fast refresh.)

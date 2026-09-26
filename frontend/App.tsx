@@ -12,7 +12,6 @@ import { useChatPreferences } from "./hooks/useChatPreferences";
 import { useResizableHandle } from "./hooks/useResizableHandle";
 
 // Components
-import GraphCMDB from "./components/GraphCMDB";
 import LODGraphCMDB from "./components/LODGraphCMDB";
 import AIAgentConsole from "./components/AIAgentConsole";
 import CIEditor from "./components/CIEditor";
@@ -260,13 +259,13 @@ const MainLayout: React.FC = () => {
                 path="cmdb"
                 element={
                   <LODGraphCMDB
-                    onClusterClick={(clusterId) =>
+                    onClusterClick={(cluster) =>
                       // PR5 will hydrate cluster detail. For now, fall
                       // through to the legacy modal so existing node
                       // selection keeps working.
                       handleGraphNodeClick({
-                        id: clusterId,
-                        label: clusterId,
+                        id: cluster.cluster_id,
+                        label: cluster.display_label,
                         type: "CLUSTER_SUMMARY",
                         status: "OK",
                         metadata: {},
