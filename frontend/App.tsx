@@ -13,6 +13,7 @@ import { useResizableHandle } from "./hooks/useResizableHandle";
 
 // Components
 import GraphCMDB from "./components/GraphCMDB";
+import LODGraphCMDB from "./components/LODGraphCMDB";
 import AIAgentConsole from "./components/AIAgentConsole";
 import CIEditor from "./components/CIEditor";
 import AdminPage from "./components/AdminPage";
@@ -255,7 +256,25 @@ const MainLayout: React.FC = () => {
               />
               <Route path="users" element={<UserManager />} />
               <Route path="audit" element={<AuditLogPage />} />
-              <Route path="cmdb" element={<GraphCMDB onNodeClick={handleGraphNodeClick} />} />
+              <Route
+                path="cmdb"
+                element={
+                  <LODGraphCMDB
+                    onClusterClick={(clusterId) =>
+                      // PR5 will hydrate cluster detail. For now, fall
+                      // through to the legacy modal so existing node
+                      // selection keeps working.
+                      handleGraphNodeClick({
+                        id: clusterId,
+                        label: clusterId,
+                        type: "CLUSTER_SUMMARY",
+                        status: "OK",
+                        metadata: {},
+                      } as GraphNode)
+                    }
+                  />
+                }
+              />
               <Route path="analytics" element={<MetricAnalytics />} />
               <Route path="inventory" element={<GlobalInventory />} />
               <Route path="itsm/service-catalog" element={<ItsmServiceCatalogPage />} />
