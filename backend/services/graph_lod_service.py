@@ -30,30 +30,24 @@ from contracts.aggregate_policy import (
     derive_safe_geo_precision,
 )
 from contracts.cluster_id import (
-    ClusterId,
-    InvalidClusterIdError,
     assert_axis_matches,
     parse_cluster_id,
 )
 from contracts.cursor import (
     InvalidCursorError,
-    PermissionChangedError,
-    StaleCursorError,
     decode_cursor,
     derive_principal_hash,
     encode_cursor,
 )
-from contracts.projection import DetailProjectionPolicy, SensitiveSource
+from contracts.projection import SensitiveSource
 from contracts.revision import Revision
 from repositories import graph_lod_repo
 from schemas.graph import (
     AggregatePolicyDTO,
-    BoundaryStub,
     DetailCluster,
     DetailLink,
     DetailNode,
     DetailResponse,
-    EmptyReasonLiteral,
     Legend,
     OverviewCluster,
     OverviewResponse,
@@ -210,8 +204,8 @@ def _resolve_revision() -> Revision:
 
 def _strip_sensitive_fields(node_dict: dict[str, Any]) -> dict[str, Any]:
     """Strip sensitive fields from a detail node (REQ-DETAIL-5)."""
-    SENSITIVE_KEYS = {"public_ip", "metadata", "geo", "serial", "provider_account"}
-    return {k: v for k, v in node_dict.items() if k not in SENSITIVE_KEYS}
+    sensitive_keys = {"public_ip", "metadata", "geo", "serial", "provider_account"}
+    return {k: v for k, v in node_dict.items() if k not in sensitive_keys}
 
 
 def _principal_permissions(principal: Any) -> frozenset[str]:
@@ -251,10 +245,7 @@ def _projection_policy(principal: Any, sensitive_requested: bool) -> ProjectionF
 
 def _shape_detail_node(raw: dict[str, Any], projection: ProjectionFlags) -> DetailNode:
     """Apply projection to a raw node dict and shape it as DetailNode."""
-    if projection.show_sensitive_metadata:
-        node_data = dict(raw)
-    else:
-        node_data = _strip_sensitive_fields(raw)
+    node_data = dict(raw) if projection.show_sensitive_metadata else _strip_sensitive_fields(raw)
     allowed_axes = node_data.get("allowed_public_axes") or []
     return DetailNode(
         id=str(node_data["id"]),
@@ -273,9 +264,7 @@ def _shape_detail_link(raw: dict[str, Any]) -> DetailLink:
     )
 
 
-def _shape_detail_cluster(
-    cluster_id: str, raw: dict[str, Any]
-) -> DetailCluster:
+def _shape_detail_cluster(cluster_id: str, raw: dict[str, Any]) -> DetailCluster:
     return DetailCluster(
         cluster_id=cluster_id,
         axis="location",
@@ -382,12 +371,8 @@ def get_detail(
         )
 
     cluster_meta = raw_subgraph["cluster"]
-    nodes = [
-        _shape_detail_node(n, projection) for n in raw_subgraph.get("nodes") or []
-    ]
-    links = [
-        _shape_detail_link(l) for l in raw_subgraph.get("links") or []
-    ]
+    nodes = [_shape_detail_node(n, projection) for n in raw_subgraph.get("nodes") or []]
+    links = [_shape_detail_link(link) for link in raw_subgraph.get("links") or []]
     has_more = bool(raw_subgraph.get("has_more", False))
 
     # Build next cursor only when there are more pages

@@ -23,18 +23,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from models.user import User
-from schemas.graph import DetailResponse, OverviewResponse
-from services import graph_lod_service
-from services.auth_service import get_current_active_user
-
 from contracts.cluster_id import AxisConflictError, InvalidClusterIdError
 from contracts.cursor import (
     InvalidCursorError,
     PermissionChangedError,
     StaleCursorError,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from models.user import User
+from schemas.graph import DetailResponse, OverviewResponse
+from services import graph_lod_service
+from services.auth_service import get_current_active_user
 
 router = APIRouter(
     prefix="/graph",

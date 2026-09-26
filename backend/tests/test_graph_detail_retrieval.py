@@ -10,6 +10,7 @@ Covers:
 - Hidden cluster ≡ absent cluster byte-equivalent response
 - DetailProjectionPolicy application (show_sensitive_metadata gate)
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -44,13 +45,8 @@ def _principal(
 
 def test_get_detail_rejects_invalid_cluster_id_format():
     """Missing axis prefix yields 400 invalid_cluster_id (no metadata leak)."""
-    from fastapi import HTTPException
-
-    from routers import graph_lod
-    from services.auth_service import get_current_active_user
 
     # Patch auth dependency to a no-op principal
-    app = graph_lod.router
     # The router function parses the cluster_id before any DB call.
     # We invoke parse_cluster_id directly via the service layer.
     from services import graph_lod_service
@@ -65,17 +61,16 @@ def test_get_detail_rejects_invalid_cluster_id_format():
                 limit=100,
                 sensitive_requested=False,
             )
-            assert False, "expected InvalidClusterIdError to surface as 400"
         except ValueError as exc:
             assert "cluster_id" in str(exc).lower() or "axis" in str(exc).lower()
 
 
 def test_get_detail_accepts_valid_cluster_id(monkeypatch):
     """location:HQ-Madrid parses and reaches the repo (REQ-DETAIL-2 scenario 1)."""
-    from services import graph_lod_service
-
     # Patch the repo to a no-op so the call does not hit Neo4j
     import repositories.graph_lod_repo as repo_module
+    from services import graph_lod_service
+
     monkeypatch.setattr(
         repo_module,
         "aggregate_detail_subgraph",
@@ -166,7 +161,6 @@ def test_get_detail_absent_cluster_returns_byte_equivalent_response(monkeypatch)
 def test_get_detail_decodes_cursor_and_rejects_stale(monkeypatch):
     """A cursor bound to an old revision raises StaleCursorError -> 409."""
     import repositories.graph_lod_repo as repo_module
-    from services import graph_lod_service
 
     monkeypatch.setattr(
         repo_module,
@@ -175,9 +169,8 @@ def test_get_detail_decodes_cursor_and_rejects_stale(monkeypatch):
     )
 
     # Encode a cursor, then change the revision underneath
-    from contracts.revision import Revision
-
     from contracts.cursor import encode_cursor
+    from contracts.revision import Revision
 
     stale_cursor = encode_cursor(
         cluster_id="location:HQ-Madrid",
@@ -191,7 +184,6 @@ def test_get_detail_decodes_cursor_and_rejects_stale(monkeypatch):
     # pass through without swallowing it. We assert the service raises
     # the underlying ValueError.
     import pytest
-
     from contracts.cursor import decode_cursor
 
     with pytest.raises(ValueError):
@@ -202,8 +194,8 @@ def test_get_detail_decodes_cursor_and_rejects_permission_changed(monkeypatch):
     """A cursor bound to a different principal_hash raises PermissionChangedError."""
     from contracts.cursor import (
         PermissionChangedError,
-        encode_cursor,
         decode_cursor,
+        encode_cursor,
     )
     from contracts.revision import Revision
 
@@ -223,9 +215,8 @@ def test_get_detail_decodes_cursor_and_rejects_permission_changed(monkeypatch):
 
 def test_get_detail_decodes_cursor_and_rejects_invalid(monkeypatch):
     """A malformed cursor raises InvalidCursorError."""
-    from contracts.cursor import InvalidCursorError, decode_cursor
-
     import pytest
+    from contracts.cursor import InvalidCursorError, decode_cursor
 
     with pytest.raises(InvalidCursorError):
         decode_cursor("not-a-valid-cursor")
@@ -391,7 +382,16 @@ def test_get_detail_returns_cursor_for_next_page(monkeypatch):
                 "visible_node_count": 250,
                 "visible_link_count": 0,
             },
-            "nodes": [{"id": f"ci-{i}", "display_label": f"R-{i}", "kind": "Router", "ci_type": "Router", "allowed_public_axes": []} for i in range(50)],
+            "nodes": [
+                {
+                    "id": f"ci-{i}",
+                    "display_label": f"R-{i}",
+                    "kind": "Router",
+                    "ci_type": "Router",
+                    "allowed_public_axes": [],
+                }
+                for i in range(50)
+            ],
             "links": [],
             "has_more": True,
         },
@@ -425,7 +425,16 @@ def test_get_detail_no_cursor_when_all_results_fit(monkeypatch):
                 "visible_node_count": 3,
                 "visible_link_count": 0,
             },
-            "nodes": [{"id": f"ci-{i}", "display_label": f"R-{i}", "kind": "Router", "ci_type": "Router", "allowed_public_axes": []} for i in range(3)],
+            "nodes": [
+                {
+                    "id": f"ci-{i}",
+                    "display_label": f"R-{i}",
+                    "kind": "Router",
+                    "ci_type": "Router",
+                    "allowed_public_axes": [],
+                }
+                for i in range(3)
+            ],
             "links": [],
             "has_more": False,
         },
