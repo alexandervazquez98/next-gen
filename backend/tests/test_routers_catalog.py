@@ -14,21 +14,21 @@ Strategy:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+# Imports below need to come before patching so ruff does not flag E402.
+# The Neo4j patch must be active before `from main import app` because
+# main.py touches database.py at import time.
+from models.user import User, UserPermission  # noqa: E402
+from services.auth_service import get_current_active_user  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Patch Neo4j driver BEFORE importing anything that touches database.py
 # ---------------------------------------------------------------------------
 _mock_neo4j_driver = MagicMock()
 with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
-    from main import app
-
-from models.user import User, UserPermission
-from services.auth_service import get_current_active_user
-
+    from main import app  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # TestClient
