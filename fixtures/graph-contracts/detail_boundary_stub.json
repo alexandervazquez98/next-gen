@@ -1,0 +1,62 @@
+{
+  "boundary_stubs": [
+    {
+      "cluster_id": "location:dc-2",
+      "redacted": false,
+      "redaction_reason": null,
+      "visible_link_count": 3
+    },
+    {
+      "cluster_id": "location:dc-3",
+      "redacted": true,
+      "redaction_reason": "low_cardinality",
+      "visible_link_count": 1
+    }
+  ],
+  "cluster": {
+    "axis": "location",
+    "cluster_id": "location:dc-1",
+    "display_label": "dc-1",
+    "visible_link_count": 4,
+    "visible_node_count": 5
+  },
+  "empty_reason": "none",
+  "filters": {},
+  "generated_at": "2026-01-15T10:00:00Z",
+  "links": [
+    {
+      "relationship": "CONNECTS_TO",
+      "source_node_id": "ci-1",
+      "target_node_id": "ci-2"
+    }
+  ],
+  "nodes": [
+    {
+      "allowed_public_axes": [
+        "ci_type"
+      ],
+      "ci_type": "router",
+      "display_label": "R1",
+      "id": "ci-1",
+      "kind": "CI"
+    },
+    {
+      "allowed_public_axes": [
+        "ci_type"
+      ],
+      "ci_type": "router",
+      "display_label": "R2",
+      "id": "ci-2",
+      "kind": "CI"
+    }
+  ],
+  "page": {
+    "has_more": false,
+    "next_cursor": null
+  },
+  "projection_flags": {
+    "sensitive_source": "principal_scope",
+    "show_sensitive_metadata": false
+  },
+  "revision": "test-revision-0011"
+}

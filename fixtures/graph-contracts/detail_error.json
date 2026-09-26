@@ -1,0 +1,5 @@
+{
+  "cluster_id": "",
+  "error": "invalid_cluster_id",
+  "reason": "cluster_id is empty"
+}

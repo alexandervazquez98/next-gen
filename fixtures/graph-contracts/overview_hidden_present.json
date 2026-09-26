@@ -1,0 +1,31 @@
+{
+  "aggregate_policy": {
+    "minimum_count": 5,
+    "permission_required": "graph:aggregate_breakdown:read",
+    "safe_geo_precision": "city"
+  },
+  "axis": "location",
+  "clusters": [
+    {
+      "aggregate_redacted": false,
+      "cluster_id": "location:dc-1",
+      "display_label": "dc-1",
+      "suppression_reason": null,
+      "visible_link_count": 18,
+      "visible_node_count": 25
+    }
+  ],
+  "filters": {},
+  "generated_at": "2026-01-15T10:00:00Z",
+  "inter_cluster_links": [],
+  "legend": {
+    "cards": [
+      "summary"
+    ]
+  },
+  "page": {
+    "has_more": false,
+    "next_cursor": null
+  },
+  "revision": "test-revision-0004"
+}
