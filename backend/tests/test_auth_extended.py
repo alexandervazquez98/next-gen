@@ -621,6 +621,7 @@ class TestPermissionSecurity:
             UserPermission.ITSM_EDIT,
             UserPermission.CI_APPROVE_PROPOSAL,
             UserPermission.CI_BULK_IMPORT,
+            UserPermission.GRAPH_AGGREGATE_BREAKDOWN_READ,
         }
 
         defined_permissions = set(UserPermission)

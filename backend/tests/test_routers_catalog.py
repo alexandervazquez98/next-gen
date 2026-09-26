@@ -877,6 +877,7 @@ class TestOwnersRouter:
                 "phone": "+541100000000",
                 "email": "alice@example.com",
                 "tier": "T1",
+                "aggregate_breakdown_regions": [],
                 "disabled": False,
                 "force_password_change": False,
             },
