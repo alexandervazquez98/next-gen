@@ -32,6 +32,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.6] — 2026-09-26
+
+### Chores
+
+- **LOD graph overview and detail contracts finalized — value objects, frozen DTOs, fixtures, and TypeScript mirrors (#390, PR #468)**: the CMDB graph rendering path needs Level-of-Detail (LOD) loading for large topologies, but the API contracts for `/graph/overview` and `/graph/detail/{cluster_id}` were not yet frozen as concrete backend/frontend DTOs — without explicit contracts, the upcoming implementation slices (#391 backend APIs, #392 GraphCMDB migration, #393 consumer migration) would drift on pagination, cluster identifiers, search behavior, security projection, and cache/revision semantics. This change ships the contract layer only — no new runtime endpoints, no frontend behavior change, `/graph/full` unchanged in shape and redaction semantics. **39 files, +4157 LOC** across backend contracts, Pydantic v2 DTOs, frozen JSON fixtures, frontend TypeScript mirrors, and a spec coverage gate.
+
+  - **Backend value objects** (`backend/contracts/`): five new modules — `cluster_id.py` (case-insensitive parse with axis-derived `cluster_id` semantics and rejection tests), `cursor.py` (deterministic encode/decode for paginated detail responses), `projection.py` (`DetailProjectionPolicy` enum for visible-only membership resolution), `revision.py` (cache invalidation token semantics), `aggregate_policy.py` (tiered geographic precision disclosure: full → bucketed → hidden with externally indistinguishable responses).
+
+  - **Pydantic v2 DTOs** (`backend/schemas/graph.py`): `GraphOverviewResponse`, `GraphOverviewCluster`, `GraphDetailResponse`, `GraphDetailNode`, `GraphDetailEdge` — strict, no `extra`, versioned via schema export. Surfaced in `backend/schemas/__init__.py`.
+
+  - **Frozen JSON fixtures** (`fixtures/graph-contracts/`): six canonical responses — `detail_visible.json`, `detail_hidden.json`, `detail_absent.json`, `detail_no_visible_members.json`, `detail_boundary_stub.json`, `detail_error.json` — plus the existing `fixtures/graph-full/frozen_response.json` byte-equality snapshot guarding `/graph/full` regression. Each fixture is independently reviewable but cumulatively exceed the 400-LOC soft cap.
+
+  - **Frontend TypeScript mirrors + parity gate** (`frontend/`): TS type definitions mirroring the Pydantic DTOs, request builders for the future `/graph/overview` and `/graph/detail/{cluster_id}` calls, and parity tests that fail CI on any drift between frontend types and backend DTOs (run on every PR via `frontend-tests`).
+
+  - **Spec coverage gate** (`backend/tests/test_spec_coverage_graph.py`): enforces 9 REQs / 43 scenarios for the LOD contracts — every requirement in `openspec/changes/feat-390-lod-contracts/specs/cmdb-graph-overview-detail-contracts/spec.md` is matched to at least one test. Removing a requirement fails CI; adding a test without a matching requirement fails CI.
+
+  - **Strict-TDD coverage**: 67 new tests across 8 files (`test_graph_contracts_aggregate_policy.py`, `test_graph_contracts_cluster_id_parse.py`, `test_graph_contracts_cluster_id_rejection.py`, `test_graph_contracts_cursor.py`, `test_graph_contracts_projection.py`, `test_graph_contracts_schemas.py`, `test_graph_full_snapshot.py`, `test_spec_coverage_graph.py`) — all green; verified end-to-end via PR test-mode report (pytest 67/67 PASS, backend smoke, frontend smoke).
+
+  - **OpenSpec change archived** at `openspec/changes/feat-390-lod-contracts/` (proposal + design + exploration + tasks + spec delta); earlier proposal archived at `openspec/changes/archive/2026-07-08-cmdb-graph-level-of-detail/`.
+
+  - **Implementation slices tracked separately**: #391 (backend `/graph/overview` and `/graph/detail/{cluster_id}` runtime APIs), #392 (frontend GraphCMDB overview-first migration), #393 (migrate remaining `/graph/full` consumers); each will close via supersession PR after cluster integration is validated. PR #214 (visual editor scaling) stays `status:needs-review` until #393 lands per its downgrade comment. **Zero runtime impact at deploy time** — no API surface change, no schema change, no migration; the DTOs are the source of truth for the next implementation slice.
+
 ## [1.17.5] — 2026-09-19
 
 ### Chores
