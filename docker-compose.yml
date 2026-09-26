@@ -84,6 +84,10 @@ services:
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
       - DISABLE_BACKEND_COLLECTOR=true
+      # feat-cmdb-ai-handoff (PR #483): enable /api/cmdb/proposals/* router.
+      # Default OFF so unflagged deployments stay silent; flip to true to enable
+      # the HITL CI proposal workflow. See docs/USER_GUIDE.md and #487/#488/#489.
+      - FEATURE_CMDB_PROPOSALS_ENABLED=${FEATURE_CMDB_PROPOSALS_ENABLED:-false}
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       # PR 5 E2E journey (frontend/test/e2e/service-management-pr5.spec.ts)
       # logs in as admin/admin against the freshly seeded smoke stack.

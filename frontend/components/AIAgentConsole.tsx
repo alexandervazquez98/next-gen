@@ -3,13 +3,45 @@ import type React from "react";
 import { useState, useRef, useEffect } from "react";
 import { ApiError } from "../services/api";
 import { chatWithAIAgent } from "../services/geminiService";
+import { ProposalBadge } from "./cmdb/proposals/ProposalBadge";
+import { useAuth } from "../context/AuthContext";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  // feat-489: backend-supplied harness_result for this assistant turn.
+  // For propose_ci submissions, this carries {type, status, proposal_id,
+  // ci_id, version} so the console can render a per-message review link.
+  harnessResult?: Record<string, unknown> | null;
+}
+
+function extractProposalLink(
+  harnessResult: Record<string, unknown> | null | undefined,
+): { proposalId: string; ciId: string | null } | null {
+  if (!harnessResult || typeof harnessResult !== "object") return null;
+  if (harnessResult.type !== "propose_ci") return null;
+  if (harnessResult.denied === true) return null;
+  if (harnessResult.status === "error") return null;
+  const proposalId =
+    typeof harnessResult.proposal_id === "string" ? harnessResult.proposal_id : null;
+  if (!proposalId) return null;
+  const ciId = typeof harnessResult.ci_id === "string" ? harnessResult.ci_id : null;
+  return { proposalId, ciId };
+}
+
+function useSafeHasPermission(perm: string): boolean {
+  // Defensive: when the console is rendered without an AuthProvider (e.g. legacy
+  // unit tests), bail out as if the user has no permission. This keeps the badge
+  // hidden instead of crashing the chat console.
+  try {
+    return useAuth().hasPermission(perm);
+  } catch {
+    return false;
+  }
 }
 
 const AIAgentConsole: React.FC = () => {
+  const canReviewProposals = useSafeHasPermission("CI_APPROVE_PROPOSAL");
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -55,7 +87,8 @@ const AIAgentConsole: React.FC = () => {
         ...prev,
         {
           role: "assistant",
-          content: response || "Unable to process request.",
+          content: response.answer || "Unable to process request.",
+          harnessResult: response.harness_result ?? null,
         },
       ]);
     } catch (error) {
@@ -94,19 +127,38 @@ const AIAgentConsole: React.FC = () => {
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[85%] p-3 rounded-2xl text-base leading-relaxed whitespace-pre-wrap break-words ${
-                m.role === "user"
-                  ? "bg-brand-600 text-white rounded-tr-none"
-                  : "bg-neutral-800/80 text-neutral-200 border border-white/5 rounded-tl-none"
-              }`}
-            >
-              {m.content}
+        {messages.map((m, i) => {
+          const proposalLink = m.role === "assistant" ? extractProposalLink(m.harnessResult) : null;
+          return (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className="flex flex-col gap-2 max-w-[85%]">
+                <div
+                  className={`p-3 rounded-2xl text-base leading-relaxed whitespace-pre-wrap break-words ${
+                    m.role === "user"
+                      ? "bg-brand-600 text-white rounded-tr-none"
+                      : "bg-neutral-800/80 text-neutral-200 border border-white/5 rounded-tl-none"
+                  }`}
+                >
+                  {m.content}
+                </div>
+                {proposalLink && (
+                  <a
+                    data-testid={`proposal-link-${proposalLink.proposalId}`}
+                    href={`/#/proposals/cmdb?id=${proposalLink.proposalId}`}
+                    className="self-start inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-sm">rule</span>
+                    Review CI proposal
+                    {proposalLink.ciId && (
+                      <span className="font-mono text-emerald-200/80">({proposalLink.ciId})</span>
+                    )}
+                    <span className="text-emerald-400/60">→</span>
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {loading && (
           <div className="flex justify-start">
             <div className="bg-neutral-800/80 p-3 rounded-2xl rounded-tl-none border border-white/5 flex gap-1">
@@ -119,6 +171,12 @@ const AIAgentConsole: React.FC = () => {
       </div>
 
       <div className="p-4 bg-black/40 border-t border-white/5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+            MODEL: NexCO-Gen1
+          </span>
+          <ProposalBadge canReview={canReviewProposals} />
+        </div>
         <div className="relative">
           <input
             type="text"

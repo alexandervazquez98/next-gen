@@ -489,6 +489,8 @@ Los roles son **conjuntos de permisos** que se asignan a usuarios.
 
 > **Cuidado**: Los roles marcados como **system** no se pueden eliminar.
 
+> **Backfill automático al arrancar** (feat-489 Phase 3): desde **v1.17.4** el backend ejecuta `backfill_user_permissions_from_roles()` después de `seed_roles()` en cada boot. La regla es **fill-missing**: los permisos que el rol tiene y el usuario no, se agregan al `User.permissions` row (Postgres) y a la propiedad `:User.permissions` (Neo4j). Los permisos **revocados explícitamente a un usuario** se respetan — el rol es el piso, no el techo. Esto significa que cuando agregás un permiso nuevo a un rol system (ej. `CI_APPROVE_PROPOSAL` en `OPERATOR`), todos los OPERATOR existentes lo reciben automáticamente en el próximo reinicio, sin que tengas que editar la fila de cada usuario a mano. Si querés revocar un permiso específico para un usuario, seguís pudiendo hacerlo desde el Role Manager (la revocación manual sobrevive el backfill porque la operación es aditiva).
+
 ---
 
 ## 9. Troubleshooting
@@ -537,6 +539,95 @@ Los roles son **conjuntos de permisos** que se asignan a usuarios.
 | [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) | Bugs activos y handovers de desarrollo |
 | `docs/domain/business-model.md` | Modelo de negocio: cómo se relacionan CIs, servicios y SLAs |
 | `docs/itsm/event-flow.md` | Flujo completo de eventos: lifecycle, ownership, escalación |
+
+---
+
+## 10. CMDB Proposals — AI HITL Workflow
+
+El flujo **HITL (Human-In-The-Loop)** permite que un agente de IA (`AI_DIAGNOSTIC` o `AI_OPERATOR`) proponga nuevos CIs al CMDB a través de un manifest JSON. La IA **nunca escribe directamente al grafo** — siempre pasa por un humano con `CI_APPROVE_PROPOSAL` que revisa y aprueba o revoca la propuesta en `/proposals/cmdb`.
+
+### 10.1 ¿Cómo se activa?
+
+El router está gateado por una feature flag. Para habilitarla en tu deploy:
+
+1. Editá `.env` y agregá:
+   ```env
+   FEATURE_CMDB_PROPOSALS_ENABLED=true
+   ```
+2. Reconstruí y reiniciá el backend:
+   ```bash
+   docker compose build backend
+   docker compose up -d --force-recreate --no-deps backend
+   ```
+3. Verificá que el endpoint responde:
+   ```bash
+   curl -sS http://localhost:8000/api/cmdb/proposals/count?status=DRAFT
+   # → 401 Not authenticated (router vivo; flag honrado)
+   # → 404 feature_disabled (flag apagada)
+   ```
+
+> **Default**: la flag viene **OFF** (`FEATURE_CMDB_PROPOSALS_ENABLED=false`) en `.env.example`. Mantenerla apagada hasta que el operador decida conscientemente activarla. Ver el contrato en [`docs/ai/cmdb-proposals.md`](./ai/cmdb-proposals.md).
+
+### 10.2 ¿Cómo reviso las propuestas?
+
+Una vez activada, la UI de revisión está en `#/proposals/cmdb`:
+
+- **Lista**: filtros por status (`?status=DRAFT`, `APPROVED`, `REVOKED`), categoría y agente que propuso.
+- **Detalle**: click sobre una fila para ver el manifest completo + audit timeline.
+- **Aprobar**: botón **Approve** (requiere `CI_APPROVE_PROPOSAL`). Si la categoría ya no existe, devuelve `409 category_drift`.
+- **Revocar**: botón **Revoke** con razón opcional.
+
+El badge de la consola IA (`AIAgentConsole`) muestra el contador de propuestas DRAFT — cliqueable para ir directo a la lista filtrada.
+
+### 10.3 Permisos requeridos
+
+| Rol / permiso | Acción |
+| :--- | :--- |
+| `AI_PROPOSE_CI` (en `users.permissions` de un `AI_DIAGNOSTIC`/`AI_OPERATOR`) | Enviar propuesta vía `POST /api/cmdb/proposals` |
+| `CI_VIEW` | Ver el listado y el detalle |
+| `CI_APPROVE_PROPOSAL` | Aprobar o revocar la propuesta |
+
+> **Separación de duties**: el mismo agente que propone **nunca** debe aprobar, aunque su token lleve `CI_APPROVE_PROPOSAL`. El gate existe para que un humano valide los cambios.
+
+### 10.4 Antes de la primera propuesta
+
+Desde **v1.17.4** el backend auto-seedea categorías por defecto al arrancar (ver `backend/seed_categories.py`). El set inicial cubre los tipos más comunes:
+
+- `Router`
+- `Switch`
+- `Server`
+- `Sensor`
+- `Firewall`
+- `Other`
+
+`GET /api/categories` devuelve este set en un stack fresco; el primer manifest con `category="Router"` ya no devuelve `422 unknown_category`. El seed es idempotente (MERGE), así que un reinicio no duplica filas y solo backfilea `icon_key` si la categoría existe sin icono.
+
+**Agregar categorías adicionales** (ej. `Load Balancer`, `Database`):
+
+```bash
+curl -X POST http://localhost:8000/api/categories \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Load Balancer","description":"L4/L7 LB"}'
+```
+
+**Forzar re-seed manual** (ej. después de un wipe del grafo):
+
+```bash
+docker compose exec backend python -m seed_categories
+```
+
+### 10.5 Secretos en manifests — NUNCA
+
+El audit walker (`redact_manifest_secrets` en `backend/services/audit_service.py`) reemplaza automáticamente secretos que coincidan con el deny-list (`*key|*token|*secret|*password`) por `<REDACTED>`. **Pero** el CMDB sí guarda lo que le mandes — preferí placeholders como `"REPLACE_ME"` o `"secret://..."` y completá el valor real en `CIEditor` después de aprobar.
+
+Para SNMP, usá `snmp_community_ref` en vez de `snmp_community`:
+
+```json
+{
+  "snmp": { "version": "v2c", "community_ref": "secret://pop-central/snmp/ro" }
+}
+```
 
 ---
 

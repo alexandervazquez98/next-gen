@@ -1129,6 +1129,171 @@ def _recover_icmp_latency_events(session, updates):
     )
 
 
+def _recover_icmp_jitter_events(session, updates):
+    """Mirror of ``_recover_icmp_latency_events`` for ``ICMP_JITTER_METRIC_ID``.
+
+    Recovers OPEN/ACK THRESHOLD_BREACH events when an OK jitter sample arrives
+    in the same cycle. Recovers PROPAGATED descendants via ``propagated_from``.
+    See design.md AD-1.
+    """
+    recoveries = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_JITTER_METRIC_ID
+        and u.get("status") == "OK"
+    ]
+    if not recoveries:
+        return
+    session.run(
+        """
+        UNWIND $recoveries AS row
+        MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+          AND e.event_type = 'THRESHOLD_BREACH'
+          AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.message = row.message
+        WITH e
+        CALL {
+            WITH e
+            MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE pe.propagated_from = e.id
+              AND pe.root_cause_ci_id = e.ci_id
+              AND pe.correlation_type = 'PROPAGATED'
+              AND pe.status IN ['OPEN', 'ACK']
+              AND coalesce(m.can_propagate, true) = true
+            SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+            RETURN count(pe) AS propagated_recovered
+        }
+        RETURN e
+    """,
+        recoveries=recoveries,
+    )
+
+
+def _recover_icmp_packet_loss_events(session, updates):
+    """Mirror of ``_recover_icmp_latency_events`` for ``ICMP_PACKET_LOSS_METRIC_ID``.
+
+    See design.md AD-1.
+    """
+    recoveries = [
+        u
+        for u in updates
+        if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_ICMP
+        and u.get("metric_id") == ICMP_PACKET_LOSS_METRIC_ID
+        and u.get("status") == "OK"
+    ]
+    if not recoveries:
+        return
+    session.run(
+        """
+        UNWIND $recoveries AS row
+        MATCH (:CI {id: row.node_id})-[:HAS_EVENT]->(e:Event {metric_id: row.metric_id})
+        WHERE e.status IN ['OPEN', 'ACK']
+          AND coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+          AND e.event_type = 'THRESHOLD_BREACH'
+          AND (e.source_protocol IS NULL OR toUpper(e.source_protocol) = row.source_protocol)
+        SET e.status = 'RECOVERED',
+            e.recovered_at = datetime(),
+            e.message = row.message
+        WITH e
+        CALL {
+            WITH e
+            MATCH (pe:Event)-[:TRIGGERED_BY]->(m:MetricDef)
+            WHERE pe.propagated_from = e.id
+              AND pe.root_cause_ci_id = e.ci_id
+              AND pe.correlation_type = 'PROPAGATED'
+              AND pe.status IN ['OPEN', 'ACK']
+              AND coalesce(m.can_propagate, true) = true
+            SET pe.status = 'RECOVERED', pe.recovered_at = datetime()
+            RETURN count(pe) AS propagated_recovered
+        }
+        RETURN e
+    """,
+        recoveries=recoveries,
+    )
+
+
+def _inject_synthetic_breaches_for_down_cis(
+    updates,
+    availability_updates,
+    metric_id,
+    configured_metrics_by_ci,
+):
+    """Inject a synthetic CRITICAL breach row for every (CI, metric_id) pair where
+    the CI is unreachable (availability==0), the ``(ci_id, metric_id)`` pair is
+    configured on the CI (via ``:HAS_METRIC`` from Neo4j), and the metric has
+    no real sample in ``updates`` for this cycle.
+
+    The gate order is:
+      1. SKIP if the availability source is not ICMP (non-ICMP families are out
+         of scope — the synthetic breach is an ICMP-only signal).
+      2. SKIP if ``value != 0`` (the CI is UP).
+      3. SKIP if ``(ci_id, metric_id)`` is NOT in ``configured_metrics_by_ci``
+         — the metric is not configured on the CI
+         (REQ-SYNTHETIC-BREACH-SCOPE). This is the bug-fixed gate: it must be
+         evaluated against the Neo4j `:HAS_METRIC` set, not against the
+         in-memory ``updates`` list (a CI without the metric is also absent
+         from ``updates``, which would invert the gate).
+      4. SKIP if ``(ci_id, metric_id)`` is already represented in ``updates``
+         (real sample this cycle — avoid double-injection).
+      5. Otherwise append a synthetic row.
+
+    The helper walks ``availability_updates`` (the ICMP availability companion
+    samples produced earlier in the same ``poll_snmp()`` cycle). The synthetic
+    rows flow through the existing ``_refresh_icmp_jitter_events`` /
+    ``_refresh_icmp_packet_loss_events`` writers — no special persistence path.
+
+    Pure Python; no Neo4j access. Returns the number of rows injected.
+    """
+    existing_keys = {
+        (u.get("node_id"), u.get("metric_id"))
+        for u in updates
+        if u.get("node_id") and u.get("metric_id")
+    }
+    availability_by_ci = {}
+    for sample in availability_updates:
+        node_id = sample.get("node_id")
+        if not node_id:
+            continue
+        if _availability_source(sample.get("availability_source")) is None:
+            continue
+        availability_by_ci[node_id] = sample
+
+    injected = 0
+    for node_id, sample in availability_by_ci.items():
+        if float(sample.get("value") or 0.0) != 0.0:
+            continue
+        # REQ-SYNTHETIC-BREACH-SCOPE gate: the (CI, metric) MUST be configured
+        # before any synthetic row is appended. The configured set is built
+        # once per cycle by ``poll_snmp()`` from `:HAS_METRIC`.
+        if (node_id, metric_id) not in configured_metrics_by_ci:
+            continue
+        # De-dup against real samples already in `updates` for this cycle.
+        if (node_id, metric_id) in existing_keys:
+            continue
+        updates.append(
+            {
+                "node_id": node_id,
+                "metric_id": metric_id,
+                "protocol": SOURCE_PROTOCOL_ICMP,
+                "source_protocol": SOURCE_PROTOCOL_ICMP,
+                "event_type": EVENT_TYPE_THRESHOLD_BREACH,
+                "status": "CRITICAL",
+                "severity": "CRITICAL",
+                "value": None,
+                "message": "Unable to measure: CI unreachable (availability=0)",
+                "is_synthetic": True,
+            }
+        )
+        existing_keys.add((node_id, metric_id))
+        injected += 1
+    return injected
+
+
 def _recover_snmp_collection_failures(session, updates):
     recoveries = [
         u for u in updates if str(u.get("protocol") or "").upper() == SOURCE_PROTOCOL_SNMP
@@ -1753,6 +1918,48 @@ def poll_snmp():
                         session, packet_loss_root_rows, cache={}, lock_db=db
                     )
 
+            # ── fix-484 synthetic breach (CI DOWN → CRITICAL event) ────────
+            # When a CI is unreachable (availability=0) the ICMP sidecar
+            # produces no jitter/packet-loss sample for that cycle, so the
+            # refresh helpers see nothing to act on and the per-metric
+            # HAS_METRIC row keeps the last OK value (stale display).
+            # Inject one CRITICAL synthetic THRESHOLD_BREACH row per
+            # (CI, metric) pair where availability=0 and the metric is
+            # configured; the rows flow through the same Pass 3 refresh
+            # path as real samples — no special persistence.
+            # (design.md §Data Flow; AD-2/AD-3; spec fix-484 §Synthetic
+            # Threshold Breach on CI DOWN for Jitter/PacketLoss.)
+            #
+            # REQ-SYNTHETIC-BREACH-SCOPE gate: the (CI, metric) pair MUST
+            # have an active :HAS_METRIC relationship before injection. The
+            # configured set is built here, once per cycle, so the helper
+            # can do a single O(1) set lookup per (CI, metric) pair without
+            # an extra Neo4j roundtrip per candidate.
+            configured_metrics_records = session.run(
+                """
+                MATCH (ci:CI)-[:HAS_METRIC]->(m:MetricDef)
+                WHERE m.id IN [$icmp_jitter_metric_id, $icmp_packet_loss_metric_id]
+                RETURN ci.id AS ci_id, m.id AS metric_id
+                """,
+                icmp_jitter_metric_id=ICMP_JITTER_METRIC_ID,
+                icmp_packet_loss_metric_id=ICMP_PACKET_LOSS_METRIC_ID,
+            )
+            configured_metrics_by_ci: set[tuple[str, str]] = {
+                (record["ci_id"], record["metric_id"]) for record in configured_metrics_records
+            }
+            _inject_synthetic_breaches_for_down_cis(
+                jitter_updates,
+                availability_updates,
+                ICMP_JITTER_METRIC_ID,
+                configured_metrics_by_ci,
+            )
+            _inject_synthetic_breaches_for_down_cis(
+                packet_loss_updates,
+                availability_updates,
+                ICMP_PACKET_LOSS_METRIC_ID,
+                configured_metrics_by_ci,
+            )
+
             # ── Recovery passes (unchanged from the pre-fix flow) ─────────
             # The design places them between Pass 2 and Pass 3 so a parent
             # that recovers in the same cycle cannot accept new dependent
@@ -1760,6 +1967,10 @@ def poll_snmp():
             _recover_snmp_collection_failures(session, latest_updates)
             _recover_icmp_availability_events(session, availability_updates)
             _recover_icmp_latency_events(session, latency_updates)
+            # fix-484 — close the symmetry that #431 deliberately deferred.
+            # Both writers mirror _recover_icmp_latency_events (see above).
+            _recover_icmp_jitter_events(session, jitter_updates)
+            _recover_icmp_packet_loss_events(session, packet_loss_updates)
 
             # Pass 3: rebuild the cache now that Pass 2's ROOT events are
             # persisted, then route the NON-candidate rows through the

@@ -2753,3 +2753,130 @@ def test_ai_chat_timeout_still_504(monkeypatch):
 
     assert response.status_code == 504
     assert response.json()["detail"] == "LM Studio request timed out"
+
+
+# ── feat-cmdb-ai-handoff: CMDB proposals tool prompt tests ────────────────
+
+
+def test_payload_system_prompt_loads_cmdb_proposals_tool(tmp_path, monkeypatch):
+    """REGRESSION GUARD: the cmdb_proposals.md prompt must be loaded into the
+    system prompt when the file exists in the prompts tree. The agent needs
+    this contract to know how to call propose_ci / list_proposals /
+    approve_proposal / revoke_proposal without inventing behavior."""
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    identity_dir = tmp_path / "identity"
+    tools_dir = tmp_path / "tools"
+    identity_dir.mkdir()
+    tools_dir.mkdir()
+    (identity_dir / "Soul.md").write_text("# Soul\n\nIdentity.", encoding="utf-8")
+    (identity_dir / "scope.md").write_text("# Scope\n\nRead-only.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text("# Policy\n\nCompact.", encoding="utf-8")
+    (tools_dir / "cmdb_proposals.md").write_text(
+        "# CMDB Proposal Tools (Human-in-the-Loop)\n\n"
+        "Use propose_ci, list_proposals, approve_proposal, revoke_proposal.\n"
+        "AI agents MUST NOT call POST /api/nodes directly.\n"
+        "Lifecycle: DRAFT -> APPROVED / REVOKED.\n"
+        "Required permission: AI_PROPOSE_CI for propose_ci.",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "Add a new router", None, None, LMStudioSettings(enabled=True, model="local-model")
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "cmdb_proposals" in system_prompt.lower()
+    assert "propose_ci" in system_prompt
+    assert "list_proposals" in system_prompt
+    assert "approve_proposal" in system_prompt
+    assert "revoke_proposal" in system_prompt
+    assert "POST /api/nodes" in system_prompt
+    assert "AI_PROPOSE_CI" in system_prompt
+
+
+def test_payload_system_prompt_cmdb_proposals_bundled_fallback(tmp_path, monkeypatch):
+    """When the user override does NOT include cmdb_proposals.md, the loader
+    falls back to the bundled default at backend/ai/tools/cmdb_proposals.md.
+    This guarantees the agent always has the CMDB HITL contract available."""
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    identity_dir = tmp_path / "identity"
+    identity_dir.mkdir()
+    (identity_dir / "Soul.md").write_text("# Soul\n\nIdentity.", encoding="utf-8")
+    (identity_dir / "scope.md").write_text("# Scope\n\nRead-only.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text("# Policy\n\nCompact.", encoding="utf-8")
+    # Intentionally no tools/cmdb_proposals.md in the user override;
+    # the loader must fall back to the bundled default.
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "Add a new router", None, None, LMStudioSettings(enabled=True, model="local-model")
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    # Bundled fallback must still include the CMDB proposal contract.
+    assert "propose_ci" in system_prompt
+    assert "tools/cmdb_proposals.md" in system_prompt
+
+
+def test_payload_system_prompt_user_override_cmdb_proposals_wins(tmp_path, monkeypatch):
+    """When the user override provides cmdb_proposals.md, its contents must
+    win over the bundled default. This lets operators customize the agent's
+    CMDB instructions without redeploying."""
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    identity_dir = tmp_path / "identity"
+    tools_dir = tmp_path / "tools"
+    identity_dir.mkdir()
+    tools_dir.mkdir()
+    (identity_dir / "Soul.md").write_text("# Soul\n\nIdentity.", encoding="utf-8")
+    (identity_dir / "scope.md").write_text("# Scope\n\nRead-only.", encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text("# Policy\n\nCompact.", encoding="utf-8")
+    (tools_dir / "cmdb_proposals.md").write_text(
+        "# CMDB proposals override\n\nCUSTOM_OVERRIDE_MARKER_FOR_TEST", encoding="utf-8"
+    )
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "Add a new router", None, None, LMStudioSettings(enabled=True, model="local-model")
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "CUSTOM_OVERRIDE_MARKER_FOR_TEST" in system_prompt
+
+
+def test_payload_system_prompt_under_budget_with_cmdb_proposals(tmp_path, monkeypatch):
+    """The full system prompt (identity + optional tools including cmdb_proposals)
+    must stay under MAX_SYSTEM_PROMPT_CHARS. The CMDB proposals prompt is the
+    longest optional file we ship; this guards against prompt bloat."""
+    from config import LMStudioSettings
+    from services import ai_chat_service
+
+    identity_dir = tmp_path / "identity"
+    tools_dir = tmp_path / "tools"
+    identity_dir.mkdir()
+    tools_dir.mkdir()
+    (identity_dir / "Soul.md").write_text("# Soul\n\n" + ("identity " * 200), encoding="utf-8")
+    (identity_dir / "scope.md").write_text("# Scope\n\n" + ("scope " * 200), encoding="utf-8")
+    (identity_dir / "context-policy.md").write_text(
+        "# Policy\n\n" + ("policy " * 200), encoding="utf-8"
+    )
+    (tools_dir / "cmdb_proposals.md").write_text(
+        "# CMDB proposals\n\n" + ("cmdb " * 800), encoding="utf-8"
+    )
+    monkeypatch.setattr(ai_chat_service, "AI_USER_DIR", tmp_path)
+
+    payload = ai_chat_service.build_lm_studio_payload(
+        "Add a router", None, None, LMStudioSettings(enabled=True, model="local-model")
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert len(system_prompt) <= ai_chat_service.MAX_SYSTEM_PROMPT_CHARS, (
+        f"System prompt exceeded budget: {len(system_prompt)} > "
+        f"{ai_chat_service.MAX_SYSTEM_PROMPT_CHARS}"
+    )

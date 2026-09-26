@@ -23,6 +23,10 @@ class AIPermission(str, Enum):  # noqa: UP042
     AI_CI_UPDATE_METADATA = "AI_CI_UPDATE_METADATA"
     AI_EVENT_CLOSE = "AI_EVENT_CLOSE"
     AI_DICTIONARY_PREVIEW = "AI_DICTIONARY_PREVIEW"
+    # feat-cmdb-ai-handoff (REQ-CMAP-004): lets an AI agent submit a CI
+    # manifest via POST /api/cmdb/proposals. Approve/revoke is intentionally
+    # NOT exposed to AI roles — humans always have the final say.
+    AI_PROPOSE_CI = "AI_PROPOSE_CI"
 
 
 class UserPermission(str, Enum):  # noqa: UP042
@@ -55,6 +59,15 @@ class UserPermission(str, Enum):  # noqa: UP042
     # MQTT integration
     MQTT_READ = "MQTT_READ"
     MQTT_MAPPING_MANAGE = "MQTT_MAPPING_MANAGE"
+
+    # feat-cmdb-ai-handoff (REQ-CMAP-005): gates human-side approve/revoke on
+    # AI-submitted CI proposals. Admin already receives this permission via
+    # the spread of all UserPermission values in seed_roles.py.
+    CI_APPROVE_PROPOSAL = "CI_APPROVE_PROPOSAL"
+    # feat-489 Slice 1B: gates admin bulk CSV import (POST /cmdb/proposals/
+    # bulk-import). Distinct from CI_APPROVE_PROPOSAL so chat-vs-bulk audit
+    # stays separable; admins receive it via the spread in seed_roles.py.
+    CI_BULK_IMPORT = "CI_BULK_IMPORT"
 
 
 class Role(BaseModel):

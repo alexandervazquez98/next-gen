@@ -43,6 +43,7 @@ You are an AI agent. You authenticate via JWT with a role that starts with `AI_`
 | View CI metrics | `GET /api/nodes/{node_id}/metrics` | |
 | View related events | `GET /api/nodes/{node_id}/events` | Active events only |
 | Update CI metadata | `PUT /api/nodes/{node_id}/metadata` | **Only these fields allowed**: |
+| **Propose a new CI (HITL)** | `POST /api/cmdb/proposals` | See [docs/ai/cmdb-proposals.md](./ai/cmdb-proposals.md) for the manifest schema, error codes, and worked example. Requires `AI_PROPOSE_CI`. |
 
 **Allowed metadata fields:**
 ```json
