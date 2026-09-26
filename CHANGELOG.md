@@ -32,6 +32,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-09-26
+
+### Added
+
+- **LOD graph runtime slice for CMDB topology endpoints (#391, PR #499 tracker with child PRs #498 + #500 + #501)**: ships the runtime behavior for the Level-of-Detail graph endpoints that the contract slice (#390, v1.17.6) defined. The tracker PR accumulates three child PRs delivered via Feature Branch Chain (mirror of PR #468 pattern), each with strict TDD evidence (46 new tests across the chain) and a single round-of-test validation gate on the tracker branch before the main merge.
+
+  - **`GET /graph/overview` endpoint (#391 PR1, PR #498)**: returns the location-cluster overview for the authenticated principal. Authorization/scoping is enforced **before** aggregation in the Cypher WHERE clause — a non-admin principal without `allowed_locations` triggers zero database queries (REQ-OVERVIEW-2 hard rule). Hidden and absent clusters are externally indistinguishable on the wire (REQ-OVERVIEW-3, REQ-DETAIL-4). The aggregate policy is computed using `derive_safe_geo_precision(visible_count, minimum_count)` and then refined by a per-user capability + scope gate: ``graph:aggregate_breakdown:read`` permission is the global capability; ``User.aggregate_breakdown_regions: list[str]`` is the per-user scope (empty list = global breakdown; populated list = scoped membership; out-of-scope clusters silently downgrade to ``region`` tier preserving hidden-absent parity). Default safe: no role seeded with the permission; region list `[]` for all users.
+
+    * `backend/repositories/graph_lod_repo.py::aggregate_overview_clusters` (new) — aggregation Cypher with visible-set WHERE clause
+    * `backend/services/graph_lod_service.py::get_overview` (new) — orchestrator: principal resolution → repo aggregation → aggregate policy + scope resolution → DTO shaping
+    * `backend/routers/graph_lod.py::GET /graph/overview` (new) — FastAPI route handler with `severity` and `ci_type` filter forwarding
+    * `backend/models/user.py` — add `UserPermission.GRAPH_AGGREGATE_BREAKDOWN_READ` enum value (capability gate), `UserBase.aggregate_breakdown_regions` field (per-user scope, default `[]`), `UserUpdate.aggregate_breakdown_regions`
+    * `backend/migrations/007_user_aggregate_breakdown_regions.cypher` (new) — adds the Postgres `users.aggregate_breakdown_regions TEXT[]` column with default `ARRAY[]::TEXT[]` (no-op if column exists; safe on every cold start)
+
+  - **`GET /graph/detail/{cluster_id}` endpoint (#391 PR2, PR #500)**: returns the bounded subgraph for a single cluster with cursor pagination and ``DetailProjectionPolicy`` enforcement. Builds on the value objects shipped in v1.17.6 (cluster_id codec, cursor codec, projection policy protocol, revision token).
+
+    * `backend/repositories/graph_lod_repo.py::aggregate_detail_subgraph` (new) — bounded Cypher returning nodes + links + `has_more` per cluster
+    * `backend/services/graph_lod_service.py::get_detail` (new) — orchestrator: `parse_cluster_id` → `assert_axis_matches` → `decode_cursor` (with stale/permission check) → visible-set resolve → repo aggregate → projection → shape `DetailResponse`
+    * `backend/routers/graph_lod.py::GET /graph/detail/{cluster_id}` (new) — query params: `cursor`, `limit` (1..1000), `axis`, `sensitive=include`; translates domain errors to HTTP 400 / 409 with no metadata leak in error bodies
+
+    Cursor semantics (REQ-DETAIL-3): bound to `(cluster_id, filters_hash, revision, principal_hash)`. Stale revisions surface as 409 `stale_cursor` with the current revision in the body; permission changes surface as 400 `stale_cursor` / `permission_changed`; malformed cursors surface as 400 `invalid_cursor`. The cursor's `principal_hash` invalidates the cursor when the user's permissions change mid-pagination — long sessions cannot leak data across permission boundaries.
+
+    ``show_sensitive_metadata`` policy (REQ-DETAIL-5): ``True`` ONLY when the principal has ``graph:aggregate_breakdown:read`` AND the caller explicitly requested sensitive fields (`?sensitive=include`). The endpoint NEVER defaults to ``True``. Stripped fields on the wire: `public_ip`, raw `metadata`, exact geo, serial, provider account.
+
+  - **Cross-cutting parity + aggregate disclosure coverage (#391 PR3, PR #501)**: dedicated test files at the integration boundary between repository, service, and DTOs to lock the hidden-absent parity invariant and aggregate disclosure policy behavior.
+
+    * `backend/tests/test_graph_hidden_absent_parity.py` (new, 7 tests) — detail endpoint hidden ≡ absent cluster byte-equivalence; projection flags preserved on hidden/absent; no metadata leak fields (`exists`, `absent`, `is_hidden` discriminators forbidden); overview omits hidden clusters; response shape independent of visibility; `/graph/full` byte-equality snapshot test existence check
+    * `backend/tests/test_graph_aggregate_disclosure.py` (new, 9 tests) — tier ladder (`none` / `region` / `city`); silent downgrade without permission; silent downgrade when region out of scope; multi-cluster: `city` available when any high-count cluster is in scope; per-cluster `aggregate_redacted` marker for low-cardinality clusters; `User` model exposes `aggregate_breakdown_regions` field; `UserUpdate` supports the field; `UserPermission` enum exposes `graph:aggregate_breakdown:read`
+
+### Fixed
+
+_None — additive runtime slice._
+
+### Migration
+
+- `backend/migrations/007_user_aggregate_breakdown_regions.cypher` (new, idempotent) — adds the Postgres `users.aggregate_breakdown_regions TEXT[]` column with default `ARRAY[]::TEXT[]`. Apply on next deploy. No Neo4j changes (the property is read-only on the User model in this slice; existing rows default to `[]` which the service treats as "no scope" — same effect as global breakdown, just opt-in rather than opt-out). Backward compatible: existing users without the column read as `[]`.
+
+### Tests
+
+- **46 new tests** across the chain, all green:
+  - PR1 overview: 17 tests (5 auth pre-aggregation + 12 aggregation + aggregate breakdown scope + tier ladder)
+  - PR2 detail: 13 tests (cluster_id parse, cursor decode errors, hidden/absent parity, visible-set, projection policy, pagination)
+  - PR3 parity + disclosure: 16 tests (cross-cutting hidden-absent byte-equivalence, tier ladder + downgrade paths, model integration)
+- **Round-of-test on tracker** (`feat/391-lod-backend-runtime`) before main merge:
+  - Backend suite: 2338 passed, 2 skipped, 6 pre-existing failures (testcontainers missing + auth cookie domain test infra — same set observed on `main` before this chain; 0 regressions introduced)
+  - Graph cluster tests: 113/113 green (overview + detail + parity + disclosure + contracts + snapshot + spec coverage)
+  - `/graph/full` byte-equality preserved (existing `test_graph_full_snapshot.py` continues to enforce the frozen fixture)
+  - Smoke test: green (after re-trigger for a pre-existing broken-pipe bug in the `Materialize test-only .env` step of the smoke workflow; not introduced by this slice)
+
+### References
+
+- Issue: #391
+- Tracker PR: #499 (squash-merged to `main` as `10d5af5`)
+- Child PRs: #498 (overview), #500 (detail), #501 (parity + disclosure)
+- Parent epic: #230 (closed), archived at `openspec/changes/archive/2026-07-08-cmdb-graph-level-of-detail/`
+- Contract slice: #390 (closed), merged in v1.17.6 (PR #468), archived at `openspec/changes/archive/2026-09-10-feat-390-lod-contracts/`
+- Runtime OpenSpec change: `openspec/changes/cmdb-graph-lod-runtime/` (proposal, design, tasks, 3 specs)
+- DTOs consumed: `backend/schemas/graph.py` (`OverviewResponse`, `DetailResponse`, `DetailCluster`, `DetailNode`, `DetailLink`, `ProjectionFlags`, `SensitiveSource`, `EmptyReason`) — v1.17.6
+- Value objects consumed: `backend/contracts/` (`aggregate_policy`, `cluster_id`, `cursor`, `projection`, `revision`) — v1.17.6
+- Mirror pattern: PR #468 (LOD contracts tracker) and the Feature Branch Chain strategy documented in the OpenSpec change
+
+### Size
+
+This is a **minor version bump** (1.17.6 → 1.18.0) because the slice adds new runtime endpoints, new query paths, and new model fields (capability gate + per-user scope). The change is additive: no existing endpoint or wire shape changes (`/graph/full` byte-equality preserved by `test_graph_full_snapshot.py`).
+
 ## [1.17.6] — 2026-09-26
 
 ### Chores
