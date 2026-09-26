@@ -11,6 +11,7 @@ Covers:
 - Per-user ``aggregate_breakdown_regions`` scope resolution.
 - Hidden ≡ absent parity for clusters outside the principal's scope.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -52,6 +53,7 @@ def _cluster(
 
 def _patch_repo(monkeypatch, return_value: list[dict]) -> None:
     from repositories import graph_lod_repo
+
     monkeypatch.setattr(
         graph_lod_repo,
         "aggregate_overview_clusters",

@@ -8,6 +8,7 @@ Hard rule (REQ-OVERVIEW-2): visible-set filtering happens BEFORE
 aggregation, in the WHERE clause. A non-admin principal without
 ``allowed_locations`` MUST NOT trigger any database query.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -53,9 +54,7 @@ def aggregate_overview_clusters(
 
 def _build_query(is_admin: bool) -> str:
     """Build the aggregation Cypher with or without the visible-set WHERE."""
-    location_filter = (
-        "" if is_admin else " WHERE n.location_name IN $allowed_locations "
-    )
+    location_filter = "" if is_admin else " WHERE n.location_name IN $allowed_locations "
     return f"""
         MATCH (n:CI)
         {location_filter}

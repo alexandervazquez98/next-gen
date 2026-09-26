@@ -18,6 +18,7 @@ indistinguishable. The repository's pre-aggregation filter is the single
 source of truth for visibility — the service never inspects the full
 graph to "see if a cluster should be hidden".
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -116,9 +117,7 @@ def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
     )
 
     minimum_count = DEFAULT_MINIMUM_COUNT
-    clusters = [
-        _shape_cluster(principal, raw, minimum_count) for raw in raw_clusters
-    ]
+    clusters = [_shape_cluster(principal, raw, minimum_count) for raw in raw_clusters]
 
     # Derive the aggregate policy tier using the largest cluster's visible count.
     # The per-cluster scope check (``_region_in_breakdown_scope``) only
@@ -134,15 +133,12 @@ def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
             # Capability present -> city only if at least one high-count
             # cluster is in scope; otherwise silent downgrade to region
             any_in_scope = any(
-                c.visible_node_count
-                >= minimum_count * LOW_CARDINALITY_THRESHOLD_MULTIPLIER
+                c.visible_node_count >= minimum_count * LOW_CARDINALITY_THRESHOLD_MULTIPLIER
                 and _region_in_breakdown_scope(principal, c.display_label)
                 for c in clusters
             )
             safe_geo_precision = (
-                SafeGeoPrecision.CITY.value
-                if any_in_scope
-                else SafeGeoPrecision.REGION.value
+                SafeGeoPrecision.CITY.value if any_in_scope else SafeGeoPrecision.REGION.value
             )
     else:
         safe_geo_precision = base_tier

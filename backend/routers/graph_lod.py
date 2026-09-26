@@ -16,6 +16,7 @@ Hard rules (mirrored from the spec):
 - ``/graph/full`` shape and redaction semantics are unchanged (covered
   by ``test_graph_full_snapshot.py``).
 """
+
 from __future__ import annotations
 
 from typing import Any

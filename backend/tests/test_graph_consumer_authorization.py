@@ -7,6 +7,7 @@ not post-aggregation. A non-admin principal without allowed_locations
 must NOT trigger any database query (and must NOT receive data leaked
 via aggregate counts on the full graph).
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -33,9 +34,7 @@ def test_aggregate_overview_requires_visible_set_for_non_admin(monkeypatch):
     driver, session = _mock_driver()
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    result = graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=None, is_admin=False
-    )
+    result = graph_lod_repo.aggregate_overview_clusters(allowed_locations=None, is_admin=False)
 
     assert result == []
     # Hard rule: no auth → no DB query, so no data can leak via timing or counts
@@ -49,9 +48,7 @@ def test_aggregate_overview_empty_visible_set_returns_empty_for_non_admin(monkey
     driver, session = _mock_driver()
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    result = graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=[], is_admin=False
-    )
+    result = graph_lod_repo.aggregate_overview_clusters(allowed_locations=[], is_admin=False)
 
     assert result == []
     session.run.assert_not_called()
@@ -69,9 +66,7 @@ def test_aggregate_overview_passes_visible_set_in_where_clause(monkeypatch):
     driver, session = _mock_driver()
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=["HQ-Madrid"], is_admin=False
-    )
+    graph_lod_repo.aggregate_overview_clusters(allowed_locations=["HQ-Madrid"], is_admin=False)
 
     query = session.run.call_args.args[0]
     params = session.run.call_args.kwargs
@@ -88,9 +83,7 @@ def test_aggregate_overview_admin_skips_visibility_filter(monkeypatch):
     driver, session = _mock_driver()
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=None, is_admin=True
-    )
+    graph_lod_repo.aggregate_overview_clusters(allowed_locations=None, is_admin=True)
 
     query = session.run.call_args.args[0]
     params = session.run.call_args.kwargs
@@ -127,14 +120,10 @@ def test_aggregate_overview_calls_db_after_resolving_visibility(monkeypatch):
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
     # Non-admin without scope → session.run is NOT called
-    result = graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=None, is_admin=False
-    )
+    result = graph_lod_repo.aggregate_overview_clusters(allowed_locations=None, is_admin=False)
     assert result == []
     assert call_log == []
 
     # Non-admin with scope → session.run IS called
-    graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=["HQ-Madrid"], is_admin=False
-    )
+    graph_lod_repo.aggregate_overview_clusters(allowed_locations=["HQ-Madrid"], is_admin=False)
     assert call_log == ["session.run"]
