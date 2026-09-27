@@ -1076,11 +1076,11 @@ const MonitoringConsole: React.FC = () => {
       setMapBoundsVersion((v) => v + 1);
     };
     read();
-    map.on('moveend', read);
-    map.on('zoomend', read);
+    map.on("moveend", read);
+    map.on("zoomend", read);
     return () => {
-      map.off('moveend', read);
-      map.off('zoomend', read);
+      map.off("moveend", read);
+      map.off("zoomend", read);
     };
   }, [mapRef.current]);
 
@@ -1089,7 +1089,7 @@ const MonitoringConsole: React.FC = () => {
     if (!bounds) return culledNodes;
     return culledNodes.filter((n) => {
       const loc = n.location;
-      if (!loc || loc.lat == null || loc.long == null) return false;
+      if (!loc || loc.lat === undefined || loc.long === undefined) return false;
       if (bounds.west <= bounds.east) {
         return (
           loc.lat >= bounds.south &&
@@ -1171,8 +1171,8 @@ const MonitoringConsole: React.FC = () => {
     [expandedClusterId, expandCluster, resetMapView],
   );
 
-  const openEvents = events.filter((e) => e.status === "OPEN");
-  const ackEvents = events.filter((e) => e.status === "ACK");
+  const _openEvents = events.filter((e) => e.status === "OPEN");
+  const _ackEvents = events.filter((e) => e.status === "ACK");
 
   // P2 REQ-005: KPI counts are derived from ROOT events only. The backend
   // `correlation_type` is authoritative (legacy rows default to ROOT via

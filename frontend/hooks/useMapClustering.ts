@@ -6,10 +6,10 @@
  * remaining nodes.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import Supercluster from 'supercluster';
-import type { ClusterProperties as SuperclusterClusterProperties } from 'supercluster';
-import { GraphNode, Event } from '../types';
+import { useState, useEffect, useMemo, useCallback } from "react";
+import Supercluster from "supercluster";
+import type { ClusterProperties as SuperclusterClusterProperties } from "supercluster";
+import { GraphNode, Event } from "../types";
 
 export interface ClusterMember {
   node: GraphNode;
@@ -22,7 +22,7 @@ export interface Cluster {
   centroid: [number, number]; // [lat, long]
   members: ClusterMember[];
   count: number;
-  worstSeverity: 'CRITICAL' | 'WARNING' | 'INFO' | 'OK';
+  worstSeverity: "CRITICAL" | "WARNING" | "INFO" | "OK";
   isExpanded: boolean;
 }
 
@@ -40,7 +40,7 @@ export interface UseMapClusteringOptions {
 
 const DEFAULT_PROXIMITY_RADIUS_PX = 80;
 const DEFAULT_MAX_ZOOM = 16;
-const FEATURE_FLAG_KEY = 'geoview-clustering::enabled:v2';
+const FEATURE_FLAG_KEY = "geoview-clustering::enabled:v2";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure Functions (exported for unit testing)
@@ -51,12 +51,7 @@ const FEATURE_FLAG_KEY = 'geoview-clustering::enabled:v2';
  * Returns distance in meters. Kept as a public utility for callers that
  * need distance computations outside of clustering (e.g. diagnostics).
  */
-export function haversineDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
+export function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371000; // Earth's radius in meters
   const toRad = (deg: number) => (deg * Math.PI) / 180;
 
@@ -65,10 +60,7 @@ export function haversineDistance(
 
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -82,7 +74,7 @@ export function haversineDistance(
 export function computeProximityClusters(
   members: ClusterMember[],
   thresholdMeters: number,
-  idCounter: { next: number } = { next: 1 }
+  idCounter: { next: number } = { next: 1 },
 ): Cluster[] {
   if (members.length === 0) return [];
 
@@ -102,12 +94,7 @@ export function computeProximityClusters(
       const loc2 = other.node.location;
       if (!loc1 || !loc2) continue;
 
-      const distance = haversineDistance(
-        loc1.lat,
-        loc1.long,
-        loc2.lat,
-        loc2.long
-      );
+      const distance = haversineDistance(loc1.lat, loc1.long, loc2.lat, loc2.long);
 
       if (distance <= thresholdMeters) {
         clusterMembers.push(other);
@@ -128,9 +115,7 @@ export function computeProximityClusters(
     const centroid: [number, number] =
       validCount > 0 ? [latSum / validCount, lonSum / validCount] : [0, 0];
 
-    const locationNames = clusterMembers
-      .map((m) => m.node.location_name)
-      .filter(Boolean);
+    const locationNames = clusterMembers.map((m) => m.node.location_name).filter(Boolean);
     const label =
       locationNames.length === clusterMembers.length && locationNames[0]
         ? locationNames[0]
@@ -155,13 +140,11 @@ export function computeProximityClusters(
  * Groups nodes by location_name (case-insensitive, trimmed).
  * Returns Map where key is normalized location_name.
  */
-export function computeLocationNameGroups(
-  nodes: GraphNode[]
-): Map<string, GraphNode[]> {
+export function computeLocationNameGroups(nodes: GraphNode[]): Map<string, GraphNode[]> {
   const groups = new Map<string, GraphNode[]>();
 
   for (const node of nodes) {
-    const key = (node.location_name ?? '').trim().toLowerCase();
+    const key = (node.location_name ?? "").trim().toLowerCase();
     if (!groups.has(key)) {
       groups.set(key, []);
     }
@@ -175,14 +158,12 @@ export function computeLocationNameGroups(
  * Returns worst severity from array.
  * Priority: CRITICAL > WARNING > INFO > OK
  */
-export function getWorstSeverity(
-  events: Event[]
-): 'CRITICAL' | 'WARNING' | 'INFO' | 'OK' {
+export function getWorstSeverity(events: Event[]): "CRITICAL" | "WARNING" | "INFO" | "OK" {
   const priority = { CRITICAL: 4, WARNING: 3, INFO: 2, OK: 1 } as const;
 
-  if (events.length === 0) return 'OK';
+  if (events.length === 0) return "OK";
 
-  let worst: 'CRITICAL' | 'WARNING' | 'INFO' | 'OK' = 'OK';
+  let worst: "CRITICAL" | "WARNING" | "INFO" | "OK" = "OK";
   for (const event of events) {
     if (priority[event.severity] > priority[worst]) {
       worst = event.severity;
@@ -200,15 +181,15 @@ export function getWorstSeverity(
  */
 export function buildSuperclusterIndex(
   members: ClusterMember[],
-  options?: Pick<UseMapClusteringOptions, 'maxZoom' | 'proximityRadiusPx'>
+  options?: Pick<UseMapClusteringOptions, "maxZoom" | "proximityRadiusPx">,
 ): Supercluster<ClusterMember & { node: GraphNode; events: Event[] }, ClusterMember> {
-  const features: GeoJSON.Feature<GeoJSON.Point, ClusterMember>[] = members
-    .filter((m) => m.node.location?.lat != null && m.node.location?.long != null)
+  const features = members
+    .filter((m) => m.node.location?.lat !== undefined && m.node.location?.long !== undefined)
     .map((m) => ({
-      type: 'Feature',
+      type: "Feature",
       properties: m,
       geometry: {
-        type: 'Point',
+        type: "Point",
         // supercluster expects [longitude, latitude]
         coordinates: [m.node.location!.long, m.node.location!.lat],
       },
@@ -230,7 +211,7 @@ export function queryClusters(
   index: Supercluster<ClusterMember, ClusterMember>,
   _members: ClusterMember[],
   zoom: number,
-  locationName: string
+  locationName: string,
 ): Cluster[] {
   // World bounds in [west, south, east, north] order.
   const clusters = index.getClusters([-180, -85, 180, 85], zoom);
@@ -243,7 +224,7 @@ export function queryClusters(
       const clusterId = props.cluster_id as number;
       const leaves = index.getLeaves(clusterId, Infinity);
       const clusterMembers: ClusterMember[] = leaves.map(
-        (l) => (l.properties as unknown) as ClusterMember
+        (l) => l.properties as unknown as ClusterMember,
       );
       const allEvents = clusterMembers.flatMap((m) => m.events);
       return {
@@ -277,13 +258,13 @@ export function queryClusters(
 export function buildClusters(
   nodes: GraphNode[],
   events: Event[],
-  options?: UseMapClusteringOptions
+  options?: UseMapClusteringOptions,
 ): Cluster[] {
   if (nodes.length === 0) return [];
 
   // DEFENSIVE: only process nodes with valid location
   const validNodes = nodes.filter(
-    (n) => n.location?.lat != null && n.location?.long != null
+    (n) => n.location?.lat !== undefined && n.location?.long !== undefined,
   );
   if (validNodes.length === 0) return [];
 
@@ -330,9 +311,7 @@ export function buildClusters(
   }
 
   // DEFENSIVE: filter out clusters with invalid centroids
-  return out.filter(
-    (c) => Number.isFinite(c.centroid[0]) && Number.isFinite(c.centroid[1])
-  );
+  return out.filter((c) => Number.isFinite(c.centroid[0]) && Number.isFinite(c.centroid[1]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,21 +321,21 @@ export function buildClusters(
 export function useMapClustering(
   nodes: GraphNode[],
   events: Event[],
-  options?: UseMapClusteringOptions
+  options?: UseMapClusteringOptions,
 ): {
   clusters: Cluster[];
   isClustered: boolean;
   enabled: boolean;
   toggleClustering: () => void;
   expandedClusterId: string | null;
-  expandCluster: (clusterId: string) => void;
+  expandCluster: (_clusterId: string) => void;
   collapseCluster: () => void;
 } {
   const [enabled, setEnabled] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem(FEATURE_FLAG_KEY);
       if (stored !== null) {
-        return stored === 'true';
+        return stored === "true";
       }
     } catch {
       // ignore
@@ -368,7 +347,7 @@ export function useMapClustering(
     try {
       const stored = localStorage.getItem(FEATURE_FLAG_KEY);
       if (stored !== null) {
-        setEnabled(stored === 'true');
+        setEnabled(stored === "true");
       }
     } catch {
       // ignore
@@ -391,13 +370,15 @@ export function useMapClustering(
       const next = !prev;
       try {
         localStorage.setItem(FEATURE_FLAG_KEY, String(next));
-      } catch {}
+      } catch {
+        // localStorage may be unavailable (private mode, quota); ignore.
+      }
       return next;
     });
   }, []);
 
-  const expandCluster = useCallback((clusterId: string) => {
-    setExpandedClusterId((prev) => (prev === clusterId ? null : clusterId));
+  const expandCluster = useCallback((_clusterId: string) => {
+    setExpandedClusterId((prev) => (prev === _clusterId ? null : _clusterId));
   }, []);
 
   const collapseCluster = useCallback(() => {
