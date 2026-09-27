@@ -867,6 +867,9 @@ class GeoViewErrorBoundary extends React.Component<
   }
 }
 
+const GEO_VIEW_TILE_FILTER =
+  "invert(1) hue-rotate(180deg) brightness(0.9) saturate(0.4) contrast(1.15)";
+
 const MonitoringConsole: React.FC = () => {
   const [viewMode, setViewMode] = useState<"DASHBOARD" | "MAP">("DASHBOARD");
   const [filterCategory, setFilterCategory] = useState<string>("ALL");
@@ -1483,7 +1486,7 @@ const MonitoringConsole: React.FC = () => {
                 className="h-full w-full z-0"
                 zoomControl={false}
                 attributionControl={false}
-                style={{ filter: "invert(1) hue-rotate(180deg) brightness(0.9) saturate(0.4) contrast(1.15)" }}
+                style={{ filter: GEO_VIEW_TILE_FILTER }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
                 <TileLayer
