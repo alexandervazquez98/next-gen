@@ -9,55 +9,75 @@
  * @returns culled nodes based on smart mode state
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { rankCIs, SMART_CULL_THRESHOLD, TOP_N } from '../components/MonitoringConsole';
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { rankCIs, SMART_CULL_THRESHOLD, TOP_N } from "../components/MonitoringConsole";
 
-const STORAGE_KEY = 'geoview-smart-culling::mode';
+const STORAGE_KEY = "geoview-smart-culling::mode";
+
+/**
+ * Hard cap on rendered markers. When the topology has more than this many
+ * nodes, smart culling is forced on regardless of the event threshold so the
+ * map never tries to render thousands of CircleMarkers at once.
+ */
+export const HARD_CULL_NODE_THRESHOLD = 1000;
 
 export function useSmartCulling<T extends { events?: { severity: string }[] }>(
-    nodesWithEvents: T[],
-    events: { severity: string }[]
+  nodesWithEvents: T[],
+  events: { severity: string }[],
 ): {
-    culledNodes: T[];
-    isActive: boolean;
-    toggle: () => void;
+  culledNodes: T[];
+  isActive: boolean;
+  toggle: () => void;
+  forced: boolean;
 } {
-    const [isSmartMode, setIsSmartMode] = useState<boolean>(() => {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored !== null) {
-                return stored === 'true';
-            }
-        } catch {
-            // ignore
-        }
-        return events.length >= SMART_CULL_THRESHOLD;
-    });
+  const [isSmartMode, setIsSmartMode] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored !== null) {
+        return stored === "true";
+      }
+    } catch {
+      // ignore
+    }
+    return events.length >= SMART_CULL_THRESHOLD;
+  });
 
-    useEffect(() => {
-        // Sync with localStorage on mount (handles external changes)
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored !== null) {
-                setIsSmartMode(stored === 'true');
-            }
-        } catch {
-            // ignore
-        }
-    }, []);
+  useEffect(() => {
+    // Sync with localStorage on mount (handles external changes)
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored !== null) {
+        setIsSmartMode(stored === "true");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
-    const culledNodes = useMemo(() => {
-        if (events.length >= SMART_CULL_THRESHOLD && isSmartMode) {
-            return rankCIs(nodesWithEvents, TOP_N);
-        }
-        return nodesWithEvents;
-    }, [nodesWithEvents, events.length, isSmartMode]);
+  const forced = nodesWithEvents.length > HARD_CULL_NODE_THRESHOLD;
+  const effectiveSmartMode = forced || isSmartMode;
 
-    const toggle = useCallback(() => {
-        const newMode = !isSmartMode;
-        setIsSmartMode(newMode);
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(newMode)); } catch {}
-    }, [isSmartMode]);
+  const culledNodes = useMemo(() => {
+    if (forced) {
+      // Hard cap: always cull to TOP_N by severity rank.
+      return rankCIs(nodesWithEvents, TOP_N);
+    }
+    if (events.length >= SMART_CULL_THRESHOLD && isSmartMode) {
+      return rankCIs(nodesWithEvents, TOP_N);
+    }
+    return nodesWithEvents;
+  }, [nodesWithEvents, events.length, isSmartMode, forced]);
 
-    return { culledNodes, isActive: isSmartMode, toggle };
+  const toggle = useCallback(() => {
+    if (forced) return; // Toggle disabled while hard cap is active.
+    const newMode = !isSmartMode;
+    setIsSmartMode(newMode);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newMode));
+    } catch {
+      // localStorage may be unavailable; ignore.
+    }
+  }, [isSmartMode, forced]);
+
+  return { culledNodes, isActive: effectiveSmartMode, toggle, forced };
 }
