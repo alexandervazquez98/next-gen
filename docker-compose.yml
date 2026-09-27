@@ -123,7 +123,7 @@ services:
       # expect so the bind-mounted fixtures/specs/docs become visible.
       # All are read-only; the container must not mutate the host tree.
       - ./backend:/backend:ro                                    # scripts + tests path resolution
-      - ./backend/tests/fixtures:/fixtures:ro                    # /graph/full snapshot tests
+      - ./fixtures:/fixtures:ro                                  # /graph/full snapshot tests (repo-root fixtures dir, NOT backend/tests/fixtures)
       - ./openspec:/openspec:ro                                  # spec coverage graph tests
       - ./docs:/docs:ro                                          # polling docs links tests
       - ./README.md:/README.md:ro                                # polling docs links tests
