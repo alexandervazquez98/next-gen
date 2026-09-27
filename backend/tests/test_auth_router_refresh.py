@@ -50,10 +50,10 @@ def rate_limit_db(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine, tables=[RateLimitAttempt.__table__])
-    monkeypatch.setattr(rate_limit, "SessionLocal", TestingSessionLocal)
-    yield TestingSessionLocal
+    monkeypatch.setattr(rate_limit, "SessionLocal", testing_session_local)
+    yield testing_session_local
     Base.metadata.drop_all(bind=engine, tables=[RateLimitAttempt.__table__])
 
 
@@ -97,14 +97,16 @@ class TestAuthTokenCookie:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth.verify_password", return_value=True):
-            with patch(
+        with (
+            patch("routers.auth.verify_password", return_value=True),
+            patch(
                 "routers.auth.create_refresh_token", return_value="new_refresh_token"
-            ) as mock_create_refresh:
-                response = client.post(
-                    "/api/auth/token",
-                    data={"username": "testuser", "password": "correct_password"},
-                )
+            ) as mock_create_refresh,
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         # Check Set-Cookie header is present for both cookies (may appear as two Set-Cookie headers)
@@ -128,15 +130,17 @@ class TestAuthTokenCookie:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(
-            os.environ,
-            {"SESSION_OPERATIONAL_ENABLED": "false", "SESSION_STANDARD_REFRESH_DAYS": "2"},
+        with (
+            patch.dict(
+                os.environ,
+                {"SESSION_OPERATIONAL_ENABLED": "false", "SESSION_STANDARD_REFRESH_DAYS": "2"},
+            ),
+            patch("routers.auth.verify_password", return_value=True),
         ):
-            with patch("routers.auth.verify_password", return_value=True):
-                response = client.post(
-                    "/api/auth/token",
-                    data={"username": "testuser", "password": "correct_password"},
-                )
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         set_cookie_headers = response.headers.get_list("set-cookie")
@@ -156,19 +160,21 @@ class TestAuthTokenCookie:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(
-            os.environ,
-            {
-                "SESSION_OPERATIONAL_ENABLED": "true",
-                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
-                "SESSION_OPERATIONAL_REFRESH_DAYS": "4",
-            },
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SESSION_OPERATIONAL_ENABLED": "true",
+                    "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                    "SESSION_OPERATIONAL_REFRESH_DAYS": "4",
+                },
+            ),
+            patch("routers.auth.verify_password", return_value=True),
         ):
-            with patch("routers.auth.verify_password", return_value=True):
-                response = client.post(
-                    "/api/auth/token",
-                    data={"username": "ops_user", "password": "correct_password"},
-                )
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "ops_user", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         set_cookie_headers = response.headers.get_list("set-cookie")
@@ -188,20 +194,22 @@ class TestAuthTokenCookie:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(
-            os.environ,
-            {
-                "SESSION_OPERATIONAL_ENABLED": "true",
-                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
-                "SESSION_OPERATIONAL_ACCESS_MINUTES": "20",
-                "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
-            },
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SESSION_OPERATIONAL_ENABLED": "true",
+                    "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                    "SESSION_OPERATIONAL_ACCESS_MINUTES": "20",
+                    "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
+                },
+            ),
+            patch("routers.auth.verify_password", return_value=True),
         ):
-            with patch("routers.auth.verify_password", return_value=True):
-                response = client.post(
-                    "/api/auth/token",
-                    data={"username": "ops_user", "password": "correct_password"},
-                )
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "ops_user", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         payload = jwt.decode(response.json()["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
@@ -241,17 +249,19 @@ class TestAuthRefresh:
             policy_profile="standard",
         )
 
-        with patch("routers.auth.verify_refresh_token", return_value=verification):
-            with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
-                with patch(
-                    "routers.auth.create_refresh_token",
-                    return_value=("new_refresh_token", MagicMock(id=123)),
-                ):
-                    with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                        response = client.post(
-                            "/api/auth/refresh",
-                            cookies={"refresh_token": "old_refresh_token"},
-                        )
+        with (
+            patch("routers.auth.verify_refresh_token", return_value=verification),
+            patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user),
+            patch(
+                "routers.auth.create_refresh_token",
+                return_value=("new_refresh_token", MagicMock(id=123)),
+            ),
+            patch("routers.auth.create_access_token", return_value="new_access_token"),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": "old_refresh_token"},
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -282,15 +292,16 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(
-            os.environ,
-            {
-                "SESSION_OPERATIONAL_ENABLED": "true",
-                "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
-                "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
-            },
-        ):
-            with patch(
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SESSION_OPERATIONAL_ENABLED": "true",
+                    "SESSION_OPERATIONAL_ROLES": "NOC,SOC",
+                    "SESSION_OPERATIONAL_REFRESH_DAYS": "10",
+                },
+            ),
+            patch(
                 "routers.auth.verify_refresh_token",
                 return_value=RefreshVerificationResult(
                     status=RefreshVerificationStatus.VALID,
@@ -298,12 +309,13 @@ class TestAuthRefresh:
                     session_id="sid-ops-001",
                     policy_profile="operational",
                 ),
-            ):
-                with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": "old_refresh_token"},
-                    )
+            ),
+            patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": "old_refresh_token"},
+            )
 
         assert response.status_code == 200
         payload = jwt.decode(response.json()["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
@@ -428,23 +440,25 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.VALID,
-                user_id=42,
-                session_id="sid-success",
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.VALID,
+                    user_id=42,
+                    session_id="sid-success",
+                ),
             ),
-        ):
-            with patch(
+            patch(
                 "routers.auth.create_refresh_token",
                 return_value=("new_refresh_token", MagicMock(id=123)),
-            ):
-                with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": refresh_token},
-                    )
+            ),
+            patch("routers.auth.create_access_token", return_value="new_access_token"),
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": refresh_token},
+            )
 
         assert response.status_code == 200
 
@@ -482,26 +496,28 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
-                user_id=42,
-                session_id="sid-recovered",
-                token_id=99,
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                    user_id=42,
+                    session_id="sid-recovered",
+                    token_id=99,
+                ),
             ),
-        ):
-            with patch(
+            patch(
                 "routers.auth.create_refresh_token",
                 return_value=("recovered-refresh-token", MagicMock(id=124)),
-            ):
-                with patch(
-                    "routers.auth.try_increment_refresh_recovery_count", return_value=True
-                ) as recovery_count:
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": stale_refresh_token},
-                    )
+            ),
+            patch(
+                "routers.auth.try_increment_refresh_recovery_count", return_value=True
+            ) as recovery_count,
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": stale_refresh_token},
+            )
 
         assert response.status_code == 200
         # stale recovery should reuse session and keep it active
@@ -543,25 +559,27 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
-                user_id=42,
-                session_id="sid-recoverable-exhausted",
-                token_id=99,
-                should_count_rate_limit=False,
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                    user_id=42,
+                    session_id="sid-recoverable-exhausted",
+                    token_id=99,
+                    should_count_rate_limit=False,
+                ),
             ),
-        ):
-            with patch(
+            patch(
                 "routers.auth.try_increment_refresh_recovery_count",
                 return_value=False,
-            ) as recovery_count:
-                with patch("routers.auth.increment_attempts") as increment_attempts:
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": stale_refresh_token},
-                    )
+            ) as recovery_count,
+            patch("routers.auth.increment_attempts") as increment_attempts,
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": stale_refresh_token},
+            )
 
         assert response.status_code == 401
         # The bug proof: increment_attempts must NOT have been called.
@@ -609,30 +627,32 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
-                user_id=42,
-                session_id="sid-recoverable-within-cap",
-                token_id=99,
-                should_count_rate_limit=False,
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                    user_id=42,
+                    session_id="sid-recoverable-within-cap",
+                    token_id=99,
+                    should_count_rate_limit=False,
+                ),
             ),
-        ):
-            with patch(
+            patch(
                 "routers.auth.try_increment_refresh_recovery_count",
                 return_value=True,
-            ) as recovery_count:
-                with patch(
-                    "routers.auth.create_refresh_token",
-                    return_value=("recovered-refresh-token", MagicMock(id=125)),
-                ):
-                    with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                        with patch("routers.auth.increment_attempts") as increment_attempts:
-                            response = client.post(
-                                "/api/auth/refresh",
-                                cookies={"refresh_token": stale_refresh_token},
-                            )
+            ) as recovery_count,
+            patch(
+                "routers.auth.create_refresh_token",
+                return_value=("recovered-refresh-token", MagicMock(id=125)),
+            ),
+            patch("routers.auth.create_access_token", return_value="new_access_token"),
+            patch("routers.auth.increment_attempts") as increment_attempts,
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": stale_refresh_token},
+            )
 
         assert response.status_code == 200
         # The bug-proof guard. Today this passes for the wrong reason (atomic
@@ -674,24 +694,26 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
-                user_id=42,
-                session_id="sid-recoverable-no-token-id",
-                token_id=None,
-                should_count_rate_limit=False,
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.ROTATED_STALE_RECOVERABLE,
+                    user_id=42,
+                    session_id="sid-recoverable-no-token-id",
+                    token_id=None,
+                    should_count_rate_limit=False,
+                ),
             ),
-        ):
-            with patch(
+            patch(
                 "routers.auth.try_increment_refresh_recovery_count",
-            ) as recovery_count:
-                with patch("routers.auth.increment_attempts") as increment_attempts:
-                    response = client.post(
-                        "/api/auth/refresh",
-                        cookies={"refresh_token": stale_refresh_token},
-                    )
+            ) as recovery_count,
+            patch("routers.auth.increment_attempts") as increment_attempts,
+        ):
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": stale_refresh_token},
+            )
 
         assert response.status_code == 401
         # The bug proof: increment_attempts must NOT have been called when the
@@ -851,27 +873,27 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.VALID,
-                user_id=42,
-                session_id="sid-bump",
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.VALID,
+                    user_id=42,
+                    session_id="sid-bump",
+                ),
             ),
+            patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user),
+            patch(
+                "routers.auth.create_refresh_token",
+                return_value=("new_refresh_token", MagicMock(id=123)),
+            ),
+            patch("routers.auth.create_access_token", return_value="new_access_token"),
+            patch("routers.auth.record_session_activity", return_value=True) as mock_record,
         ):
-            with patch("routers.auth.user_repo.get_user_by_id", return_value=mock_user):
-                with patch(
-                    "routers.auth.create_refresh_token",
-                    return_value=("new_refresh_token", MagicMock(id=123)),
-                ):
-                    with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                        with patch(
-                            "routers.auth.record_session_activity", return_value=True
-                        ) as mock_record:
-                            response = client.post(
-                                "/api/auth/refresh",
-                                cookies={"refresh_token": "old_refresh_token"},
-                            )
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": "old_refresh_token"},
+            )
 
         assert response.status_code == 200
         mock_record.assert_called_once()
@@ -893,21 +915,23 @@ class TestAuthRefresh:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch(
-            "routers.auth.verify_refresh_token",
-            return_value=RefreshVerificationResult(
-                status=RefreshVerificationStatus.IDLE_EXPIRED,
-                user_id=42,
-                session_id="sid-idle",
-                policy_profile="standard",
-                token_id=99,
+        with (
+            patch(
+                "routers.auth.verify_refresh_token",
+                return_value=RefreshVerificationResult(
+                    status=RefreshVerificationStatus.IDLE_EXPIRED,
+                    user_id=42,
+                    session_id="sid-idle",
+                    policy_profile="standard",
+                    token_id=99,
+                ),
             ),
+            patch("routers.auth.audit_service") as mock_audit,
         ):
-            with patch("routers.auth.audit_service") as mock_audit:
-                response = client.post(
-                    "/api/auth/refresh",
-                    cookies={"refresh_token": "old_refresh_token"},
-                )
+            response = client.post(
+                "/api/auth/refresh",
+                cookies={"refresh_token": "old_refresh_token"},
+            )
 
         assert response.status_code == 401
         assert "session timed out" in response.json()["detail"]
@@ -1117,17 +1141,17 @@ class TestCookieDomainAndSecure:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
-            with patch(
-                "routers.auth._get_cookie_domain_and_secure", return_value=("10.53.1.22", False)
-            ):
-                with patch("routers.auth._COOKIE_DOMAIN", "10.53.1.22"):
-                    with patch("routers.auth._COOKIE_SECURE", False):
-                        with patch("routers.auth.verify_password", return_value=True):
-                            response = client.post(
-                                "/api/auth/token",
-                                data={"username": "testuser", "password": "correct_password"},
-                            )
+        with (
+            patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}),
+            patch("routers.auth._get_cookie_domain_and_secure", return_value=("10.53.1.22", False)),
+            patch("routers.auth._COOKIE_DOMAIN", "10.53.1.22"),
+            patch("routers.auth._COOKIE_SECURE", False),
+            patch("routers.auth.verify_password", return_value=True),
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         set_cookie = response.headers.get("set-cookie", "")
@@ -1148,13 +1172,15 @@ class TestCookieDomainAndSecure:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch("routers.auth._COOKIE_DOMAIN", "app.example.com"):
-            with patch("routers.auth._COOKIE_SECURE", True):
-                with patch("routers.auth.verify_password", return_value=True):
-                    response = client.post(
-                        "/api/auth/token",
-                        data={"username": "testuser", "password": "correct_password"},
-                    )
+        with (
+            patch("routers.auth._COOKIE_DOMAIN", "app.example.com"),
+            patch("routers.auth._COOKIE_SECURE", True),
+            patch("routers.auth.verify_password", return_value=True),
+        ):
+            response = client.post(
+                "/api/auth/token",
+                data={"username": "testuser", "password": "correct_password"},
+            )
 
         assert response.status_code == 200
         set_cookie = response.headers.get("set-cookie", "")
