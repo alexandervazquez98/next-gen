@@ -261,12 +261,16 @@ export function buildLinkConfig(
 export function getNodeRenderConfig(node: {
   hasCritical?: boolean;
   hasWarning?: boolean;
-  events?: { severity: string }[];
+  events?: { severity: string; status?: string }[];
 }): NodeRenderConfig {
   const isCritical = Boolean(node.hasCritical);
   const isWarning = Boolean(node.hasWarning);
-  const critCount = node.events?.filter((e) => e.severity === "CRITICAL").length ?? 0;
-  const warnCount = node.events?.filter((e) => e.severity === "WARNING").length ?? 0;
+  // Marker size scales with active event count. RECOVERED events are
+  // excluded so the marker shrinks back when the underlying condition
+  // clears — matching the color flag behaviour in `nodesWithEvents`.
+  const activeEvents = node.events?.filter((e) => e.status !== "RECOVERED") ?? [];
+  const critCount = activeEvents.filter((e) => e.severity === "CRITICAL").length;
+  const warnCount = activeEvents.filter((e) => e.severity === "WARNING").length;
 
   const BASE_RADIUS = 6;
 
@@ -398,22 +402,27 @@ const MapBounds = ({ nodes }: { nodes: GraphNode[] }) => {
 };
 
 /**
- * Helper to get severity background class for cluster member tooltips
+ * Helper to get severity background class for cluster member tooltips.
+ * Excludes RECOVERED events: the underlying condition already cleared,
+ * so the row shouldn't render with the alarmed styling.
  */
 function getSeverityBg(events: Event[]): string {
-  const hasCritical = events.some((e) => e.severity === "CRITICAL");
-  const hasWarning = events.some((e) => e.severity === "WARNING");
+  const active = events.filter((e) => e.status !== "RECOVERED");
+  const hasCritical = active.some((e) => e.severity === "CRITICAL");
+  const hasWarning = active.some((e) => e.severity === "WARNING");
   if (hasCritical) return "bg-red-100 text-red-800";
   if (hasWarning) return "bg-yellow-100 text-yellow-800";
   return "bg-green-100 text-green-800";
 }
 
 /**
- * Helper to get status label for a single CI based on its events
+ * Helper to get status label for a single CI based on its active events.
+ * Excludes RECOVERED events for the same reason as `getSeverityBg`.
  */
 function getCIStatus(events: Event[]): "CRITICAL" | "WARNING" | "OK" {
-  const hasCritical = events.some((e) => e.severity === "CRITICAL");
-  const hasWarning = events.some((e) => e.severity === "WARNING");
+  const active = events.filter((e) => e.status !== "RECOVERED");
+  const hasCritical = active.some((e) => e.severity === "CRITICAL");
+  const hasWarning = active.some((e) => e.severity === "WARNING");
   if (hasCritical) return "CRITICAL";
   if (hasWarning) return "WARNING";
   return "OK";
@@ -1018,8 +1027,14 @@ const MonitoringConsole: React.FC = () => {
     () =>
       filteredNodes.map((node) => {
         const nodeEvents = events.filter((e) => e.ci_id === node.id);
-        const critical = nodeEvents.some((e) => e.severity === "CRITICAL");
-        const warning = nodeEvents.some((e) => e.severity === "WARNING");
+        // Color flags (hasCritical / hasWarning) only count events that are
+        // still actionable. RECOVERED events mean the underlying condition
+        // already cleared — they should not keep the marker red after the
+        // system healed. The full `events` array below keeps RECOVERED rows
+        // so the popup can still show the recovery history.
+        const activeEvents = nodeEvents.filter((e) => e.status !== "RECOVERED");
+        const critical = activeEvents.some((e) => e.severity === "CRITICAL");
+        const warning = activeEvents.some((e) => e.severity === "WARNING");
         return {
           ...node,
           hasCritical: critical,
@@ -1101,8 +1116,8 @@ const MonitoringConsole: React.FC = () => {
     [expandedClusterId, expandCluster, resetMapView],
   );
 
-  const openEvents = events.filter((e) => e.status === "OPEN");
-  const ackEvents = events.filter((e) => e.status === "ACK");
+  const _openEvents = events.filter((e) => e.status === "OPEN");
+  const _ackEvents = events.filter((e) => e.status === "ACK");
 
   // P2 REQ-005: KPI counts are derived from ROOT events only. The backend
   // `correlation_type` is authoritative (legacy rows default to ROOT via
