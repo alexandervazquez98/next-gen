@@ -27,6 +27,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 SPEC_PATH = Path(
     "openspec/changes/feat-390-lod-contracts/specs/" "cmdb-graph-overview-detail-contracts/spec.md"
 )

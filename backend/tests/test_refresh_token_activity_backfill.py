@@ -152,9 +152,8 @@ class TestBackfillScriptHelp:
         # argparse writes help to stdout and calls ``parser.exit(0)`` which
         # raises SystemExit; capture both so the test sees the help text.
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            with pytest.raises(SystemExit) as exc_info:
-                script.main(["--help"])
+        with contextlib.redirect_stdout(buf), pytest.raises(SystemExit) as exc_info:
+            script.main(["--help"])
         assert exc_info.value.code == 0
         return buf.getvalue()
 
