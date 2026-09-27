@@ -125,14 +125,45 @@ describe("LODGraphCMDB (#392 PR4)", () => {
     expect(screen.getByText(/Loading LOD overview/i)).toBeInTheDocument();
   });
 
-  it("shows error state when overview fetch fails (PR6 will add fallback)", () => {
+  it("shows error state when overview fetch fails and topology fallback also fails", () => {
     mockUseGraphOverviewQuery.mockReturnValue({
       data: undefined,
       isLoading: false,
       error: new Error("network unreachable"),
     });
+    mockUseGraphTopologyQuery.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("topology also unreachable"),
+    });
     render(<LODGraphCMDB />, { wrapper: createWrapper() });
     expect(screen.getByText(/LOD overview unavailable/i)).toBeInTheDocument();
+  });
+
+  it("falls back to /graph/full topology when overview fails", () => {
+    mockUseGraphOverviewQuery.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("overview endpoint down"),
+    });
+    mockUseGraphTopologyQuery.mockReturnValue({
+      data: {
+        nodes: [
+          { id: "ci-1", label: "Router-1", location_name: "HQ" },
+          { id: "ci-2", label: "Server-1", location_name: "HQ" },
+        ],
+        links: [],
+      },
+      isLoading: false,
+    });
+    render(<LODGraphCMDB />, { wrapper: createWrapper() });
+    expect(screen.getByTestId("fallback-view")).toBeInTheDocument();
+    expect(screen.getByTestId("fallback-banner")).toBeInTheDocument();
+    expect(screen.getByText(/Fallback active/i)).toBeInTheDocument();
+    // Topology nodes render as cluster cards in the fallback
+    const grid = screen.getByTestId("cluster-grid");
+    expect(within(grid).getByText("Router-1")).toBeInTheDocument();
+    expect(within(grid).getByText("Server-1")).toBeInTheDocument();
   });
 
   it("forwards cluster click to the onClusterClick callback", async () => {
