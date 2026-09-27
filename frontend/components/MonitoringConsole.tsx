@@ -1483,6 +1483,7 @@ const MonitoringConsole: React.FC = () => {
                 className="h-full w-full z-0"
                 zoomControl={false}
                 attributionControl={false}
+                style={{ filter: "invert(1) hue-rotate(180deg) brightness(0.9)" }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
                 <TileLayer
@@ -1490,7 +1491,6 @@ const MonitoringConsole: React.FC = () => {
                   maxNativeZoom={20}
                   url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  style={{ filter: "invert(1) hue-rotate(180deg) brightness(0.9)" }}
                 />
                 <MapOutsideClickHandler onMapClick={resetMapView} />
                 <MapBounds nodes={nodesWithEvents} />
