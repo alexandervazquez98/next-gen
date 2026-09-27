@@ -76,7 +76,7 @@ function ClusterCard({
 }
 
 const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
-  const { data: overview, isLoading, error } = useGraphOverviewQuery();
+  const { data: overview, isLoading, error: overviewError } = useGraphOverviewQuery();
   // Topology is still loaded in the background for the location
   // filter catalog (``allLocations``) and as the fallback path
   // (PR6). It is NOT the primary render source anymore.
@@ -124,7 +124,21 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
     );
   }
 
-  if (error) {
+  // PR6: fallback path. When overview fails but the background
+  // topology query succeeded, render the topology as a degraded
+  // fallback so operators still see data.
+  if (overviewError && fullData) {
+    return (
+      <FallbackView
+        nodes={fullData.nodes ?? []}
+        links={fullData.links ?? []}
+        reason={overviewError.message}
+        onClusterClick={onClusterClick}
+      />
+    );
+  }
+
+  if (overviewError) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-surface-950 grid-bg">
         <div className="flex flex-col items-center gap-4 max-w-md text-center">
@@ -135,7 +149,7 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
             LOD overview unavailable
           </span>
           <span className="text-xs text-neutral-500">
-            {error.message}. PR6 will add automatic fallback to /graph/full.
+            {overviewError.message}. Both overview and fallback topology failed.
           </span>
         </div>
       </div>
@@ -250,6 +264,71 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
 };
 
 export default LODGraphCMDB;
+
+/**
+ * PR6: Fallback view rendered when the LOD overview endpoint fails
+ * but the background /graph/full query succeeded.
+ */
+function FallbackView({
+  nodes,
+  links: _links,
+  reason,
+  onClusterClick,
+}: {
+  nodes: Array<{ id: string; label?: string; location_name?: string | null }>;
+  links: unknown[];
+  reason: string;
+  onClusterClick?: (_cluster: OverviewCluster) => void;
+}) {
+  const fallbackClusters: OverviewCluster[] = nodes.map((node) => ({
+    cluster_id: `node:${node.id}`,
+    display_label: node.label ?? node.id,
+    visible_node_count: 1,
+    visible_link_count: 0,
+    aggregate_redacted: false,
+    suppression_reason: null,
+  }));
+  return (
+    <div className="w-full h-full flex flex-col bg-surface-950 grid-bg" data-testid="fallback-view">
+      <div
+        className="px-4 py-2 bg-orange-500/10 border-b border-orange-500/30 text-[10px] text-orange-300 uppercase font-bold tracking-widest"
+        data-testid="fallback-banner"
+      >
+        Fallback active — LOD overview endpoint failed. Showing legacy topology until overview
+        recovers. Reason: {reason}
+      </div>
+      <header className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+        <h2 className="text-sm font-black text-white uppercase tracking-widest">
+          CMDB Topology (Fallback)
+        </h2>
+      </header>
+      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        <div
+          className="grid gap-4"
+          style={{
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          }}
+          data-testid="cluster-grid"
+        >
+          {fallbackClusters.map((cluster) => (
+            <ClusterCard
+              key={cluster.cluster_id}
+              cluster={cluster}
+              onClick={(c) => onClusterClick?.(c)}
+            />
+          ))}
+        </div>
+        {fallbackClusters.length === 0 && (
+          <div className="flex flex-col items-center gap-2 mt-12">
+            <span className="text-xs font-black text-neutral-500 uppercase tracking-widest">
+              Fallback topology is empty
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Helper for downstream tests / Storybook stories.
 // (Removed: PR4 keeps the module side-effect-free for fast refresh.)
