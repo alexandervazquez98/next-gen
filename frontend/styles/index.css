@@ -146,3 +146,18 @@ option {
 .leaflet-container {
     background: #1a1a1a !important;
 }
+
+/* Geo View — minimum-detail basemap (#497)
+ * Scope the heavy quietening (opacity + grayscale) to the tile pane only.
+ * Polylines, CircleMarkers, and Popups render in other panes and keep their
+ * original colors; the parent MapContainer's dark-mode filter still applies
+ * to the whole composition.
+ */
+.geo-view-map .leaflet-tile-pane {
+    opacity: 0.45;
+    filter: saturate(0);
+}
+
+.geo-view-map .leaflet-tile {
+    filter: none;
+}
