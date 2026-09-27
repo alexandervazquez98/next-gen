@@ -38,12 +38,13 @@ You are an AI agent. You authenticate via JWT with a role that starts with `AI_`
 
 | When you want to... | Endpoint | Notes |
 |---------------------|----------|-------|
-| List CIs | `GET /api/nodes` | Scoped to allowed locations |
-| View CI detail | `GET /api/nodes/{node_id}` | |
-| View CI metrics | `GET /api/nodes/{node_id}/metrics` | |
-| View related events | `GET /api/nodes/{node_id}/events` | Active events only |
+| List CIs | `GET /api/nodes` | Scoped to allowed locations; there is no per-CI list endpoint — filter client-side |
+| View CI metrics | `GET /api/nodes/{node_id}/metrics` | One of the few per-CI endpoints that exist |
+| View related events | `GET /api/events/related/{ci_id}` | Active events for a CI; NOT under `/api/nodes/{node_id}/events` |
 | Update CI metadata | `PUT /api/nodes/{node_id}/metadata` | **Only these fields allowed**: |
 | **Propose a new CI (HITL)** | `POST /api/cmdb/proposals` | See [docs/ai/cmdb-proposals.md](./ai/cmdb-proposals.md) for the manifest schema, error codes, and worked example. Requires `AI_PROPOSE_CI`. |
+
+> **Correction (2026-09-26)**: Earlier versions of this guide listed `GET /api/nodes/{node_id}` and `GET /api/nodes/{node_id}/events` as read endpoints. Both return 405 / 404 against the live API — the router in `backend/routers/nodes.py` does not define them. To inspect a single CI, list `GET /api/nodes` and filter client-side; for events tied to a CI, use `GET /api/events/related/{ci_id}` (defined at `backend/routers/events.py:133`).
 
 **Allowed metadata fields:**
 ```json
@@ -173,3 +174,20 @@ Your role must be `AI_DIAGNOSTIC` or `AI_OPERATOR`. Tokens without `type: "ai_ag
 - **"Too many X without diagnostic run"** → Run a diagnostic on that CI first.
 - **"AI cannot operate on more than 10 entities"** → Reduce batch size.
 - **"CRITICAL events require human approval"** → Alert a human, do not retry.
+
+## Error Code Guidance
+
+The platform returns standard HTTP status codes with machine-parseable bodies. Match the response to the action below — do not retry blindly.
+
+| Status | Typical cause | Action |
+|--------|---------------|--------|
+| `401 Unauthorized` | Access token expired or missing | Call `POST /api/auth/refresh` **once**, then retry the original request. If refresh itself returns 401, your session is invalid — re-authenticate from scratch. |
+| `403 Forbidden` | Role lacks the required permission, behavioral guard tripped, cooldown active, or critical-event attempt | Inspect the `detail` field. See [If You Get a 403](#if-you-get-a-403) below for the common messages. Do not retry without changing behavior. |
+| `404 Not Found` | The `{ci_id}` / `{event_id}` does not exist or is outside your scope | Refresh your CI list (`GET /api/nodes`) and re-resolve the identifier. Do not invent IDs. |
+| `405 Method Not Allowed` | You called an endpoint that does not exist for this resource | Check the endpoint table in this guide. Many fabricated endpoints (e.g. `GET /api/nodes/{node_id}`) return 405 — they are not implemented. |
+| `413 Payload Too Large` | Bulk upload (`POST /api/nodes/upload`) file > 5 MB | Split the file, or use `POST /api/nodes` in batches. The 5 MB limit is enforced server-side. |
+| `422 Unprocessable Entity` | Pydantic field validation failed (missing required field, wrong type, enum mismatch) | Read the response body — Pydantic errors include the field path and a link to `pydantic.dev` docs. Fix the payload; do not retry with the same body. |
+| `429 Too Many Requests` | Rate limit or refresh-token lockout | Read the `Retry-After` header (seconds). Stop and wait. Repeated retries extend the lockout and hide the real failure. |
+
+**Field-restriction error codes are explicit.** When a CI metadata update hits a blocked field, the server returns 403 with `detail: "AI agents cannot modify fields: [label, type, ...]"`. Treat the array as the authoritative whitelist-negation; do not probe with arbitrary fields.
+
