@@ -1035,28 +1035,10 @@ const MonitoringConsole: React.FC = () => {
     () => new Map(nodesWithEvents.map((node) => [node.id, node])),
     [nodesWithEvents],
   );
-  const visibleMapLinks = useMemo(() => {
-    const visibleNodeIds = new Set(nodesWithEvents.map((node) => node.id));
-    return links.filter(
-      (link) => visibleNodeIds.has(link.source) && visibleNodeIds.has(link.target),
-    );
-  }, [links, nodesWithEvents]);
-  const tunnelHealth = useVisibleTunnelHealth(visibleMapLinks as GraphLink[]);
-  const tunnelVisuals = useMemo(
-    () =>
-      visibleMapLinks
-        .filter((link) => isTunnelMedium(link.medium))
-        .map((link) => {
-          const linkId = encodeTunnelLinkId(link as GraphLink);
-          const visual =
-            tunnelHealth.visualByLinkId[linkId] ??
-            resolveTunnelVisual(link as GraphLink, link.tunnel_health ?? undefined);
-          return { link, visual };
-        }),
-    [visibleMapLinks, tunnelHealth.visualByLinkId],
-  );
 
-  // Smart culling hook — returns top-n nodes when threshold exceeded
+  // Smart culling hook — returns top-n nodes when threshold exceeded.
+  // Forced on when the total node count exceeds HARD_CULL_THRESHOLD, so the
+  // map never tries to render thousands of CircleMarkers at once.
   const { culledNodes, isActive: isSmartMode } = useSmartCulling(nodesWithEvents, events);
 
   // Map clustering hook
@@ -1073,6 +1055,92 @@ const MonitoringConsole: React.FC = () => {
   const handleMapReady = useCallback((map: L.Map) => {
     mapRef.current = map;
   }, []);
+
+  // Map viewport bounds — tracks moveend/zoomend on the Leaflet instance so
+  // markers and links outside the viewport can be culled before render.
+  const mapBoundsRef = useRef<{ south: number; west: number; north: number; east: number } | null>(
+    null,
+  );
+  const [mapBoundsVersion, setMapBoundsVersion] = useState(0);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const read = () => {
+      const b = map.getBounds();
+      mapBoundsRef.current = {
+        south: b.getSouth(),
+        west: b.getWest(),
+        north: b.getNorth(),
+        east: b.getEast(),
+      };
+      setMapBoundsVersion((v) => v + 1);
+    };
+    read();
+    map.on('moveend', read);
+    map.on('zoomend', read);
+    return () => {
+      map.off('moveend', read);
+      map.off('zoomend', read);
+    };
+  }, [mapRef.current]);
+
+  const viewportCulledNodes = useMemo(() => {
+    const bounds = mapBoundsRef.current;
+    if (!bounds) return culledNodes;
+    return culledNodes.filter((n) => {
+      const loc = n.location;
+      if (!loc || loc.lat == null || loc.long == null) return false;
+      if (bounds.west <= bounds.east) {
+        return (
+          loc.lat >= bounds.south &&
+          loc.lat <= bounds.north &&
+          loc.long >= bounds.west &&
+          loc.long <= bounds.east
+        );
+      }
+      // Antimeridian wrap.
+      return (
+        loc.lat >= bounds.south &&
+        loc.lat <= bounds.north &&
+        (loc.long >= bounds.west || loc.long <= bounds.east)
+      );
+    });
+  }, [culledNodes, mapBoundsVersion]);
+
+  const visibleMapLinks = useMemo(() => {
+    // Use culledNodes instead of nodesWithEvents so that link rendering
+    // scales down together with marker culling. Without this, the link
+    // filter scans the full link array even when only the top-N nodes
+    // are shown on screen.
+    const visibleNodeIds = new Set(culledNodes.map((node) => node.id));
+    const bounds = mapBoundsRef.current;
+    const viewportNodeIds = new Set(viewportCulledNodes.map((node) => node.id));
+    return links.filter((link) => {
+      if (!visibleNodeIds.has(link.source) || !visibleNodeIds.has(link.target)) {
+        return false;
+      }
+      // If we have viewport bounds, also require that at least one endpoint
+      // is currently visible. Otherwise the link is off-screen.
+      if (bounds && !viewportNodeIds.has(link.source) && !viewportNodeIds.has(link.target)) {
+        return false;
+      }
+      return true;
+    });
+  }, [links, culledNodes, viewportCulledNodes, mapBoundsVersion]);
+  const tunnelHealth = useVisibleTunnelHealth(visibleMapLinks as GraphLink[]);
+  const tunnelVisuals = useMemo(
+    () =>
+      visibleMapLinks
+        .filter((link) => isTunnelMedium(link.medium))
+        .map((link) => {
+          const linkId = encodeTunnelLinkId(link as GraphLink);
+          const visual =
+            tunnelHealth.visualByLinkId[linkId] ??
+            resolveTunnelVisual(link as GraphLink, link.tunnel_health ?? undefined);
+          return { link, visual };
+        }),
+    [visibleMapLinks, tunnelHealth.visualByLinkId],
+  );
 
   const resetMapView = useCallback(() => {
     collapseCluster();
@@ -1485,6 +1553,7 @@ const MonitoringConsole: React.FC = () => {
                 className="h-full w-full z-0 geo-view-map"
                 zoomControl={false}
                 attributionControl={false}
+                preferCanvas={true}
                 style={{ filter: GEO_VIEW_DARK_FILTER }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
@@ -1564,7 +1633,9 @@ const MonitoringConsole: React.FC = () => {
                 {/* Conditional rendering: clusters vs individual markers */}
                 {!clusteringEnabled
                   ? // Task 10: Individual markers when clustering is OFF
-                    culledNodes
+                    // Use viewportCulledNodes (not culledNodes) so that markers
+                    // outside the current Leaflet viewport are skipped entirely.
+                    viewportCulledNodes
                       .filter(
                         (n) =>
                           n.location &&
@@ -1630,6 +1701,25 @@ const MonitoringConsole: React.FC = () => {
                     : // Task 11: Cluster markers
                       clusters
                         .filter((c) => c.count > 0)
+                        .filter((c) => {
+                          // Skip clusters whose centroid is outside the current viewport.
+                          const bounds = mapBoundsRef.current;
+                          if (!bounds) return true;
+                          const [lat, lng] = c.centroid;
+                          if (bounds.west <= bounds.east) {
+                            return (
+                              lat >= bounds.south &&
+                              lat <= bounds.north &&
+                              lng >= bounds.west &&
+                              lng <= bounds.east
+                            );
+                          }
+                          return (
+                            lat >= bounds.south &&
+                            lat <= bounds.north &&
+                            (lng >= bounds.west || lng <= bounds.east)
+                          );
+                        })
                         .map((cluster) => (
                           <ClusterMarker
                             key={cluster.id}

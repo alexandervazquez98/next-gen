@@ -203,16 +203,37 @@ describe('buildClusters', () => {
     expect(clusters[0].worstSeverity).toBe('CRITICAL');
   });
 
-  it('calculates centroid correctly', () => {
-    // Use same location_name so they get proximity-clustered
+  it('calculates centroid correctly (supercluster: same location + high zoom → 2 individual leaves)', () => {
+    // Supercluster's default radius is 80px; at queryZoom 16 (street level) two
+    // points 1° apart in the same location group render as individual leaves.
+    // Centroid derivation is exercised by the leaf branch.
     const nodes: GraphNode[] = [
       makeNode({ id: 'n1', location_name: 'Zone', location: { lat: 40.0, long: -3.0 } }),
       makeNode({ id: 'n2', location_name: 'Zone', location: { lat: 41.0, long: -4.0 } }),
     ];
-    const clusters = buildClusters(nodes, [], { proximityThresholdMeters: 200000 }); // 200km threshold
+    const clusters = buildClusters(nodes, [], { maxZoom: 16, queryZoom: 16 });
+    expect(clusters).toHaveLength(2);
+    // First leaf at (40.0, -3.0)
+    expect(clusters[0].centroid[0]).toBeCloseTo(40.0, 4);
+    expect(clusters[0].centroid[1]).toBeCloseTo(-3.0, 4);
+    // Second leaf at (41.0, -4.0)
+    expect(clusters[1].centroid[0]).toBeCloseTo(41.0, 4);
+    expect(clusters[1].centroid[1]).toBeCloseTo(-4.0, 4);
+  });
+
+  it('supercluster aggregates nearby points at low zoom', () => {
+    // Two points 0.0001° apart (~11m) at the same location. At zoom 0 the
+    // world is 256px wide so 11m of arc is well under the 80px radius.
+    const nodes: GraphNode[] = [
+      makeNode({ id: 'n1', location_name: 'Zone', location: { lat: 40.4168, long: -3.7038 } }),
+      makeNode({ id: 'n2', location_name: 'Zone', location: { lat: 40.4169, long: -3.7039 } }),
+    ];
+    const clusters = buildClusters(nodes, [], { maxZoom: 16, queryZoom: 0 });
     expect(clusters).toHaveLength(1);
-    expect(clusters[0].centroid[0]).toBeCloseTo(40.5, 4);
-    expect(clusters[0].centroid[1]).toBeCloseTo(-3.5, 4);
+    expect(clusters[0].members).toHaveLength(2);
+    // Centroid should be near (40.41685, -3.70385)
+    expect(clusters[0].centroid[0]).toBeCloseTo(40.41685, 4);
+    expect(clusters[0].centroid[1]).toBeCloseTo(-3.70385, 4);
   });
 
   it('returns empty array for empty nodes', () => {
