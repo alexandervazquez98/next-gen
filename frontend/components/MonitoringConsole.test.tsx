@@ -4,6 +4,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { encodeTunnelLinkId } from "../utils/tunnelVisuals";
+
+// Mock the vector tile basemap before importing the component, so the
+// maplibre-gl / @maplibre/maplibre-gl-leaflet modules (which require WebGL)
+// never load in jsdom.
+vi.mock("./VectorTileBasemap", () => ({
+  VectorTileBasemap: () => null,
+  default: () => null,
+}));
+
 import MonitoringConsole from "./MonitoringConsole";
 
 const { mockUseMonitoringConsoleData, mockUseVisibleTunnelHealth } = vi.hoisted(() => ({
@@ -87,7 +96,6 @@ vi.mock("react-leaflet", () => ({
   MapContainer: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="map">{children}</div>
   ),
-  TileLayer: () => <div data-testid="tile-layer" />,
   Polyline: ({ children }: { children?: React.ReactNode }) => (
     <div data-testid="polyline">{children}</div>
   ),

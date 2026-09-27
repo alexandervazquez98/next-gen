@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, no-unused-vars, react-refresh/only-export-components, react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Popup } from "react-leaflet";
+import { MapContainer, Polyline, useMap, CircleMarker, Popup } from "react-leaflet";
+import { VectorTileBasemap } from "./VectorTileBasemap";
 import { createPortal } from "react-dom";
 import "leaflet/dist/leaflet.css";
 import type { GraphLink, GraphNode, Event } from "../types";
@@ -1103,8 +1104,8 @@ const MonitoringConsole: React.FC = () => {
     [expandedClusterId, expandCluster, resetMapView],
   );
 
-  const openEvents = events.filter((e) => e.status === "OPEN");
-  const ackEvents = events.filter((e) => e.status === "ACK");
+  const _openEvents = events.filter((e) => e.status === "OPEN");
+  const _ackEvents = events.filter((e) => e.status === "ACK");
 
   // P2 REQ-005: KPI counts are derived from ROOT events only. The backend
   // `correlation_type` is authoritative (legacy rows default to ROOT via
@@ -1488,12 +1489,7 @@ const MonitoringConsole: React.FC = () => {
                 style={{ filter: GEO_VIEW_DARK_FILTER }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
-                <TileLayer
-                  maxZoom={20}
-                  maxNativeZoom={20}
-                  url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                />
+                <VectorTileBasemap />
                 <MapOutsideClickHandler onMapClick={resetMapView} />
                 <MapBounds nodes={nodesWithEvents} />
 

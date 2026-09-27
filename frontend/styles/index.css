@@ -147,16 +147,18 @@ option {
 }
 
 /* Geo View — minimum-detail basemap (#497)
- * Scope the heavy quietening (opacity + grayscale) to the tile pane only.
- * Polylines, CircleMarkers, and Popups render in other panes and keep their
- * original colors; the parent MapContainer's dark-mode filter still applies
- * to the whole composition.
+ * The basemap is vector tiles via @maplibre/maplibre-gl-leaflet, which
+ * renders into a canvas element nested inside the Leaflet map. Scope the
+ * heavy quietening (opacity + grayscale) to that canvas so Polylines,
+ * CircleMarkers, and Popups render at full color while the basemap
+ * fades into the background. The parent MapContainer's dark-mode filter
+ * (invert + hue-rotate + brightness) still applies to the whole composition.
  */
-.geo-view-map .leaflet-tile-pane {
-  opacity: 0.45;
+.geo-view-map .maplibregl-canvas {
+  opacity: 0.5;
   filter: saturate(0);
 }
 
-.geo-view-map .leaflet-tile {
-  filter: none;
+.geo-view-map .maplibregl-canvas-container {
+  opacity: 0.5;
 }
