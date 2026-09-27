@@ -115,6 +115,18 @@ services:
     volumes:
       - ${BACKUP_DIR:-.docker/backups}:/backups
       - ${AI_PROMPTS_DIR_HOST:-.docker/ai}:/data/ai
+      # Fix #514 — bind-mounts required by the prtest test suite. Several
+      # tests under backend/tests/ resolve their repo root via
+      # Path(__file__).resolve().parents[2] which, when the container runs
+      # from WORKDIR=/app, lands on '/' rather than the repo root. The
+      # mounts below expose the repo at the absolute paths those tests
+      # expect so the bind-mounted fixtures/specs/docs become visible.
+      # All are read-only; the container must not mutate the host tree.
+      - ./backend:/backend:ro                                    # scripts + tests path resolution
+      - ./fixtures:/fixtures:ro                                  # /graph/full snapshot tests (repo-root fixtures dir, NOT backend/tests/fixtures)
+      - ./openspec:/openspec:ro                                  # spec coverage graph tests
+      - ./docs:/docs:ro                                          # polling docs links tests
+      - ./README.md:/README.md:ro                                # polling docs links tests
     healthcheck:
       test:
         [

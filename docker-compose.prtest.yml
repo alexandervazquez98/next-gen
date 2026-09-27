@@ -1,0 +1,51 @@
+# docker-compose.prtest.yml — prtest-only override for next-gen backend (#514)
+#
+# Usage (from repo root, after creating the prtest .env):
+#   docker compose \
+#     -p nextgen-prtest \
+#     --env-file .env.prtest \
+#     -f docker-compose.yml \
+#     -f docker-compose.prtest.yml \
+#     up -d --build
+#
+# Why this file exists
+# --------------------
+# The default `docker-compose.yml` exposes a hardened backend image (read-only
+# volumes for /fixtures /openspec /docs etc.). The prtest harness additionally
+# needs:
+#
+#   1. The host Docker socket so testcontainers[postgres] tests
+#      (`backend/tests/test_writer_advisory_lock.py`) can spawn ephemeral
+#      Postgres containers in CI. The socket MUST NEVER be mounted into prod —
+#      this override is the only place it appears.
+#
+#   2. The PRTEST_FIXTURES_ENABLED flag so tests that read host-mounted
+#      fixtures can short-circuit cleanly when those mounts are absent.
+#
+#   3. A deterministic pytest command so the prtest run is reproducible
+#      regardless of how the operator invokes the stack.
+#
+# This file is intentionally small. Anything that should apply to BOTH prtest
+# and prod belongs in `docker-compose.yml`; anything that is prtest-only
+# belongs here.
+
+services:
+  backend:
+    volumes:
+      # testcontainers[postgres] needs to talk to the host Docker daemon.
+      # Prtest-only: never mount this in production stacks.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PRTEST_FIXTURES_ENABLED=true
+    command: ["python", "-m", "pytest", "tests/", "-q", "--no-header", "--tb=line"]
+    # prtest runs the FULL suite (env_required tests included). With the
+    # docker.sock mount above, testcontainers[postgres] tests have the daemon
+    # they need. If a future change needs to skip env_required tests in prtest,
+    # append `-m "not env_required"` — do NOT default to skipping them,
+    # otherwise the prtest verdict loses coverage on the 7 most integration-
+    # heavy tests.
+
+  mqtt-subscriber:
+    # prtest does not exercise the MQTT subscriber; scale it down to save
+    # resources and remove it from the prtest dependency chain.
+    command: ["python", "-c", "import time; time.sleep(86400)"]

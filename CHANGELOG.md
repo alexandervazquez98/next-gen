@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **20 pre-existing pytest failures in the `nextgen-prtest` isolated stack resolved (#514)**: the prtest harness ran `pytest tests/` against `origin/main` HEAD and reported `20 failed / 2324 passed / 2 skipped` — chronic noise caused by (a) the container's `WORKDIR=/app` flat layout making tests that resolve repo paths via `Path(__file__).resolve().parents[2]` land on `/` instead of the repo root, and (b) several tests genuinely requiring a fully-fitted environment (Docker socket for `testcontainers[postgres]`, `pg_dump` binary) that should be opt-in rather than mandatory. This change adds a hybrid remediation: **five read-only bind-mounts** in `docker-compose.yml` (`./backend -> /backend`, `./fixtures -> /fixtures`, `./openspec -> /openspec`, `./docs -> /docs`, `./README.md -> /README.md`) so the absolute paths the tests expect resolve to the host tree, a **new `docker-compose.prtest.yml` override** that mounts `/var/run/docker.sock` (prtest-only — NEVER mounted in prod) and pins the pytest command, a **new `env_required` pytest marker** registered in `backend/pytest.ini` decorating the 7 `testcontainers`/`pg_dump` tests so they are skipped by default and only exercised inside prtest, and three **defensive `pytest.skip(...)` guards** in the spec/fixture/script-reading tests so they fail gracefully (not noisily) on intermediate branches. Also adds `docs/testing-environment.md` as the canonical reference for marker semantics, the three execution contexts (developer laptop / CI runner / prtest container), and the bind-mount landscape. Local `pytest backend/tests/` now reports `0` failures (was 20); the prtest stack additionally exercises the integration-heavy `env_required` tests for full coverage. One pre-existing `apscheduler` test-isolation bug surfaced during verification — reproducible on `origin/main` without these changes — and is documented in the PR for a follow-up issue.
+
 ## [1.19.0] — 2026-09-26
 
 ### Added

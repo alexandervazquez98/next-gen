@@ -645,6 +645,7 @@ def _swap_in_real_psycopg2():
 
 
 @pytest.mark.integration
+@pytest.mark.env_required
 def test_concurrent_writers_block_on_lock():
     """Two real Postgres writers for the same triplet MUST serialize.
 
@@ -772,6 +773,7 @@ def test_concurrent_writers_block_on_lock():
 
 
 @pytest.mark.integration
+@pytest.mark.env_required
 def test_unsorted_lock_acquisition_deadlocks():
     """Two threads acquiring triplet locks in OPPOSITE order MUST deadlock.
 
@@ -870,6 +872,7 @@ def test_unsorted_lock_acquisition_deadlocks():
 
 
 @pytest.mark.integration
+@pytest.mark.env_required
 def test_sorted_lock_acquisition_prevents_deadlock():
     """Sorted lexicographic acquisition MUST NOT deadlock even with reversed input.
 
@@ -962,6 +965,7 @@ def test_sorted_lock_acquisition_prevents_deadlock():
 
 
 @pytest.mark.integration
+@pytest.mark.env_required
 def test_full_poll_cycle_no_duplicates():
     """All 3 writers targeting the same triplet MUST produce exactly 1 Event.
 
