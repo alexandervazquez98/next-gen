@@ -2,21 +2,20 @@
 
 import hashlib
 import os
-import pytest
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
+import pytest
+from fastapi.testclient import TestClient
+from jose import jwt
 from middleware import rate_limit
 from middleware.rate_limit import MAX_ATTEMPTS, increment_attempts, refresh_token_rate_limit_key
 from models.rate_limit_attempt import RateLimitAttempt
-from jose import jwt
-from postgres_db import Base
-from services.auth_service import SECRET_KEY, ALGORITHM
 from models.refresh_token import RefreshVerificationResult, RefreshVerificationStatus
+from postgres_db import Base
+from services.auth_service import ALGORITHM, SECRET_KEY
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # Patch Neo4j driver BEFORE importing anything
 _mock_neo4j_driver = MagicMock()
@@ -24,7 +23,6 @@ with patch("neo4j.GraphDatabase.driver", return_value=_mock_neo4j_driver):
     from main import app
     from postgres_db import get_pg_db
     from services.auth_service import get_current_active_user
-    from models.refresh_token import RefreshTokenResponse
 
 
 client = TestClient(app)
@@ -100,7 +98,9 @@ class TestAuthTokenCookie:
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch("routers.auth.verify_password", return_value=True):
-            with patch("routers.auth.create_refresh_token", return_value="new_refresh_token") as mock_create_refresh:
+            with patch(
+                "routers.auth.create_refresh_token", return_value="new_refresh_token"
+            ) as mock_create_refresh:
                 response = client.post(
                     "/api/auth/token",
                     data={"username": "testuser", "password": "correct_password"},
@@ -128,7 +128,10 @@ class TestAuthTokenCookie:
 
         app.dependency_overrides[get_pg_db] = override_get_db
 
-        with patch.dict(os.environ, {"SESSION_OPERATIONAL_ENABLED": "false", "SESSION_STANDARD_REFRESH_DAYS": "2"}):
+        with patch.dict(
+            os.environ,
+            {"SESSION_OPERATIONAL_ENABLED": "false", "SESSION_STANDARD_REFRESH_DAYS": "2"},
+        ):
             with patch("routers.auth.verify_password", return_value=True):
                 response = client.post(
                     "/api/auth/token",
@@ -207,6 +210,7 @@ class TestAuthTokenCookie:
         assert payload["profile"] == "operational"
 
         app.dependency_overrides.pop(get_pg_db, None)
+
 
 class TestAuthRefresh:
     """Tests for POST /api/auth/refresh endpoint."""
@@ -393,7 +397,9 @@ class TestAuthRefresh:
             session.close()
 
         assert len(attempts) == 1
-        assert attempts[0].identity_key == f"refresh:{hashlib.sha256(raw_token.encode()).hexdigest()}"
+        assert (
+            attempts[0].identity_key == f"refresh:{hashlib.sha256(raw_token.encode()).hexdigest()}"
+        )
         assert attempts[0].identity_key != raw_token
         assert attempts[0].identity_type == "refresh_token"
 
@@ -444,7 +450,10 @@ class TestAuthRefresh:
 
         session = rate_limit_db()
         try:
-            assert session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).first() is None
+            assert (
+                session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).first()
+                is None
+            )
         finally:
             session.close()
 
@@ -486,7 +495,9 @@ class TestAuthRefresh:
                 "routers.auth.create_refresh_token",
                 return_value=("recovered-refresh-token", MagicMock(id=124)),
             ):
-                with patch("routers.auth.try_increment_refresh_recovery_count", return_value=True) as recovery_count:
+                with patch(
+                    "routers.auth.try_increment_refresh_recovery_count", return_value=True
+                ) as recovery_count:
                     response = client.post(
                         "/api/auth/refresh",
                         cookies={"refresh_token": stale_refresh_token},
@@ -737,11 +748,7 @@ class TestAuthRefresh:
 
         session = rate_limit_db()
         try:
-            rows = (
-                session.query(RateLimitAttempt)
-                .filter_by(identity_key=rate_limit_key)
-                .all()
-            )
+            rows = session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).all()
             assert len(rows) == 1
             assert rows[0].identity_type == "refresh_token"
         finally:
@@ -781,11 +788,7 @@ class TestAuthRefresh:
 
         session = rate_limit_db()
         try:
-            rows = (
-                session.query(RateLimitAttempt)
-                .filter_by(identity_key=rate_limit_key)
-                .all()
-            )
+            rows = session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).all()
             assert len(rows) == 1
             assert rows[0].identity_type == "refresh_token"
         finally:
@@ -822,11 +825,7 @@ class TestAuthRefresh:
 
         session = rate_limit_db()
         try:
-            rows = (
-                session.query(RateLimitAttempt)
-                .filter_by(identity_key=rate_limit_key)
-                .all()
-            )
+            rows = session.query(RateLimitAttempt).filter_by(identity_key=rate_limit_key).all()
             assert len(rows) == 1
             assert rows[0].identity_type == "refresh_token"
         finally:
@@ -866,7 +865,9 @@ class TestAuthRefresh:
                     return_value=("new_refresh_token", MagicMock(id=123)),
                 ):
                     with patch("routers.auth.create_access_token", return_value="new_access_token"):
-                        with patch("routers.auth.record_session_activity", return_value=True) as mock_record:
+                        with patch(
+                            "routers.auth.record_session_activity", return_value=True
+                        ) as mock_record:
                             response = client.post(
                                 "/api/auth/refresh",
                                 cookies={"refresh_token": "old_refresh_token"},
@@ -957,6 +958,7 @@ class TestAuthLogout:
 
         async def override_get_current_active_user():
             from models.user import User
+
             return User(
                 id=1,
                 username="testuser",
@@ -991,11 +993,37 @@ class TestCookieDomainAndSecure:
     Tests different FRONTEND_ORIGIN scenarios to verify:
     - domain is correctly extracted from the origin hostname
     - secure flag is True ONLY when scheme is https
+
+    Isolation note: routers/auth.py calls load_dotenv() at import time, which
+    walks parent directories and can leak COOKIE_SECURE / COOKIE_DOMAIN /
+    FRONTEND_ORIGIN from a repo-root .env into os.environ. Each test below
+    uses ``patch.dict`` without ``clear=True``, so leaked values are NOT
+    removed and can flip the secure flag (e.g. COOKIE_SECURE=false from a
+    local .env silently turns a true-HTTPS expectation into secure=False).
+    The autouse fixture below strips these keys before every test so each
+    one starts from a known baseline; the keys are restored on teardown so
+    we don't leak state into neighbouring tests.
     """
+
+    _COOKIE_ENV_KEYS = ("COOKIE_SECURE", "COOKIE_DOMAIN", "FRONTEND_ORIGIN")
+
+    @pytest.fixture(autouse=True)
+    def _isolate_cookie_env(self):
+        """Strip cookie-related env vars so each test starts from a known state."""
+        saved = {k: os.environ.pop(k, None) for k in self._COOKIE_ENV_KEYS}
+        try:
+            yield
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     def test_get_cookie_domain_and_secure_http_ip_origin(self):
         """HTTP origin with IP address: domain=IP, secure=False."""
         from routers.auth import _get_cookie_domain_and_secure
+
         with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "10.53.1.22"
@@ -1004,6 +1032,7 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_https_hostname(self):
         """HTTPS origin with hostname: domain=hostname, secure=True."""
         from routers.auth import _get_cookie_domain_and_secure
+
         with patch.dict(os.environ, {"FRONTEND_ORIGIN": "https://app.example.com"}):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "app.example.com"
@@ -1012,6 +1041,7 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_localhost(self):
         """Localhost origin: domain=localhost, secure=False."""
         from routers.auth import _get_cookie_domain_and_secure
+
         with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://localhost:5173"}):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "localhost"
@@ -1020,6 +1050,7 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_missing_origin(self):
         """Missing FRONTEND_ORIGIN: domain=None, secure=False."""
         from routers.auth import _get_cookie_domain_and_secure
+
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("FRONTEND_ORIGIN", None)
             with patch.dict(os.environ, {"FRONTEND_ORIGIN": ""}):
@@ -1030,10 +1061,14 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_cookie_domain_override(self):
         """COOKIE_DOMAIN override takes precedence and respects FRONTEND_ORIGIN scheme."""
         from routers.auth import _get_cookie_domain_and_secure
-        with patch.dict(os.environ, {
-            "COOKIE_DOMAIN": "custom.example.com",
-            "FRONTEND_ORIGIN": "https://secure.example.com",
-        }):
+
+        with patch.dict(
+            os.environ,
+            {
+                "COOKIE_DOMAIN": "custom.example.com",
+                "FRONTEND_ORIGIN": "https://secure.example.com",
+            },
+        ):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "custom.example.com"
         assert secure is True  # derived from FRONTEND_ORIGIN scheme
@@ -1041,7 +1076,10 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_cookie_domain_none(self):
         """COOKIE_DOMAIN=none disables domain."""
         from routers.auth import _get_cookie_domain_and_secure
-        with patch.dict(os.environ, {"COOKIE_DOMAIN": "none", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+
+        with patch.dict(
+            os.environ, {"COOKIE_DOMAIN": "none", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}
+        ):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain is None
         assert secure is False
@@ -1049,7 +1087,10 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_cookie_secure_override_true(self):
         """COOKIE_SECURE=true overrides HTTP scheme to secure=True."""
         from routers.auth import _get_cookie_domain_and_secure
-        with patch.dict(os.environ, {"COOKIE_SECURE": "true", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
+
+        with patch.dict(
+            os.environ, {"COOKIE_SECURE": "true", "FRONTEND_ORIGIN": "http://10.53.1.22:3010"}
+        ):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "10.53.1.22"
         assert secure is True
@@ -1057,7 +1098,10 @@ class TestCookieDomainAndSecure:
     def test_get_cookie_domain_and_secure_cookie_secure_override_false(self):
         """COOKIE_SECURE=false overrides HTTPS scheme to secure=False."""
         from routers.auth import _get_cookie_domain_and_secure
-        with patch.dict(os.environ, {"COOKIE_SECURE": "false", "FRONTEND_ORIGIN": "https://secure.example.com"}):
+
+        with patch.dict(
+            os.environ, {"COOKIE_SECURE": "false", "FRONTEND_ORIGIN": "https://secure.example.com"}
+        ):
             domain, secure = _get_cookie_domain_and_secure()
         assert domain == "secure.example.com"
         assert secure is False
@@ -1074,7 +1118,9 @@ class TestCookieDomainAndSecure:
         app.dependency_overrides[get_pg_db] = override_get_db
 
         with patch.dict(os.environ, {"FRONTEND_ORIGIN": "http://10.53.1.22:3010"}):
-            with patch("routers.auth._get_cookie_domain_and_secure", return_value=("10.53.1.22", False)):
+            with patch(
+                "routers.auth._get_cookie_domain_and_secure", return_value=("10.53.1.22", False)
+            ):
                 with patch("routers.auth._COOKIE_DOMAIN", "10.53.1.22"):
                     with patch("routers.auth._COOKIE_SECURE", False):
                         with patch("routers.auth.verify_password", return_value=True):

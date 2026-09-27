@@ -19,6 +19,12 @@ ignore = ["E501"]  # line length is enforced by the formatter, not the linter
 # avoid introducing new B008; the pre-existing 11 B008 + 1 F841 + 1 SIM118 stay
 # silenced here until the legacy cleanup issue lands.
 "routers/users.py" = ["B008", "F841", "SIM118"]
+# TODO(#510): tests/test_auth_router_refresh.py surfaced 15x SIM117 (nested with)
+# + 1x N806 (TestingSessionLocal) when the lint-backend lane first ran against
+# the file via tj-actions/changed-files. PR #509 silenced them here so the
+# test-isolation fix could land; issue #510 tracks the mechanical collapse +
+# rename so this ignore can be removed.
+"tests/test_auth_router_refresh.py" = ["SIM117", "N806"]
 
 [lint.isort]
 known-first-party = ["backend"]
