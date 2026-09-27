@@ -55,9 +55,7 @@ def _resolve_script_path() -> str:
     """
     import os
 
-    repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     script_path = os.path.join(
         repo_root, "backend", "scripts", "backfill_refresh_token_activity.py"
     )
@@ -83,9 +81,7 @@ class TestBackfillRefreshTokenActivity:
 
         db, calls = _make_execute_mock([1, 0])
 
-        updated = script.backfill_refresh_token_activity(
-            db, batch_size=1000, sleep_seconds=0
-        )
+        updated = script.backfill_refresh_token_activity(db, batch_size=1000, sleep_seconds=0)
 
         assert updated == 1
         # First batch updated one row; loop probed again with rowcount=0 and
@@ -99,9 +95,7 @@ class TestBackfillRefreshTokenActivity:
 
         db, calls = _make_execute_mock([0])
 
-        updated = script.backfill_refresh_token_activity(
-            db, batch_size=1000, sleep_seconds=0
-        )
+        updated = script.backfill_refresh_token_activity(db, batch_size=1000, sleep_seconds=0)
 
         assert updated == 0
         assert len(calls) == 1
@@ -117,35 +111,27 @@ class TestBackfillRefreshTokenActivity:
 
         db, calls = _make_execute_mock([0])
 
-        script.backfill_refresh_token_activity(
-            db, batch_size=1000, sleep_seconds=0
-        )
+        script.backfill_refresh_token_activity(db, batch_size=1000, sleep_seconds=0)
 
         assert calls, "expected the backfill to call db.execute at least once"
         rendered_sql = str(calls[0]["stmt"]).upper()
         assert "NOW()" in rendered_sql, (
-            "Backfill UPDATE must use DB NOW() (no clock skew). "
-            f"Got SQL: {rendered_sql!r}"
+            "Backfill UPDATE must use DB NOW() (no clock skew). " f"Got SQL: {rendered_sql!r}"
         )
         assert "LIMIT" in rendered_sql, (
-            "Backfill UPDATE must be bounded by batch_size LIMIT. "
-            f"Got SQL: {rendered_sql!r}"
+            "Backfill UPDATE must be bounded by batch_size LIMIT. " f"Got SQL: {rendered_sql!r}"
         )
         assert "LAST_ACTIVITY_AT" in rendered_sql, (
-            "Backfill UPDATE must target last_activity_at. "
-            f"Got SQL: {rendered_sql!r}"
+            "Backfill UPDATE must target last_activity_at. " f"Got SQL: {rendered_sql!r}"
         )
 
 
 class TestBackfillScriptHelp:
     """The CLI help must advertise the live-evidence SQL operators run before/after."""
 
-    EVIDENCE_SQL = (
-        "SELECT count(*) FROM refresh_tokens WHERE last_activity_at IS NULL"
-    )
+    EVIDENCE_SQL = "SELECT count(*) FROM refresh_tokens WHERE last_activity_at IS NULL"
     EVIDENCE_ROW_SQL = (
-        "SELECT id, user_id, last_activity_at FROM refresh_tokens "
-        "WHERE last_activity_at IS NULL"
+        "SELECT id, user_id, last_activity_at FROM refresh_tokens " "WHERE last_activity_at IS NULL"
     )
 
     def _capture_help(self, script):
@@ -199,9 +185,7 @@ class TestBackfillScriptHelp:
         import sys
 
         script_path = _resolve_script_path()
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..")
-        )
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
         result = subprocess.run(
             [sys.executable, script_path, "--help"],
@@ -212,25 +196,20 @@ class TestBackfillScriptHelp:
         )
 
         assert result.returncode == 0, (
-            f"Script --help failed with code {result.returncode}. "
-            f"stderr: {result.stderr!r}"
+            f"Script --help failed with code {result.returncode}. " f"stderr: {result.stderr!r}"
         )
-        assert self.EVIDENCE_SQL in result.stdout, (
-            "--help output must include the live-evidence SQL for operators."
-        )
+        assert (
+            self.EVIDENCE_SQL in result.stdout
+        ), "--help output must include the live-evidence SQL for operators."
 
     def test_invalid_batch_size_rejected(self):
         from scripts import backfill_refresh_token_activity as script
 
         with pytest.raises(ValueError, match="batch_size must be positive"):
-            script.backfill_refresh_token_activity(
-                MagicMock(), batch_size=0, sleep_seconds=0
-            )
+            script.backfill_refresh_token_activity(MagicMock(), batch_size=0, sleep_seconds=0)
 
     def test_invalid_sleep_seconds_rejected(self):
         from scripts import backfill_refresh_token_activity as script
 
         with pytest.raises(ValueError, match="sleep_seconds must be non-negative"):
-            script.backfill_refresh_token_activity(
-                MagicMock(), batch_size=1000, sleep_seconds=-0.1
-            )
+            script.backfill_refresh_token_activity(MagicMock(), batch_size=1000, sleep_seconds=-0.1)
