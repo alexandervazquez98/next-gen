@@ -134,3 +134,13 @@ Documenta:
 - Config relevante: `docker-compose.yml`, `docker-compose.prod.yml`, `backend/Dockerfile`, `backend/pytest.ini`
 - OpenSpec config: `openspec/config.yaml` (`review_budget_changed_lines: 400`, `strict_tdd.test_first_required: true`)
 - Precedent de bug infra fix: `fix-508-auth-cookie-test-isolation`, `fix-497-geo-view-osm-tiles`
+
+## Hallazgos durante verificación (no parte del scope #514)
+
+Durante la verificación (task 10) se descubrió un **bug pre-existente de aislamiento de tests** NO relacionado con #514:
+
+- **Síntoma**: `backend/tests/test_graph_full_snapshot.py::TestGraphFullSnapshot::test_snapshot_byte_equality_against_testclient` levanta `ModuleNotFoundError: No module named 'apscheduler.schedulers'` cuando se corre junto con `test_writer_advisory_lock.py` + `test_backup_service.py` en la misma sesión pytest.
+- **Aislado**: el test pasa individualmente; sólo falla cuando hay pollution de `sys.modules`/`sys.path` desde los otros archivos.
+- **No es regresión de #514**: `git diff origin/main..HEAD -- backend/main.py backend/tests/test_graph_full_snapshot.py` está vacío. El test y `main.py` no fueron tocados por esta PR.
+- **Reproduce sin los cambios de #514**: cualquier ejecución que junte los tres archivos dispara el error.
+- **Acción recomendada (fuera de scope)**: agregar `import apscheduler.schedulers` explícito en `backend/main.py` antes del `from apscheduler.schedulers.asyncio import AsyncIOScheduler`, O resetear `sys.modules` en un `conftest.py` por directorio. Esto debería ir en una issue separada (#TBD) para no inflar el budget de revisión de #514.
