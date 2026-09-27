@@ -179,7 +179,13 @@ jobs:
           grep -q '^ADMIN_DEFAULT_USERNAME=' .env || echo "ADMIN_DEFAULT_USERNAME=admin" >> .env
           grep -q '^ADMIN_DEFAULT_PASSWORD=' .env || echo "ADMIN_DEFAULT_PASSWORD=admin" >> .env
           echo "--- .env (sanitized, lines 1-20) ---"
-          sed -e 's/=.*/=<redacted>/' .env | head -20
+          # `sed … | head -20` closes stdin early → sed gets SIGPIPE on
+          # buffer flush → exits non-zero → `set -o pipefail` fails the
+          # step with the propagated exit code (observed as exit 4 on
+          # the runner). Timing-dependent; ~50% failure rate on the
+          # first run of every PR. Tracked in #512. Combine sanitize
+          # and limit in one awk process so there is no pipe to break.
+          awk 'NR <= 20 { sub(/=.*/, "=<redacted>"); print }' .env
 
       # Backend-stack first: postgres + neo4j + backend. The `depends_on`
       # healthchecks in docker-compose.yml gate the order; we additionally
