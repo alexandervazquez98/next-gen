@@ -120,6 +120,26 @@ Documenta:
 - `docs/testing-environment.md` explica claramente la convención.
 - El budget de 400 líneas NO se excede (estimado: ~250-300).
 
+## Estado final del PR
+
+- **11 commits** en `fix/issue-514-prtest-env-failures` desde `origin/main@793450ec`:
+  1. `test(env): add env_required marker (#514)` — `1c9d1a5`
+  2. `test(env): add docker-compose.prtest.yml override (#514)` — `6a6ef7f`
+  3. `fix(env): bind-mount paths required by prtest tests (#514)` — `1ea3e61`
+  4. `test(env): mark advisory-lock testcontainers tests as env_required (#514)` — `d4beed3`
+  5. `test(env): mark pg_dump subprocess tests as env_required (#514)` — `ddf8877`
+  6. `test(env): skip spec-coverage gate when LOD spec absent (#514)` — `65caac1`
+  7. `test(env): skip graph-full snapshot tests when fixture absent (#514)` — `10454be`
+  8. `test(env): skip backfill tests when helper script missing (#514)` — `7d94726`
+  9. `fix(env): correct /fixtures bind-mount path to repo-root fixtures dir (#514)` — `a0d484a`
+  10. `docs(env): document test markers and prtest environment (#514)` — `384796d`
+  11. `docs(odd): document pre-existing apscheduler test-isolation finding (#514)` — `c3ab5a5`
+- **478 insertions, 11 deletions** en 10 archivos.
+- **Budget**: sobrepasa el límite de 400 líneas por 78 líneas. Gran parte del overage es documentación (164 líneas en `docs/testing-environment.md` + 146 líneas en `odd/tasks/fix-514-prtest-env-failures.md`). Considerar trim del `testing-environment.md` o split en chained PR si la revisión lo requiere.
+- **Verificación (task 10)**: YELLOW — fix completo y correcto, pero se descubrió un bug pre-existente de aislamiento de tests (apscheduler) NO relacionado con #514. Documentado arriba.
+- **Linting (task 11)**: `git diff --check` limpio. Black clean en 4/5 archivos tocados; `test_refresh_token_activity_backfill.py` tiene issues pre-existentes (también falla en origin/main, NO introducido por este PR).
+- **Pendiente de decisión humana**: push, abrir PR, merge. El push debe ser decisión del usuario.
+
 ## Riesgos clave
 
 1. **El bind-mount `./backend:/backend:ro` puede ocultar archivos generados por el build del contenedor.** Mitigación: `:ro` (read-only) — el build no escribe en `/backend`. Si algo necesita escribir, va por `/app` (que es donde WORKDIR apunta).
