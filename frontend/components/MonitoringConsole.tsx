@@ -1483,7 +1483,7 @@ const MonitoringConsole: React.FC = () => {
                 className="h-full w-full z-0"
                 zoomControl={false}
                 attributionControl={false}
-                style={{ filter: "invert(1) hue-rotate(180deg) brightness(0.9)" }}
+                style={{ filter: "invert(1) hue-rotate(180deg) brightness(0.9) saturate(0.4) contrast(1.15)" }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
                 <TileLayer
