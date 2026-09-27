@@ -140,8 +140,6 @@ describe("fetchGraphDetail", () => {
 
   it("rejects malformed response shape", async () => {
     mockFetch({ not_a_detail: true });
-    await expect(fetchGraphDetail("location:HQ-Madrid")).rejects.toThrow(
-      /DetailResponse shape/,
-    );
+    await expect(fetchGraphDetail("location:HQ-Madrid")).rejects.toThrow(/DetailResponse shape/);
   });
 });

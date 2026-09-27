@@ -63,12 +63,8 @@ function ClusterCard({
         </span>
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-black text-white">
-          {cluster.visible_node_count}
-        </span>
-        <span className="text-[10px] font-bold text-neutral-500 uppercase">
-          nodes
-        </span>
+        <span className="text-2xl font-black text-white">{cluster.visible_node_count}</span>
+        <span className="text-[10px] font-bold text-neutral-500 uppercase">nodes</span>
       </div>
       {isRedacted && (
         <div className="mt-2 text-[10px] text-orange-400 uppercase font-bold tracking-tight">
@@ -148,8 +144,7 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
           <p className="text-[10px] text-neutral-500 uppercase mt-1">
             {clusters.length} cluster
             {clusters.length === 1 ? "" : "s"} ·{" "}
-            {clusters.reduce((acc, c) => acc + c.visible_node_count, 0)} total
-            nodes visible
+            {clusters.reduce((acc, c) => acc + c.visible_node_count, 0)} total nodes visible
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -169,11 +164,7 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
           data-testid="cluster-grid"
         >
           {clusters.map((cluster) => (
-            <ClusterCard
-              key={cluster.cluster_id}
-              cluster={cluster}
-              onClick={handleClusterClick}
-            />
+            <ClusterCard key={cluster.cluster_id} cluster={cluster} onClick={handleClusterClick} />
           ))}
         </div>
         {clusters.length === 0 && (
@@ -182,17 +173,15 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
               No visible clusters
             </span>
             <span className="text-[10px] text-neutral-500">
-              Hidden ≡ absent (REQ-OVERVIEW-3, REQ-DETAIL-4): an empty
-              overview is indistinguishable from an empty graph.
+              Hidden ≡ absent (REQ-OVERVIEW-3, REQ-DETAIL-4): an empty overview is indistinguishable
+              from an empty graph.
             </span>
           </div>
         )}
       </div>
 
       <footer className="px-6 py-3 border-t border-white/5 flex items-center justify-between text-[10px] uppercase text-neutral-500">
-        <span>
-          Locations catalog: {allLocations.length} (background topology fetch)
-        </span>
+        <span>Locations catalog: {allLocations.length} (background topology fetch)</span>
         <span>
           Categories: {categories?.length ?? 0} · Owners: {owners?.length ?? 0}
         </span>

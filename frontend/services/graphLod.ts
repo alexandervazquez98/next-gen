@@ -39,9 +39,7 @@ export async function fetchGraphOverview(
   const url = buildOverviewUrl(filters).replace(/^\/api/, "");
   const body = await api.get<unknown>(url, signal ? { signal } : {});
   if (!isOverviewResponse(body)) {
-    throw new Error(
-      "fetchGraphOverview: response did not match OverviewResponse shape",
-    );
+    throw new Error("fetchGraphOverview: response did not match OverviewResponse shape");
   }
   return body;
 }
