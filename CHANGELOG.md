@@ -32,6 +32,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-09-26
+
+### Added
+
+- **Frontend migration to the LOD graph endpoints shipped in v1.18.0 (#392, tracker PR #507 with child PRs #504 + #505 + #506)**: delivers the new `<LODGraphCMDB>` component that consumes the LOD overview and detail endpoints, leaving the legacy `<GraphCMDB>` intact for `NetworkVisualizer` (which migrates in #393). Delivered via Feature Branch Chain — three child PRs accumulated in the tracker, each with strict TDD evidence.
+
+  - **New `<LODGraphCMDB>` component (#392 PR4, PR #504)**: renders location-cluster summaries from `/api/graph/overview` instead of the full graph payload from `/api/graph/full`. The `/cmdb` route mounts this new component; the legacy `<GraphCMDB>` remains available for `NetworkVisualizer` and other consumers until their own migration lands. Mount calls the overview endpoint only — `/graph/full` is NOT the primary render source. ~190 LOC component with cluster-card grid, loading state, error state, `onClusterClick` callback, footer showing background topology catalog counts.
+
+  - **Cluster detail hydration (#392 PR5, PR #505)**: click on a cluster card calls `/api/graph/detail/{cluster_id}` and renders the bounded subgraph in a delimited panel. **Zoom events NEVER trigger a fetch** (REQ-DETAIL-4 hard rule) — the `useGraphDetailQuery` hook has `refetchInterval: false`, `refetchOnWindowFocus: false`, and `enabled: Boolean(clusterId)`. Only the explicit click handler triggers a fetch. ~30 LOC hook + 4 tests. Hidden cluster ≡ absent cluster copy preserved.
+
+  - **Fallback to `/graph/full` when overview fails (#392 PR6, PR #506)**: graceful degradation path. When the overview endpoint is unavailable but the background topology query succeeds, the component renders a degraded `FallbackView` with the same cluster-card grid (synthesized from topology nodes) plus a clearly-labeled banner explaining the fallback. **No additional network call, no new endpoint** — the fallback reuses the topology data already in memory. When BOTH overview AND topology fail, the original error UI is shown.
+
+  - **New infrastructure files**:
+    - `frontend/services/graphLod.ts`: `fetchGraphOverview` + `fetchGraphDetail` (~95 LOC) wrapping the existing `graphContract.ts` URL builders with the `api.get` client and `isOverviewResponse` / `isDetailResponse` type guards
+    - `frontend/hooks/queries/useGraphOverviewQuery.ts`: React Query hook for the overview endpoint (no polling, 30s stale time)
+    - `frontend/hooks/queries/useGraphDetailQuery.ts`: React Query hook for the detail endpoint (clusterId guard, no zoom fetch)
+    - `frontend/__tests__/graphLod.test.ts`: 7 tests for URL composition + filter forwarding + cluster_id validation
+    - `frontend/components/__tests__/LODGraphCMDB.test.tsx`: 10 tests covering card rendering, low-cardinality redaction, loading/error states, hidden-absent empty state, detail panel open/close, detail nodes render, hidden detail copy, fallback view render, dual-failure error state
+
+  - **Routing change**:
+    - `frontend/App.tsx`: `/cmdb` route now uses `<LODGraphCMDB>` and forwards cluster clicks to the legacy modal handler for backward compatibility. PR5 (detail hydration) replaces this shim with proper detail rendering.
+
+### Tests
+
+- **+13 frontend tests** across the chain (was 796 before the chain, now 809): 7 graphLod tests + 6 LODGraphCMDB tests (3 PR4 + 3 PR5) + 1 PR6 fallback test (replacing 1 PR4 error-state test).
+- **Backend suite: 0 regressions** (2338 passed, 2 skipped, 6 pre-existing failures — same set as v1.18.0).
+- **Frontend suite: 809 passed, 0 failed** at round-of-test on tracker branch.
+
+### Round-of-test summary (on tracker before main merge)
+
+- Backend suite: 2338 passed, 2 skipped, 6 pre-existing failures (testcontainers + auth cookie domain — same set on `main` before the chain; 0 regressions).
+- Frontend suite: 809 passed, 0 failed.
+- Each child PR individually passed its required checks (lint, smoke after re-trigger, backend-tests, frontend-tests, ci-verify gates).
+
+### Hard rules enforced (and verified by tests)
+
+| Rule | Source |
+|---|---|
+| Mount calls `/api/graph/overview` only | PR4 — `LODGraphCMDB` overview mount |
+| Zoom NEVER triggers a detail fetch | PR5 — `useGraphDetailQuery` config + no zoom handlers in the component |
+| Hidden cluster ≡ absent cluster | PR5 — `LODGraphCMDB` shows the same copy for both cases |
+| `/graph/full` is NOT the primary render source | PR6 — topology is only consumed for `allLocations` (filter catalog) and as fallback |
+| Cluster ID parse validated at URL-build time | PR5 — `buildDetailUrl` throws synchronously on malformed input |
+
+### References
+
+- Issue: #392
+- Tracker PR: #507 (squash-merged as `058e006`)
+- Child PRs: #504 (overview), #505 (detail), #506 (fallback)
+- Backend runtime slice: #391, v1.18.0
+- TypeScript mirrors: `frontend/types/graph.ts` (v1.17.6)
+- OpenSpec change artifacts: `openspec/changes/cmdb-graph-lod-runtime/`
+- Mirror pattern: PR #468 / PR #499 (LOD contracts tracker, backend runtime tracker)
+
+### Size
+
+- **Minor version bump** (1.18.0 → 1.19.0): the chain adds new functionality (new component, two new hooks, fetch helpers, three new test files) without breaking existing behavior. Legacy `<GraphCMDB>` is preserved for backward compatibility with `NetworkVisualizer` until #393 lands.
+- Per-child PR size: PR4 +519 / PR5 +368 / PR6 +114. Total chain ~1000 LOC (component + hooks + tests).
+- Tracker squash carries ~1300 LOC + the test files; within the 400-line review budget per PR with `size:exception` only at the chain level.
+
 ## [1.18.0] — 2026-09-26
 
 ### Added
