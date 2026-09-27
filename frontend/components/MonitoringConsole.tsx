@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, no-unused-vars, react-refresh/only-export-components, react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { MapContainer, TileLayer, Polyline, useMap, CircleMarker, Popup } from "react-leaflet";
+import { MapContainer, Polyline, useMap, CircleMarker, Popup } from "react-leaflet";
+import { VectorTileBasemap } from "./VectorTileBasemap";
 import { createPortal } from "react-dom";
 import "leaflet/dist/leaflet.css";
 import type { GraphLink, GraphNode, Event } from "../types";
@@ -876,6 +877,8 @@ class GeoViewErrorBoundary extends React.Component<
   }
 }
 
+const GEO_VIEW_DARK_FILTER = "invert(1) hue-rotate(180deg) brightness(0.85)";
+
 const MonitoringConsole: React.FC = () => {
   const [viewMode, setViewMode] = useState<"DASHBOARD" | "MAP">("DASHBOARD");
   const [filterCategory, setFilterCategory] = useState<string>("ALL");
@@ -1495,17 +1498,13 @@ const MonitoringConsole: React.FC = () => {
                 minZoom={4}
                 maxZoom={20}
                 scrollWheelZoom={true}
-                className="h-full w-full z-0"
+                className="h-full w-full z-0 geo-view-map"
                 zoomControl={false}
                 attributionControl={false}
+                style={{ filter: GEO_VIEW_DARK_FILTER }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
-                <TileLayer
-                  maxZoom={20}
-                  maxNativeZoom={20}
-                  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                  attribution="&copy; OpenStreetMap contributors &copy; CARTO"
-                />
+                <VectorTileBasemap />
                 <MapOutsideClickHandler onMapClick={resetMapView} />
                 <MapBounds nodes={nodesWithEvents} />
 
