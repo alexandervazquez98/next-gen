@@ -991,7 +991,32 @@ class TestCookieDomainAndSecure:
     Tests different FRONTEND_ORIGIN scenarios to verify:
     - domain is correctly extracted from the origin hostname
     - secure flag is True ONLY when scheme is https
+
+    Isolation note: routers/auth.py calls load_dotenv() at import time, which
+    walks parent directories and can leak COOKIE_SECURE / COOKIE_DOMAIN /
+    FRONTEND_ORIGIN from a repo-root .env into os.environ. Each test below
+    uses ``patch.dict`` without ``clear=True``, so leaked values are NOT
+    removed and can flip the secure flag (e.g. COOKIE_SECURE=false from a
+    local .env silently turns a true-HTTPS expectation into secure=False).
+    The autouse fixture below strips these keys before every test so each
+    one starts from a known baseline; the keys are restored on teardown so
+    we don't leak state into neighbouring tests.
     """
+
+    _COOKIE_ENV_KEYS = ("COOKIE_SECURE", "COOKIE_DOMAIN", "FRONTEND_ORIGIN")
+
+    @pytest.fixture(autouse=True)
+    def _isolate_cookie_env(self):
+        """Strip cookie-related env vars so each test starts from a known state."""
+        saved = {k: os.environ.pop(k, None) for k in self._COOKIE_ENV_KEYS}
+        try:
+            yield
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     def test_get_cookie_domain_and_secure_http_ip_origin(self):
         """HTTP origin with IP address: domain=IP, secure=False."""
