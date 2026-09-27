@@ -14,6 +14,7 @@ import LODGraphCMDB from "../LODGraphCMDB";
 
 const mockUseGraphOverviewQuery = vi.fn();
 const mockUseGraphTopologyQuery = vi.fn();
+const mockUseGraphDetailQuery = vi.fn();
 const mockUseCategoriesQuery = vi.fn();
 const mockUseOwnersQuery = vi.fn();
 
@@ -61,6 +62,9 @@ const overviewSnapshot = {
 vi.mock("../../hooks/queries/useGraphOverviewQuery", () => ({
   useGraphOverviewQuery: () => mockUseGraphOverviewQuery(),
 }));
+vi.mock("../../hooks/queries/useGraphDetailQuery", () => ({
+  useGraphDetailQuery: () => mockUseGraphDetailQuery(),
+}));
 vi.mock("../../hooks/queries/useGraphTopologyQuery", () => ({
   useGraphTopologyQuery: () => mockUseGraphTopologyQuery(),
 }));
@@ -76,12 +80,14 @@ describe("LODGraphCMDB (#392 PR4)", () => {
   beforeEach(() => {
     mockUseGraphOverviewQuery.mockReset();
     mockUseGraphTopologyQuery.mockReset();
+    mockUseGraphDetailQuery.mockReset();
     mockUseCategoriesQuery.mockReset();
     mockUseOwnersQuery.mockReset();
     mockUseCategoriesQuery.mockReturnValue({ data: [], isLoading: false });
     mockUseOwnersQuery.mockReturnValue({ data: [], isLoading: false });
     mockUseGraphTopologyQuery.mockReturnValue({ data: { nodes: [], links: [] }, isLoading: false });
     mockUseGraphOverviewQuery.mockReturnValue({ data: overviewSnapshot, isLoading: false });
+    mockUseGraphDetailQuery.mockReturnValue({ data: undefined, isFetching: false });
   });
   afterEach(() => {
     cleanup();
@@ -153,5 +159,185 @@ describe("LODGraphCMDB (#392 PR4)", () => {
     });
     render(<LODGraphCMDB />, { wrapper: createWrapper() });
     expect(screen.getByText(/No visible clusters/i)).toBeInTheDocument();
+  });
+});
+
+describe("LODGraphCMDB detail hydration (#392 PR5)", () => {
+  beforeEach(() => {
+    mockUseGraphOverviewQuery.mockReset();
+    mockUseGraphTopologyQuery.mockReset();
+    mockUseGraphDetailQuery.mockReset();
+    mockUseCategoriesQuery.mockReset();
+    mockUseOwnersQuery.mockReset();
+    mockUseCategoriesQuery.mockReturnValue({ data: [], isLoading: false });
+    mockUseOwnersQuery.mockReturnValue({ data: [], isLoading: false });
+    mockUseGraphTopologyQuery.mockReturnValue({ data: { nodes: [], links: [] }, isLoading: false });
+    mockUseGraphOverviewQuery.mockReturnValue({ data: overviewSnapshot, isLoading: false });
+    // Default detail mock returns a snapshot with two nodes so the
+    // detail panel renders content. Tests that need different data
+    // override via mockReturnValueOnce.
+    mockUseGraphDetailQuery.mockReturnValue({
+      data: {
+        cluster: {
+          cluster_id: "location:HQ-Madrid",
+          axis: "location",
+          display_label: "HQ-Madrid",
+          visible_node_count: 2,
+          visible_link_count: 1,
+        },
+        filters: {},
+        generated_at: "2026-09-26T20:00:00Z",
+        revision: "test-revision-0001",
+        nodes: [
+          {
+            id: "ci-1",
+            display_label: "Router-1",
+            kind: "Router",
+            ci_type: "Router",
+            allowed_public_axes: [],
+          },
+          {
+            id: "ci-2",
+            display_label: "Server-1",
+            kind: "Server",
+            ci_type: "Server",
+            allowed_public_axes: [],
+          },
+        ],
+        links: [],
+        boundary_stubs: [],
+        projection_flags: {
+          show_sensitive_metadata: false,
+          sensitive_source: "never",
+        },
+        empty_reason: "none",
+        page: { next_cursor: null, has_more: false },
+      },
+      isFetching: false,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("opens the detail panel on cluster click and closes on close button", async () => {
+    const user = userEvent.setup();
+    // First call (clusterId=null): no detail data.
+    // Second call (clusterId="location:HQ-Madrid"): detail data.
+    mockUseGraphDetailQuery.mockReturnValueOnce({ data: undefined, isFetching: false });
+    mockUseGraphDetailQuery.mockReturnValue({
+      data: {
+        cluster: {
+          cluster_id: "location:HQ-Madrid",
+          axis: "location",
+          display_label: "HQ-Madrid",
+          visible_node_count: 2,
+          visible_link_count: 1,
+        },
+        filters: {},
+        generated_at: "2026-09-26T20:00:00Z",
+        revision: "test-revision-0001",
+        nodes: [
+          {
+            id: "ci-1",
+            display_label: "Router-1",
+            kind: "Router",
+            ci_type: "Router",
+            allowed_public_axes: [],
+          },
+        ],
+        links: [],
+        boundary_stubs: [],
+        projection_flags: {
+          show_sensitive_metadata: false,
+          sensitive_source: "never",
+        },
+        empty_reason: "none",
+        page: { next_cursor: null, has_more: false },
+      },
+      isFetching: false,
+    });
+
+    render(<LODGraphCMDB />, { wrapper: createWrapper() });
+    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("cluster-card-location:HQ-Madrid"));
+
+    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByText(/Detail: location:HQ-Madrid/i)).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("detail-close"));
+
+    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders detail nodes when the query returns data", async () => {
+    const user = userEvent.setup();
+    mockUseGraphDetailQuery.mockReturnValue({
+      data: {
+        cluster: {
+          cluster_id: "location:HQ-Madrid",
+          axis: "location",
+          display_label: "HQ-Madrid",
+          visible_node_count: 2,
+          visible_link_count: 1,
+        },
+        filters: {},
+        generated_at: "2026-09-26T20:00:00Z",
+        revision: "test-revision-0001",
+        nodes: [
+          {
+            id: "ci-1",
+            display_label: "Router-1",
+            kind: "Router",
+            ci_type: "Router",
+            allowed_public_axes: [],
+          },
+          {
+            id: "ci-2",
+            display_label: "Server-1",
+            kind: "Server",
+            ci_type: "Server",
+            allowed_public_axes: [],
+          },
+        ],
+        links: [],
+        boundary_stubs: [],
+        projection_flags: { show_sensitive_metadata: false, sensitive_source: "never" },
+        empty_reason: "none",
+        page: { next_cursor: null, has_more: false },
+      },
+      isFetching: false,
+    });
+    render(<LODGraphCMDB />, { wrapper: createWrapper() });
+    await user.click(screen.getByTestId("cluster-card-location:HQ-Madrid"));
+
+    const nodeList = screen.getByTestId("detail-nodes");
+    expect(within(nodeList).getByText(/ci-1 — Router-1/)).toBeInTheDocument();
+    expect(within(nodeList).getByText(/ci-2 — Server-1/)).toBeInTheDocument();
+  });
+
+  it("shows the hidden-absent copy when detail is hidden", async () => {
+    const user = userEvent.setup();
+    mockUseGraphDetailQuery.mockReturnValue({
+      data: {
+        cluster: null,
+        filters: {},
+        generated_at: "2026-09-26T20:00:00Z",
+        revision: "test-revision-0001",
+        nodes: [],
+        links: [],
+        boundary_stubs: [],
+        projection_flags: { show_sensitive_metadata: false, sensitive_source: "never" },
+        empty_reason: "hidden_absent",
+        page: { next_cursor: null, has_more: false },
+      },
+      isFetching: false,
+    });
+    render(<LODGraphCMDB />, { wrapper: createWrapper() });
+    await user.click(screen.getByTestId("cluster-card-location:HQ-Madrid"));
+
+    expect(screen.getByText(/Hidden — externally indistinguishable/i)).toBeInTheDocument();
   });
 });

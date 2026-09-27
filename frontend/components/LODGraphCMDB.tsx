@@ -17,9 +17,10 @@
 // cards are click handlers that surface cluster selection (PR5 wires
 // them to detail hydration; PR4 leaves the handler a no-op).
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { type OverviewCluster } from "../types/graph";
 import { useGraphOverviewQuery } from "../hooks/queries/useGraphOverviewQuery";
+import { useGraphDetailQuery } from "../hooks/queries/useGraphDetailQuery";
 import { useGraphTopologyQuery } from "../hooks/queries/useGraphTopologyQuery";
 import { useCategoriesQuery } from "../hooks/queries/useCategoriesQuery";
 import { useOwnersQuery } from "../hooks/queries/useOwnersQuery";
@@ -42,7 +43,6 @@ function ClusterCard({
     <button
       type="button"
       onClick={() => onClick(cluster)}
-      data-testid={`cluster-card-${cluster.cluster_id}`}
       data-testid={`cluster-card-${cluster.cluster_id}`}
       className={`group text-left p-4 rounded-xl border transition-all ${
         isRedacted
@@ -84,15 +84,23 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
   const { data: categories } = useCategoriesQuery();
   const { data: owners } = useOwnersQuery();
 
+  // PR5: detail hydration state.
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+  const { data: detail, isFetching: detailLoading } = useGraphDetailQuery(selectedClusterId);
+
   const handleClusterClick = useCallback(
     (cluster: OverviewCluster) => {
+      setSelectedClusterId(cluster.cluster_id);
       if (onClusterClick) {
         onClusterClick(cluster);
       }
-      // PR5 wires this to fetchGraphDetail + setSelectedClusterId.
     },
     [onClusterClick],
   );
+
+  const handleDetailClose = useCallback(() => {
+    setSelectedClusterId(null);
+  }, []);
 
   const clusters = overview?.clusters ?? [];
   const allLocations = Array.from(
@@ -176,6 +184,57 @@ const LODGraphCMDB = ({ onClusterClick }: LODGraphCMDBProps) => {
               Hidden ≡ absent (REQ-OVERVIEW-3, REQ-DETAIL-4): an empty overview is indistinguishable
               from an empty graph.
             </span>
+          </div>
+        )}
+        {/* PR5: detail panel — delimited overlay when a cluster is selected */}
+        {selectedClusterId && (
+          <div
+            data-testid="detail-panel"
+            className="mt-6 rounded-xl border border-brand-500/30 bg-neutral-950/80 p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-brand-500" />
+                <span className="text-[10px] font-black text-neutral-300 uppercase">
+                  Detail: {selectedClusterId}
+                </span>
+                {detailLoading && (
+                  <span className="text-[10px] text-neutral-500 uppercase">loading…</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleDetailClose}
+                data-testid="detail-close"
+                className="text-[10px] text-neutral-500 hover:text-white uppercase"
+              >
+                Close
+              </button>
+            </div>
+            {detail && (
+              <ul className="space-y-1 text-[10px] text-neutral-400" data-testid="detail-nodes">
+                {detail.nodes.slice(0, 20).map((node) => (
+                  <li
+                    key={node.id}
+                    className="px-2 py-1 rounded bg-neutral-900 border border-white/5"
+                  >
+                    {node.id} — {node.display_label} ({node.ci_type})
+                  </li>
+                ))}
+                {detail.nodes.length > 20 && (
+                  <li className="text-[10px] text-neutral-500 px-2 py-1">
+                    … {detail.nodes.length - 20} more nodes (truncated for display)
+                  </li>
+                )}
+                {detail.nodes.length === 0 && (
+                  <li className="text-[10px] text-neutral-500 px-2 py-1">
+                    {detail.empty_reason === "hidden_absent"
+                      ? "Hidden — externally indistinguishable from absent."
+                      : "No visible nodes in this cluster."}
+                  </li>
+                )}
+              </ul>
+            )}
           </div>
         )}
       </div>
