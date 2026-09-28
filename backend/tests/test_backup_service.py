@@ -358,6 +358,36 @@ class TestPgDump:
         assert any(str(arg).replace("\\", "/").startswith("/backups/backup_") for arg in call_args)
         assert call_args[-2:] == ["-d", "nexgen_auth"]
 
+    def test_run_pg_dump_explicit_db_name_overrides_postgres_db_env(self):
+        """An explicit db_name wins; POSTGRES_DB only supplies the default (#519).
+
+        Regression guard: `_run_pg_dump` used to read POSTGRES_DB first and treat
+        `db_name` as a mere fallback, so a caller asking for one database was
+        silently handed another whenever POSTGRES_DB was exported. Fully mocks
+        subprocess.run, so it needs no pg_dump binary and is not env_required.
+        """
+        backup_service = _load_backup_service_module()
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_USER": "custom_user",
+                    "POSTGRES_PASSWORD": "custom_password",
+                    "POSTGRES_HOST": "custom_postgres",
+                    "POSTGRES_PORT": "15432",
+                    "POSTGRES_DB": "custom_db",
+                },
+            ),
+            patch("os.makedirs"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            backup_service._run_pg_dump(output_path="/backups", db_name="explicit_db")
+
+        call_args = mock_run.call_args[0][0]
+        assert call_args[10:12] == ["-d", "explicit_db"]
+
     @pytest.mark.env_required
     def test_run_pg_dump_uses_postgres_env_vars(self):
         """_run_pg_dump passes Compose-compatible env vars as pg_dump args."""

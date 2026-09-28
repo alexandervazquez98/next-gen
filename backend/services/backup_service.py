@@ -8,12 +8,11 @@ import os
 import posixpath
 import subprocess
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from database import get_db
 from postgres_db import SessionLocal
-
 
 # --- Config defaults ---
 
@@ -21,7 +20,7 @@ PERSISTENT_BACKUP_ROOT = "/backups"
 logger = logging.getLogger(__name__)
 
 
-def _normalize_storage_path(storage_path: Optional[str]) -> str:
+def _normalize_storage_path(storage_path: str | None) -> str:
     """Keep backup storage inside the persisted container mount."""
     if not storage_path:
         return PERSISTENT_BACKUP_ROOT
@@ -37,6 +36,7 @@ def _normalize_storage_path(storage_path: Optional[str]) -> str:
     )
     return PERSISTENT_BACKUP_ROOT
 
+
 DEFAULT_CONFIG = {
     "schedule_type": "daily",
     "scheduled_time": "06:00",
@@ -48,7 +48,8 @@ DEFAULT_CONFIG = {
 
 # --- Private DB helpers ---
 
-def _get_config_from_db() -> Optional[Dict[str, Any]]:
+
+def _get_config_from_db() -> dict[str, Any] | None:
     """Load backup_config from PostgreSQL, or None if not set."""
     from models.backup_config import BackupConfig
 
@@ -75,8 +76,8 @@ def _save_config_to_db(
     enabled: bool,
     retention_days: int,
     storage_path: str,
-    updated_by: Optional[str] = None,
-) -> Dict[str, Any]:
+    updated_by: str | None = None,
+) -> dict[str, Any]:
     """Create or update backup_config in PostgreSQL."""
     from models.backup_config import BackupConfig
 
@@ -109,18 +110,13 @@ def _save_config_to_db(
         db.close()
 
 
-def _get_history_from_db(limit: int = 50) -> List[Dict[str, Any]]:
+def _get_history_from_db(limit: int = 50) -> list[dict[str, Any]]:
     """Load recent backup history records from PostgreSQL."""
     from models.backup_config import BackupHistory
 
     db = SessionLocal()
     try:
-        rows = (
-            db.query(BackupHistory)
-            .order_by(BackupHistory.started_at.desc())
-            .limit(limit)
-            .all()
-        )
+        rows = db.query(BackupHistory).order_by(BackupHistory.started_at.desc()).limit(limit).all()
         return [
             {
                 "id": r.id,
@@ -144,14 +140,14 @@ def _get_history_from_db(limit: int = 50) -> List[Dict[str, Any]]:
 def _record_backup_history(
     filename: str,
     file_path: str,
-    size_bytes: Optional[int],
+    size_bytes: int | None,
     status: str,
-    error_message: Optional[str],
+    error_message: str | None,
     backup_type: str,
-    triggered_by: Optional[str],
-    duration_seconds: Optional[int],
+    triggered_by: str | None,
+    duration_seconds: int | None,
     started_at: datetime,
-    completed_at: Optional[datetime],
+    completed_at: datetime | None,
 ) -> None:
     """Persist a backup history record to PostgreSQL."""
     from models.backup_config import BackupHistory
@@ -178,7 +174,8 @@ def _record_backup_history(
 
 # --- Public API ---
 
-def get_backup_config() -> Dict[str, Any]:
+
+def get_backup_config() -> dict[str, Any]:
     """Return current backup configuration, falling back to defaults."""
     stored = _get_config_from_db()
     if stored is None:
@@ -188,13 +185,13 @@ def get_backup_config() -> Dict[str, Any]:
 
 
 def update_backup_config(
-    schedule_type: Optional[str] = None,
-    scheduled_time: Optional[str] = None,
-    enabled: Optional[bool] = None,
-    retention_days: Optional[int] = None,
-    storage_path: Optional[str] = None,
-    updated_by: Optional[str] = None,
-) -> Dict[str, Any]:
+    schedule_type: str | None = None,
+    scheduled_time: str | None = None,
+    enabled: bool | None = None,
+    retention_days: int | None = None,
+    storage_path: str | None = None,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
     """Update backup configuration and return the new values."""
     current = get_backup_config()
 
@@ -203,13 +200,20 @@ def update_backup_config(
         scheduled_time=scheduled_time if scheduled_time is not None else current["scheduled_time"],
         enabled=enabled if enabled is not None else current["enabled"],
         retention_days=retention_days if retention_days is not None else current["retention_days"],
-        storage_path=_normalize_storage_path(storage_path if storage_path is not None else current["storage_path"]),
+        storage_path=_normalize_storage_path(
+            storage_path if storage_path is not None else current["storage_path"]
+        ),
         updated_by=updated_by,
     )
 
 
-def _run_pg_dump(output_path: str, db_name: str = "nexgen_auth") -> str:
-    """Run pg_dump for the specified database and save to output_path."""
+def _run_pg_dump(output_path: str, db_name: str | None = None) -> str:
+    """Run pg_dump for the specified database and save to output_path.
+
+    An explicit ``db_name`` always wins. ``POSTGRES_DB`` only supplies the
+    default when the caller names no database, so an exported env var can no
+    longer silently redirect a caller that asked for a specific one (#519).
+    """
     os.makedirs(output_path, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"backup_{timestamp}.dump"
@@ -218,7 +222,7 @@ def _run_pg_dump(output_path: str, db_name: str = "nexgen_auth") -> str:
     postgres_password = os.getenv("POSTGRES_PASSWORD", "nexgen_password").strip("'\"")
     postgres_host = os.getenv("POSTGRES_HOST", "postgres").strip("'\"")
     postgres_port = os.getenv("POSTGRES_PORT", "5432").strip("'\"")
-    postgres_db = os.getenv("POSTGRES_DB", db_name).strip("'\"")
+    postgres_db = (db_name or os.getenv("POSTGRES_DB", "nexgen_auth")).strip("'\"")
     pg_dump_env = os.environ.copy()
     pg_dump_env["PGPASSWORD"] = postgres_password
 
@@ -226,18 +230,25 @@ def _run_pg_dump(output_path: str, db_name: str = "nexgen_auth") -> str:
         [
             "pg_dump",
             "-Fc",
-            "-f", filepath,
-            "-h", postgres_host,
-            "-p", postgres_port,
-            "-U", postgres_user,
-            "-d", postgres_db,
+            "-f",
+            filepath,
+            "-h",
+            postgres_host,
+            "-p",
+            postgres_port,
+            "-U",
+            postgres_user,
+            "-d",
+            postgres_db,
         ],
         capture_output=True,
         env=pg_dump_env,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"pg_dump failed: {result.stderr.decode() if result.stderr else 'unknown error'}")
+        raise RuntimeError(
+            f"pg_dump failed: {result.stderr.decode() if result.stderr else 'unknown error'}"
+        )
 
     return filepath
 
@@ -245,7 +256,7 @@ def _run_pg_dump(output_path: str, db_name: str = "nexgen_auth") -> str:
 def _emit_backup_event(status: str, message: str) -> None:
     """Emit a BACKUP_SUCCESS or BACKUP_FAILURE Neo4j event for the admin dashboard."""
     driver = get_db()
-    event_id = f"backup-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    event_id = f"backup-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     severity = "INFO" if status == "SUCCESS" else "CRITICAL"
 
     with driver.session() as session:
@@ -268,20 +279,20 @@ def _emit_backup_event(status: str, message: str) -> None:
         )
 
 
-def trigger_scheduled_backup() -> Dict[str, Any]:
+def trigger_scheduled_backup() -> dict[str, Any]:
     """
     Trigger a scheduled PostgreSQL backup (called by APScheduler at dawn).
     Returns the same result structure as trigger_manual_backup.
     """
     from services.backup_service import (
-        get_backup_config,
-        _run_pg_dump,
-        _record_backup_history,
         _cleanup_old_backups,
         _emit_backup_event,
+        _record_backup_history,
+        _run_pg_dump,
+        get_backup_config,
     )
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     config = get_backup_config()
     output_path = config["storage_path"]
 
@@ -289,8 +300,8 @@ def trigger_scheduled_backup() -> Dict[str, Any]:
         filepath = _run_pg_dump(output_path=output_path)
         filename = os.path.basename(filepath)
         size_bytes = os.path.getsize(filepath) if os.path.exists(filepath) else None
-        duration = int((datetime.now(timezone.utc) - started_at).total_seconds())
-        completed_at = datetime.now(timezone.utc)
+        duration = int((datetime.now(UTC) - started_at).total_seconds())
+        completed_at = datetime.now(UTC)
 
         _record_backup_history(
             filename=filename,
@@ -326,8 +337,8 @@ def trigger_scheduled_backup() -> Dict[str, Any]:
         }
 
     except Exception as exc:
-        duration = int((datetime.now(timezone.utc) - started_at).total_seconds())
-        completed_at = datetime.now(timezone.utc)
+        duration = int((datetime.now(UTC) - started_at).total_seconds())
+        completed_at = datetime.now(UTC)
         error_msg = str(exc)
         filename = f"FAILED_{started_at.strftime('%Y%m%d_%H%M%S')}.dump"
 
@@ -361,10 +372,10 @@ def trigger_scheduled_backup() -> Dict[str, Any]:
         }
 
 
-def trigger_manual_backup(triggered_by: str) -> Dict[str, Any]:
+def trigger_manual_backup(triggered_by: str) -> dict[str, Any]:
     """Trigger a manual PostgreSQL backup and record the result."""
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     config = get_backup_config()
     output_path = config["storage_path"]
 
@@ -372,8 +383,8 @@ def trigger_manual_backup(triggered_by: str) -> Dict[str, Any]:
         filepath = _run_pg_dump(output_path=output_path)
         filename = os.path.basename(filepath)
         size_bytes = os.path.getsize(filepath) if os.path.exists(filepath) else None
-        duration = int((datetime.now(timezone.utc) - started_at).total_seconds())
-        completed_at = datetime.now(timezone.utc)
+        duration = int((datetime.now(UTC) - started_at).total_seconds())
+        completed_at = datetime.now(UTC)
 
         _record_backup_history(
             filename=filename,
@@ -409,8 +420,8 @@ def trigger_manual_backup(triggered_by: str) -> Dict[str, Any]:
         }
 
     except Exception as exc:
-        duration = int((datetime.now(timezone.utc) - started_at).total_seconds())
-        completed_at = datetime.now(timezone.utc)
+        duration = int((datetime.now(UTC) - started_at).total_seconds())
+        completed_at = datetime.now(UTC)
         error_msg = str(exc)
         filename = f"FAILED_{started_at.strftime('%Y%m%d_%H%M%S')}.dump"
 
@@ -444,12 +455,12 @@ def trigger_manual_backup(triggered_by: str) -> Dict[str, Any]:
         }
 
 
-def get_backup_history(limit: int = 50) -> List[Dict[str, Any]]:
+def get_backup_history(limit: int = 50) -> list[dict[str, Any]]:
     """Return the most recent backup history records."""
     return _get_history_from_db(limit=limit)
 
 
-def get_backup_metrics() -> Dict[str, Any]:
+def get_backup_metrics() -> dict[str, Any]:
     """Aggregate backup statistics from history."""
     history = _get_history_from_db(limit=100)
 
@@ -465,7 +476,11 @@ def get_backup_metrics() -> Dict[str, Any]:
         "failed_backups": failed,
         "last_backup": last_backup["filename"] if last_backup else None,
         "last_backup_status": last_backup["status"] if last_backup else None,
-        "last_backup_at": last_backup["started_at"].isoformat() if last_backup and last_backup.get("started_at") else None,
+        "last_backup_at": (
+            last_backup["started_at"].isoformat()
+            if last_backup and last_backup.get("started_at")
+            else None
+        ),
     }
 
 
@@ -474,7 +489,6 @@ def _cleanup_old_backups(backup_dir: str, retention_days: int) -> int:
     if not os.path.exists(backup_dir):
         return 0
 
-    import time
     cutoff = time.time() - (retention_days * 86400)
     removed = 0
 
