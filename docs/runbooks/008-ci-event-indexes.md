@@ -5,7 +5,7 @@ instance. This is a **one-time schema operation**; it does not run on every depl
 
 ## What it does
 
-Creates five index/constraint objects on the `:CI` and `:Event` labels:
+Creates nine index/constraint objects on the `:CI` and `:Event` labels:
 
 | Name | Type | Target |
 |---|---|---|
@@ -14,8 +14,17 @@ Creates five index/constraint objects on the `:CI` and `:Event` labels:
 | `event_ci_id` | INDEX | `Event.ci_id` |
 | `event_metric_id` | INDEX | `Event.metric_id` |
 | `ci_status` | INDEX | `CI.status` |
+| `ci_location_name` | INDEX | `CI.location_name` |
+| `ci_test_seed` | INDEX | `CI.test_seed` |
+| `event_status` | INDEX | `Event.status` |
+| `event_test_seed` | INDEX | `Event.test_seed` |
 
-These unblock index-seek plans on the two hottest write paths in the system:
+`ci_location_name` is the one to watch: it backs `WHERE n.location_name IN
+$allowed_locations`, the scope filter that every non-admin user hits on `/nodes` and
+`/links`. Before it existed, a 220-CI dev graph cost 441 DbHits for that filter — the
+same before and after the rest of 008, because nothing else touched it.
+
+These also unblock index-seek plans on the two hottest write paths in the system:
 `topology_repo.py:66` (`MERGE (n:CI {id})`) and `event_writer.py:439`
 (event dedup on `{ci_id, metric_id}`).
 
@@ -80,12 +89,16 @@ SHOW INDEXES YIELD name, entityType, properties, indexType
 WHERE name STARTS WITH 'event_ci_id'
    OR name STARTS WITH 'event_metric_id'
    OR name STARTS WITH 'ci_status'
+   OR name STARTS WITH 'ci_location_name'
+   OR name STARTS WITH 'ci_test_seed'
+   OR name STARTS WITH 'event_status'
+   OR name STARTS WITH 'event_test_seed'
 RETURN name, entityType, properties, indexType;
 ```
 
-Expected: `ci_id_unique` and `event_id_unique` as node uniqueness constraints on
-`id`; `event_ci_id` and `event_metric_id` as range indexes on `ci_id` and
-`metric_id`; `ci_status` as a range index on `status`.
+Expected: 2 constraints (`ci_id_unique`, `event_id_unique`) and 7 indexes
+(`event_ci_id`, `event_metric_id`, `ci_status`, `ci_location_name`, `ci_test_seed`,
+`event_status`, `event_test_seed`). Nine objects total.
 
 ## This is a one-time step
 
@@ -124,6 +137,10 @@ DROP CONSTRAINT event_id_unique IF EXISTS;
 DROP INDEX event_ci_id IF EXISTS;
 DROP INDEX event_metric_id IF EXISTS;
 DROP INDEX ci_status IF EXISTS;
+DROP INDEX ci_location_name IF EXISTS;
+DROP INDEX ci_test_seed IF EXISTS;
+DROP INDEX event_status IF EXISTS;
+DROP INDEX event_test_seed IF EXISTS;
 ```
 
 The `IF EXISTS` form is safe to run even when the object is not present.
