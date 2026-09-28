@@ -80,11 +80,15 @@ def test_script_exits_nonzero_without_neo4j():
 # ---------------------------------------------------------------------------
 
 
-def test_real_migration_yields_exactly_five_statements():
-    """Parsing the real migration file yields exactly 5 statements.
+def test_real_migration_yields_one_statement_per_create():
+    """Parsing the real migration yields exactly one statement per CREATE, no more.
 
     Regression: splitting on ';' before dropping // lines orphans trailing comment
     prose that contains a semicolon, producing junk statements.
+
+    The expected count is derived from the file's own CREATE statements rather than
+    hardcoded, so adding an index to the migration does not silently require editing
+    this test — but any extra statement means comment text leaked through the parser.
     """
     import importlib.util
 
@@ -95,9 +99,18 @@ def test_real_migration_yields_exactly_five_statements():
     content = MIGRATION_PATH.read_text(encoding="utf-8")
     statements = module._extract_cypher_statements(content)
 
-    assert (
-        len(statements) == 5
-    ), f"Expected exactly 5 statements, got {len(statements)}: {statements}"
+    non_comment = [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("//")
+    ]
+    expected = sum(1 for line in non_comment if line.upper().startswith("CREATE "))
+
+    assert expected > 0, "No CREATE statements found in the migration to compare against"
+    assert len(statements) == expected, (
+        f"Expected exactly {expected} statements (one per CREATE), "
+        f"got {len(statements)}: {statements}"
+    )
 
 
 def test_real_migration_statements_all_start_with_cypher_keywords():
