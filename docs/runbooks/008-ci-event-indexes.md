@@ -50,10 +50,10 @@ found.
 
 ## How to apply
 
-Run from the repository root:
+Run from the repository root INSIDE the backend container:
 
 ```bash
-python backend/scripts/migrate_ci_event_indexes.py
+docker compose exec -T backend python scripts/migrate_ci_event_indexes.py
 ```
 
 Exit codes:

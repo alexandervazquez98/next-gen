@@ -1,7 +1,7 @@
 """Idempotently apply 008_ci_event_indexes.cypher: CI/Event uniqueness constraints and supporting indexes.
 
-Run from the repository root with:
-    python backend/scripts/migrate_ci_event_indexes.py
+Run from the repository root INSIDE the backend container:
+    docker compose exec -T backend python scripts/migrate_ci_event_indexes.py
 
 Exit codes:
     0 — all statements applied (or already present)
@@ -51,17 +51,24 @@ def _migration_file_path() -> Path:
 
 
 def _extract_cypher_statements(content: str) -> list[str]:
-    """Split migration text into executable statements, skipping comment-only lines."""
+    """Split migration text into executable statements, skipping comment-only lines.
+
+    Comment lines (starting with //) are removed BEFORE splitting on semicolons,
+    so semicolons inside comment prose cannot orphan trailing non-comment text.
+    """
+    # Strip // comment lines first — semicolons inside comments must not split statements
+    non_comment_lines = [
+        line
+        for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("//") and line.strip() != "--"
+    ]
+    normalized_content = "\n".join(non_comment_lines)
+
     statements: list[str] = []
-    for raw_statement in content.split(";"):
-        lines = [line.strip() for line in raw_statement.splitlines() if line.strip()]
-        query_lines = [
-            line for line in lines if not line.lstrip().startswith("//") and line != "--"
-        ]
-        normalized = " ".join(query_lines).strip()
-        if not normalized:
-            continue
-        statements.append(normalized)
+    for raw_statement in normalized_content.split(";"):
+        normalized = " ".join(raw_statement.splitlines()).strip()
+        if normalized:
+            statements.append(normalized)
     return statements
 
 
