@@ -214,6 +214,10 @@ def test_overview_omits_hidden_clusters(monkeypatch):
                     "visible_link_count": 0,
                     "aggregate_redacted": False,
                     "suppression_reason": None,
+                    # #524 — severity count fields; defaults to 0.
+                    "critical_count": 0,
+                    "warning_count": 0,
+                    "event_count": 0,
                 }
             ]
             if allowed_locations
@@ -247,6 +251,10 @@ def test_overview_response_shape_independent_of_visibility(monkeypatch):
                 "visible_link_count": 5,
                 "aggregate_redacted": False,
                 "suppression_reason": None,
+                # #524 — severity count fields; defaults to 0.
+                "critical_count": 0,
+                "warning_count": 0,
+                "event_count": 0,
             }
         ],
     )

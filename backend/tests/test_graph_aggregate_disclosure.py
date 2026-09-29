@@ -35,7 +35,14 @@ def _principal(*, is_admin: bool = False, permissions=None, aggregate_breakdown_
     return p
 
 
-def _cluster(cluster_id: str, count: int) -> dict:
+def _cluster(
+    cluster_id: str,
+    count: int,
+    *,
+    critical_count: int = 0,
+    warning_count: int = 0,
+    event_count: int = 0,
+) -> dict:
     return {
         "cluster_id": cluster_id,
         "display_label": cluster_id.split(":", 1)[1],
@@ -43,6 +50,12 @@ def _cluster(cluster_id: str, count: int) -> dict:
         "visible_link_count": 0,
         "aggregate_redacted": False,
         "suppression_reason": None,
+        # #524 — severity count fields. Default 0 keeps pre-#524
+        # callers valid; tests pass non-zero values explicitly when
+        # exercising severity paths.
+        "critical_count": critical_count,
+        "warning_count": warning_count,
+        "event_count": event_count,
     }
 
 

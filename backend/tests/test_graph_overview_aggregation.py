@@ -40,6 +40,10 @@ def _cluster(
     cluster_id: str,
     visible_node_count: int,
     visible_link_count: int = 0,
+    *,
+    critical_count: int = 0,
+    warning_count: int = 0,
+    event_count: int = 0,
 ) -> dict:
     return {
         "cluster_id": cluster_id,
@@ -48,6 +52,12 @@ def _cluster(
         "visible_link_count": visible_link_count,
         "aggregate_redacted": False,
         "suppression_reason": None,
+        # #524 — severity count fields. Default 0 keeps the
+        # pre-#524 helper invocations valid; tests that want to
+        # exercise non-zero counts pass them explicitly.
+        "critical_count": critical_count,
+        "warning_count": warning_count,
+        "event_count": event_count,
     }
 
 
