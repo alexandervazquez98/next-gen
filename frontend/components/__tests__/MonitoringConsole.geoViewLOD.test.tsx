@@ -192,7 +192,13 @@ function makeLODDetailState(clusterId: string, nodes: any[] = [], events: any[] 
     kind: "detail" as const,
     overview: null,
     detail: {
-      cluster: { cluster_id: clusterId, axis: "location", display_label: clusterId, visible_node_count: nodes.length, visible_link_count: 0 },
+      cluster: {
+        cluster_id: clusterId,
+        axis: "location",
+        display_label: clusterId,
+        visible_node_count: nodes.length,
+        visible_link_count: 0,
+      },
       filters: {},
       generated_at: "2026-09-29T00:00:00Z",
       revision: "test",
@@ -204,7 +210,12 @@ function makeLODDetailState(clusterId: string, nodes: any[] = [], events: any[] 
       page: { next_cursor: null, has_more: false },
     },
     clusters: [],
-    enrichedNodes: nodes.map((n) => ({ ...n, events: events.filter((e: any) => e.ci_id === n.id), hasCritical: false, hasWarning: false })),
+    enrichedNodes: nodes.map((n) => ({
+      ...n,
+      events: events.filter((e: any) => e.ci_id === n.id),
+      hasCritical: false,
+      hasWarning: false,
+    })),
     events,
     isLoading: false,
     error: null,

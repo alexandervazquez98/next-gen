@@ -159,9 +159,7 @@ def test_repo_returns_severity_count_fields_from_db(monkeypatch):
     driver, session = _mock_driver(rows=repo_rows)
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    result = graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=None, is_admin=True
-    )
+    result = graph_lod_repo.aggregate_overview_clusters(allowed_locations=None, is_admin=True)
 
     assert len(result) == 2
     by_id = {row["cluster_id"]: row for row in result}
@@ -191,9 +189,7 @@ def test_repo_handles_missing_severity_count_fields(monkeypatch):
     driver, session = _mock_driver(rows=repo_rows)
     monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
 
-    result = graph_lod_repo.aggregate_overview_clusters(
-        allowed_locations=None, is_admin=True
-    )
+    result = graph_lod_repo.aggregate_overview_clusters(allowed_locations=None, is_admin=True)
 
     assert len(result) == 1
     # The repo passes through whatever Neo4j returns; missing keys are not

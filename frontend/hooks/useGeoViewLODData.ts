@@ -75,8 +75,7 @@ export function useGeoViewLODData({ focusedClusterId }: UseGeoViewLODArgs): GeoV
 
   return useMemo<GeoViewLODState>(() => {
     const events = eventsQuery.data ?? [];
-    const isLoading =
-      overviewQuery.isLoading || eventsQuery.isLoading || detailQuery.isLoading;
+    const isLoading = overviewQuery.isLoading || eventsQuery.isLoading || detailQuery.isLoading;
     const error =
       (overviewQuery.error as Error | null) ??
       (detailQuery.error as Error | null) ??
@@ -110,7 +109,16 @@ export function useGeoViewLODData({ focusedClusterId }: UseGeoViewLODArgs): GeoV
       isLoading,
       error,
     };
-  }, [focusedClusterId, overviewQuery.data, overviewQuery.isLoading, overviewQuery.error,
-     detailQuery.data, detailQuery.isLoading, detailQuery.error,
-     eventsQuery.data, eventsQuery.isLoading, eventsQuery.error]);
+  }, [
+    focusedClusterId,
+    overviewQuery.data,
+    overviewQuery.isLoading,
+    overviewQuery.error,
+    detailQuery.data,
+    detailQuery.isLoading,
+    detailQuery.error,
+    eventsQuery.data,
+    eventsQuery.isLoading,
+    eventsQuery.error,
+  ]);
 }

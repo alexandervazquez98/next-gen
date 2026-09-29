@@ -21,8 +21,20 @@ import { joinEventsToNodes, getClusterRenderConfig } from "../geoViewLODData";
 describe("joinEventsToNodes", () => {
   it("attaches matching events to each node by ci_id", () => {
     const nodes: DetailNode[] = [
-      { id: "ci-1", display_label: "Router-1", kind: "CI", ci_type: "router", allowed_public_axes: [] },
-      { id: "ci-2", display_label: "Router-2", kind: "CI", ci_type: "router", allowed_public_axes: [] },
+      {
+        id: "ci-1",
+        display_label: "Router-1",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
+      {
+        id: "ci-2",
+        display_label: "Router-2",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
     ];
     const events: EventSummary[] = [
       {
@@ -61,7 +73,13 @@ describe("joinEventsToNodes", () => {
     // the recovery history, matching the existing MonitoringConsole
     // behavior at frontend/components/MonitoringConsole.tsx.
     const nodes: DetailNode[] = [
-      { id: "ci-1", display_label: "Router-1", kind: "CI", ci_type: "router", allowed_public_axes: [] },
+      {
+        id: "ci-1",
+        display_label: "Router-1",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
     ];
     const events: EventSummary[] = [
       {
@@ -92,9 +110,27 @@ describe("joinEventsToNodes", () => {
 
   it("sets hasCritical / hasWarning flags from the active events only", () => {
     const nodes: DetailNode[] = [
-      { id: "ci-1", display_label: "Router-1", kind: "CI", ci_type: "router", allowed_public_axes: [] },
-      { id: "ci-2", display_label: "Router-2", kind: "CI", ci_type: "router", allowed_public_axes: [] },
-      { id: "ci-3", display_label: "Router-3", kind: "CI", ci_type: "router", allowed_public_axes: [] },
+      {
+        id: "ci-1",
+        display_label: "Router-1",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
+      {
+        id: "ci-2",
+        display_label: "Router-2",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
+      {
+        id: "ci-3",
+        display_label: "Router-3",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
     ];
     const events: EventSummary[] = [
       {
@@ -128,7 +164,13 @@ describe("joinEventsToNodes", () => {
 
   it("returns an empty event array (and OK flags) for nodes with no matching events", () => {
     const nodes: DetailNode[] = [
-      { id: "ci-orphan", display_label: "Orphan", kind: "CI", ci_type: "router", allowed_public_axes: [] },
+      {
+        id: "ci-orphan",
+        display_label: "Orphan",
+        kind: "CI",
+        ci_type: "router",
+        allowed_public_axes: [],
+      },
     ];
     const events: EventSummary[] = [
       {

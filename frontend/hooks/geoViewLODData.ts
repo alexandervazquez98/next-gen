@@ -54,10 +54,7 @@ export interface ClusterRenderConfig {
  * excluded since the active feed (status="CONSOLE") only returns
  * OPEN + ACK + RECOVERED rows; this function is robust regardless.
  */
-export function joinEventsToNodes(
-  nodes: DetailNode[],
-  events: EventSummary[],
-): GeoViewNode[] {
+export function joinEventsToNodes(nodes: DetailNode[], events: EventSummary[]): GeoViewNode[] {
   return nodes.map((node) => {
     const nodeEvents = events.filter((e) => e.ci_id === node.id);
     const active = nodeEvents.filter((e) => e.status !== "RECOVERED");

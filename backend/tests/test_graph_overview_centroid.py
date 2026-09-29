@@ -158,8 +158,8 @@ def test_centroid_is_rounded_to_region_precision(monkeypatch):
             "critical_count": 0,
             "warning_count": 0,
             "event_count": 0,
-            "centroid_lat": 40.416775,    # unrounded
-            "centroid_long": -3.703790,   # unrounded
+            "centroid_lat": 40.416775,  # unrounded
+            "centroid_long": -3.703790,  # unrounded
         },
     ]
     _patch_repo(monkeypatch, rows)
@@ -185,7 +185,7 @@ def test_centroid_is_rounded_to_city_precision(monkeypatch):
             "critical_count": 0,
             "warning_count": 0,
             "event_count": 0,
-            "centroid_lat": 40.41677555,   # unrounded
+            "centroid_lat": 40.41677555,  # unrounded
             "centroid_long": -3.70379042,  # unrounded
         },
     ]
@@ -215,7 +215,7 @@ def test_centroid_passes_through_when_no_rounding_needed(monkeypatch):
             "critical_count": 0,
             "warning_count": 0,
             "event_count": 0,
-            "centroid_lat": 40.4168,   # already 4 decimals
+            "centroid_lat": 40.4168,  # already 4 decimals
             "centroid_long": -3.7038,
         },
     ]
