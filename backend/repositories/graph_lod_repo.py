@@ -101,7 +101,10 @@ def _build_query(is_admin: bool) -> str:
 
     #524 — joins ``(n)-[:HAS_EVENT]->(e:Event)`` and aggregates per-cluster
     severity counts so the Geo View can color cluster markers by worst
-    severity at country zoom (Tier 2 of the LOD perf migration).
+    severity at country zoom (Tier 2 of the LOD perf migration). Also
+    aggregates ``avg(n.location.lat)`` / ``avg(n.location.long)`` as the
+    cluster centroid, which the Geo View uses to place markers on the
+    map. The rounding happens in the service layer (safe_geo_precision).
 
     Active = ``status IN ['OPEN', 'ACK']``. RECOVERED and CLOSED events
     are EXCLUDED — the Geo View marks a CI OK when its underlying
@@ -121,7 +124,9 @@ def _build_query(is_admin: bool) -> str:
              count(DISTINCT n) AS visible_node_count,
              sum(CASE WHEN e.severity = 'CRITICAL' THEN 1 ELSE 0 END) AS critical_count,
              sum(CASE WHEN e.severity = 'WARNING' THEN 1 ELSE 0 END) AS warning_count,
-             count(e) AS event_count
+             count(e) AS event_count,
+             avg(n.location.lat) AS centroid_lat,
+             avg(n.location.long) AS centroid_long
         RETURN
             'location:' + coalesce(location_name, '__unassigned__') AS cluster_id,
             coalesce(location_name, 'Unassigned') AS display_label,
@@ -131,7 +136,9 @@ def _build_query(is_admin: bool) -> str:
             null AS suppression_reason,
             critical_count,
             warning_count,
-            event_count
+            event_count,
+            coalesce(centroid_lat, 0.0) AS centroid_lat,
+            coalesce(centroid_long, 0.0) AS centroid_long
         ORDER BY cluster_id
     """
 

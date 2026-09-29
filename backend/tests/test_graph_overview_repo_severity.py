@@ -93,6 +93,23 @@ def test_aggregation_query_uses_severity_predicate(monkeypatch):
     assert "WARNING" in query
 
 
+def test_aggregation_query_aggregates_centroid(monkeypatch):
+    """#524 — the Cypher must aggregate n.location.lat / n.location.long
+    via avg() so the Geo View can place cluster markers on the map.
+    The service layer applies safe_geo_precision rounding; the repo
+    just returns the unrounded averages."""
+    driver, session = _mock_driver()
+    monkeypatch.setattr(graph_lod_repo, "get_db", lambda: driver)
+
+    graph_lod_repo.aggregate_overview_clusters(allowed_locations=["HQ-Madrid"], is_admin=False)
+
+    query = session.run.call_args.args[0]
+    assert "avg(n.location.lat)" in query
+    assert "avg(n.location.long)" in query
+    assert "centroid_lat" in query
+    assert "centroid_long" in query
+
+
 def test_admin_query_also_aggregates_severity(monkeypatch):
     """Admin path (no visible-set WHERE) must still aggregate severity counts."""
     driver, session = _mock_driver()

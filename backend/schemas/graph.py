@@ -158,6 +158,11 @@ class OverviewCluster(BaseModel):
     All three default to 0 and are always 0 when ``aggregate_redacted`` is
     True (REQ-OVERVIEW-3) — they MUST NEVER disclose per-CI severity
     through the cluster aggregate.
+
+    The two ``centroid_*`` fields let the Geo View place cluster markers
+    on the Leaflet map. Both default to 0.0 and are reset to 0.0 by the
+    service layer when ``aggregate_redacted`` is True or when the
+    response-level ``safe_geo_precision`` is "none" (REQ-9).
     """
 
     model_config = _strict_model()
@@ -172,6 +177,10 @@ class OverviewCluster(BaseModel):
     critical_count: int = 0
     warning_count: int = 0
     event_count: int = 0
+    # #524 — privacy-safe centroid (lat, long). Service layer rounds to
+    # the response-level safe_geo_precision tier.
+    centroid_lat: float = 0.0
+    centroid_long: float = 0.0
 
 
 class InterClusterLink(BaseModel):
