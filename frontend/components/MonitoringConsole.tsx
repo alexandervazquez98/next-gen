@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, no-unused-vars, react-refresh/only-export-components, react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from "react";
 import { MapContainer, Polyline, useMap, CircleMarker, Popup } from "react-leaflet";
-import { VectorTileBasemap } from "./VectorTileBasemap";
 import { createPortal } from "react-dom";
 import "leaflet/dist/leaflet.css";
 import type { GraphLink, GraphNode, Event } from "../types";
@@ -879,6 +878,10 @@ class GeoViewErrorBoundary extends React.Component<
 
 const GEO_VIEW_DARK_FILTER = "invert(1) hue-rotate(180deg) brightness(0.85)";
 
+// Deferred import — maplibre-gl (~1 MB WebGL renderer) is only downloaded when
+// the operator first opens the Geo View tab, not on every page load.
+const LazyVectorTileBasemap = lazy(() => import("./VectorTileBasemap"));
+
 const MonitoringConsole: React.FC = () => {
   const [viewMode, setViewMode] = useState<"DASHBOARD" | "MAP">("DASHBOARD");
   const [filterCategory, setFilterCategory] = useState<string>("ALL");
@@ -1573,7 +1576,9 @@ const MonitoringConsole: React.FC = () => {
                 style={{ filter: GEO_VIEW_DARK_FILTER }}
               >
                 <MapInstanceCapture onReady={handleMapReady} />
-                <VectorTileBasemap />
+                <Suspense fallback={null}>
+                  <LazyVectorTileBasemap />
+                </Suspense>
                 <MapOutsideClickHandler onMapClick={resetMapView} />
                 <MapBounds nodes={nodesWithEvents} />
 
