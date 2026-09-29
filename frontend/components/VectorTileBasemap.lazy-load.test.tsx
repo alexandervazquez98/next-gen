@@ -106,6 +106,21 @@ vi.mock("../hooks/useMapClustering", () => ({
   }),
 }));
 
+// #524 — Geo View Tier 2 LOD data composer. Stubbed here so this test
+// doesn't need a real React Query client.
+vi.mock("../hooks/useGeoViewLODData", () => ({
+  useGeoViewLODData: () => ({
+    kind: "overview",
+    overview: null,
+    detail: null,
+    clusters: [],
+    enrichedNodes: [],
+    events: [],
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock("leaflet", () => ({
   default: {
     icon: vi.fn(() => ({})),

@@ -12,7 +12,12 @@
       "display_label": "dc-1",
       "suppression_reason": null,
       "visible_link_count": 8,
-      "visible_node_count": 12
+      "visible_node_count": 12,
+      "critical_count": 1,
+      "warning_count": 2,
+      "event_count": 4,
+      "centroid_lat": 40.4168,
+      "centroid_long": -3.7038
     },
     {
       "aggregate_redacted": false,
@@ -20,7 +25,12 @@
       "display_label": "dc-2",
       "suppression_reason": null,
       "visible_link_count": 4,
-      "visible_node_count": 7
+      "visible_node_count": 7,
+      "critical_count": 0,
+      "warning_count": 1,
+      "event_count": 2,
+      "centroid_lat": 41.39,
+      "centroid_long": 2.17
     }
   ],
   "filters": {

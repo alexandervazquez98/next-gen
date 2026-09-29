@@ -7,19 +7,23 @@
  * @param nodesWithEvents - array of nodes enriched with event data
  * @param events - full event array
  * @returns culled nodes based on smart mode state
+ *
+ * #524 (Tier 2 LOD migration): the legacy hard cap at
+ * ``HARD_CULL_NODE_THRESHOLD`` (1000 nodes) was removed. The Geo View
+ * now sources its render data from the v1.18.0 LOD endpoints
+ * (``useGeoViewLODData``), which means the backend handles culling
+ * via server-side aggregation. The frontend smart-culling hook is now
+ * strictly user-toggled and only kicks in when ``events.length >=
+ * SMART_CULL_THRESHOLD``. The hook is retained because it still
+ * governs the legacy individual-markers path (when clustering is OFF
+ * and the operator wants every visible CI), but the forced lockout is
+ * gone.
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { rankCIs, SMART_CULL_THRESHOLD, TOP_N } from "../components/MonitoringConsole";
 
 const STORAGE_KEY = "geoview-smart-culling::mode";
-
-/**
- * Hard cap on rendered markers. When the topology has more than this many
- * nodes, smart culling is forced on regardless of the event threshold so the
- * map never tries to render thousands of CircleMarkers at once.
- */
-export const HARD_CULL_NODE_THRESHOLD = 1000;
 
 export function useSmartCulling<T extends { events?: { severity: string }[] }>(
   nodesWithEvents: T[],
@@ -54,22 +58,14 @@ export function useSmartCulling<T extends { events?: { severity: string }[] }>(
     }
   }, []);
 
-  const forced = nodesWithEvents.length > HARD_CULL_NODE_THRESHOLD;
-  const effectiveSmartMode = forced || isSmartMode;
-
   const culledNodes = useMemo(() => {
-    if (forced) {
-      // Hard cap: always cull to TOP_N by severity rank.
-      return rankCIs(nodesWithEvents, TOP_N);
-    }
     if (events.length >= SMART_CULL_THRESHOLD && isSmartMode) {
       return rankCIs(nodesWithEvents, TOP_N);
     }
     return nodesWithEvents;
-  }, [nodesWithEvents, events.length, isSmartMode, forced]);
+  }, [nodesWithEvents, events.length, isSmartMode]);
 
   const toggle = useCallback(() => {
-    if (forced) return; // Toggle disabled while hard cap is active.
     const newMode = !isSmartMode;
     setIsSmartMode(newMode);
     try {
@@ -77,7 +73,7 @@ export function useSmartCulling<T extends { events?: { severity: string }[] }>(
     } catch {
       // localStorage may be unavailable; ignore.
     }
-  }, [isSmartMode, forced]);
+  }, [isSmartMode]);
 
-  return { culledNodes, isActive: effectiveSmartMode, toggle, forced };
+  return { culledNodes, isActive: isSmartMode, toggle, forced: false };
 }

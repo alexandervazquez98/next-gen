@@ -12,7 +12,12 @@
       "display_label": "dc-1",
       "suppression_reason": "low_cardinality",
       "visible_link_count": 2,
-      "visible_node_count": 3
+      "visible_node_count": 3,
+      "critical_count": 0,
+      "warning_count": 0,
+      "event_count": 0,
+      "centroid_lat": 0.0,
+      "centroid_long": 0.0
     }
   ],
   "filters": {},

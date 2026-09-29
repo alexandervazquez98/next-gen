@@ -115,6 +115,19 @@ def _shape_cluster(
     cluster_id = str(raw["cluster_id"])
     display_label = str(raw.get("display_label") or cluster_id)
     is_low_cardinality = visible_node_count < minimum_count
+    # #524 — aggregated severity counts. Repo returns them when the
+    # aggregation query joins against the Event label; on redacted
+    # clusters (low-cardinality) we MUST zero them so the aggregate
+    # never discloses per-CI severity. Same REQ-9 policy that already
+    # hides public_ip / metadata on the cluster aggregate.
+    if is_low_cardinality:
+        critical_count = 0
+        warning_count = 0
+        event_count = 0
+    else:
+        critical_count = int(raw.get("critical_count", 0))
+        warning_count = int(raw.get("warning_count", 0))
+        event_count = int(raw.get("event_count", 0))
     return OverviewCluster(
         cluster_id=cluster_id,
         display_label=display_label,
@@ -122,7 +135,46 @@ def _shape_cluster(
         visible_link_count=int(raw.get("visible_link_count", 0)),
         aggregate_redacted=is_low_cardinality,
         suppression_reason=LOW_CARDINALITY_REASON if is_low_cardinality else None,
+        critical_count=critical_count,
+        warning_count=warning_count,
+        event_count=event_count,
+        # #524 — privacy-safe centroid pass-through. The rounding happens
+        # in get_overview after the response-level safe_geo_precision is
+        # resolved, so this function stays principal-agnostic.
+        centroid_lat=float(raw.get("centroid_lat", 0.0)),
+        centroid_long=float(raw.get("centroid_long", 0.0)),
     )
+
+
+def _round_cluster_centroid(
+    cluster: OverviewCluster,
+    safe_geo_precision: str,
+) -> OverviewCluster:
+    """Apply the response-level safe_geo_precision to a cluster's centroid.
+
+    REQ-9: redacted clusters never disclose centroid (always 0.0).
+    ``"none"`` precision suppresses ALL centroids (defense in depth).
+    ``"region"`` rounds to 2 decimals (~1.1 km precision).
+    ``"city"`` rounds to 4 decimals (~11 m precision).
+    """
+    if cluster.aggregate_redacted or safe_geo_precision == SafeGeoPrecision.NONE.value:
+        return cluster.model_copy(update={"centroid_lat": 0.0, "centroid_long": 0.0})
+    if safe_geo_precision == SafeGeoPrecision.REGION.value:
+        return cluster.model_copy(
+            update={
+                "centroid_lat": round(cluster.centroid_lat, 2),
+                "centroid_long": round(cluster.centroid_long, 2),
+            }
+        )
+    if safe_geo_precision == SafeGeoPrecision.CITY.value:
+        return cluster.model_copy(
+            update={
+                "centroid_lat": round(cluster.centroid_lat, 4),
+                "centroid_long": round(cluster.centroid_long, 4),
+            }
+        )
+    # Unknown tier — pass through unchanged (defensive).
+    return cluster
 
 
 def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
@@ -165,6 +217,11 @@ def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
         permission_required=PERMISSION_REQUIRED,
         safe_geo_precision=SafeGeoPrecision(safe_geo_precision),
     )
+
+    # #524 — apply safe_geo_precision to each cluster's centroid so the
+    # Geo View can render markers at the privacy-correct tier. The
+    # precision is response-wide; we round each cluster individually.
+    clusters = [_round_cluster_centroid(c, safe_geo_precision) for c in clusters]
 
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     revision = f"revision-{int(datetime.now(UTC).timestamp())}"

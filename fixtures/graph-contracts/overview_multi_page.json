@@ -12,7 +12,12 @@
       "display_label": "dc-101",
       "suppression_reason": null,
       "visible_link_count": 4,
-      "visible_node_count": 8
+      "visible_node_count": 8,
+      "critical_count": 0,
+      "warning_count": 1,
+      "event_count": 1,
+      "centroid_lat": 51.5074,
+      "centroid_long": -0.1278
     }
   ],
   "filters": {
