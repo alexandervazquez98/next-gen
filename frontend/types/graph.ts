@@ -47,6 +47,15 @@ export interface OverviewCluster {
   visible_link_count: number;
   aggregate_redacted: boolean;
   suppression_reason: string | null;
+  // #524 — aggregated severity counts from the LOD perf migration.
+  // Always 0 when aggregate_redacted is true (REQ-OVERVIEW-3 parity;
+  // per-CI severity is never disclosed via the cluster aggregate).
+  // critical_count / warning_count drive the worst-severity color on
+  // Geo View cluster markers at country zoom; event_count is the
+  // total active events driving the cluster.
+  critical_count: number;
+  warning_count: number;
+  event_count: number;
 }
 
 export interface InterClusterLink {
