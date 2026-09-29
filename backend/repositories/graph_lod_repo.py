@@ -97,22 +97,41 @@ def aggregate_detail_subgraph(
 
 
 def _build_query(is_admin: bool) -> str:
-    """Build the aggregation Cypher with or without the visible-set WHERE."""
+    """Build the aggregation Cypher with or without the visible-set WHERE.
+
+    #524 — joins ``(n)-[:HAS_EVENT]->(e:Event)`` and aggregates per-cluster
+    severity counts so the Geo View can color cluster markers by worst
+    severity at country zoom (Tier 2 of the LOD perf migration).
+
+    Active = ``status IN ['OPEN', 'ACK']``. RECOVERED and CLOSED events
+    are EXCLUDED — the Geo View marks a CI OK when its underlying
+    condition clears, and we don't want cluster markers to keep
+    painting red after the system healed.
+
+    REQ-9 sensitivity policy: the join is at the cluster aggregate
+    level only; per-CI severity is never disclosed.
+    """
     location_filter = "" if is_admin else " WHERE n.location_name IN $allowed_locations "
     return f"""
         MATCH (n:CI)
         {location_filter}
+        OPTIONAL MATCH (n)-[:HAS_EVENT]->(e:Event)
+          WHERE e.status IN ['OPEN', 'ACK']
         WITH n.location_name AS location_name,
-             collect(DISTINCT n) AS nodes
-        WITH location_name,
-             size(nodes) AS visible_node_count
+             count(DISTINCT n) AS visible_node_count,
+             sum(CASE WHEN e.severity = 'CRITICAL' THEN 1 ELSE 0 END) AS critical_count,
+             sum(CASE WHEN e.severity = 'WARNING' THEN 1 ELSE 0 END) AS warning_count,
+             count(e) AS event_count
         RETURN
             'location:' + coalesce(location_name, '__unassigned__') AS cluster_id,
             coalesce(location_name, 'Unassigned') AS display_label,
             visible_node_count,
             0 AS visible_link_count,
             false AS aggregate_redacted,
-            null AS suppression_reason
+            null AS suppression_reason,
+            critical_count,
+            warning_count,
+            event_count
         ORDER BY cluster_id
     """
 
