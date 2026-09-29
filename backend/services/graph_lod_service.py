@@ -115,6 +115,19 @@ def _shape_cluster(
     cluster_id = str(raw["cluster_id"])
     display_label = str(raw.get("display_label") or cluster_id)
     is_low_cardinality = visible_node_count < minimum_count
+    # #524 — aggregated severity counts. Repo returns them when the
+    # aggregation query joins against the Event label; on redacted
+    # clusters (low-cardinality) we MUST zero them so the aggregate
+    # never discloses per-CI severity. Same REQ-9 policy that already
+    # hides public_ip / metadata on the cluster aggregate.
+    if is_low_cardinality:
+        critical_count = 0
+        warning_count = 0
+        event_count = 0
+    else:
+        critical_count = int(raw.get("critical_count", 0))
+        warning_count = int(raw.get("warning_count", 0))
+        event_count = int(raw.get("event_count", 0))
     return OverviewCluster(
         cluster_id=cluster_id,
         display_label=display_label,
@@ -122,6 +135,9 @@ def _shape_cluster(
         visible_link_count=int(raw.get("visible_link_count", 0)),
         aggregate_redacted=is_low_cardinality,
         suppression_reason=LOW_CARDINALITY_REASON if is_low_cardinality else None,
+        critical_count=critical_count,
+        warning_count=warning_count,
+        event_count=event_count,
     )
 
 
