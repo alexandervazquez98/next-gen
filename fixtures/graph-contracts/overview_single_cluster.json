@@ -15,7 +15,9 @@
       "visible_node_count": 20,
       "critical_count": 1,
       "warning_count": 0,
-      "event_count": 1
+      "event_count": 1,
+      "centroid_lat": 48.8566,
+      "centroid_long": 2.3522
     }
   ],
   "filters": {},

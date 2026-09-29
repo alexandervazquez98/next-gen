@@ -56,6 +56,13 @@ export interface OverviewCluster {
   critical_count: number;
   warning_count: number;
   event_count: number;
+  // #524 — privacy-safe centroid. Used by the Geo View to place cluster
+  // markers on the Leaflet map. Default 0.0; the service layer applies
+  // safe_geo_precision rounding (city=4dec / region=2dec / none=0.0)
+  // and zeros these on redacted clusters. The Geo View's render path
+  // MUST skip rendering the marker when both fields are 0.0.
+  centroid_lat: number;
+  centroid_long: number;
 }
 
 export interface InterClusterLink {

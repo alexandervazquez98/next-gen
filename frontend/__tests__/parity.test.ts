@@ -65,6 +65,10 @@ const OVERVIEW_CLUSTER_KEYS: ReadonlyArray<string> = [
   "critical_count",
   "warning_count",
   "event_count",
+  // #524 — privacy-safe centroid. Same REQ-9 parity rule as the
+  // severity counts: always present in the wire payload.
+  "centroid_lat",
+  "centroid_long",
 ];
 
 const INTER_CLUSTER_LINK_KEYS: ReadonlyArray<string> = [
