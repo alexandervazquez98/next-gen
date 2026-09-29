@@ -32,6 +32,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.4] — 2026-09-29
+
+### Performance
+
+- **Geo View Tier 2 — backend aggregation, Geo View migrates to LOD endpoints, hard cap removed (#524, PR #532)**: the Geo View of `MonitoringConsole` still pulled the full topology (`useNodesQuery` + `useLinksQuery`) to render cluster markers, even though `v1.18.0` ships `GET /api/graph/overview` and `GET /api/graph/detail/{cluster_id}` from the LOD chain (#390/#391/#392). A 5k-CI topology round-trip was several MB of JSON; the existing 1000-node hard cap in `useSmartCulling` was a frontend mitigation that locked the operator out of the topology entirely once exceeded. Tier 2 closes that gap by having the Geo View render cluster markers from the LOD overview payload at country/region zoom, with the backend doing the culling via server-side aggregation. Twenty-five files changed, +2207 / −56 lines, 11/11 CI gates verde, all 840 frontend tests pass.
+
+  - **Backend (`OverviewCluster` schema extension, additive)**: three new aggregated severity fields and two privacy-safe centroid fields, all default-0/false so existing fixtures stay valid. `critical_count`, `warning_count`, `event_count` drive the worst-severity color on Geo View cluster markers at country zoom; `centroid_lid`, `centroid_long` let the Geo View place cluster markers on the Leaflet map. `extra="forbid"` stays in force — REQ-9 sensitivity policy. `_shape_cluster` in `backend/services/graph_lod_service.py` pulls the new fields from the repo row and **zeros all five on redacted clusters** (REQ-OVERVIEW-3 + REQ-9 parity: low-cardinality clusters never disclose per-CI severity or geo). New `_round_cluster_centroid` applies `safe_geo_precision` rounding AFTER the per-principal tier is resolved, so the repo stays principal-agnostic: `city` → 4 decimals (~11 m), `region` → 2 decimals (~1.1 km), `none` → `(0.0, 0.0)`.
+
+  - **Backend (Cypher aggregation, single query)**: `aggregate_overview_clusters` joins `(n:CI)-[:HAS_EVENT]->(e:Event)` filtered on `status IN ['OPEN', 'ACK']` and aggregates per-cluster severity counts via `sum(CASE WHEN e.severity = 'CRITICAL' THEN 1 ELSE 0 END)` / `sum(CASE WHEN e.severity = 'WARNING' THEN 1 ELSE 0 END)` / `count(e)`. `avg(n.location.lat)` / `avg(n.location.long)` produces the centroid; the service layer rounds. RECOVERED and CLOSED events are excluded so cluster markers don't keep painting red after the underlying condition clears (matching the Geo View's color encoding). Cypher shape is verified by 7 new tests in `backend/tests/test_graph_overview_repo_severity.py` that assert the join, the `e.status IN ['OPEN', 'ACK']` filter, the severity predicate, the return fields, and that the admin path also aggregates severity.
+
+  - **Frontend (hook + helpers)**: `frontend/hooks/geoViewLODData.ts` exports two pure helpers — `joinEventsToNodes` (matches `event.ci_id === node.id`, computes `hasCritical` / `hasWarning` flags from the active-events subset, keeps RECOVERED rows in the popup-history array) and `getClusterRenderConfig` (worst-severity-wins color encoding with `pixelRadius` scaled by `log10(visible_node_count)`). `frontend/hooks/useGeoViewLODData.ts` is a thin React Query composer over `useGraphOverviewQuery` + `useGraphDetailQuery` + `useActiveEventsQuery`, returning a discriminated union (`{ kind: 'overview', clusters }` vs `{ kind: 'detail', enrichedNodes }`) with overview as the graceful fallback while the detail query is in flight so the map never blanks out.
+
+  - **Frontend (MonitoringConsole wire-up)**: the Geo View render path in `frontend/components/MonitoringConsole.tsx` now sources cluster markers from `geoLOD.clusters` first, falling back to the legacy `useMapClustering` supercluster when the LOD payload is empty (network error, scope denied, etc.). Each LOD cluster becomes a `CircleMarker` colored by `getClusterRenderConfig` (CRITICAL=red, WARNING=yellow, OK=green) with `pixelRadius` scaled to `visible_node_count`; the popup surfaces `critical_count`/`warning_count` so operators see aggregated severity at a glance. Cluster click sets `focusedClusterId` for the drill-down path. **Out of scope for this slice (documented follow-up)**: detail-mode rendering on the map. `DetailNode` deliberately omits `lat`/`long` per REQ-9, so the Geo View's drill-down rendering waits for a safe `display_geo` field on `DetailNode`. The state machinery (`focusedClusterId`) and the data composer (`useGeoViewLODData`) are in place; the only missing piece is a backend extension that adds `display_geo` with city/region granularity per the existing `AggregatePolicy.safe_geo_precision`.
+
+  - **Frontend (hard cap removed)**: `useSmartCulling` no longer forces smart culling at 1000 nodes. The hook still triggers on `events.length >= SMART_CULL_THRESHOLD (200)` — that's the meaningful signal — and the user toggle still works. The cap was redundant once LOD clusters are the primary render source; it stays removed because the Geo View with clustering OFF still uses `culledNodes`, and operators with a small filtered topology should see all of it.
+
+  - **Parity gate (REQ-1 / REQ-2 drift guard)**: `frontend/types/graph.ts::OverviewCluster` mirrors the backend schema exactly; `frontend/__tests__/parity.test.ts::OVERVIEW_CLUSTER_KEYS` includes all five new keys; the five `fixtures/graph-contracts/overview_*.json` fixtures were updated to carry the new fields with redacted clusters carrying zeros and non-redacted clusters carrying plausible city coordinates. **85/85 parity tests green**.
+
+  - **Test evidence** (local, all 840 frontend + 148/149 backend graph tests green):
+
+    | file | tests |
+    |---|---|
+    | `backend/tests/test_graph_overview_centroid.py` | 8/8 — schema, defaults, redacted suppression, none/region/city precision, negative-longitude rounding |
+    | `backend/tests/test_graph_overview_severity_counts.py` | 6/6 — schema, defaults, wire serialization, strict-model rejection, service pass-through, redacted zeroing |
+    | `backend/tests/test_graph_overview_repo_severity.py` | 7/7 — Cypher joins `[:HAS_EVENT]`, filters `e.status IN [OPEN, ACK]`, returns `critical_count`/`warning_count`/`event_count`/`centroid_lat`/`centroid_long`, branches on severity, admin path aggregates |
+    | `frontend/hooks/__tests__/geoViewLODData.test.ts` | 10/10 — `joinEventsToNodes` + `getClusterRenderConfig` |
+    | `frontend/hooks/__tests__/useGeoViewLODData.test.tsx` | 7/7 — overview/detail discrimination, fallback when detail hasn't resolved, error surfacing |
+    | `frontend/components/__tests__/MonitoringConsole.geoViewLOD.test.tsx` | 5/5 — one CircleMarker per LOD cluster, severity-coloring, redacted-centroid skip, legacy fallback, no-crash on detail-mode payload |
+
+  The one remaining backend test failure (`test_graph_hidden_absent_parity::test_graph_full_endpoint_byte_equality_preserved`) is unrelated — it asserts that `tests/test_graph_full_snapshot.py` exists, and that file is missing from the tree.
+
 ## [1.19.3] — 2026-09-29
 
 ### Performance
