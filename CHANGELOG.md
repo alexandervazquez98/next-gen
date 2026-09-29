@@ -32,6 +32,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.3] — 2026-09-29
+
+### Performance
+
+- **Geo View no longer costs every operator a megabyte on page load (#527, PR #530)**: `frontend/components/MonitoringConsole.tsx` imported `VectorTileBasemap` statically, which pulled `maplibre-gl` — a WebGL renderer — into the entry chunk. The Geo View is one tab of the Event Console, so every operator downloaded ~1 MB they may never open. The import is now deferred with `React.lazy()` + `Suspense fallback={null}` at the call site, using the existing `GeoViewErrorBoundary` for chunk-load failures and Leaflet's own tile events for the loading state. The side-effect import of `@maplibre/maplibre-gl-leaflet`, which patches `L.maplibreGL` onto the shared Leaflet namespace, travels with the chunk; that is correct, because the component body calling `L.maplibreGL` only runs once the chunk resolves and both files share one `leaflet` instance. `frontend/vite.config.ts` is deliberately unchanged — its `optimizeDeps.exclude` is a dev-server pre-bundling concern, orthogonal to build-time code splitting. Measured with `vite build`, both ends reproduced independently in CI and in the test-mode report:
+
+  | artifact | before | after |
+  |---|---|---|
+  | `index-*.js` (entry) | 2,854.68 kB | **1,819.57 kB** |
+  | `VectorTileBasemap-*.js` (lazy) | — | 1,029.91 kB |
+  | `index-*.css` | 189.38 kB | 106.23 kB |
+  | `VectorTileBasemap-*.css` (lazy) | — | 83.15 kB |
+
+  Main JS drops **1,035.11 kB (−36.2 %)**; total CSS is unchanged at 189.38 kB, with 83.15 kB of it now deferred. **Note for anyone comparing against issue #527:** its "~1.5 MB" acceptance criterion is not reachable — the measured floor is 1,807.75 kB — and the numbers above are the real ones. The issue's separate claim that `maplibre-gl` inflates the bundle by ~1 MB was accurate. A new behavioral test pins the deferral: it mocks `./VectorTileBasemap` and uses `vi.resetModules()` with a fresh dynamic import per test, so it fails against a static import rather than passing vacuously.
+
+### Changed
+
+- **Corrected the PR attribution of two v1.19.2 changelog entries**: the vector-tile basemap and the Vite `optimizeDeps` entries were credited to PR #516. Both shipped in PR #515 (`9a00e20`); PR #516 (`bc219a4`) contains a single commit touching only `docs/AI_AGENT_GUIDE.md`. The original error came from reading adjacency in a `git log --grep` listing as merge membership — `git merge-base --is-ancestor` is the check that proves it. Docs only, no behavior change.
+
 ## [1.19.2] — 2026-09-28
 
 > This release also carries four PRs merged after the `v1.19.1` tag, which shipped without
