@@ -182,7 +182,17 @@ def _build_detail_query(
                  display_label: coalesce(n.name, n.id),
                  kind: coalesce(labels(n), ['CI'])[0],
                  ci_type: coalesce(n.layer, 'CI'),
-                 allowed_public_axes: []
+                 allowed_public_axes: [],
+                 # #524 follow-up — per-node raw coordinates. Rounding and
+                 # REQ-9 redaction are applied by the service layer into
+                 # ``DetailNode.display_geo``; the repo stays deterministic
+                 # and principal-agnostic. ``coalesce(..., 0.0)`` keeps CIs
+                 # without a ``n.location`` from breaking the projection;
+                 # the service treats (lat=0, long=0) as "no location set".
+                 location: {{
+                     lat: coalesce(n.location.lat, 0.0),
+                     long: coalesce(n.location.long, 0.0)
+                 }}
              }}] AS nodes_page
         RETURN
             $display_label AS display_label,
