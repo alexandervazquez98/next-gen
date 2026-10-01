@@ -36,6 +36,10 @@
         "ci_type"
       ],
       "ci_type": "router",
+      "display_geo": {
+        "lat": 41.3851,
+        "long": 2.1734
+      },
       "display_label": "R1",
       "id": "ci-1",
       "kind": "CI"
@@ -45,6 +49,7 @@
         "ci_type"
       ],
       "ci_type": "router",
+      "display_geo": null,
       "display_label": "R2",
       "id": "ci-2",
       "kind": "CI"

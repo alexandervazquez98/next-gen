@@ -1724,100 +1724,183 @@ const MonitoringConsole: React.FC = () => {
                           />
                         );
                       })()
-                    : // #524 Tier 2 — cluster markers via LOD overview endpoint.
-                      // Server-side aggregation scales to 50k+ CIs without
-                      // the client-side hard cap. Falls back to the legacy
-                      // client-side supercluster when the LOD payload is
-                      // unavailable (network error, missing scope, etc.).
-                      geoLOD.clusters.length > 0
-                      ? geoLOD.clusters
-                          .filter((c) => c.centroid_lat !== 0 || c.centroid_long !== 0)
-                          .map((cluster) => {
-                            const cfg = getClusterRenderConfig(cluster);
+                    : // #524 Tier 2 — detail-mode render branch. Activated when
+                      // the operator clicks a cluster marker (sets
+                      // focusedClusterId) and the LOD detail query resolves
+                      // with non-redacted nodes. Renders per-node CircleMarker
+                      // positions from node.display_geo (privacy-safe rounded
+                      // coords). Nodes with display_geo=null (REQ-9 redacted
+                      // or no location set) are skipped — the renderer MUST
+                      // never emit (0, 0) markers. Click the popup's back
+                      // button to clear focusedClusterId and return to the
+                      // country overview.
+                      geoLOD.kind === "detail"
+                      ? geoLOD.enrichedNodes
+                          .filter((node) => node.display_geo !== null)
+                          .map((node) => {
+                            if (!node.display_geo) return null;
+                            const color = node.hasCritical
+                              ? "#dc2626"
+                              : node.hasWarning
+                                ? "#eab308"
+                                : "#22c55e";
                             return (
                               <CircleMarker
-                                key={cluster.cluster_id}
-                                center={[cluster.centroid_lat, cluster.centroid_long]}
-                                radius={cfg.pixelRadius}
+                                key={node.id}
+                                center={[node.display_geo.lat, node.display_geo.long]}
+                                radius={6}
                                 pathOptions={{
-                                  color: cfg.color,
-                                  fillColor: cfg.color,
-                                  fillOpacity: cfg.worstSeverity === "OK" ? 0.4 : 0.7,
-                                  weight: cfg.worstSeverity === "OK" ? 1 : 2,
+                                  color,
+                                  fillColor: color,
+                                  fillOpacity: 0.7,
+                                  weight: 1,
                                   opacity: 1,
-                                }}
-                                eventHandlers={{
-                                  click: () => setFocusedClusterId(cluster.cluster_id),
                                 }}
                               >
                                 <Popup>
-                                  <div className="p-2 min-w-[200px]">
-                                    <h3 className="font-bold text-sm mb-1">
-                                      {cluster.display_label}
-                                    </h3>
+                                  <div className="p-2 min-w-[180px]">
+                                    <h3 className="font-bold text-sm mb-1">{node.display_label}</h3>
                                     <p className="text-xs text-neutral-500 mb-2">
-                                      {cluster.visible_node_count} CIs ·{" "}
-                                      {cluster.visible_link_count} links
+                                      {node.ci_type} · {node.events.length} active event
+                                      {node.events.length === 1 ? "" : "s"}
                                     </p>
-                                    {cluster.aggregate_redacted ? (
-                                      <div className="text-orange-400 text-xs font-bold">
-                                        Redacted (low cardinality)
-                                      </div>
-                                    ) : (
-                                      <div className="space-y-1 text-xs">
-                                        {cluster.critical_count > 0 && (
-                                          <div className="text-red-700 bg-red-100 p-1 rounded">
-                                            {cluster.critical_count} CRITICAL
-                                          </div>
-                                        )}
-                                        {cluster.warning_count > 0 && (
-                                          <div className="text-yellow-700 bg-yellow-100 p-1 rounded">
-                                            {cluster.warning_count} WARNING
-                                          </div>
-                                        )}
-                                        {cluster.critical_count === 0 &&
-                                          cluster.warning_count === 0 && (
-                                            <div className="text-green-700 bg-green-100 p-1 rounded">
-                                              All clear
-                                            </div>
-                                          )}
+                                    {node.hasCritical && (
+                                      <div className="text-red-700 bg-red-100 p-1 rounded text-xs mb-1">
+                                        CRITICAL
                                       </div>
                                     )}
+                                    {node.hasWarning && (
+                                      <div className="text-yellow-700 bg-yellow-100 p-1 rounded text-xs mb-1">
+                                        WARNING
+                                      </div>
+                                    )}
+                                    <button
+                                      onClick={() => setFocusedClusterId(null)}
+                                      className="mt-2 px-2 py-1 rounded bg-black/30 hover:bg-black/50 border border-white/10 text-[10px] font-bold uppercase text-neutral-300 w-full"
+                                    >
+                                      ← Back to overview
+                                    </button>
                                   </div>
                                 </Popup>
                               </CircleMarker>
                             );
                           })
-                      : // Fallback: legacy client-side supercluster.
-                        clusters
-                          .filter((c) => c.count > 0)
-                          .filter((c) => {
-                            // Skip clusters whose centroid is outside the current viewport.
-                            const bounds = mapBoundsRef.current;
-                            if (!bounds) return true;
-                            const [lat, lng] = c.centroid;
-                            if (bounds.west <= bounds.east) {
+                      : // #524 Tier 2 — cluster markers via LOD overview endpoint.
+                        // Server-side aggregation scales to 50k+ CIs without
+                        // the client-side hard cap. Falls back to the legacy
+                        // client-side supercluster when the LOD payload is
+                        // unavailable (network error, missing scope, etc.).
+                        geoLOD.clusters.length > 0
+                        ? geoLOD.clusters
+                            .filter((c) => c.centroid_lat !== 0 || c.centroid_long !== 0)
+                            .map((cluster) => {
+                              const cfg = getClusterRenderConfig(cluster);
+                              return (
+                                <CircleMarker
+                                  key={cluster.cluster_id}
+                                  center={[cluster.centroid_lat, cluster.centroid_long]}
+                                  radius={cfg.pixelRadius}
+                                  pathOptions={{
+                                    color: cfg.color,
+                                    fillColor: cfg.color,
+                                    fillOpacity: cfg.worstSeverity === "OK" ? 0.4 : 0.7,
+                                    weight: cfg.worstSeverity === "OK" ? 1 : 2,
+                                    opacity: 1,
+                                  }}
+                                  eventHandlers={{
+                                    click: () => setFocusedClusterId(cluster.cluster_id),
+                                  }}
+                                >
+                                  <Popup>
+                                    <div className="p-2 min-w-[200px]">
+                                      <h3 className="font-bold text-sm mb-1">
+                                        {cluster.display_label}
+                                      </h3>
+                                      <p className="text-xs text-neutral-500 mb-2">
+                                        {cluster.visible_node_count} CIs ·{" "}
+                                        {cluster.visible_link_count} links
+                                      </p>
+                                      {cluster.aggregate_redacted ? (
+                                        <div className="text-orange-400 text-xs font-bold">
+                                          Redacted (low cardinality)
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-1 text-xs">
+                                          {cluster.critical_count > 0 && (
+                                            <div className="text-red-700 bg-red-100 p-1 rounded">
+                                              {cluster.critical_count} CRITICAL
+                                            </div>
+                                          )}
+                                          {cluster.warning_count > 0 && (
+                                            <div className="text-yellow-700 bg-yellow-100 p-1 rounded">
+                                              {cluster.warning_count} WARNING
+                                            </div>
+                                          )}
+                                          {cluster.critical_count === 0 &&
+                                            cluster.warning_count === 0 && (
+                                              <div className="text-green-700 bg-green-100 p-1 rounded">
+                                                All clear
+                                              </div>
+                                            )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </Popup>
+                                </CircleMarker>
+                              );
+                            })
+                        : // Fallback: legacy client-side supercluster.
+                          clusters
+                            .filter((c) => c.count > 0)
+                            .filter((c) => {
+                              // Skip clusters whose centroid is outside the current viewport.
+                              const bounds = mapBoundsRef.current;
+                              if (!bounds) return true;
+                              const [lat, lng] = c.centroid;
+                              if (bounds.west <= bounds.east) {
+                                return (
+                                  lat >= bounds.south &&
+                                  lat <= bounds.north &&
+                                  lng >= bounds.west &&
+                                  lng <= bounds.east
+                                );
+                              }
                               return (
                                 lat >= bounds.south &&
                                 lat <= bounds.north &&
-                                lng >= bounds.west &&
-                                lng <= bounds.east
+                                (lng >= bounds.west || lng <= bounds.east)
                               );
-                            }
-                            return (
-                              lat >= bounds.south &&
-                              lat <= bounds.north &&
-                              (lng >= bounds.west || lng <= bounds.east)
-                            );
-                          })
-                          .map((cluster) => (
-                            <ClusterMarker
-                              key={cluster.id}
-                              cluster={cluster}
-                              onExpand={handleClusterExpand}
-                            />
-                          ))}
+                            })
+                            .map((cluster) => (
+                              <ClusterMarker
+                                key={cluster.id}
+                                cluster={cluster}
+                                onExpand={handleClusterExpand}
+                              />
+                            ))}
               </MapContainer>
+
+              {/* #524 follow-up — Detail-mode breadcrumb overlay. Renders
+                  when the operator has focused a cluster (LOD drill-down).
+                  Clicking it clears focusedClusterId and returns to the
+                  country overview. Sibling to the status overlay below. */}
+              {focusedClusterId !== null && geoLOD.kind === "detail" && (
+                <div
+                  data-testid="detail-breadcrumb"
+                  className="absolute top-4 left-4 px-3 py-2 glass rounded-lg border border-white/5 shadow-2xl z-[1000] flex items-center gap-3"
+                >
+                  <span className="text-[10px] font-bold uppercase text-neutral-400">
+                    Drill-down · {geoLOD.enrichedNodes.length} nodes
+                  </span>
+                  <button
+                    data-testid="detail-breadcrumb-back"
+                    onClick={() => setFocusedClusterId(null)}
+                    className="px-2 py-1 rounded-md bg-black/30 hover:bg-black/50 border border-white/10 text-[10px] font-bold uppercase text-neutral-300 transition-colors"
+                  >
+                    ← Back to overview
+                  </button>
+                </div>
+              )}
 
               {/* Status Overlay — sibling to MapContainer, inside the relative wrapper */}
               <div className="absolute top-4 right-4 p-4 glass rounded-xl border border-white/5 shadow-2xl z-[1000] min-w-[250px]">

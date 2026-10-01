@@ -239,3 +239,65 @@ class TestSchemaDTOs:
 
         flags = ProjectionFlags()
         assert flags.show_sensitive_metadata is False
+
+    # ------------------------------------------------------------------
+    # #524 follow-up — DetailNode gains a privacy-safe per-node geo field
+    # (``display_geo``) so the Geo View can render detail-mode markers
+    # after a cluster click. The raw ``n.location.lat/long`` are still
+    # NEVER exposed (REQ-9); ``display_geo`` is the service-layer
+    # rounding output and defaults to None when the CI is redacted.
+    # ------------------------------------------------------------------
+
+    def test_display_geo_round_trip(self):
+        """DisplayGeo is a typed BaseModel with lat/long only."""
+        from schemas.graph import DisplayGeo
+
+        geo = DisplayGeo(lat=40.4168, long=-3.7038)
+        dumped = geo.model_dump(mode="json")
+        assert dumped == {"lat": 40.4168, "long": -3.7038}
+        round_tripped = DisplayGeo.model_validate(dumped)
+        assert round_tripped.lat == 40.4168
+        assert round_tripped.long == -3.7038
+
+    def test_display_geo_strict_forbids_unknown_keys(self):
+        """DisplayGeo inherits _strict_model() — extra="forbid" applies."""
+        import pytest
+        from pydantic import ValidationError
+        from schemas.graph import DisplayGeo
+
+        with pytest.raises(ValidationError):
+            DisplayGeo(lat=40.4168, long=-3.7038, altitude=660.0)
+
+    def test_detail_node_exposes_display_geo_field(self):
+        """DetailNode accepts a DisplayGeo and round-trips it."""
+        from schemas.graph import DetailNode, DisplayGeo
+
+        node = DetailNode(
+            id="ci-mad-01",
+            display_label="HQ-Madrid-RT-01",
+            kind="CI",
+            ci_type="router",
+            allowed_public_axes=["ci_type"],
+            display_geo=DisplayGeo(lat=40.4168, long=-3.7038),
+        )
+        dumped = node.model_dump(mode="json")
+        assert dumped["display_geo"] == {"lat": 40.4168, "long": -3.7038}
+        assert node.display_geo is not None
+        assert node.display_geo.lat == 40.4168
+
+    def test_detail_node_display_geo_defaults_to_none(self):
+        """Backward-compatible: existing fixtures without display_geo stay valid."""
+        from schemas.graph import DetailNode
+
+        node = DetailNode(
+            id="ci-1",
+            display_label="ci-1",
+            kind="CI",
+            ci_type="router",
+        )
+        assert node.display_geo is None
+        dumped = node.model_dump(mode="json")
+        # `display_geo` is None — the field is always emitted (schema contract),
+        # but the value is null so the renderer can branch on it explicitly.
+        assert "display_geo" in dumped
+        assert dumped["display_geo"] is None

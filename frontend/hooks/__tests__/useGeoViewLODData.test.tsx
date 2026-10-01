@@ -83,6 +83,7 @@ const DETAIL: DetailResponse = {
       kind: "CI",
       ci_type: "router",
       allowed_public_axes: [],
+      display_geo: { lat: 40.4168, long: -3.7038 },
     },
     {
       id: "ci-2",
@@ -90,6 +91,7 @@ const DETAIL: DetailResponse = {
       kind: "CI",
       ci_type: "router",
       allowed_public_axes: [],
+      display_geo: null, // No-location sentinel; renderer skips the marker.
     },
   ],
   links: [],
@@ -200,6 +202,12 @@ describe("useGeoViewLODData — detail mode", () => {
     expect(ci2.hasCritical).toBe(false);
     expect(ci2.hasWarning).toBe(false);
     expect(ci2.events).toEqual([]);
+
+    // #524 follow-up — joinEventsToNodes passes display_geo through unchanged.
+    // The composer adds events/hasCritical/hasWarning on top of the node;
+    // privacy-safe geo MUST survive the spread.
+    expect(ci1.display_geo).toEqual({ lat: 40.4168, long: -3.7038 });
+    expect(ci2.display_geo).toBeNull();
   });
 
   it("forwards the clusterId to useGraphDetailQuery", async () => {

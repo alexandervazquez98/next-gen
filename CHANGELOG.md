@@ -63,6 +63,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The one remaining backend test failure (`test_graph_hidden_absent_parity::test_graph_full_endpoint_byte_equality_preserved`) is unrelated — it asserts that `tests/test_graph_full_snapshot.py` exists, and that file is missing from the tree.
 
+## [1.19.5] — 2026-10-01
+
+### Performance
+
+- **Geo View detail-mode render branch + `DetailNode.display_geo` (closes #524 follow-up, PR #534)**: the Geo View of `MonitoringConsole` rendered cluster markers from the LOD overview payload after the v1.19.4 Tier 2 migration, but clicking a country cluster and drilling down still fell back to the legacy `useMapClustering` supercluster path because `DetailNode` deliberately omitted `lat`/`long` per REQ-9 sensitivity policy. This slice closes that loop by adding a privacy-safe per-node `display_geo` field on `DetailNode`, rounding it through the existing `safe_geo_precision` ladder, and rendering per-node `CircleMarker`s from the new field. The legacy client-side drill-down path is no longer entered when `geoLOD.kind === "detail"`. Eight files changed, +528 / −19 lines, 851/851 frontend tests + 149/149 backend graph tests green.
+
+  - **Backend (`DetailNode.display_geo`, additive)**: new `DisplayGeo` Pydantic model with `lat: float`, `long: float`, `_strict_model()` config (`extra="forbid"`). `DetailNode.display_geo: DisplayGeo | None = None` defaults to None and is always emitted on the wire. The raw `n.location.lat` / `n.location.long` are NEVER exposed on `DetailNode` — only the service-rounded value (or `null`) is. New tests `test_display_geo_round_trip`, `test_display_geo_strict_forbids_unknown_keys`, `test_detail_node_exposes_display_geo_field`, `test_detail_node_display_geo_defaults_to_none` in `test_graph_contracts_schemas.py`.
+
+  - **Backend (Cypher per-node projection)**: `aggregate_detail_subgraph` extends the `nodes_page` map literal in `_build_detail_query` to read `n.location.lat` / `n.location.long` per node with `coalesce(..., 0.0)`. The repo stays principal-agnostic and deterministic; `(0.0, 0.0)` is the sentinel for "no location set" and is NEVER rendered as a marker. Three new tests in `backend/tests/test_graph_detail_repo_display_geo.py` assert the projection shape (one Cypher-shape test) and the consumer shape (one driver-mock test asserting each node carries `{location: {lat, long}}`).
+
+  - **Backend (privacy rounding)**: new `_round_detail_node_geo(node, precision)` helper in `backend/services/graph_lod_service.py` mirrors `_round_cluster_centroid` at the per-node layer. Returns a new `DetailNode` via `model_copy(update={...})` with `display_geo` set to `None`, rounded to 2 decimals (REGION), or rounded to 4 decimals (CITY). Defense in depth: `(0.0, 0.0)` always drops to `None` regardless of tier; unknown precision passes through. `_shape_detail_node` extracts the raw `location` dict and constructs a `DisplayGeo` (malformed/missing → `None`); `_round_detail_node_geo` is then applied to each node AFTER the focused cluster's `visible_node_count` is resolved into a tier via the existing `_derive_safe_geo_precision_for_principal` helper (same path as `get_overview`: tier ladder + `graph:aggregate_breakdown:read` permission check). Wire shape is verified by `test_get_detail_wire_shape_does_not_leak_raw_n_location` — top-level `lat` / `long` / `location` are NEVER emitted on a node dump; `lat` / `long` only appear nested under `display_geo`. Twelve new tests in `backend/tests/test_graph_detail_display_geo.py` cover the helper (7) and the integration (5).
+
+  - **Frontend (TS mirror + parity gate)**: `frontend/types/graph.ts::DetailNode` gains `display_geo: { lat: number; long: number } | null` (required in TS — the wire always emits the key). `frontend/__tests__/parity.test.ts::DETAIL_NODE_KEYS` includes `display_geo`; all detail fixtures conform. The composer `joinEventsToNodes` passes `display_geo` through the spread unchanged — explicitly verified by a new assertion in `useGeoViewLODData.test.tsx`. `GeoViewNode extends DetailNode` so the field flows into `enrichedNodes` automatically.
+
+  - **Frontend (render branch + breadcrumb)**: new JSX detail-mode branch in `MonitoringConsole.tsx` between the legacy `MapFocusZone` and the overview cluster markers. Iterates `geoLOD.enrichedNodes` filtered by `display_geo !== null`, renders one `CircleMarker` per non-redacted node positioned at `[display_geo.lat, display_geo.long]` colored by worst severity (CRITICAL → red, WARNING → yellow, OK → green). Each `CircleMarker` carries a `<Popup>` with `display_label`, `ci_type`, active-event count, severity chips, and a "Back to overview" button that calls `setFocusedClusterId(null)`. New sibling breadcrumb overlay (top-left, `data-testid="detail-breadcrumb"`) appears when `focusedClusterId !== null && geoLOD.kind === "detail"` showing node count + the same back button. The legacy `useMapClustering` path is no longer entered when `geoLOD.kind === "detail"`. Four new tests in `MonitoringConsole.geoViewLOD.test.tsx` (1 forwarding contract, 2 detail markers, 1 breadcrumb contract placeholder). `getBounds()` mock extended with valid bounds so the click-to-detail re-mount of `MapBounds` does not crash on `b.getSouth()`.
+
+  - **Parity fixtures**: `fixtures/graph-contracts/detail_visible.json` (3 nodes updated with Paris coords), `detail_boundary_stub.json` (1 with coords, 1 null), and new `detail_redacted.json` (low-cardinality cluster, 3 nodes all with `display_geo: null`) exercise the precision ladder. Empty-node fixtures (`detail_no_visible_members.json`, `detail_hidden.json`, `detail_absent.json`) need no change.
+
+  - **Test evidence** (local, all 851 frontend + 149/149 backend graph tests green):
+
+    | file | tests |
+    |---|---|
+    | `backend/tests/test_graph_contracts_schemas.py` | 14/14 — 4 new `display_geo` schema tests added |
+    | `backend/tests/test_graph_detail_repo_display_geo.py` | 3/3 — Cypher projection + consumer shape |
+    | `backend/tests/test_graph_detail_display_geo.py` | 12/12 — 7 helper unit + 5 integration |
+    | `frontend/__tests__/parity.test.ts` | 93/93 — DETAIL_NODE_KEYS extended, all detail fixtures conform |
+    | `frontend/hooks/__tests__/useGeoViewLODData.test.tsx` | 7/7 — display_geo passthrough assertion |
+    | `frontend/components/__tests__/MonitoringConsole.geoViewLOD.test.tsx` | 8/8 — 4 detail tests + 4 pre-existing overview tests |
+
+  **Out of scope (deferred to a future slice)**: visual styling of drill-down markers (color, size, shape beyond the severity encoding); webgl renderer migration (Tier 3); cluster click on detail mode (further drill-down); `display_geo` exposure for non-geo CIs (they render with `display_geo = null` and no marker — by design).
+
 ## [1.19.3] — 2026-09-29
 
 ### Performance

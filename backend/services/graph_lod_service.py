@@ -48,6 +48,7 @@ from schemas.graph import (
     DetailLink,
     DetailNode,
     DetailResponse,
+    DisplayGeo,
     Legend,
     OverviewCluster,
     OverviewResponse,
@@ -177,6 +178,64 @@ def _round_cluster_centroid(
     return cluster
 
 
+def _round_detail_node_geo(
+    node: DetailNode,
+    safe_geo_precision: str,
+) -> DetailNode:
+    """Apply the response-level safe_geo_precision to a detail node's geo (#524).
+
+    Mirror of ``_round_cluster_centroid`` at the per-node layer. Used by
+    ``get_detail`` after the focused cluster's ``visible_node_count`` is
+    resolved into a privacy tier via ``derive_safe_geo_precision``.
+
+    Rules (same ladder as the cluster path, plus a no-location guard):
+
+    - ``display_geo is None``          -> unchanged (defensive).
+    - raw coords are ``(0.0, 0.0)``    -> ``display_geo = None``
+      (the repo COALESCEs missing ``n.location.lat/long`` to 0.0;
+      ``(0, 0)`` is the sentinel for "no location set" and MUST
+      NEVER render a marker).
+    - precision == ``"none"``          -> ``display_geo = None`` (defense in depth).
+    - precision == ``"region"``        -> round lat/long to 2 decimals (~1.1 km).
+    - precision == ``"city"``            -> round lat/long to 4 decimals (~11 m).
+    - unknown precision               -> unchanged (defensive).
+
+    The input node is NEVER mutated; a new DetailNode is returned via
+    ``model_copy(update={...})``.
+    """
+    if node.display_geo is None:
+        return node
+
+    # No-location sentinel from the repo: CIs without ``n.location`` COALESCE
+    # to (0, 0). Suppress those regardless of tier so we never paint a marker
+    # at the origin.
+    if node.display_geo.lat == 0.0 and node.display_geo.long == 0.0:
+        return node.model_copy(update={"display_geo": None})
+
+    if safe_geo_precision == SafeGeoPrecision.NONE.value:
+        return node.model_copy(update={"display_geo": None})
+    if safe_geo_precision == SafeGeoPrecision.REGION.value:
+        return node.model_copy(
+            update={
+                "display_geo": DisplayGeo(
+                    lat=round(node.display_geo.lat, 2),
+                    long=round(node.display_geo.long, 2),
+                )
+            }
+        )
+    if safe_geo_precision == SafeGeoPrecision.CITY.value:
+        return node.model_copy(
+            update={
+                "display_geo": DisplayGeo(
+                    lat=round(node.display_geo.lat, 4),
+                    long=round(node.display_geo.long, 4),
+                )
+            }
+        )
+    # Unknown tier — pass through unchanged (defensive).
+    return node
+
+
 def get_overview(principal: Any, filters: dict[str, Any]) -> OverviewResponse:
     """Build the ``OverviewResponse`` for the given principal."""
     allowed_locations, is_admin = _resolve_visible_set(principal)
@@ -304,12 +363,30 @@ def _shape_detail_node(raw: dict[str, Any], projection: ProjectionFlags) -> Deta
     """Apply projection to a raw node dict and shape it as DetailNode."""
     node_data = dict(raw) if projection.show_sensitive_metadata else _strip_sensitive_fields(raw)
     allowed_axes = node_data.get("allowed_public_axes") or []
+
+    # #524 follow-up — extract the raw per-node location into a DisplayGeo.
+    # The privacy rounding happens later via _round_detail_node_geo (driven by
+    # the focused cluster's visible_node_count + principal permissions).
+    # A missing / malformed ``location`` yields display_geo=None so the
+    # renderer skips the marker rather than emitting (0, 0).
+    raw_location = node_data.get("location")
+    display_geo: DisplayGeo | None = None
+    if isinstance(raw_location, dict) and "lat" in raw_location and "long" in raw_location:
+        try:
+            display_geo = DisplayGeo(
+                lat=float(raw_location["lat"]),
+                long=float(raw_location["long"]),
+            )
+        except (TypeError, ValueError):
+            display_geo = None
+
     return DetailNode(
         id=str(node_data["id"]),
         display_label=str(node_data.get("display_label") or node_data["id"]),
         kind=str(node_data.get("kind") or "CI"),
         ci_type=str(node_data.get("ci_type") or "CI"),
         allowed_public_axes=list(allowed_axes),
+        display_geo=display_geo,
     )
 
 
@@ -429,6 +506,19 @@ def get_detail(
 
     cluster_meta = raw_subgraph["cluster"]
     nodes = [_shape_detail_node(n, projection) for n in raw_subgraph.get("nodes") or []]
+
+    # #524 follow-up — resolve the per-response safe_geo_precision from the
+    # focused cluster's visible_node_count and apply the rounding helper to
+    # each node. Mirrors the overview path (``_round_cluster_centroid``)
+    # so the same principal tier governs both aggregate and per-node geo.
+    minimum_count = DEFAULT_MINIMUM_COUNT
+    safe_geo_precision = _derive_safe_geo_precision_for_principal(
+        principal=principal,
+        visible_count=int(cluster_meta.get("visible_node_count", 0)),
+        minimum_count=minimum_count,
+    )
+    nodes = [_round_detail_node_geo(n, safe_geo_precision) for n in nodes]
+
     links = [_shape_detail_link(link) for link in raw_subgraph.get("links") or []]
     has_more = bool(raw_subgraph.get("has_more", False))
 
