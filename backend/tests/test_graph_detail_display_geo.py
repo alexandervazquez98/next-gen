@@ -121,11 +121,15 @@ def test_round_detail_node_geo_zero_coords_drop_to_none():
         display_geo=DisplayGeo(lat=0.0, long=0.0),
     )
 
-    for precision in (SafeGeoPrecision.NONE.value, SafeGeoPrecision.REGION.value, SafeGeoPrecision.CITY.value):
+    for precision in (
+        SafeGeoPrecision.NONE.value,
+        SafeGeoPrecision.REGION.value,
+        SafeGeoPrecision.CITY.value,
+    ):
         result = graph_lod_service._round_detail_node_geo(node, precision)
-        assert result.display_geo is None, (
-            f"precision={precision} should drop (0, 0) to None; got {result.display_geo}"
-        )
+        assert (
+            result.display_geo is None
+        ), f"precision={precision} should drop (0, 0) to None; got {result.display_geo}"
 
 
 def test_round_detail_node_geo_does_not_mutate_input():
@@ -187,7 +191,11 @@ def test_round_detail_node_geo_none_input_passes_through():
         ci_type="router",
     )
 
-    for precision in (SafeGeoPrecision.NONE.value, SafeGeoPrecision.REGION.value, SafeGeoPrecision.CITY.value):
+    for precision in (
+        SafeGeoPrecision.NONE.value,
+        SafeGeoPrecision.REGION.value,
+        SafeGeoPrecision.CITY.value,
+    ):
         result = graph_lod_service._round_detail_node_geo(node, precision)
         assert result.display_geo is None
 
@@ -354,9 +362,7 @@ def test_get_detail_city_precision_rounds_to_4_decimals(monkeypatch):
 
     response = graph_lod_service.get_detail(
         cluster_id_raw="location:HQ-Madrid",
-        principal=_principal(
-            is_admin=True, permissions=["graph:aggregate_breakdown:read"]
-        ),
+        principal=_principal(is_admin=True, permissions=["graph:aggregate_breakdown:read"]),
         filters={},
         cursor=None,
         limit=100,
@@ -389,9 +395,7 @@ def test_get_detail_wire_shape_does_not_leak_raw_n_location(monkeypatch):
 
     response = graph_lod_service.get_detail(
         cluster_id_raw="location:HQ-Madrid",
-        principal=_principal(
-            is_admin=True, permissions=["graph:aggregate_breakdown:read"]
-        ),
+        principal=_principal(is_admin=True, permissions=["graph:aggregate_breakdown:read"]),
         filters={},
         cursor=None,
         limit=100,
