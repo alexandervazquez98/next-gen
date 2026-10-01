@@ -36,6 +36,10 @@
         "location_name"
       ],
       "ci_type": "router",
+      "display_geo": {
+        "lat": 48.8566,
+        "long": 2.3522
+      },
       "display_label": "Router-01",
       "id": "ci-1",
       "kind": "CI"
@@ -46,6 +50,10 @@
         "location_name"
       ],
       "ci_type": "switch",
+      "display_geo": {
+        "lat": 48.8606,
+        "long": 2.3376
+      },
       "display_label": "Switch-01",
       "id": "ci-2",
       "kind": "CI"
@@ -56,6 +64,10 @@
         "location_name"
       ],
       "ci_type": "server",
+      "display_geo": {
+        "lat": 48.8738,
+        "long": 2.295
+      },
       "display_label": "Server-01",
       "id": "ci-3",
       "kind": "CI"

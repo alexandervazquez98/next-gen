@@ -84,6 +84,9 @@ const DETAIL_NODE_KEYS: ReadonlyArray<string> = [
   "kind",
   "ci_type",
   "allowed_public_axes",
+  // #524 follow-up — privacy-safe per-node geo. Always emitted on the
+  // wire (value may be null when the CI is redacted or has no location).
+  "display_geo",
 ];
 
 const DETAIL_LINK_KEYS: ReadonlyArray<string> = [

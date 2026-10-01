@@ -106,6 +106,13 @@ export interface DetailNode {
   kind: string;
   ci_type: string;
   allowed_public_axes: string[];
+  // #524 follow-up — privacy-safe per-node geo. Coordinates are rounded
+  // at the service layer to safe_geo_precision (city=4dec / region=2dec).
+  // The field is null when the CI is REQ-9 redacted, when the raw
+  // ``n.location`` is missing (repo sentinel (0, 0)), or when the
+  // principal's effective tier is NONE. The wire shape always emits the
+  // key (the value may be null) so the renderer can branch explicitly.
+  display_geo: { lat: number; long: number } | null;
 }
 
 export interface DetailLink {
