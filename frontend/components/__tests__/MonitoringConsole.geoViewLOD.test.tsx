@@ -494,21 +494,23 @@ describe("MonitoringConsole — Geo View Tier 2 (LOD)", () => {
     // mocking the full state machine reliably exceeds the test
     // worker's time budget. The static detail-mode marker tests
     // above pin the render contract independently of focusedClusterId.
-    mockUseGeoViewLODData.mockReturnValue(makeLODOverviewState([
-      {
-        cluster_id: "location:HQ-Madrid",
-        display_label: "HQ-Madrid",
-        visible_node_count: 12,
-        visible_link_count: 8,
-        aggregate_redacted: false,
-        suppression_reason: null,
-        critical_count: 0,
-        warning_count: 0,
-        event_count: 0,
-        centroid_lat: 40.4168,
-        centroid_long: -3.7038,
-      },
-    ]));
+    mockUseGeoViewLODData.mockReturnValue(
+      makeLODOverviewState([
+        {
+          cluster_id: "location:HQ-Madrid",
+          display_label: "HQ-Madrid",
+          visible_node_count: 12,
+          visible_link_count: 8,
+          aggregate_redacted: false,
+          suppression_reason: null,
+          critical_count: 0,
+          warning_count: 0,
+          event_count: 0,
+          centroid_lat: 40.4168,
+          centroid_long: -3.7038,
+        },
+      ]),
+    );
 
     const { wrapper } = renderWithQueryClient();
     render(<MonitoringConsole />, { wrapper });

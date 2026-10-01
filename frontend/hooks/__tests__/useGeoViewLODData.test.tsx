@@ -91,7 +91,7 @@ const DETAIL: DetailResponse = {
       kind: "CI",
       ci_type: "router",
       allowed_public_axes: [],
-      display_geo: null,  // No-location sentinel; renderer skips the marker.
+      display_geo: null, // No-location sentinel; renderer skips the marker.
     },
   ],
   links: [],
