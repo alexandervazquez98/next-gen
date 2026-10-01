@@ -48,8 +48,8 @@ def test_round_detail_node_geo_none_precision_suppresses_to_none():
     Defense in depth: even if the input has valid coordinates, NONE
     precision suppresses them entirely.
     """
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-1",
@@ -66,8 +66,8 @@ def test_round_detail_node_geo_none_precision_suppresses_to_none():
 
 def test_round_detail_node_geo_region_rounds_to_2_decimals():
     """Precision REGION -> lat / long rounded to 2 decimals (~1.1 km)."""
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-1",
@@ -86,8 +86,8 @@ def test_round_detail_node_geo_region_rounds_to_2_decimals():
 
 def test_round_detail_node_geo_city_rounds_to_4_decimals():
     """Precision CITY -> lat / long rounded to 4 decimals (~11 m)."""
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-1",
@@ -110,8 +110,8 @@ def test_round_detail_node_geo_zero_coords_drop_to_none():
     The repo COALESCEs missing lat/long to 0.0; (0, 0) means "no location".
     The service MUST NEVER render a marker at (0, 0) regardless of tier.
     """
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-orphan",
@@ -134,8 +134,8 @@ def test_round_detail_node_geo_does_not_mutate_input():
     DetailNode is logically immutable at request scope; if the caller
     caches the rounded node across requests, mutations would leak.
     """
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-1",
@@ -154,8 +154,8 @@ def test_round_detail_node_geo_does_not_mutate_input():
 
 def test_round_detail_node_geo_preserves_other_fields():
     """Rounding must not drop or alter the non-geo fields."""
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-mad-01",
@@ -177,8 +177,8 @@ def test_round_detail_node_geo_preserves_other_fields():
 
 def test_round_detail_node_geo_none_input_passes_through():
     """If display_geo is already None, the helper must return None (no crash)."""
-    from services import graph_lod_service
     from contracts.aggregate_policy import SafeGeoPrecision
+    from services import graph_lod_service
 
     node = DetailNode(
         id="ci-1",
@@ -204,8 +204,8 @@ def test_shape_detail_node_does_not_expose_raw_location_key():
     raw node dict, the wire shape carries ``display_geo`` only. The raw
     ``location`` key MUST NEVER appear on a DetailNode dump.
     """
-    from services import graph_lod_service
     from schemas.graph import ProjectionFlags, SensitiveSource
+    from services import graph_lod_service
 
     raw = {
         "id": "ci-1",

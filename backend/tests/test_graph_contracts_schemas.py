@@ -263,7 +263,6 @@ class TestSchemaDTOs:
         """DisplayGeo inherits _strict_model() — extra="forbid" applies."""
         import pytest
         from pydantic import ValidationError
-
         from schemas.graph import DisplayGeo
 
         with pytest.raises(ValidationError):
