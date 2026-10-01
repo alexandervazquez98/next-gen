@@ -235,11 +235,32 @@ class DetailCluster(BaseModel):
     visible_link_count: int = 0
 
 
+class DisplayGeo(BaseModel):
+    """Privacy-safe per-node geo for the Geo View detail-mode rendering (#524).
+
+    Coordinates are rounded at the service layer to ``safe_geo_precision``
+    (city=4dec / region=2dec). ``DetailNode.display_geo`` is set to ``None``
+    when the CI is REQ-9 redacted or the principal's effective tier is NONE.
+    """
+
+    model_config = _strict_model()
+
+    lat: float
+    long: float
+
+
 class DetailNode(BaseModel):
     """A single node on a detail response.
 
     Sensitive fields (public_ip, metadata, geo, serial, provider_account) are
     NEVER present here — see the projection policy (impl in #391).
+
+    ``display_geo`` is the privacy-safe per-node geo added in the #524
+    follow-up so the Geo View can render detail-mode markers after a
+    cluster click. Coordinates are rounded at the service layer to
+    ``safe_geo_precision`` (city=4dec / region=2dec) and the field is
+    set to ``None`` when the CI is REQ-9 redacted or the principal's
+    effective tier is NONE.
     """
 
     model_config = _strict_model()
@@ -249,6 +270,7 @@ class DetailNode(BaseModel):
     kind: str
     ci_type: str
     allowed_public_axes: list[str] = Field(default_factory=list)
+    display_geo: DisplayGeo | None = None
 
 
 class DetailLink(BaseModel):
