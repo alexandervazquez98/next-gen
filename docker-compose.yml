@@ -187,6 +187,11 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      # parity.test.ts and graphContract.test.ts resolve fixtures relative to
+      # their own __tests__/ location, which lands on /fixtures inside the
+      # container. The build context is ./frontend so the repo-root fixtures/
+      # directory must be bind-mounted read-only. See issue #531.
+      - ./fixtures:/fixtures:ro
     environment:
       - VITE_API_TARGET=${VITE_API_TARGET:-http://nexgen_backend:8000}
     healthcheck:
