@@ -96,9 +96,7 @@ def test_migration_009_uses_idempotent_if_not_exists():
     """Every statement must use IF NOT EXISTS so the migration is re-runnable."""
     text = _load_migration()
     # Strip comment lines before counting statements
-    non_comment = "\n".join(
-        line for line in text.splitlines() if not line.strip().startswith("//")
-    )
+    non_comment = "\n".join(line for line in text.splitlines() if not line.strip().startswith("//"))
     statements = [s.strip() for s in non_comment.split(";") if s.strip()]
     assert len(statements) >= 2, "Expected at least 2 statements (id constraint + index)"
     for stmt in statements:
