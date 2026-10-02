@@ -87,6 +87,36 @@ class Link(BaseModel):
         return value
 
 
+# ---------------------------------------------------------------------------
+# Slice 1/4 of fiber-optic / physical-link visualization (#323).
+# ---------------------------------------------------------------------------
+# PhysicalLink is decoupled from the tunnel Link.medium field. It represents
+# a physical layer link between two CIs (fiber, copper, microwave, wireless
+# point-to-point) and is queryable independently of tunnel links.
+# ---------------------------------------------------------------------------
+
+PhysicalLinkType = Literal["fiber", "copper", "microwave", "wireless_ptp"]
+PhysicalLinkStatus = Literal["UP", "DOWN", "UNKNOWN", "PLANNED"]
+
+
+class PhysicalLink(BaseModel):
+    """Pydantic model representing a physical-layer link between two CIs.
+
+    Distinct from the tunnel ``Link`` model: this represents the physical
+    transport (fiber, copper, microwave, wireless_ptp) and is connected to
+    CIs through the ``CONNECTED_VIA`` relationship. Tunnel ``Link.medium``
+    is intentionally untouched — both models coexist and are queryable
+    independently.
+    """
+
+    id: str
+    type: PhysicalLinkType
+    endpoints: tuple[str, str]
+    status: PhysicalLinkStatus = "UNKNOWN"
+    capacity_gbps: float | None = None
+    install_date: str | None = None
+
+
 class Category(BaseModel):
     name: str
     icon_key: str | None = None
