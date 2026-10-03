@@ -46,13 +46,20 @@ Chain strategy: single-pr
 
 ## Phase 2: #444 visual styling
 
-### PR1 (style registry + legend)
-- [ ] 2.1 RED test in `frontend/__tests__/PhysicalLinkStyle.test.tsx`: each `PhysicalLink.type` (`fiber`, `copper`, `microwave`, `wireless_ptp`) maps to a distinct color, dash pattern, and label style
-- [ ] 2.2 RED test in `frontend/__tests__/LinkTypeLegend.test.tsx`: legend renders all link types with their colors and a one-line description
-- [ ] 2.3 `frontend/components/cmdb/topology/PhysicalLinkStyleRegistry.ts`: lookup by `PhysicalLink.type`
-- [ ] 2.4 `frontend/components/cmdb/topology/PhysicalLinkLayer.tsx`: consume registry, apply per-type styling
-- [ ] 2.5 `frontend/components/cmdb/topology/LinkTypeLegend.tsx`: render legend from registry
-- [ ] 2.6 GREEN tests; visual snapshot or contract test if applicable; full frontend suite green
+### PR1 (style registry + legend) — SHIPPED in #444
+- [x] 2.1 RED test in `frontend/__tests__/physicalLinkStyles.test.ts`: each `PhysicalLink.type` (`fiber`, `copper`, `microwave`, `wireless_ptp`) maps to a distinct color, dash pattern, and label style. (File path differs: style tests live next to the helper under `frontend/utils/__tests__/physicalLinkStyles.test.ts`.)
+- [x] 2.2 RED test in `frontend/components/cmdb/topology/__tests__/LinkTypeLegend.test.tsx`: legend renders all link types with their colors and a one-line description
+- [x] 2.3 `frontend/utils/physicalLinkStyles.ts`: lookup by `PhysicalLink.type` (frozen const + `getPhysicalLinkStyle` accessor — exhaustive via `Record<PhysicalLinkType, PhysicalLinkStyle>`)
+- [x] 2.4 ~`PhysicalLinkLayer.tsx`~: deferred to a follow-up slice — none of the legacy renderers (TopologyViewer / NetworkVisualizer / VisualRelationshipEditor / MonitoringConsole) consume PhysicalLink data today. Wiring will land when the data flow ships.
+- [x] 2.5 `frontend/components/cmdb/topology/LinkTypeLegend.tsx`: render legend from registry (data-driven, accessible, semantic)
+- [x] 2.6 GREEN tests; visual snapshot or contract test if applicable; full frontend suite green (881/881)
+
+### PR2 (CRUD API + preview route) — SHIPPED in #444 (scope expansion)
+- [x] 2.7 Backend CRUD: `backend/{schemas,repositories,services,routers}/physical_link_*.py` + register in `backend/main.py` — POST / GET list (filters: ci_id/type/status) / GET by id / PATCH status. Auth: `CI_EDIT` write, public read (mirrors tunnel-link precedent), Admin bypasses. 38 new backend tests, RED→GREEN observed.
+- [x] 2.8 Frontend API client + React Query hooks: `frontend/services/physicalLinks.ts` + `hooks/queries/{usePhysicalLinksQuery,usePhysicalLinkMutations}.ts` + `services/queryKeys.ts` keys. Cache invalidation on mutation success. 6 new frontend tests, RED→GREEN observed.
+- [x] 2.9 `frontend/components/cmdb/topology/PhysicalLinkPreview.tsx`: showcase component — legend + live CRUD list + create form + per-row status selector. 5 RTL tests, RED→GREEN observed.
+- [x] 2.10 `frontend/pages/PhysicalLinksPage.tsx`: page wrapper mounted at `/physical-links`. 2 page tests (header + back link).
+- [x] 2.11 Backend feature flag `FEATURE_CMDB_PHYSICAL_LINKS_ENABLED` (default off, 404 when off) — mirrors `FEATURE_CMDB_PROPOSALS_ENABLED`. 4 flag-off tests.
 
 ### PR2 (regression)
 - [ ] 3.1 Visual regression test: tunnel links (`vpn`, `sd_wan`, `satellite`) render unchanged (snapshot diff vs baseline)
