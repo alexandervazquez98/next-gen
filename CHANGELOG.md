@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.6] — 2026-10-03
+
 ### Changed
 
 - **feat(cmdb): add static visual styling registry and legend for PhysicalLink types (#444)**: slice 2/4 of the fiber-optic / physical-link visualization chain lands a presentational `LinkTypeLegend` and a frozen `PHYSICAL_LINK_STYLES` registry in `frontend/utils/physicalLinkStyles.ts`. The registry covers the four canonical `PhysicalLinkType` values (`fiber` / `copper` / `microwave` / `wireless_ptp`) — exhaustive at compile time via `Record<PhysicalLinkType, PhysicalLinkStyle>` and at runtime via `Object.freeze`. The new `frontend/types.ts` additions (`PhysicalLinkType`, `PhysicalLinkStyle`, `PhysicalLink`) mirror the backend `PhysicalLink` Pydantic model byte-for-byte, including the `endpoints: tuple[str, str]` shape and the `"UP" | "DOWN" | "UNKNOWN" | "PLANNED"` status literal. No existing topology renderer (`TopologyViewer` / `NetworkVisualizer` / `VisualRelationshipEditor` / `MonitoringConsole`) is touched — none consume `PhysicalLink` data today, and wiring will land in a follow-up slice that introduces the data flow. Style overrides remain a single-file edit at `frontend/utils/physicalLinkStyles.ts`.
