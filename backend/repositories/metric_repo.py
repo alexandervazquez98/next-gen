@@ -109,6 +109,54 @@ def get_metric_history_days(
     return [str(row[0]) for row in rows]
 
 
+def get_metric_window(
+    node_id: str,
+    metric_id: str,
+    start: datetime,
+    end: datetime,
+) -> List[Dict[str, Any]]:
+    """Return ``metric_values`` rows for ``(node_id, metric_id)`` in ``[start, end]``.
+
+    Slice 3/4 of the PhysicalLink visualization chain (#439). Used by the
+    slice-3 read model to compute per-endpoint counter deltas over a rollup
+    window without forcing the service layer to assemble SQLAlchemy
+    queries. Contract:
+
+    - Returns a list of ``{"time": datetime, "value": float}`` rows.
+    - Ordered ASC by time (oldest first) — the caller relies on this for
+      first/last selection.
+    - Empty list when no rows are in range (NEVER raises).
+    - Filters ``time`` with the inclusive range ``[start, end]`` to match
+      the window definition (start = now - window_seconds, end = now).
+
+    The session is opened on-demand via ``postgres_db.SessionLocal`` so
+    callers don't have to thread a ``db`` parameter through the service
+    layer; the function is otherwise pure read-only.
+    """
+    if end < start:
+        # Defensive: a misconfigured window MUST NOT silently swap bounds.
+        return []
+
+    from postgres_db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(MetricValue)
+            .filter(
+                MetricValue.node_id == node_id,
+                MetricValue.metric_id == metric_id,
+                MetricValue.time >= start,
+                MetricValue.time <= end,
+            )
+            .order_by(MetricValue.time.asc())
+            .all()
+        )
+        return [{"time": r.time, "value": float(r.value)} for r in rows]
+    finally:
+        db.close()
+
+
 def get_latest_metrics(db: Session, node_id: str) -> Dict[str, Any]:
     # This is expensive in standard SQL without strict constraints or specialized index usage (Latest LKT).
     # For now, we simple query.

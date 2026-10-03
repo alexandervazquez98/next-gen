@@ -15,6 +15,7 @@ out as a 2-list (JSON wire compatibility for the frontend DTO).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from database import get_db
@@ -214,6 +215,83 @@ class PhysicalLinkRepo:
         else:
             rows = []
         return [r for r in (self._record(row) for row in rows) if r is not None]
+
+    # ── get_aggregate_counter_samples (slice 3/4 — feat-439) ───────────────
+
+    # Metrics pulled per endpoint. The slice-3 spec locks these to the two
+    # RFC 1213 counters used to compute utilization. Slice 4 (#443) may add
+    # ifInErrors / ifOutErrors as a future extension; the slice-3 surface
+    # MUST stay closed to keep the wire shape stable.
+    _AGGREGATE_METRICS: tuple[str, ...] = ("ifInOctets", "ifOutOctets")
+
+    def get_aggregate_counter_samples(
+        self,
+        link_id: str,
+        window_seconds: int,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        """Join ``PhysicalLink.endpoints`` with ``metric_values`` for the window.
+
+        Returns a dict shaped like::
+
+            {
+              "physical_link": <row dict from get_by_id>,
+              "endpoints": {
+                "ci-A": {
+                  "ifInOctets":    [{"time": dt, "value": float}, ...],
+                  "ifOutOctets":   [{"time": dt, "value": float}, ...],
+                  "max_sample_at": <datetime or None>,
+                },
+                "ci-B": { ... },
+              },
+            }
+
+        Returns ``None`` when the ``PhysicalLink`` is unknown — the service
+        layer maps that to HTTP 404.
+
+        Endpoints with no samples in the window are still present in the
+        output (with empty arrays + ``max_sample_at=None``) so the service
+        can distinguish "endpoint exists but no data" from "endpoint
+        missing entirely". The metric read is delegated to
+        ``metric_repo.get_metric_window`` so it stays mockable in tests.
+        """
+        from repositories import metric_repo
+
+        link = self.get_by_id(link_id)
+        if link is None:
+            return None
+
+        endpoints = link.get("endpoints") or []
+        if not isinstance(endpoints, (list, tuple)):
+            endpoints = []
+        # Endpoint list is small (max 2) — sequential fetch keeps the code
+        # trivial and matches the slice-3 traffic profile. Slice 4 (#443)
+        # may parallelize once polling lands.
+        start = now.timestamp() - float(window_seconds)
+        from datetime import timezone
+
+        start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
+        end_dt = now
+
+        per_endpoint: dict[str, dict[str, Any]] = {}
+        for ci_id in endpoints:
+            ci_data: dict[str, Any] = {}
+            max_seen: datetime | None = None
+            for metric_id in self._AGGREGATE_METRICS:
+                rows = metric_repo.get_metric_window(
+                    ci_id, metric_id, start_dt, end_dt
+                )
+                ci_data[metric_id] = rows
+                for row in rows:
+                    t = row.get("time")
+                    if t is None:
+                        continue
+                    if max_seen is None or t > max_seen:
+                        max_seen = t
+            ci_data["max_sample_at"] = max_seen
+            per_endpoint[ci_id] = ci_data
+
+        return {"physical_link": link, "endpoints": per_endpoint}
 
     # ── update_status ───────────────────────────────────────────────────────
 
