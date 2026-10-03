@@ -737,3 +737,71 @@ class AIPromptsSettings(BaseModel):
 def get_ai_prompts_settings() -> AIPromptsSettings:
     """Return fresh AI prompts settings so tests and env changes are respected."""
     return AIPromptsSettings.from_env()
+
+
+# ---------------------------------------------------------------------------
+# PhysicalLink Utilization Settings (slice 3/4 — feat-439)
+# ---------------------------------------------------------------------------
+
+
+# Default values for PhysicalLinkUtilizationSettings. Mirrors the
+# ``EventPruneSettings`` pattern in this module: every default has a
+# matching module-level constant so the docs and the runtime agree.
+PHYSICAL_LINK_UTILIZATION_DEFAULT_STALE_AFTER_SECONDS = 1800
+PHYSICAL_LINK_UTILIZATION_MIN_STALE_AFTER_SECONDS = 60
+PHYSICAL_LINK_UTILIZATION_ENV_PREFIX = "PHYSICAL_LINK_UTILIZATION_"
+
+
+class PhysicalLinkUtilizationSettings(BaseModel):
+    """Runtime settings for the PhysicalLink utilization read model.
+
+    Slice 3/4 of the PhysicalLink visualization chain (#439). Mirrors the
+    ``EventPruneSettings`` pattern in this module — env-var driven, with
+    a hard floor on the staleness threshold so operators can't set a
+    negative or zero value via the env.
+
+    Fields
+    ------
+    stale_after_seconds:
+        Maximum age of the newest ``metric_values`` sample before the
+        endpoint is reported as ``stale: true`` with
+        ``empty_reason="stale_samples"``. Default 30 minutes; min 60s
+        to keep the threshold meaningful.
+        ``PHYSICAL_LINK_UTILIZATION_STALE_AFTER_SECONDS`` overrides.
+    """
+
+    stale_after_seconds: int = Field(
+        default=PHYSICAL_LINK_UTILIZATION_DEFAULT_STALE_AFTER_SECONDS,
+        ge=PHYSICAL_LINK_UTILIZATION_MIN_STALE_AFTER_SECONDS,
+    )
+
+    @classmethod
+    def from_env(cls) -> PhysicalLinkUtilizationSettings:
+        """Load PhysicalLink utilization settings from environment variables.
+
+        Invalid values fall back to the safe default rather than raising
+        — mirrors ``EventPruneSettings.from_env`` so the API process
+        never crashes on a typo.
+        """
+        raw = os.getenv(
+            "PHYSICAL_LINK_UTILIZATION_STALE_AFTER_SECONDS",
+            str(PHYSICAL_LINK_UTILIZATION_DEFAULT_STALE_AFTER_SECONDS),
+        )
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            value = PHYSICAL_LINK_UTILIZATION_DEFAULT_STALE_AFTER_SECONDS
+        if value < PHYSICAL_LINK_UTILIZATION_MIN_STALE_AFTER_SECONDS:
+            value = PHYSICAL_LINK_UTILIZATION_DEFAULT_STALE_AFTER_SECONDS
+        return cls(stale_after_seconds=value)
+
+
+_physical_link_utilization_settings: PhysicalLinkUtilizationSettings | None = None
+
+
+def get_physical_link_utilization_settings() -> PhysicalLinkUtilizationSettings:
+    """Return cached PhysicalLink utilization settings (singleton)."""
+    global _physical_link_utilization_settings
+    if _physical_link_utilization_settings is None:
+        _physical_link_utilization_settings = PhysicalLinkUtilizationSettings.from_env()
+    return _physical_link_utilization_settings
