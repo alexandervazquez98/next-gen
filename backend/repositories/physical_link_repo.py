@@ -15,7 +15,7 @@ out as a 2-list (JSON wire compatibility for the frontend DTO).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from database import get_db
@@ -268,9 +268,8 @@ class PhysicalLinkRepo:
         # trivial and matches the slice-3 traffic profile. Slice 4 (#443)
         # may parallelize once polling lands.
         start = now.timestamp() - float(window_seconds)
-        from datetime import timezone
 
-        start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
+        start_dt = datetime.fromtimestamp(start, tz=UTC)
         end_dt = now
 
         per_endpoint: dict[str, dict[str, Any]] = {}
@@ -278,9 +277,7 @@ class PhysicalLinkRepo:
             ci_data: dict[str, Any] = {}
             max_seen: datetime | None = None
             for metric_id in self._AGGREGATE_METRICS:
-                rows = metric_repo.get_metric_window(
-                    ci_id, metric_id, start_dt, end_dt
-                )
+                rows = metric_repo.get_metric_window(ci_id, metric_id, start_dt, end_dt)
                 ci_data[metric_id] = rows
                 for row in rows:
                     t = row.get("time")
