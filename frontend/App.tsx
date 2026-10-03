@@ -28,6 +28,7 @@ import VisualRelationshipEditorPage from "./components/VisualRelationshipEditorP
 import ItsmServiceCatalogPage from "./components/ItsmServiceCatalogPage";
 import ItsmTicketFolioPage from "./components/ItsmTicketFolioPage";
 import ProposalsCmdbPage from "./pages/ProposalsCmdbPage";
+import PhysicalLinksPage from "./pages/PhysicalLinksPage";
 
 // --- Protected Route Helper ---
 const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
@@ -280,6 +281,18 @@ const MainLayout: React.FC = () => {
               <Route path="itsm/tickets" element={<ItsmTicketFolioPage />} />
               <Route path="proposals/cmdb" element={<ProposalsCmdbPage />} />
               <Route path="proposals/cmdb/:id" element={<ProposalsCmdbPage detailMode />} />
+              <Route
+                path="physical-links"
+                element={
+                  // feat-444 slice 2/4: the PhysicalLinksPage is the
+                  // mounted surface for the static visual contract
+                  // (registry + legend) backed by the real CRUD API.
+                  // The backend router is gated on
+                  // FEATURE_CMDB_PHYSICAL_LINKS_ENABLED — no frontend
+                  // flag here, the gate belongs to the API contract.
+                  <PhysicalLinksPage />
+                }
+              />
             </Routes>
           </div>
 

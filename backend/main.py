@@ -290,6 +290,7 @@ from routers import (  # noqa: E402
     mqtt,
     nodes,
     permissions,
+    physical_links,
     roles,
     rtus,
     ticket_folios,
@@ -425,6 +426,7 @@ app.include_router(permissions.router, prefix="/api")
 app.include_router(rtus.router, prefix="/api/v1")
 app.include_router(cmdb_proposals.router, prefix="/api")
 app.include_router(graph_lod.router, prefix="/api")
+app.include_router(physical_links.router, prefix="/api")
 
 
 @app.exception_handler(Exception)

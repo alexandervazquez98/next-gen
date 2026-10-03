@@ -31,4 +31,7 @@ export const queryKeys = {
   cmdbProposals: (filters?: object) => ["cmdb-proposals", filters ?? {}] as const,
   cmdbProposalDetail: (id: string) => ["cmdb-proposals", "detail", id] as const,
   cmdbProposalDraftCount: () => ["cmdb-proposals", "count", "draft"] as const,
+  // feat-444 (slice 2): PhysicalLink CRUD cache keys.
+  physicalLinks: (filters?: object) => ["cmdb-physical-links", filters ?? {}] as const,
+  physicalLinkDetail: (id: string) => ["cmdb-physical-links", "detail", id] as const,
 };
