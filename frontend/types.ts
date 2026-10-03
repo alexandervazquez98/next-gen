@@ -425,3 +425,41 @@ export interface MultiMetricHistoryRequest {
 export interface MultiMetricHistoryResponse {
   nodes: NodeMetricData[];
 }
+
+// =============================================================================
+// PhysicalLink DTO mirror (slice 2/4 of feat-444, closes #444)
+//
+// Byte-compatible with the backend `PhysicalLink` Pydantic model in
+// `backend/models/core.py` (slice 1/4 of feat-323). PhysicalLink is a
+// distinct runtime concept from `GraphLink` — it represents the physical
+// transport layer (fiber, copper, microwave, wireless_ptp) between two CIs
+// and is queryable independently of tunnel `Link.medium`. Slice 2 ships the
+// frontend mirror + a static style registry + legend; wiring into the
+// existing topology renderers is deferred to a follow-up slice that
+// introduces the PhysicalLink data flow.
+//
+// Endpoint shape mirrors the backend `endpoints: tuple[str, str]` field
+// exactly — the frontend keeps it as a 2-tuple rather than splitting into
+// `endpoint_a_id` / `endpoint_b_id`, so the wire shape stays byte-identical
+// to what the backend will emit.
+// =============================================================================
+
+export type PhysicalLinkType = "fiber" | "copper" | "microwave" | "wireless_ptp";
+
+export interface PhysicalLinkStyle {
+  color: string;
+  weight: number;
+  dashArray: string | null;
+  label: string;
+}
+
+export interface PhysicalLink {
+  id: string;
+  type: PhysicalLinkType;
+  /** Two-element tuple of CI ids — mirrors backend `endpoints: tuple[str, str]`. */
+  endpoints: [string, string];
+  /** Mirrors backend `PhysicalLinkStatus` literal exactly. */
+  status: "UP" | "DOWN" | "UNKNOWN" | "PLANNED";
+  capacity_gbps: number | null;
+  install_date: string | null;
+}
