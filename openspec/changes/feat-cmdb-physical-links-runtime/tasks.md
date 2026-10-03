@@ -70,18 +70,18 @@ Chain strategy: single-pr
 ## Phase 3: #439 utilization read model
 
 ### PR1 (aggregation + endpoint)
-- [ ] 4.1 RED tests in `backend/tests/test_physical_link_utilization.py`: aggregation correctness for known input → expected rollup
-- [ ] 4.2 RED tests in `backend/tests/test_physical_link_utilization_no_data.py`: empty case returns `null` utilization + `empty_reason: "no_data"` (NOT zero)
-- [ ] 4.3 `backend/repositories/physical_link_repo.py`: read model query (Cypher against `PhysicalLink` + `CONNECTED_VIA`)
-- [ ] 4.4 `backend/services/physical_link_utilization.py`: orchestration (window selection, empty detection)
-- [ ] 4.5 Endpoint: `GET /api/cmdb/physical-links/{id}/utilization?window=<duration>`
-- [ ] 4.6 GREEN tests; full backend suite green
+- [x] 4.1 RED tests in `backend/tests/test_physical_link_utilization.py`: aggregation correctness for known input → expected rollup
+- [x] 4.2 RED tests in `backend/tests/test_physical_link_utilization_no_data.py`: empty case returns `null` utilization + `empty_reason: "no_data"` (NOT zero)
+- [x] 4.3 `backend/repositories/physical_link_repo.py`: read model query (Cypher against `PhysicalLink` + `CONNECTED_VIA`)
+- [x] 4.4 `backend/services/physical_link_utilization.py`: orchestration (window selection, empty detection)
+- [x] 4.5 Endpoint: `GET /api/cmdb/physical-links/{id}/utilization?window=<duration>`
+- [x] 4.6 GREEN tests; full backend suite green
 
 ### PR2 (staleness + windowing)
-- [ ] 5.1 RED tests: windowed rollup (1h, 6h, 24h windows produce different aggregation granularity)
-- [ ] 5.2 RED tests: staleness surfacing (`stale: true` when no recent counters within threshold)
-- [ ] 5.3 Staleness calculation in service layer
-- [ ] 5.4 GREEN tests; full backend suite green; PR1 unaffected
+- [x] 5.1 RED tests: windowed rollup (1h, 6h, 24h windows produce different aggregation granularity)
+- [x] 5.2 RED tests: staleness surfacing (`stale: true` when no recent counters within threshold)
+- [x] 5.3 Staleness calculation in service layer
+- [x] 5.4 GREEN tests; full backend suite green; PR1 unaffected
 
 ## Phase 4: #443 interface-to-link polling
 
