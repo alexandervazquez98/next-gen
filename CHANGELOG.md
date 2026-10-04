@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.7] — 2026-10-03
+
+### Added
+
+- **feat(backend): utilization read model for PhysicalLink (#439, PR #540)**: slice 3/4 of the fiber-optic / physical-link visualization chain ships the missing data plane between the slice-2 CRUD API and the (not yet shipped) slice-4 polling integration. New `GET /api/cmdb/physical-links/{id}/utilization?window=15m` endpoint returns aggregated utilization over a configurable window with full-duplex max-bottleneck math (counter-delta semantics, RFC 1213, NOT a `sum()` aggregate), behind the existing `FEATURE_CMDB_PHYSICAL_LINKS_ENABLED` flag (default off, same gate as slice 2). Three explicit empty states are distinguished instead of silently returning a fake zero: `empty_reason: "no_data"` (no interfaces attached or no recent samples), `stale: true, empty_reason: "stale_samples"` (max sample age exceeds `PHYSICAL_LINK_UTILIZATION_STALE_AFTER_SECONDS`, default 1800 s), and `empty_reason: "no_capacity"` (`PhysicalLink.capacity_gbps` is null, typical of `PLANNED` links). Closed-vocabulary `WindowDuration` parser accepts only `15m` / `30m` / `1h` / `6h` / `24h` (default `15m`); any other value returns 422 — no arbitrary-duration parsing to keep the API surface small and avoid DoS via huge windows. New files: `backend/schemas/physical_link_utilization.py`, `backend/services/physical_link_utilization.py`, `backend/routers/physical_link_utilization.py`. Additive on existing layers: `backend/repositories/metric_repo.py` gains `get_metric_window`, `backend/repositories/physical_link_repo.py` gains `get_aggregate_counter_samples`, `backend/config.py` gains `PhysicalLinkUtilizationSettings`. 33 new tests (29 in `test_physical_link_utilization.py` + 4 in `test_physical_link_utilization_no_data.py`) — full backend suite green (2452 passed pre-PR + 33 new = 2485), pre-existing testcontainers / docker.sock gaps unchanged. `openspec/changes/feat-cmdb-physical-links-runtime/tasks.md` Phase 3 marked done. No new `UserPermission` enum values; reuses `CI_EDIT` for writes and reads are public (mirrors slice-2 precedent). CI 11/11 verde on PR #540.
+
 ## [1.19.6] — 2026-10-03
 
 ### Changed
