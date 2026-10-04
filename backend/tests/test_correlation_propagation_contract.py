@@ -20,7 +20,6 @@ functions as the documented public API; those helpers are also pinned here.
 from __future__ import annotations
 
 import pytest
-
 from services.correlation_propagation_contract import (
     CURRENT_TRAVERSAL_RELATIONSHIP_TYPES,
     FEATURE_FLAG_CONNECTS_TO_MEDIUM_FILTER,
