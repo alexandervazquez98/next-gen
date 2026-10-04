@@ -21,6 +21,7 @@ To change one of the four locked decisions:
    ``backend/tests/test_correlation_propagation_contract.py``.
 4. File a follow-up decision record explaining the change.
 """
+
 from __future__ import annotations
 
 from typing import Final, Literal
@@ -120,24 +121,28 @@ RelationshipPropagationDefault = Literal[
 #: - ``CONNECTED_VIA`` — PhysicalLink, status-gated (PR2)
 #: - ``MANAGES`` / ``USES`` / ``PROVIDES`` — default-propagate (PR3)
 #: - ``CONNECTS_TO`` — receives a ``medium`` predicate (PR4)
-SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES: Final = frozenset({
-    "DEPENDS_ON",
-    "HOSTED_ON",
-    "CONNECTS_TO",
-    "CONNECTED_VIA",
-    "MANAGES",
-    "USES",
-    "PROVIDES",
-})
+SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES: Final = frozenset(
+    {
+        "DEPENDS_ON",
+        "HOSTED_ON",
+        "CONNECTS_TO",
+        "CONNECTED_VIA",
+        "MANAGES",
+        "USES",
+        "PROVIDES",
+    }
+)
 
 #: Relationships that the pre-#539 traversal walks. Matches the existing
 #: 3-of-6 behavior in ``backend/repositories/topology_repo.py``. PR1 does
 #: NOT change this; PR2/3/4 extend it.
-CURRENT_TRAVERSAL_RELATIONSHIP_TYPES: Final = frozenset({
-    "DEPENDS_ON",
-    "HOSTED_ON",
-    "CONNECTS_TO",
-})
+CURRENT_TRAVERSAL_RELATIONSHIP_TYPES: Final = frozenset(
+    {
+        "DEPENDS_ON",
+        "HOSTED_ON",
+        "CONNECTS_TO",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Feature-flag names (for the rollout plan recorded in decision #6)

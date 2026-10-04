@@ -17,6 +17,7 @@ must:
 The chained implementation PRs (PR2 / PR3 / PR4) rely on the helper
 functions as the documented public API; those helpers are also pinned here.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -113,28 +114,41 @@ class TestTraversalRelationshipSet:
         assert len(SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES) == 7
 
     def test_supported_set_contains_all_expected_types(self):
-        assert frozenset({
-            "DEPENDS_ON",
-            "HOSTED_ON",
-            "CONNECTS_TO",
-            "CONNECTED_VIA",
-            "MANAGES",
-            "USES",
-            "PROVIDES",
-        }) == SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES
+        assert (
+            frozenset(
+                {
+                    "DEPENDS_ON",
+                    "HOSTED_ON",
+                    "CONNECTS_TO",
+                    "CONNECTED_VIA",
+                    "MANAGES",
+                    "USES",
+                    "PROVIDES",
+                }
+            )
+            == SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES
+        )
 
     def test_current_set_matches_pre_539_behavior(self):
         # Pre-#539: only 3 of 6 supported types are walked.
-        assert frozenset({
-            "DEPENDS_ON",
-            "HOSTED_ON",
-            "CONNECTS_TO",
-        }) == CURRENT_TRAVERSAL_RELATIONSHIP_TYPES
+        assert (
+            frozenset(
+                {
+                    "DEPENDS_ON",
+                    "HOSTED_ON",
+                    "CONNECTS_TO",
+                }
+            )
+            == CURRENT_TRAVERSAL_RELATIONSHIP_TYPES
+        )
 
     def test_current_set_is_strict_subset_of_supported(self):
         assert CURRENT_TRAVERSAL_RELATIONSHIP_TYPES < SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES
         assert len(CURRENT_TRAVERSAL_RELATIONSHIP_TYPES) == 3
-        assert len(SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES) - len(CURRENT_TRAVERSAL_RELATIONSHIP_TYPES) == 4
+        assert (
+            len(SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES) - len(CURRENT_TRAVERSAL_RELATIONSHIP_TYPES)
+            == 4
+        )
 
     def test_supported_set_intersects_relationship_types_module(self):
         # The 6 types in SUPPORTED_CI_RELATIONSHIP_TYPES are all in the
@@ -151,14 +165,19 @@ class TestTraversalRelationshipSet:
         # CONNECTED_VIA / MANAGES / USES / PROVIDES do not change this set
         # because MANAGES / USES / PROVIDES were already there; only
         # CONNECTED_VIA is new and it's a PhysicalLink rel, not a CI rel).
-        assert frozenset({
-            "CONNECTS_TO",
-            "DEPENDS_ON",
-            "HOSTED_ON",
-            "MANAGES",
-            "USES",
-            "PROVIDES",
-        }) == SUPPORTED_CI_RELATIONSHIP_TYPES
+        assert (
+            frozenset(
+                {
+                    "CONNECTS_TO",
+                    "DEPENDS_ON",
+                    "HOSTED_ON",
+                    "MANAGES",
+                    "USES",
+                    "PROVIDES",
+                }
+            )
+            == SUPPORTED_CI_RELATIONSHIP_TYPES
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -185,19 +204,25 @@ class TestFeatureFlagNames:
             == "FEATURE_CMDB_CORRELATION_CONNECTS_TO_MEDIUM_FILTER_ENABLED"
         )
 
-    @pytest.mark.parametrize("flag", [
-        FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
-        FEATURE_FLAG_MANAGES_USES_PROVIDES_CORRELATION,
-        FEATURE_FLAG_CONNECTS_TO_MEDIUM_FILTER,
-    ])
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
+            FEATURE_FLAG_MANAGES_USES_PROVIDES_CORRELATION,
+            FEATURE_FLAG_CONNECTS_TO_MEDIUM_FILTER,
+        ],
+    )
     def test_flag_name_starts_with_feature_cmdb_correlation_prefix(self, flag):
         assert flag.startswith("FEATURE_CMDB_CORRELATION_")
 
-    @pytest.mark.parametrize("flag", [
-        FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
-        FEATURE_FLAG_MANAGES_USES_PROVIDES_CORRELATION,
-        FEATURE_FLAG_CONNECTS_TO_MEDIUM_FILTER,
-    ])
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
+            FEATURE_FLAG_MANAGES_USES_PROVIDES_CORRELATION,
+            FEATURE_FLAG_CONNECTS_TO_MEDIUM_FILTER,
+        ],
+    )
     def test_flag_name_ends_with_enabled(self, flag):
         assert flag.endswith("_ENABLED")
 
@@ -208,22 +233,28 @@ class TestFeatureFlagNames:
 
 
 class TestLockedValuesAreValid:
-    @pytest.mark.parametrize("name,value", [
-        ("physical_link_unknown_propagation", PHYSICAL_LINK_UNKNOWN_PROPAGATION),
-        ("physical_link_status_freshness", PHYSICAL_LINK_STATUS_FRESHNESS),
-        ("physical_link_down_behavior", PHYSICAL_LINK_DOWN_BEHAVIOR),
-        ("manages_uses_provides_default", MANAGES_USES_PROVIDES_DEFAULT),
-    ])
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("physical_link_unknown_propagation", PHYSICAL_LINK_UNKNOWN_PROPAGATION),
+            ("physical_link_status_freshness", PHYSICAL_LINK_STATUS_FRESHNESS),
+            ("physical_link_down_behavior", PHYSICAL_LINK_DOWN_BEHAVIOR),
+            ("manages_uses_provides_default", MANAGES_USES_PROVIDES_DEFAULT),
+        ],
+    )
     def test_value_is_non_empty_string(self, name, value):
         assert isinstance(value, str)
         assert value, f"{name} must be a non-empty string"
 
-    @pytest.mark.parametrize("name,value", [
-        ("physical_link_unknown_propagation", PHYSICAL_LINK_UNKNOWN_PROPAGATION),
-        ("physical_link_status_freshness", PHYSICAL_LINK_STATUS_FRESHNESS),
-        ("physical_link_down_behavior", PHYSICAL_LINK_DOWN_BEHAVIOR),
-        ("manages_uses_provides_default", MANAGES_USES_PROVIDES_DEFAULT),
-    ])
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("physical_link_unknown_propagation", PHYSICAL_LINK_UNKNOWN_PROPAGATION),
+            ("physical_link_status_freshness", PHYSICAL_LINK_STATUS_FRESHNESS),
+            ("physical_link_down_behavior", PHYSICAL_LINK_DOWN_BEHAVIOR),
+            ("manages_uses_provides_default", MANAGES_USES_PROVIDES_DEFAULT),
+        ],
+    )
     def test_value_is_snake_case(self, name, value):
         # No spaces, no uppercase, no leading underscore.
         assert " " not in value, f"{name}={value!r} must not contain spaces"
