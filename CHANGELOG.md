@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.7] — 2026-10-03
+
+### Added
+
+- **feat(backend): PhysicalLink utilization read model (#439)**: slice 3/4 of the fiber-optic / physical-link visualization chain adds the missing data plane between the slice-2 CRUD API and the slice-4 polling integration. New endpoint `GET /api/cmdb/physical-links/{physical_link_id}/utilization?window=15m` aggregates interface counter metrics (`ifInOctets` / `ifOutOctets`) per `PhysicalLink` over a configurable time window using counter-delta semantics (RFC 1213 utilization, full-duplex max-bottleneck) — NOT a naive `sum()`. New Pydantic schema `PhysicalLinkUtilizationResponse` carries three distinct empty-state branches that operators can disambiguate without guessing: `empty_reason: "no_data"` (no interfaces attached OR no recent samples in the window), `stale: true, empty_reason: "stale_samples"` (last sample older than the configured staleness threshold), and `empty_reason: "no_capacity"` (`PhysicalLink.capacity_gbps` is null — typical for `PLANNED` links). Crucially, `utilization: null` means "we cannot tell", NOT "0% utilization" — the regression guard in `TestEmptyCase` pins this so zero-traffic links stay on the happy path. Window vocabulary is closed: `15m` (default) / `30m` / `1h` / `6h` / `24h`; any other value returns 422. Staleness threshold defaults to 1800 seconds (30 min) via new `PhysicalLinkUtilizationSettings` Pydantic model with env override `PHYSICAL_LINK_UTILIZATION_STALE_AFTER_SECONDS`. Endpoint is behind the same `FEATURE_CMDB_PHYSICAL_LINKS_ENABLED` feature flag as slice 2 (gate fires before any service call). Backend is the only surface this slice touches — no frontend wiring, no migration, no changes to tunnel metric paths (spec REQ-PHYSLINK-UTIL-3 verified by 2463-test full backend suite staying green). 33 new tests (29 in `test_physical_link_utilization.py` + 4 in `test_physical_link_utilization_no_data.py`), all observed RED pre-implementation then GREEN, covering happy-path max-bottleneck math, WindowDuration parser rejection of invalid inputs, per-endpoint sample aggregation, the three empty-state branches with the load-bearing branch order pinned (no_capacity before no_data before stale), and router E2E via TestClient with feature-flag gate.
+
 ## [1.19.6] — 2026-10-03
 
 ### Changed
