@@ -39,7 +39,6 @@ from services.correlation_propagation_contract import (
 )
 from services.relationship_types import SUPPORTED_CI_RELATIONSHIP_TYPES
 
-
 # ---------------------------------------------------------------------------
 # Locked values (one test per decision)
 # ---------------------------------------------------------------------------
@@ -115,7 +114,7 @@ class TestTraversalRelationshipSet:
         assert len(SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES) == 7
 
     def test_supported_set_contains_all_expected_types(self):
-        assert SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES == frozenset({
+        assert frozenset({
             "DEPENDS_ON",
             "HOSTED_ON",
             "CONNECTS_TO",
@@ -123,15 +122,15 @@ class TestTraversalRelationshipSet:
             "MANAGES",
             "USES",
             "PROVIDES",
-        })
+        }) == SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES
 
     def test_current_set_matches_pre_539_behavior(self):
         # Pre-#539: only 3 of 6 supported types are walked.
-        assert CURRENT_TRAVERSAL_RELATIONSHIP_TYPES == frozenset({
+        assert frozenset({
             "DEPENDS_ON",
             "HOSTED_ON",
             "CONNECTS_TO",
-        })
+        }) == CURRENT_TRAVERSAL_RELATIONSHIP_TYPES
 
     def test_current_set_is_strict_subset_of_supported(self):
         assert CURRENT_TRAVERSAL_RELATIONSHIP_TYPES < SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES
@@ -153,14 +152,14 @@ class TestTraversalRelationshipSet:
         # CONNECTED_VIA / MANAGES / USES / PROVIDES do not change this set
         # because MANAGES / USES / PROVIDES were already there; only
         # CONNECTED_VIA is new and it's a PhysicalLink rel, not a CI rel).
-        assert SUPPORTED_CI_RELATIONSHIP_TYPES == frozenset({
+        assert frozenset({
             "CONNECTS_TO",
             "DEPENDS_ON",
             "HOSTED_ON",
             "MANAGES",
             "USES",
             "PROVIDES",
-        })
+        }) == SUPPORTED_CI_RELATIONSHIP_TYPES
 
 
 # ---------------------------------------------------------------------------
