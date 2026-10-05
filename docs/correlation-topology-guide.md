@@ -143,17 +143,36 @@ Before increasing the depth, capture execution plans and timings for a normal cy
 - [ ] A six-level chain and a fan-out scenario are covered by automated tests.
 - [ ] A correlation lookup failure degrades safely to independent root events.
 
-## Decision record required before implementation
+## Locked propagation decisions (issue #539)
 
-Any implementation change must record these decisions:
+These four decisions are approved by the maintainer and recorded here as the single source of truth for the chained implementation PRs (#539-PR2, #539-PR3, #539-PR4). The runtime contract lives in `backend/services/correlation_propagation_contract.py`; the parametrized tests in `backend/tests/test_correlation_propagation_contract.py` assert the constants match these values.
 
-1. Which relationship types are eligible for backend root-cause traversal.
-2. Whether `CONNECTS_TO` is excluded, redefined, or split into causal and non-causal relation types.
-3. The default and maximum traversal depth.
-4. How redundancy and active/standby paths are modeled.
-5. The performance budget and evidence from Neo4j query profiling.
-6. Rollout, observability, and rollback criteria.
+1. **`PhysicalLink.status = UNKNOWN` propagation — `degrade_severity_and_propagate`.** A PhysicalLink in `UNKNOWN` state (the default at creation, before the first poll) DOES propagate events, but the propagated event is emitted at `WARNING` severity instead of the parent's severity. Rationale: visibility for the operator outweighs the cost of a slightly higher signal floor. An `UNKNOWN` link is not the same as a confirmed-up link, so the event severity downgrade prevents operator alarm fatigue.
+
+2. **Status freshness model — `re_query_per_correlation`.** The correlation traversal re-reads each `:CONNECTED_VIA` PhysicalLink's `status` at query time (within the same Cypher statement). No cache, no TTL. Rationale: slice 4 (#443) introduces polling that keeps status fresh; re-query is cheap given a properly indexed `:PhysicalLink` lookup, and the alternative (cached status) risks serving stale data during a flap.
+
+3. **Behavior when PhysicalLink flips UP → DOWN — `generate_descendant_event`.** When polling transitions a PhysicalLink from `UP` to `DOWN`, the system generates a new event whose `root_cause_ci_id` is the link itself and whose affected CIs are the two endpoints of the link. Rationale: a cable cut has a clear cause, and surfacing it as an event is more discoverable than blocking correlation in silence. Flap risk is bounded by the existing event-pruner.
+
+4. **`MANAGES` / `USES` / `PROVIDES` default — `all_propagate`.** The three relationship types are added to the traversal with default propagation. No per-CI flag, no per-metric flag, no env-var gate. Rationale: the model is small (3 types) and the operational risk of over-propagation is bounded; if a real-world deployment surfaces a problem, a follow-up PR can introduce an opt-out flag.
+
+## Decision record (issue #539)
+
+This record captures the implementation-blocking decisions for the chained PRs that resolve #539. Each item points to the implementation work it unblocks.
+
+1. **Relationship types eligible for backend root-cause traversal.** After all chained PRs land: `DEPENDS_ON` (always), `HOSTED_ON` (always), `:CONNECTS_TO` (always, with a `medium` predicate that excludes `vpn | sd_wan | satellite` — PR4), `:CONNECTED_VIA` (PhysicalLink — conditional on `status ∈ {UP, UNKNOWN}`, with `UNKNOWN` degrading severity per locked decision #1; PR2), `:MANAGES` / `:USES` / `:PROVIDES` (always; PR3). The pre-#539 implementation walks only 3 of these 6 — the chained PRs close the gap.
+2. **`:CONNECTS_TO` ambiguity resolution.** Filtered, not removed. The `medium` predicate is added in PR4; until PR4 lands, behavior matches the existing 3-of-6 traversal (no behavior change in this PR1).
+3. **Default and maximum traversal depth.** Default 3, maximum 3 (unchanged). The `Six-level sector-network example` earlier in this doc remains aspirational; raising depth requires its own evidence and review (out of scope for #539).
+4. **Redundancy and active/standby paths.** Refer to the "Variable ecosystem" section above. No model change in this PR1.
+5. **Performance budget.** Target: ≤50 ms added latency for the `re_query_per_correlation` decision in a topology with 100 CIs and 50 PhysicalLinks. Measured in PR2 with a benchmark; if exceeded, the decision reverts to `cache_with_ttl` and a follow-up decision is filed.
+6. **Rollout, observability, rollback.** Per-PR feature flag. PR2 ships behind `FEATURE_CMDB_CORRELATION_PHYSICAL_LINK_PROPAGATION_ENABLED=false` (default off); flip to `true` after PR2 lands and CI is green. The standard `gentle-ai-chained-pr` review pattern applies.
 
 ## Next step
 
-Open a feature request for the correlation-policy analysis and implementation plan. It must remain in review until the topology semantics, test scenarios, and performance evidence are approved.
+Issue #539 ships as four chained PRs:
+
+- **PR1 (this PR)** — design doc + contract + OpenSpec change + contract tests (no behavior change).
+- **PR2** — `:CONNECTED_VIA` traversal with status gate (locked decisions #1, #2, #3).
+- **PR3** — `:MANAGES` / `:USES` / `:PROVIDES` traversal (locked decision #4).
+- **PR4** — `:CONNECTS_TO` `medium` predicate (separate decision, follows PR3).
+
+Each implementation PR imports `correlation_propagation_contract` and adds tests that verify the runtime behavior matches the contract.

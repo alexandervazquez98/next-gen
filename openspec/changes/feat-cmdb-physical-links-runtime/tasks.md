@@ -85,16 +85,16 @@ Chain strategy: single-pr
 
 ## Phase 4: #443 interface-to-link polling
 
-### PR1 (bridge + aggregation feed)
-- [ ] 6.1 RED test in `backend/tests/test_physical_link_polling_integration.py`: polled interface counters feed into `PhysicalLink` utilization via `CONNECTED_VIA`
-- [ ] 6.2 `backend/polling/physical_link_aggregator.py`: aggregates interface counters and updates slice-3 read model
-- [ ] 6.3 Integration point in existing interface pollers (no duplication)
-- [ ] 6.4 GREEN tests
+### PR1 (bridge + aggregation feed) — SHIPPED in v1.19.8 (PR #543)
+- [x] 6.1 RED test in `backend/tests/test_physical_link_bridge.py` (+ `test_physical_link_bridge_registration.py`): bridge stamps `pl.last_polled_at` when at least one endpoint has fresh `metric_values` rows; integration via `PhysicalLink.endpoints` field (the 2-tuple, NOT `:CONNECTED_VIA` traversal yet — deferred to PR2 for status derivation scope)
+- [x] 6.2 `backend/polling/physical_link_bridge.py`: scheduled bridge (`run_once(settings, driver, now)`) updates `pl.last_polled_at` on active links (status IN {UP, UNKNOWN, PLANNED}); `metric_values` is the source of truth
+- [x] 6.3 New registration in `backend/main.py` (`_register_physical_link_polling_bridge_job` on `backup_scheduler`); no changes to `snmp_worker.py`, `writer_pool.py`, `link_service.py` (REQ-PHYSLINK-UTIL-3 hard rule honored). Sub-flag `FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED` (default off, kill-switch independent of slice-2/3 flag).
+- [x] 6.4 GREEN tests (10 tests, TDD strict RED→GREEN, 11/11 CI verde on PR #543)
 
-### PR2 (backward compat)
-- [ ] 7.1 RED test in `backend/tests/test_tunnel_polling_unchanged.py`: tunnel polling still produces same events as before the bridge
-- [ ] 7.2 No new state representation introduced
-- [ ] 7.3 GREEN tests; full backend suite green; PR1 unaffected
+### PR2 (backward compat) — SHIPPED in v1.19.9 (PR #547)
+- [x] 7.1 RED test in `backend/tests/test_tunnel_polling_unchanged.py`: tunnel polling still produces same events as before the bridge
+- [x] 7.2 No new state representation introduced (status derived, not persisted-as-decision)
+- [x] 7.3 GREEN tests (1 byte-equivalence + 6 derivation rules = 7 new tests); full backend suite 2522 green; PR1 (10 tests) unaffected
 
 ## Critical sequencing
 
