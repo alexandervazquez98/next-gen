@@ -20,10 +20,18 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import get_db
+from scripts._apply_cypher import (
+    _split_statements as _extract_cypher_statements,  # noqa: F401  backward-compat alias for tests
+    apply_cypher_file,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# Module-level so tests can monkeypatch the location without touching the
+# filesystem under ``backend/migrations/``. ``safe-rebuild.sh`` always uses
+# the real directory; tests substitute a tmp_path.
+_MIGRATIONS_DIR: Path = Path(__file__).resolve().parent.parent / "migrations"
 _MIGRATION_FILE = "008_ci_event_indexes.cypher"
 
 # Preflight queries — run before applying anything.
@@ -47,29 +55,7 @@ LIMIT 20
 
 def _migration_file_path() -> Path:
     """Return absolute path for the CI/Event indexes migration script."""
-    return Path(__file__).resolve().parent.parent / "migrations" / _MIGRATION_FILE
-
-
-def _extract_cypher_statements(content: str) -> list[str]:
-    """Split migration text into executable statements, skipping comment-only lines.
-
-    Comment lines (starting with //) are removed BEFORE splitting on semicolons,
-    so semicolons inside comment prose cannot orphan trailing non-comment text.
-    """
-    # Strip // comment lines first — semicolons inside comments must not split statements
-    non_comment_lines = [
-        line
-        for line in content.splitlines()
-        if line.strip() and not line.strip().startswith("//") and line.strip() != "--"
-    ]
-    normalized_content = "\n".join(non_comment_lines)
-
-    statements: list[str] = []
-    for raw_statement in normalized_content.split(";"):
-        normalized = " ".join(raw_statement.splitlines()).strip()
-        if normalized:
-            statements.append(normalized)
-    return statements
+    return _MIGRATIONS_DIR / _MIGRATION_FILE
 
 
 def _run_preflight(driver: Any) -> None:
@@ -127,26 +113,12 @@ def apply_ci_event_indexes(driver: Any | None = None) -> None:
         logger.error("Migration file not found: %s", migration_path)
         sys.exit(2)
 
-    raw = migration_path.read_text(encoding="utf-8")
-    statements = _extract_cypher_statements(raw)
-    logger.info("Loaded %d statement(s) from %s", len(statements), _MIGRATION_FILE)
-
-    with drv.session() as session:
-        for i, stmt in enumerate(statements, start=1):
-            try:
-                session.run(stmt)
-                logger.info("  [%d/%d] OK: %s", i, len(statements), stmt[:80])
-            except Exception as exc:  # noqa: BLE001
-                logger.error("  [%d/%d] FAILED: %s", i, len(statements), stmt[:80])
-                logger.error(
-                    "  Statement error from Neo4j driver: %s",
-                    exc,
-                )
-                logger.error(
-                    "  Migration aborted. Fix the error above and re-run. "
-                    "Statements already committed cannot be rolled back by this script."
-                )
-                sys.exit(2)
+    try:
+        apply_cypher_file(drv, migration_path, log=logger)
+    except Exception:  # noqa: BLE001
+        # The utility already logs the failing statement and exception.
+        # Re-raise as SystemExit(2) to preserve the public exit-code contract.
+        sys.exit(2)
 
     logger.info("Migration %s applied successfully.", _MIGRATION_FILE)
 
