@@ -805,3 +805,85 @@ def get_physical_link_utilization_settings() -> PhysicalLinkUtilizationSettings:
     if _physical_link_utilization_settings is None:
         _physical_link_utilization_settings = PhysicalLinkUtilizationSettings.from_env()
     return _physical_link_utilization_settings
+
+
+# ---------------------------------------------------------------------------
+# PhysicalLink Polling Bridge Settings (slice 4/4 — feat-443 PR1)
+# ---------------------------------------------------------------------------
+
+
+PHYSICAL_LINK_POLLING_DEFAULT_INTERVAL_SECONDS = 60
+PHYSICAL_LINK_POLLING_MIN_INTERVAL_SECONDS = 10
+
+
+class PhysicalLinkPollingSettings(BaseModel):
+    """Runtime settings for the PhysicalLink polling bridge scheduler.
+
+    Slice 4/4 of the PhysicalLink visualization chain (#443, PR1).
+    Mirrors the ``EventPruneSettings`` pattern — env-var driven, with a
+    hard floor on the interval.
+
+    Fields
+    ------
+    feature_enabled:
+        Kill-switch. Defaults ``False`` (opt-in). When ``False`` the
+        bridge's ``run_once`` is a pure no-op.
+    fresh_window_seconds:
+        Width of the "recent samples" window the bridge probes per
+        endpoint. Default 60s.
+    interval_seconds:
+        How often the APScheduler ``IntervalTrigger`` fires. Default
+        60s, min 10s.
+    """
+
+    feature_enabled: bool = False
+    fresh_window_seconds: int = Field(default=60, ge=1)
+    interval_seconds: int = Field(
+        default=PHYSICAL_LINK_POLLING_DEFAULT_INTERVAL_SECONDS,
+        ge=PHYSICAL_LINK_POLLING_MIN_INTERVAL_SECONDS,
+    )
+
+    @classmethod
+    def from_env(cls) -> PhysicalLinkPollingSettings:
+        """Load PhysicalLink polling settings from environment variables.
+
+        Mirrors the other ``*Settings.from_env`` loaders: invalid
+        values fall back to safe defaults rather than raising.
+        """
+
+        def _bool(name: str, default: bool) -> bool:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            normalized = raw.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            return default
+
+        raw_interval = os.getenv(
+            "PHYSICAL_LINK_POLLING_INTERVAL_SECONDS",
+            str(PHYSICAL_LINK_POLLING_DEFAULT_INTERVAL_SECONDS),
+        )
+        try:
+            interval = int(str(raw_interval).strip())
+        except (TypeError, ValueError):
+            interval = PHYSICAL_LINK_POLLING_DEFAULT_INTERVAL_SECONDS
+        if interval < PHYSICAL_LINK_POLLING_MIN_INTERVAL_SECONDS:
+            interval = PHYSICAL_LINK_POLLING_DEFAULT_INTERVAL_SECONDS
+
+        return cls(
+            feature_enabled=_bool("FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED", default=False),
+            fresh_window_seconds=60,
+            interval_seconds=interval,
+        )
+
+
+_physical_link_polling_settings: PhysicalLinkPollingSettings | None = None
+
+
+def get_physical_link_polling_settings() -> PhysicalLinkPollingSettings:
+    """Return fresh PhysicalLink polling settings (mirrors
+    :func:`get_physical_link_utilization_settings`)."""
+    return PhysicalLinkPollingSettings.from_env()

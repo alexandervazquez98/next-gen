@@ -59,6 +59,14 @@ _EVENT_PRUNE_STALE_AFTER_SECONDS = 3600
 _METRIC_RETENTION_ENABLED = True
 _METRIC_RETENTION_DAYS = 90
 
+# PhysicalLink polling bridge knobs (feat-443 slice 4/4, PR1).
+# Mirrors the other _*_ENABLED / _*_INTERVAL_SECONDS module-level globals
+# so the registration function can read a stable snapshot without
+# re-parsing env vars on every tick.
+_PHYSICAL_LINK_POLLING_ENABLED = False
+_PHYSICAL_LINK_POLLING_INTERVAL_SECONDS = 60
+_PHYSICAL_LINK_POLLING_FRESH_WINDOW_SECONDS = 60
+
 
 def _parse_system_status_bool(value: str) -> bool | None:
     if value.strip().lower() in ("1", "true", "yes", "on", "enabled", "enable"):
@@ -195,6 +203,41 @@ def _reload_metric_retention_env_settings() -> None:
     )
 
 
+def _reload_physical_link_polling_env_settings() -> None:
+    """Load PhysicalLink polling bridge knobs from environment with safe defaults.
+
+    Feat-443 slice 4/4 (PR1). Mirrors ``_reload_event_prune_env_settings``:
+    invalid bool/int values fall back to safe defaults.
+
+    Defaults: ``FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED`` off (opt-in);
+    ``PHYSICAL_LINK_POLLING_INTERVAL_SECONDS`` = 60, min 10.
+    """
+    global _PHYSICAL_LINK_POLLING_ENABLED
+    global _PHYSICAL_LINK_POLLING_INTERVAL_SECONDS
+    global _PHYSICAL_LINK_POLLING_FRESH_WINDOW_SECONDS
+
+    enabled_raw = os.getenv("FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED", "false")
+    parsed_enabled = _parse_system_status_bool(enabled_raw)
+    if parsed_enabled is None:
+        logger.warning(
+            "Invalid value for FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED=%r, using default false",
+            enabled_raw,
+        )
+        parsed_enabled = False
+    _PHYSICAL_LINK_POLLING_ENABLED = parsed_enabled
+
+    _PHYSICAL_LINK_POLLING_INTERVAL_SECONDS = _parse_system_status_int(
+        "PHYSICAL_LINK_POLLING_INTERVAL_SECONDS",
+        default_value=60,
+        minimum=10,
+    )
+    _PHYSICAL_LINK_POLLING_FRESH_WINDOW_SECONDS = _parse_system_status_int(
+        "PHYSICAL_LINK_POLLING_FRESH_WINDOW_SECONDS",
+        default_value=60,
+        minimum=10,
+    )
+
+
 def _should_start_embedded_mqtt_subscriber() -> bool:
     """Return whether the API process should own a in-process MQTT subscriber."""
     return get_mqtt_runtime_settings().run_subscriber_in_process
@@ -238,6 +281,11 @@ _reload_event_prune_env_settings()
 
 # Initialize metric retention scheduler knobs from environment (issue #457).
 _reload_metric_retention_env_settings()
+
+
+# Initialize PhysicalLink polling bridge knobs from environment
+# (feat-443 slice 4/4, PR1). Mirrors the other reload calls above.
+_reload_physical_link_polling_env_settings()
 
 
 def schedule_daily_backup() -> None:
@@ -624,6 +672,14 @@ async def startup_event():
         _register_metric_retention_job()
     except Exception as e:
         logger.error("Failed to schedule metric retention job: %s", e)
+
+    # PhysicalLink polling bridge (feat-443 slice 4/4, PR1). Honors
+    # ``_PHYSICAL_LINK_POLLING_ENABLED`` (kill-switch); IntervalTrigger
+    # every 60s.
+    try:
+        _register_physical_link_polling_bridge_job()
+    except Exception as e:
+        logger.error("Failed to schedule PhysicalLink polling bridge: %s", e)
 
     backup_scheduler.start()
     logger.info("Backup scheduler started")
@@ -1165,6 +1221,41 @@ def _register_metric_retention_job() -> bool:
         coalesce=True,
     )
     logger.info("Scheduled metric retention cleanup every 6h")
+    return True
+
+
+def _register_physical_link_polling_bridge_job() -> bool:
+    """Register the PhysicalLink polling bridge job on ``backup_scheduler``.
+
+    Feat-443 slice 4/4 (PR1). Honors ``_PHYSICAL_LINK_POLLING_ENABLED``
+    as a kill-switch; when disabled, returns False without touching
+    the scheduler.
+
+    Knobs match ``_register_event_prune_job`` / ``_register_metric_retention_job``:
+    ``coalesce=True``, ``max_instances=1``, ``replace_existing=True``,
+    ``IntervalTrigger(seconds=...)`` default 60s, min 10s.
+    """
+    if not _PHYSICAL_LINK_POLLING_ENABLED:
+        logger.info("PhysicalLink polling bridge auto-scheduler is disabled")
+        return False
+
+    # Lazy import mirrors ``_register_metric_retention_job`` so the
+    # bridge module stays off the hot startup path until opted in.
+    from polling.physical_link_bridge import run_once
+
+    backup_scheduler.add_job(
+        run_once,
+        trigger=IntervalTrigger(seconds=_PHYSICAL_LINK_POLLING_INTERVAL_SECONDS),
+        id="physical_link_polling_bridge",
+        name="PhysicalLink Polling Bridge",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled PhysicalLink polling bridge every %ss",
+        _PHYSICAL_LINK_POLLING_INTERVAL_SECONDS,
+    )
     return True
 
 
