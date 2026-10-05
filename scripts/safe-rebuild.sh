@@ -273,6 +273,12 @@ run docker compose exec -T backend python scripts/migrate_icmp_sidecar_metrics.p
 printf 'Applying ICMP availability source migration...\n'
 run docker compose exec -T backend python scripts/migrate_icmp_availability_source.py
 
+printf 'Applying Neo4j schema migrations (001-007, 009, 010)...\n'
+run docker compose exec -T backend python scripts/migrate_neo4j_schemas.py
+
+printf 'Applying CI/Event indexes + duplicate preflight (008)...\n'
+run docker compose exec -T backend python scripts/migrate_ci_event_indexes.py
+
 if [ "$run_event_backfill" -eq 1 ]; then
     printf 'Applying Event.created_at backfill (fix-423, one-shot idempotent)...\n'
     run docker compose exec -T backend python -m backend.scripts.backfill_event_created_at --batch-size "${EVENT_PRUNE_BATCH_SIZE:-500}" --sleep-seconds 0.5
