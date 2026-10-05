@@ -6,6 +6,8 @@ services:
     ports:
       - "${NEO4J_HTTP_PORT:-7474}:7474" # HTTP
       - "${NEO4J_BOLT_PORT:-7687}:7687" # Bolt
+    env_file:
+      - .env
     environment:
       NEO4J_AUTH: "${NEO4J_USER}/${NEO4J_PASSWORD}"
     volumes:
@@ -37,6 +39,8 @@ services:
     container_name: nexgen_postgres
     ports:
       - "${POSTGRES_EXTERNAL_PORT:-5432}:5432"
+    env_file:
+      - .env
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-nexgen_admin}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexgen_password}
@@ -83,7 +87,7 @@ services:
       - TIME_SYNC_QUERY_TIMEOUT_S=${TIME_SYNC_QUERY_TIMEOUT_S:-1}
       - PYTHONPATH=/app
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://10.53.1.22:3010}
-      - DISABLE_BACKEND_COLLECTOR=true
+      - DISABLE_BACKEND_COLLECTOR=${DISABLE_BACKEND_COLLECTOR:-false}
       # feat-cmdb-ai-handoff (PR #483): enable /api/cmdb/proposals/* router.
       # Default OFF so unflagged deployments stay silent; flip to true to enable
       # the HITL CI proposal workflow. See docs/USER_GUIDE.md and #487/#488/#489.
@@ -110,6 +114,14 @@ services:
       - EVENT_PRUNE_INTERVAL_SECONDS=${EVENT_PRUNE_INTERVAL_SECONDS:-3600}
       - EVENT_PRUNE_BATCH_SIZE=${EVENT_PRUNE_BATCH_SIZE:-500}
       - EVENT_PRUNE_STALE_AFTER_SECONDS=${EVENT_PRUNE_STALE_AFTER_SECONDS:-3600}
+      # feat-cmdb-physical-link-polling (PR #543): enable the PhysicalLink
+      # last-polled-at derived status path on the backend. Default OFF so
+      # unflagged deployments keep the legacy `unknown` status; flip to true
+      # in .env to start polling for the freshness window and re-rendering
+      # the derived status. See docs/operations/feature-flag-activation.md.
+      - FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED=${FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED:-false}
+    env_file:
+      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -153,6 +165,8 @@ services:
       postgres:
         condition: service_healthy
     command: ["python", "-m", "scripts.mqtt_subscriber"]
+    env_file:
+      - .env
     environment:
       - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=${NEO4J_USER}
@@ -169,7 +183,7 @@ services:
       - MQTT_MAPPING_BRIDGE_ENABLED=${MQTT_MAPPING_BRIDGE_ENABLED:-true}
       - MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS=${MQTT_SUBSCRIBER_STALE_HEARTBEAT_SECONDS:-90}
       - MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS=${MQTT_MAPPING_BRIDGE_MISSED_HEARTBEAT_SECONDS:-}
-      - ENABLE_MQTT_SUBSCRIBER=true
+      - ENABLE_MQTT_SUBSCRIBER=${ENABLE_MQTT_SUBSCRIBER:-false}
       - PYTHONPATH=/app
     restart: unless-stopped
 
@@ -221,6 +235,8 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=${NEO4J_USER}
