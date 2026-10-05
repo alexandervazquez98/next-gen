@@ -31,6 +31,9 @@ _RETURN_FIELDS: tuple[str, ...] = (
     "install_date",
 )
 
+# Feat-443 slice 4/4: also surface the polling-bridge cache field.
+_LAST_POLLED_FIELD: str = "last_polled_at"
+
 
 class PhysicalLinkNotFoundError(RuntimeError):
     """Raised when a physical link id is unknown."""
@@ -80,6 +83,9 @@ class PhysicalLinkRepo:
         out: dict[str, Any] = {}
         for field in _RETURN_FIELDS:
             out[field] = _get(field)
+        # feat-443: surface the polling-bridge cache field when the
+        # Cypher projection included it. Older call sites return None.
+        out[_LAST_POLLED_FIELD] = _get(_LAST_POLLED_FIELD)
 
         # Normalise endpoints tuple -> list for the wire (JSON has no tuple).
         endpoints = out.get("endpoints")
@@ -311,6 +317,80 @@ class PhysicalLinkRepo:
             pl.install_date AS install_date
         """
         params = {"link_id": link_id, "status": status}
+        result = self._run(query, **params)
+        row = result.single() if hasattr(result, "single") else result
+        return self._record(row)
+
+    # ── find_active_links (feat-443 slice 4/4) ──────────────────────────────
+
+    # Statuses the polling bridge considers "active". Excludes explicit
+    # ``DOWN`` so an operator-flagged outage is not silently overwritten
+    # by a derived status.
+    _ACTIVE_STATUSES: tuple[str, ...] = ("UP", "UNKNOWN", "PLANNED")
+
+    def find_active_links(self, driver: Any | None = None) -> list[dict[str, Any]]:
+        """Return all ``:PhysicalLink`` rows whose status is in
+        ``{UP, UNKNOWN, PLANNED}``.
+
+        Used by ``polling.physical_link_bridge.run_once`` to drive
+        ``last_polled_at`` cache writes. ``DOWN`` is filtered at the
+        Cypher level so the bridge never overwrites an operator outage.
+
+        ``driver`` is accepted so the bridge can pass its scheduler-owned
+        driver directly. The repo's stored driver is used when ``None``.
+        """
+        # Accept-and-ignore the driver arg — keeps the bridge call-site
+        # natural without forcing a new repo per call.
+        _ = driver
+
+        active = list(self._ACTIVE_STATUSES)
+        query = """
+        MATCH (pl:PhysicalLink)
+        WHERE pl.status IN $active_statuses
+        RETURN
+            pl.id AS id,
+            pl.type AS type,
+            pl.endpoints AS endpoints,
+            pl.status AS status,
+            pl.capacity_gbps AS capacity_gbps,
+            pl.install_date AS install_date,
+            pl.last_polled_at AS last_polled_at
+        ORDER BY pl.id
+        """
+        result = self._run(query, active_statuses=active)
+        if hasattr(result, "data"):
+            rows = result.data()
+        elif hasattr(result, "__iter__"):
+            rows = list(result)
+        else:
+            rows = []
+        return [r for r in (self._record(row) for row in rows) if r is not None]
+
+    # ── update_last_polled_at (feat-443 slice 4/4) ──────────────────────────
+
+    def update_last_polled_at(self, link_id: str, ts: datetime) -> dict[str, Any] | None:
+        """Stamp ``pl.last_polled_at = ts`` on the matching link.
+
+        Idempotent. The bridge guarantees ``ts`` is never ``None`` so
+        we don't model a null sentinel here — when the bridge has no
+        fresh sample it does not call this method at all.
+
+        Returns the refreshed row, or ``None`` when the id is unknown.
+        """
+        query = """
+        MATCH (pl:PhysicalLink)
+        WHERE pl.id = $link_id
+        SET pl.last_polled_at = $ts
+        RETURN
+            pl.id AS id,
+            pl.type AS type,
+            pl.endpoints AS endpoints,
+            pl.status AS status,
+            pl.capacity_gbps AS capacity_gbps,
+            pl.install_date AS install_date,
+            pl.last_polled_at AS last_polled_at
+        """
+        params = {"link_id": link_id, "ts": ts}
         result = self._run(query, **params)
         row = result.single() if hasattr(result, "single") else result
         return self._record(row)

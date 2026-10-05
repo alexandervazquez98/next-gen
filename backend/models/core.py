@@ -115,6 +115,12 @@ class PhysicalLink(BaseModel):
     status: PhysicalLinkStatus = "UNKNOWN"
     capacity_gbps: float | None = None
     install_date: str | None = None
+    # feat-443 slice 4/4: cached timestamp from the polling bridge. Set by
+    # ``polling.physical_link_bridge.run_once`` whenever at least one
+    # endpoint of the link has a fresh ``metric_values`` row. Nullable so
+    # the bridge can write a null sentinel (initial state) and dashboards
+    # can read ``null`` as "never polled".
+    last_polled_at: datetime | None = None
 
 
 class Category(BaseModel):
