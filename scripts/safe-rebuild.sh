@@ -239,6 +239,12 @@ printf 'Validating .env without creating secrets...\n'
 backup_dir=$(sh scripts/validate-env.sh --print-backup-dir)
 refuse_unsafe_backup_dir "$backup_dir"
 
+# Defense-in-depth: gate on BACKUP_DIR writability before docker compose
+# up so a misconfigured host fails fast. validate-env.sh --check-backup-
+# dir complements --print-backup-dir (the latter only emits the path;
+# this one verifies it actually exists and is writable).
+sh scripts/validate-env.sh --check-backup-dir || exit 1
+
 printf 'Resolved BACKUP_DIR: %s\n' "$backup_dir"
 ensure_host_backup_dir "$backup_dir"
 

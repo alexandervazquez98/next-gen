@@ -568,6 +568,8 @@ El router está gateado por una feature flag. Para habilitarla en tu deploy:
 
 > **Default**: la flag viene **OFF** (`FEATURE_CMDB_PROPOSALS_ENABLED=false`) en `.env.example`. Mantenerla apagada hasta que el operador decida conscientemente activarla. Ver el contrato en [`docs/ai/cmdb-proposals.md`](./ai/cmdb-proposals.md).
 
+> **Flujo operativo**: desde v1.20 las feature flags se activan vía `.env` + `docker compose up -d --force-recreate --no-deps <service>`, sin PR. Ver el runbook completo en [`docs/operations/feature-flag-activation.md`](./operations/feature-flag-activation.md).
+
 ### 10.2 ¿Cómo reviso las propuestas?
 
 Una vez activada, la UI de revisión está en `#/proposals/cmdb`:
