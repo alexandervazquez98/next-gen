@@ -46,7 +46,14 @@ fail() {
 # list in odd/tasks/feat-546-compose-env-file.md. Hyphenated names are
 # quoted with the jq object bracket notation because `.foo-bar` is a
 # subtraction in jq.
-SERVICES_ENV_FILE='backend mqtt-subscriber snmp-engine neo4j postgres'
+# Services that DO declare env_file: - .env. The neo4j service is
+# deliberately excluded: it would forward every var in .env (including
+# backend-only ones like NEO4J_URI / NEXGEN_NEO4J_URI) to the neo4j
+# process, where Neo4j 5.x strict_validation rejects unknown settings
+# and the container refuses to start. See issue #550.
+SERVICES_WITH_ENV_FILE='backend mqtt-subscriber snmp-engine postgres'
+# Services that MUST NOT declare env_file (negative contract).
+SERVICES_WITHOUT_ENV_FILE='neo4j'
 
 NEW_FLAG='FEATURE_CMDB_PHYSICAL_LINK_POLLING_ENABLED'
 BACKEND_TOGGLE='DISABLE_BACKEND_COLLECTOR'
@@ -119,8 +126,8 @@ service_config() {
     rm -f "$tmp"
 }
 
-# T2/T3 — every service in $SERVICES_ENV_FILE must declare env_file: .env
-for svc in $SERVICES_ENV_FILE; do
+# T2/T3 — every service in $SERVICES_WITH_ENV_FILE must declare env_file: .env
+for svc in $SERVICES_WITH_ENV_FILE; do
     cfg=$(service_config "$svc") || exit 1
     # With --no-env-resolution docker compose renders env_file entries as
     # objects of the form `{"path": "<absolute path>", "required": bool}`.
@@ -141,6 +148,21 @@ for svc in $SERVICES_ENV_FILE; do
     done
     if [ "$found" -ne 1 ]; then
         fail "T2/T3: $svc env_file does not reference .env (got: $env_paths)"
+    fi
+done
+
+# T16 — services in $SERVICES_WITHOUT_ENV_FILE must NOT declare env_file.
+# This guards the regression introduced by PR #549: the neo4j service
+# picked up env_file: - .env alongside the other 4 services, and the
+# resulting .env leak caused the neo4j 5.x strict_validation failure
+# closed in #550. Asserting the negative contract here keeps the fix
+# durable against a future "let's be consistent and add env_file to all
+# services" well-intentioned regression.
+for svc in $SERVICES_WITHOUT_ENV_FILE; do
+    cfg=$(service_config "$svc") || exit 1
+    env_paths=$(printf '%s' "$cfg" | jq -r '.services["'"$svc"'"].env_file // [] | .[].path // ""')
+    if [ -n "$env_paths" ]; then
+        fail "T16: $svc MUST NOT declare env_file (got: $env_paths) — see #550"
     fi
 done
 
@@ -185,4 +207,4 @@ if [ "$failures" -gt 0 ]; then
     exit 1
 fi
 
-printf 'compose-env-file tests passed (T2-T7 green)\n'
+printf 'compose-env-file tests passed (T2-T7, T16 green)\n'
