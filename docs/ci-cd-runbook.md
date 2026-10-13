@@ -108,6 +108,12 @@ sh scripts/safe-rebuild.sh                       # real deploy
 The CD workflow does not retry or interfere with a manual run, but it
 will open a `cd-failure` issue if a parallel `push` event triggers it.
 
+For **routine feature flag flips** (no rebuild, no PR), the workflow is
+now `edit .env + docker compose up -d --force-recreate --no-deps
+<service>`. See
+[`docs/operations/feature-flag-activation.md`](./operations/feature-flag-activation.md)
+for the full procedure.
+
 ## Failure recovery
 
 When `safe-rebuild.sh` exits non-zero, the CD workflow fails and opens a
