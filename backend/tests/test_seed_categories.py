@@ -61,8 +61,8 @@ def test_fresh_graph_creates_all_default_categories(stub_driver):
     merge_calls = [c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])]
     seeded_names = {c.kwargs.get("name") for c in merge_calls}
     assert seeded_names == set(
-        seed_categories.DEFAULT_CATEGORIES
-    ), f"Expected all DEFAULT_CATEGORIES to be MERGE'd; got {seeded_names}"
+        seed_categories.SEEDED_CATEGORIES
+    ), f"Expected all seeded categories to be MERGE'd; got {seeded_names}"
 
     # Router must resolve to icon_key='router' (canonical mapping in category_icons).
     router_call = next(c for c in merge_calls if c.kwargs.get("name") == "Router")
@@ -162,7 +162,137 @@ def test_seed_is_idempotent_across_two_runs(stub_driver):
             "SET c.icon_key" not in q for q in calls
         ), f"{label} run issued icon_key SETs on a populated graph: {calls}"
         match_calls = [q for q in calls if "MATCH (c:Category" in q]
-        assert len(match_calls) == len(seed_categories.DEFAULT_CATEGORIES), (
-            f"{label} run: expected {len(seed_categories.DEFAULT_CATEGORIES)} MATCH calls; "
+        assert len(match_calls) == len(seed_categories.SEEDED_CATEGORIES), (
+            f"{label} run: expected {len(seed_categories.SEEDED_CATEGORIES)} MATCH calls; "
             f"got {len(match_calls)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Feature #480 S4 — canonical ITIL-aligned Service Catalog categories.
+# ---------------------------------------------------------------------------
+
+CANONICAL_SERVICE_CATEGORIES = [
+    "Infrastructure & Platform",
+    "Application Services",
+    "End User Computing",
+    "IT Security",
+    "Telecommunications",
+    "Business Services",
+    "Workspace",
+    "Consulting & Advisory",
+]
+
+
+def test_canonical_service_categories_are_the_documented_taxonomy(stub_driver):
+    """The canonical taxonomy is the maintainer-approved 8-value list."""
+    import seed_categories
+
+    assert seed_categories.CANONICAL_SERVICE_CATEGORIES == CANONICAL_SERVICE_CATEGORIES
+
+
+def test_legacy_cmdb_categories_are_preserved(stub_driver):
+    """The legacy CMDB categories must survive next to the canonical ones."""
+    import seed_categories
+
+    for legacy in ("Router", "Switch", "Server", "Sensor", "Firewall", "Other"):
+        assert legacy in seed_categories.DEFAULT_CATEGORIES
+        assert legacy in seed_categories.SEEDED_CATEGORIES
+
+
+def test_seed_creates_the_canonical_service_categories(stub_driver):
+    """Every canonical category MUST be MERGE'd on boot (idempotent seed)."""
+    import asyncio
+
+    import seed_categories
+
+    session = stub_driver.session.return_value.__enter__.return_value
+    session.run.return_value.single.side_effect = _empty_single
+
+    asyncio.run(seed_categories.seed_categories())
+
+    merge_calls = [c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])]
+    seeded_names = {c.kwargs.get("name") for c in merge_calls}
+    for canonical in CANONICAL_SERVICE_CATEGORIES:
+        assert canonical in seeded_names, f"'{canonical}' was not seeded; got {seeded_names}"
+
+
+def test_main_startup_runs_the_category_seed(stub_driver):
+    """The production startup path (main.py) is what seeds the categories."""
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+
+    assert "from seed_categories import seed_categories" in source
+    assert "await seed_categories()" in source
+
+
+def test_api_categories_exposes_the_seeded_canonical_categories(stub_driver):
+    """``GET /api/categories`` must surface exactly what the boot-time seed wrote.
+
+    This walks the real chain: the production seed writes the names, the
+    catalog service reads them back from the ``:Category`` label, and the
+    public ``/api/categories`` contract returns them — with the legacy CMDB
+    categories still present.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    import seed_categories
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from models.user import User
+    from routers import catalog as catalog_router
+    from services.auth_service import get_current_active_user
+
+    # 1. Production seed — capture the names it MERGEs.
+    session = stub_driver.session.return_value.__enter__.return_value
+    session.run.return_value.single.side_effect = _empty_single
+
+    asyncio.run(seed_categories.seed_categories())
+
+    merge_calls = [c for c in session.run.call_args_list if "MERGE (c:Category" in str(c.args[0])]
+    seeded_names = {c.kwargs.get("name") for c in merge_calls}
+
+    # 2. Graph state the catalog service reads back.
+    graph_rows = [{"name": name, "icon_key": "generic"} for name in sorted(seeded_names)]
+
+    class _FakeDriver:
+        def session(self):
+            class _Session:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc_info):
+                    return False
+
+                def run(self, query, **params):
+                    class _Result:
+                        def __iter__(self):
+                            return iter(graph_rows)
+
+                    return _Result()
+
+            return _Session()
+
+    # 3. Public contract.
+    app = FastAPI()
+    app.include_router(catalog_router.router, prefix="/api")
+
+    async def _override_current_user():
+        return User(username="viewer", role="VIEWER", permissions=[], allowed_locations=[])
+
+    app.dependency_overrides[get_current_active_user] = _override_current_user
+    client = TestClient(app)
+
+    with patch("services.catalog_service.get_db", return_value=_FakeDriver()):
+        response = client.get("/api/categories")
+
+    assert response.status_code == 200
+    names = [row["name"] for row in response.json()]
+    for canonical in CANONICAL_SERVICE_CATEGORIES:
+        assert canonical in names, f"'{canonical}' is not exposed by /api/categories; got {names}"
+    for legacy in seed_categories.DEFAULT_CATEGORIES:
+        assert legacy in names, f"legacy category '{legacy} disappeared; got {names}"
+    # The legacy payload shape is unchanged (name + icon_key).
+    assert all(set(row) == {"name", "icon_key"} for row in response.json())

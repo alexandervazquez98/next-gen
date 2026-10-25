@@ -1,10 +1,15 @@
 """
 Dictionary Service — CRUD operations for MetricDictionary nodes in Neo4j.
 """
+
+import ast
+import asyncio
+import json
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from database import get_db
 
@@ -23,7 +28,7 @@ def _now():
 SNMP_PREVIEW_BATCH_SIZE = 20
 
 
-def get_metrics_from_dictionary(dictionary_id: str) -> List[str]:
+def get_metrics_from_dictionary(dictionary_id: str) -> list[str]:
     """
     Resolve HAS_METRIC relationships from a MetricDictionary to get metric_ids.
     Returns list of metric_id strings.
@@ -40,7 +45,7 @@ def get_metrics_from_dictionary(dictionary_id: str) -> List[str]:
         return [record["metric_id"] for record in result]
 
 
-def get_dictionary(id: str) -> Optional[Dict[str, Any]]:
+def get_dictionary(id: str) -> dict[str, Any] | None:
     """Get a single dictionary by id, including its metric_ids."""
     driver = _get_driver()
     with driver.session() as session:
@@ -70,7 +75,7 @@ def get_dictionary(id: str) -> Optional[Dict[str, Any]]:
         return dictionary
 
 
-def get_dictionary_by_brand_model(brand: str, model: str) -> Optional[Dict[str, Any]]:
+def get_dictionary_by_brand_model(brand: str, model: str) -> dict[str, Any] | None:
     """Get a dictionary by exact brand+model match."""
     driver = _get_driver()
     with driver.session() as session:
@@ -88,22 +93,92 @@ def get_dictionary_by_brand_model(brand: str, model: str) -> Optional[Dict[str, 
         return get_dictionary(result["id"])
 
 
-def list_dictionaries() -> List[Dict[str, Any]]:
-    """List all dictionaries with their metric_ids."""
+class MetricDictionaryLookup:
+    """Read managed values from ``MetricDictionary`` nodes by dictionary key.
+
+    Managed keys (``value_stream``, ``tier``, ``criticality``) share the
+    ``MetricDictionary`` label with the brand/model dictionary templates but
+    are scoped by the ``dictionary_key`` property and carry ``value``/``label``
+    instead of ``id``/``name``/``brand``/``model``.
+
+    This class is the single read seam for managed dictionary values: the
+    dictionaries router and the Service Management import path both use it, so
+    the dropdown sources and the import validation can never drift apart.
+    """
+
+    DICTIONARY_KEY = ""
+
+    def __init__(self, dictionary_key: str | None = None, driver: Any | None = None) -> None:
+        self.dictionary_key = dictionary_key or self.DICTIONARY_KEY
+        self._driver = driver if driver is not None else _get_driver()
+
+    def list_values(self, *, active: bool = True) -> list[dict[str, Any]]:
+        """Return ``[{value, label}]`` rows for this dictionary key."""
+
+        with self._driver.session() as session:
+            result = session.run(
+                """
+                MATCH (v:MetricDictionary {dictionary_key: $key})
+                WHERE coalesce(v.active, true) = $active
+                RETURN v.value AS value, coalesce(v.label, v.value) AS label
+                ORDER BY v.value
+                """,
+                key=self.dictionary_key,
+                active=active,
+            )
+            return [{"value": r["value"], "label": r["label"]} for r in result]
+
+    def list_active(self) -> list[dict[str, Any]]:
+        """Return the active ``[{value, label}]`` rows for this dictionary key."""
+
+        return self.list_values(active=True)
+
+    def is_active(self, value: str) -> bool:
+        """Return True when ``value`` is an active row of this dictionary key."""
+
+        if not value:
+            return False
+        with self._driver.session() as session:
+            record = session.run(
+                """
+                MATCH (v:MetricDictionary {dictionary_key: $key, value: $value})
+                RETURN coalesce(v.active, true) AS active
+                """,
+                key=self.dictionary_key,
+                value=value,
+            ).single()
+        if record is None:
+            return False
+        return bool(record.get("active"))
+
+
+def list_dictionaries() -> list[dict[str, Any]]:
+    """List all dictionaries with their metric_ids.
+
+    Managed MetricDictionary rows (``dictionary_key`` set — ``value_stream``,
+    ``tier``, ``criticality``) are value lists, not dictionary templates, so
+    they are excluded here: they would otherwise surface as null-shaped
+    records for the legacy CMDB dictionary manager.
+    """
     driver = _get_driver()
     with driver.session() as session:
         result = session.run(
             """
             MATCH (md:MetricDictionary)
+            WHERE md.dictionary_key IS NULL
             RETURN md.id AS id, md.name AS name, md.brand AS brand,
                    md.model AS model, md.polling_interval AS polling_interval,
-                   md.created_at AS created_at, md.updated_at AS updated_at
+                   md.created_at AS created_at, md.updated_at AS updated_at,
+                   md.dictionary_key AS dictionary_key
             ORDER BY md.name
             """
         )
 
         dictionaries = []
         for record in result:
+            if record.get("dictionary_key") is not None:
+                # Defense in depth: managed rows never belong in the legacy list.
+                continue
             dictionary = {
                 "id": record["id"],
                 "name": record["name"],
@@ -118,7 +193,19 @@ def list_dictionaries() -> List[Dict[str, Any]]:
         return dictionaries
 
 
-def create_dictionary(data: Dict[str, Any]) -> Dict[str, Any]:
+def list_dictionary_values(dictionary_key: str, *, active: bool = True) -> list[dict[str, Any]]:
+    """Return ``[{value, label}]`` for a managed MetricDictionary key.
+
+    Managed key surfaces (``value_stream``, ``tier``, ``criticality``) live on
+    the same label as the brand/model dictionaries, but are scoped by
+    ``dictionary_key`` and carry ``value``/``label``. This helper keeps that
+    property layout out of the routers.
+    """
+
+    return MetricDictionaryLookup(dictionary_key).list_values(active=active)
+
+
+def create_dictionary(data: dict[str, Any]) -> dict[str, Any]:
     """
     Create a new MetricDictionary node with HAS_METRIC relationships.
     Raises ValueError if brand+model pair already exists.
@@ -128,7 +215,9 @@ def create_dictionary(data: Dict[str, Any]) -> Dict[str, Any]:
     # Check for duplicate brand+model
     existing = get_dictionary_by_brand_model(data["brand"], data["model"])
     if existing:
-        raise ValueError(f"Dictionary with brand='{data['brand']}' and model='{data['model']}' already exists")
+        raise ValueError(
+            f"Dictionary with brand='{data['brand']}' and model='{data['model']}' already exists"
+        )
 
     dict_id = data["id"]
     now = _now()
@@ -182,7 +271,7 @@ def create_dictionary(data: Dict[str, Any]) -> Dict[str, Any]:
         return get_dictionary(dict_id)
 
 
-def update_dictionary(id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def update_dictionary(id: str, data: dict[str, Any]) -> dict[str, Any] | None:
     """
     Update a MetricDictionary node.
     Updates: name, brand, model, polling_interval, metric_ids (replace, not merge).
@@ -212,7 +301,9 @@ def update_dictionary(id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]
         ).single()
 
     if conflict:
-        raise ValueError(f"Another dictionary with brand='{new_brand}' and model='{new_model}' already exists")
+        raise ValueError(
+            f"Another dictionary with brand='{new_brand}' and model='{new_model}' already exists"
+        )
 
     now = _now()
 
@@ -304,7 +395,7 @@ def delete_dictionary(id: str) -> bool:
     return True
 
 
-def get_target_cis(dictionary_id: str) -> List[Dict[str, Any]]:
+def get_target_cis(dictionary_id: str) -> list[dict[str, Any]]:
     """
     Return CIs where brand and model match the dictionary's brand+model exactly.
     Case-insensitive comparison. Returns [{id, name, ip, brand, model, location_name}].
@@ -345,9 +436,9 @@ def get_target_cis(dictionary_id: str) -> List[Dict[str, Any]]:
 
 def apply_dictionary(
     dictionary_id: str,
-    ci_ids: List[str],
+    ci_ids: list[str],
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Apply a dictionary to the specified CI list.
     Creates/updates AppliedDictionary nodes (idempotent MERGE).
@@ -423,7 +514,7 @@ def apply_dictionary(
     }
 
 
-def validate_metric_ids(metric_ids: List[str]) -> tuple[bool, List[str]]:
+def validate_metric_ids(metric_ids: list[str]) -> tuple[bool, list[str]]:
     """
     Validate that all metric_ids exist as MetricDef nodes.
     Returns (all_valid, invalid_ids).
@@ -449,10 +540,10 @@ def validate_metric_ids(metric_ids: List[str]) -> tuple[bool, List[str]]:
 
 # ---- 3. Batch metric_ids collection per brand+model group ----
 def _collect_metric_ids_by_group(
-    rows: List[Dict[str, Any]],
-) -> Dict[tuple[str, str], List[str]]:
+    rows: list[dict[str, Any]],
+) -> dict[tuple[str, str], list[str]]:
     """Group metric_ids by brand+model, deduplicated."""
-    by_group: Dict[tuple[str, str], set[str]] = {}
+    by_group: dict[tuple[str, str], set[str]] = {}
     for row in rows:
         key = (row["brand"].lower(), row["model"].lower())
         by_group.setdefault(key, set()).update(row["metric_ids"])
@@ -461,8 +552,8 @@ def _collect_metric_ids_by_group(
 
 # ---- 4. Pre-validate all metric_ids before transaction ----
 def _pre_validate_metric_ids(
-    rows: List[Dict[str, Any]],
-) -> tuple[bool, Dict[str, List[str]]]:
+    rows: list[dict[str, Any]],
+) -> tuple[bool, dict[str, list[str]]]:
     """
     Collect all unique metric_ids across all rows and validate in one query.
     Returns (all_valid, per_row_errors) where per_row_errors maps row_index to invalid ids.
@@ -482,7 +573,7 @@ def _pre_validate_metric_ids(
         )
         found = {record["id"] for record in result}
 
-    invalid_by_row: Dict[str, List[str]] = {}
+    invalid_by_row: dict[str, list[str]] = {}
     for row in rows:
         invalid = [mid for mid in row["metric_ids"] if mid not in found]
         if invalid:
@@ -496,11 +587,6 @@ def _pre_validate_metric_ids(
 # Preview — Parallel SNMP query for live readings
 # ---------------------------------------------------------------------------
 
-import asyncio
-import ast
-import json
-from concurrent.futures import ThreadPoolExecutor
-
 try:
     from pysnmp.hlapi import (
         CommunityData,
@@ -511,12 +597,13 @@ try:
         UdpTransportTarget,
         getCmd,
     )
+
     SNMP_AVAILABLE = True
 except ImportError:
     SNMP_AVAILABLE = False
 
 
-def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
+def _parse_snmp_config(snmp_raw: Any) -> dict[str, Any]:
     """Parse SNMP config from CI node snmp field (dict, JSON string, or ast-literal)."""
     if not snmp_raw:
         return {}
@@ -531,7 +618,7 @@ def _parse_snmp_config(snmp_raw: Any) -> Dict[str, Any]:
             return {}
 
 
-def _get_metric_defs(metric_ids: List[str]) -> List[Dict[str, Any]]:
+def _get_metric_defs(metric_ids: list[str]) -> list[dict[str, Any]]:
     """Fetch MetricDef details (oid, warning, critical, operator) for given IDs."""
     if not metric_ids:
         return []
@@ -544,18 +631,20 @@ def _get_metric_defs(metric_ids: List[str]) -> List[Dict[str, Any]]:
         metric_defs = []
         for record in result:
             m = record["m"]
-            metric_defs.append({
-                "id": m.get("id"),
-                "oid": m.get("oid"),
-                "protocol": m.get("protocol", "SNMP"),
-                "warning": m.get("warning"),
-                "critical": m.get("critical"),
-                "operator": m.get("operator", ">="),
-            })
+            metric_defs.append(
+                {
+                    "id": m.get("id"),
+                    "oid": m.get("oid"),
+                    "protocol": m.get("protocol", "SNMP"),
+                    "warning": m.get("warning"),
+                    "critical": m.get("critical"),
+                    "operator": m.get("operator", ">="),
+                }
+            )
         return metric_defs
 
 
-def _poll_single_metric(ci_ip: str, snmp_conf: Dict[str, Any], metric_def: Dict[str, Any]):
+def _poll_single_metric(ci_ip: str, snmp_conf: dict[str, Any], metric_def: dict[str, Any]):
     """
     Poll a single metric on a single CI via SNMP.
     Returns (value, poll_status_str) where poll_status_str is 'OK' or 'NO_DATA'.
@@ -593,7 +682,7 @@ def _poll_single_metric(ci_ip: str, snmp_conf: Dict[str, Any], metric_def: Dict[
         return None, "NO_DATA"
 
 
-def _compute_metric_status(value: Any, metric_def: Dict[str, Any]) -> str:
+def _compute_metric_status(value: Any, metric_def: dict[str, Any]) -> str:
     """Determine status (OK/WARNING/CRITICAL/NO_DATA) based on value and thresholds."""
     if value is None:
         return "NO_DATA"
@@ -629,8 +718,8 @@ def _compute_metric_status(value: Any, metric_def: Dict[str, Any]) -> str:
 
 async def preview_dictionary(
     dictionary_id: str,
-    ci_ids: List[str],
-) -> List[Dict[str, Any]]:
+    ci_ids: list[str],
+) -> list[dict[str, Any]]:
     """
     Preview live SNMP readings for a dictionary applied to specified CIs.
     For each CI: fetch SNMP config, poll each metric in the dictionary.
@@ -668,7 +757,7 @@ async def preview_dictionary(
         for rec in ci_records
     }
 
-    def poll_ci(ci_id: str) -> Dict[str, Any]:
+    def poll_ci(ci_id: str) -> dict[str, Any]:
         """Poll all metrics for a single CI (runs in thread pool)."""
         ci = ci_map.get(ci_id, {})
         ci_name = ci.get("name", ci_id)
@@ -678,30 +767,36 @@ async def preview_dictionary(
         results = []
         for metric_def in metric_defs:
             if not ip:
-                results.append({
-                    "metric_id": metric_def["id"],
-                    "oid": metric_def.get("oid", ""),
-                    "value": None,
-                    "status": "NO_DATA",
-                })
+                results.append(
+                    {
+                        "metric_id": metric_def["id"],
+                        "oid": metric_def.get("oid", ""),
+                        "value": None,
+                        "status": "NO_DATA",
+                    }
+                )
                 continue
 
             value, poll_status = _poll_single_metric(ip, snmp_conf, metric_def)
             if poll_status == "NO_DATA":
-                results.append({
-                    "metric_id": metric_def["id"],
-                    "oid": metric_def.get("oid", ""),
-                    "value": None,
-                    "status": "NO_DATA",
-                })
+                results.append(
+                    {
+                        "metric_id": metric_def["id"],
+                        "oid": metric_def.get("oid", ""),
+                        "value": None,
+                        "status": "NO_DATA",
+                    }
+                )
             else:
                 status = _compute_metric_status(value, metric_def)
-                results.append({
-                    "metric_id": metric_def["id"],
-                    "oid": metric_def.get("oid", ""),
-                    "value": value,
-                    "status": status,
-                })
+                results.append(
+                    {
+                        "metric_id": metric_def["id"],
+                        "oid": metric_def.get("oid", ""),
+                        "value": value,
+                        "status": status,
+                    }
+                )
 
         return {
             "ci_id": ci_id,
@@ -717,10 +812,7 @@ async def preview_dictionary(
     with ThreadPoolExecutor(max_workers=batch_size) as executor:
         for i in range(0, len(ci_ids), batch_size):
             batch = ci_ids[i : i + batch_size]
-            futures = [
-                loop.run_in_executor(executor, poll_ci, ci_id)
-                for ci_id in batch
-            ]
+            futures = [loop.run_in_executor(executor, poll_ci, ci_id) for ci_id in batch]
             batch_results = await asyncio.gather(*futures)
             previews.extend(batch_results)
 
@@ -731,7 +823,8 @@ async def preview_dictionary(
 # Per-CI Exclusions — AppliedDictionary management
 # ---------------------------------------------------------------------------
 
-def get_applied_dictionary(ci_id: str) -> Optional[Dict[str, Any]]:
+
+def get_applied_dictionary(ci_id: str) -> dict[str, Any] | None:
     """
     Get the AppliedDictionary for a CI, including dictionary details.
     Returns dict with {dictionary_id, dictionary_name, excluded_metrics, extra_metrics, applied_at}
@@ -760,7 +853,9 @@ def get_applied_dictionary(ci_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     # Get the dictionary's actual metric_ids from HAS_METRIC relationships
-    dict_metric_ids = get_metrics_from_dictionary(result["dictionary_id"]) if result["dictionary_id"] else []
+    dict_metric_ids = (
+        get_metrics_from_dictionary(result["dictionary_id"]) if result["dictionary_id"] else []
+    )
 
     return {
         "dictionary_id": result["dictionary_id"],
@@ -776,9 +871,9 @@ def get_applied_dictionary(ci_id: str) -> Optional[Dict[str, Any]]:
 
 def update_ci_exclusions(
     ci_id: str,
-    excluded_metrics: Optional[List[str]] = None,
-    extra_metrics: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    excluded_metrics: list[str] | None = None,
+    extra_metrics: list[str] | None = None,
+) -> dict[str, Any]:
     """
     Update or create AppliedDictionary exclusions/extras for a CI.
     excluded_metrics and extra_metrics REPLACE existing values (not merge).
@@ -803,7 +898,9 @@ def update_ci_exclusions(
         ).single()
 
         if not exists:
-            raise ValueError(f"No AppliedDictionary found for CI '{ci_id}'. Apply a dictionary first.")
+            raise ValueError(
+                f"No AppliedDictionary found for CI '{ci_id}'. Apply a dictionary first."
+            )
 
         # Update excluded_metrics and extra_metrics
         session.run(
@@ -851,7 +948,8 @@ def remove_applied_dictionary(ci_id: str) -> bool:
 # Bulk CSV Upload Helpers
 # ---------------------------------------------------------------------------
 
-def get_template_brands_models() -> List[tuple[str, str]]:
+
+def get_template_brands_models() -> list[tuple[str, str]]:
     """
     Return distinct (brand, model) pairs from CI nodes that have both fields.
     Used to pre-populate the CSV template.
@@ -871,8 +969,8 @@ def get_template_brands_models() -> List[tuple[str, str]]:
 
 
 def bulk_validate_rows(
-    rows: List[Dict[str, Any]],
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Validate a list of parsed CSV rows (dicts with brand, model, name,
     polling_interval, metric_ids keys).
@@ -887,8 +985,8 @@ def bulk_validate_rows(
       valid_rows: list of validated row dicts with row_index included
       errors: list of {row, field, message} dicts
     """
-    errors: List[Dict[str, Any]] = []
-    validated_rows: List[Dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    validated_rows: list[dict[str, Any]] = []
 
     # Collect existing brand+model pairs from CIs once
     existing_pairs: set[tuple[str, str]] = set(get_template_brands_models())
@@ -897,11 +995,13 @@ def bulk_validate_rows(
     seen_triples: set[tuple[str, str, str]] = set()
 
     # Pre-collect ALL metric_ids across all rows for batch validation
-    all_row_metric_ids: List[List[str]] = []
-    row_metric_ids_map: Dict[int, List[str]] = {}
+    all_row_metric_ids: list[list[str]] = []
+    row_metric_ids_map: dict[int, list[str]] = {}
     for row in rows:
         row_idx = row.get("row_index", 0)
-        metric_ids = [mid.strip() for mid in str(row.get("metric_ids") or "").split(",") if mid.strip()]
+        metric_ids = [
+            mid.strip() for mid in str(row.get("metric_ids") or "").split(",") if mid.strip()
+        ]
         all_row_metric_ids.append(metric_ids)
         row_metric_ids_map[row_idx] = metric_ids
 
@@ -927,57 +1027,84 @@ def bulk_validate_rows(
         required = ["brand", "model", "name", "polling_interval", "metric_ids"]
         for field in required:
             if field not in row or str(row.get(field) or "").strip() == "":
-                errors.append({"row": row_idx, "field": field, "message": f"Missing or empty '{field}'"})
+                errors.append(
+                    {"row": row_idx, "field": field, "message": f"Missing or empty '{field}'"}
+                )
                 break
         else:
             brand = str(row["brand"]).strip()
             model = str(row["model"]).strip()
             name = str(row["name"]).strip()
-            metric_ids_str = str(row["metric_ids"] or "").strip()
             polling_interval_str = str(row["polling_interval"] or "60").strip()
 
             # ---- 4. Duplicate within CSV ----
             triple = (brand.lower(), model.lower(), name.lower())
             if triple in seen_triples:
-                errors.append({"row": row_idx, "field": "name", "message": f"Duplicate dictionary name '{name}' for brand='{brand}' model='{model}'"})
+                errors.append(
+                    {
+                        "row": row_idx,
+                        "field": "name",
+                        "message": f"Duplicate dictionary name '{name}' for brand='{brand}' model='{model}'",
+                    }
+                )
             else:
                 seen_triples.add(triple)
 
             # ---- 2. CI existence ----
             if (brand.lower(), model.lower()) not in existing_pairs:
-                errors.append({"row": row_idx, "field": "brand", "message": f"No CIs found for brand='{brand}' model='{model}'"})
+                errors.append(
+                    {
+                        "row": row_idx,
+                        "field": "brand",
+                        "message": f"No CIs found for brand='{brand}' model='{model}'",
+                    }
+                )
 
             # ---- 3. metric_ids exist (in-memory check against batch-validated set) ----
             metric_ids = row_metric_ids_map.get(row_idx, [])
             if metric_ids:
                 invalid = [mid for mid in metric_ids if mid not in valid_metric_ids]
                 if invalid:
-                    errors.append({"row": row_idx, "field": "metric_ids", "message": f"Invalid metric_ids: {invalid}"})
+                    errors.append(
+                        {
+                            "row": row_idx,
+                            "field": "metric_ids",
+                            "message": f"Invalid metric_ids: {invalid}",
+                        }
+                    )
 
             # ---- polling_interval must be numeric ----
             try:
                 int(polling_interval_str)
             except ValueError:
-                errors.append({"row": row_idx, "field": "polling_interval", "message": f"polling_interval must be an integer, got '{polling_interval_str}'"})
+                errors.append(
+                    {
+                        "row": row_idx,
+                        "field": "polling_interval",
+                        "message": f"polling_interval must be an integer, got '{polling_interval_str}'",
+                    }
+                )
 
             # If no errors for this row, add to validated_rows
             row_errors = [e for e in errors if e["row"] == row_idx]
             if not row_errors:
-                validated_rows.append({
-                    "brand": brand,
-                    "model": model,
-                    "name": name,
-                    "polling_interval": int(polling_interval_str),
-                    "metric_ids": metric_ids,
-                    "row_index": row_idx,
-                })
+                validated_rows.append(
+                    {
+                        "brand": brand,
+                        "model": model,
+                        "name": name,
+                        "polling_interval": int(polling_interval_str),
+                        "metric_ids": metric_ids,
+                        "row_index": row_idx,
+                    }
+                )
 
     return validated_rows, errors
 
 
 def bulk_validate_snmp_sample(
-    validated_rows: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    validated_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     """
     For each distinct brand+model in validated_rows, select ~10% of matching CIs
     at random and poll each metric via SNMP.  Returns aggregated results.
@@ -997,11 +1124,11 @@ def bulk_validate_snmp_sample(
     """
     import random
 
-    results: Dict[str, Any] = {}
+    results: dict[str, Any] = {}
     driver = _get_driver()
 
     # Group rows by brand+model
-    by_brand_model: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    by_brand_model: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in validated_rows:
         key = (row["brand"].lower(), row["model"].lower())
         by_brand_model.setdefault(key, []).append(row)
@@ -1009,8 +1136,9 @@ def bulk_validate_snmp_sample(
     for (brand, model), _ in by_brand_model.items():
         # Get all CIs for this brand+model
         with driver.session() as session:
-            cis = list(session.run(
-                """
+            cis = list(
+                session.run(
+                    """
                 MATCH (n:CI)
                 WHERE n.brand IS NOT NULL AND n.model IS NOT NULL
                   AND toLower(n.brand) = $brand
@@ -1018,9 +1146,10 @@ def bulk_validate_snmp_sample(
                   AND n.ip IS NOT NULL AND n.ip <> ''
                 RETURN n.id AS id, n.ip AS ip, n.snmp AS snmp, n.name AS name
                 """,
-                brand=brand,
-                model=model,
-            ))
+                    brand=brand,
+                    model=model,
+                )
+            )
 
         if not cis:
             continue
@@ -1030,10 +1159,10 @@ def bulk_validate_snmp_sample(
         sampled = random.sample(cis, min(sample_size, len(cis)))
         sampled_ips = [c["ip"] for c in sampled]
 
-        polled: List[Dict[str, Any]] = []
-        no_data: List[Dict[str, Any]] = []
+        polled: list[dict[str, Any]] = []
+        no_data: list[dict[str, Any]] = []
 
-        all_metric_ids_for_group: List[str] = []
+        all_metric_ids_for_group: list[str] = []
         for row in by_brand_model[(brand, model)]:
             all_metric_ids_for_group.extend(row["metric_ids"])
         unique_metric_ids = list(set(all_metric_ids_for_group))
@@ -1056,12 +1185,14 @@ def bulk_validate_snmp_sample(
                     if poll_status == "NO_DATA" or value is None:
                         no_data.append({"ip": ip, "metric_id": metric_id, "status": "NO_DATA"})
                     else:
-                        polled.append({
-                            "ip": ip,
-                            "metric_id": metric_id,
-                            "value": value,
-                            "status": "OK",
-                        })
+                        polled.append(
+                            {
+                                "ip": ip,
+                                "metric_id": metric_id,
+                                "value": value,
+                                "status": "OK",
+                            }
+                        )
 
         key = f"{brand}-{model}"
         results[key] = {
@@ -1074,8 +1205,8 @@ def bulk_validate_snmp_sample(
 
 
 def bulk_create_dictionaries(
-    validated_rows: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    validated_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Atomically create all MetricDictionary nodes and their HAS_METRIC links
     in a single Neo4j write transaction.
@@ -1089,7 +1220,7 @@ def bulk_create_dictionaries(
         return []
 
     driver = _get_driver()
-    created: List[Dict[str, Any]] = []
+    created: list[dict[str, Any]] = []
 
     def write_tx(tx):
         now = _now()
@@ -1139,12 +1270,14 @@ def bulk_create_dictionaries(
                     mid=metric_id,
                 )
 
-            created.append({
-                "id": dict_id,
-                "name": row["name"],
-                "brand": row["brand"],
-                "model": row["model"],
-            })
+            created.append(
+                {
+                    "id": dict_id,
+                    "name": row["name"],
+                    "brand": row["brand"],
+                    "model": row["model"],
+                }
+            )
 
     with driver.session() as session:
         session.execute_write(write_tx)

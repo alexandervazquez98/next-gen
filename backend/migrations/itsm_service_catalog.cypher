@@ -34,6 +34,21 @@ MERGE (deliver:MetricDictionary {dictionary_key: 'value_stream', value: 'deliver
 ON CREATE SET deliver.label = 'Deliver', deliver.active = true;
 
 // -----------------------------------------------------------------------------
+// Managed Service Catalog vocabularies (feature #480 S5)
+// -----------------------------------------------------------------------------
+// The ITIL-aligned Service Catalog dropdowns are backed by managed
+// MetricDictionary rows:
+//
+// - tier        -> bronze | silver | gold | platinum
+// - criticality -> low | medium | high | critical
+//
+// The seeded values live in backend/services/itsm_imports/seed_data.py and are
+// applied by services.itsm_bootstrap.run_managed_dictionary_seed on startup,
+// right after this migration runs (so the (dictionary_key, value) uniqueness
+// constraint above already exists). The seed is idempotent: MERGE on
+// (dictionary_key, value).
+
+// -----------------------------------------------------------------------------
 // ServiceCatalog constraints and indexes
 // -----------------------------------------------------------------------------
 
