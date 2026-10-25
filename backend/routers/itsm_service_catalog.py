@@ -17,7 +17,11 @@ from models.user import User, UserPermission
 from repositories.itsm_service_catalog_repo import ServiceCatalogRepository
 from services.auth_service import check_permission, get_current_active_user
 from services.itsm_imports import catalog_import
-from services.itsm_imports.value_stream_lookup import MetricDictionaryValueStreamLookup
+from services.itsm_imports.value_stream_lookup import (
+    MetricDictionaryCriticalityLookup,
+    MetricDictionaryTierLookup,
+    MetricDictionaryValueStreamLookup,
+)
 
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 LimitQuery = Annotated[int, Query(ge=1, le=500)]
@@ -45,11 +49,17 @@ async def get_service_catalog(
     return service_catalog_service.get_service_catalog(service_id)
 
 
-@router.post("", response_model=dict[str, Any])
+@router.post("", status_code=201, response_model=dict[str, Any])
 async def create_service_catalog(
     payload: ServiceCatalogCreate,
     current_user: CurrentUserDep,
 ):
+    """Create a service catalog entry.
+
+    Feature #480 S1: ``service_id`` is optional — the server mints
+    ``sc-{value_stream_slug|name_slug}-{nanoid}`` and returns it in the 201
+    response body.
+    """
     if not check_permission(UserPermission.ITSM_EDIT, current_user):
         raise HTTPException(status_code=403, detail="Not authorized to manage service catalog")
     return service_catalog_service.create_service_catalog(
@@ -121,6 +131,10 @@ async def import_catalog_workbook(
             actor=current_user.username,
             repository=ServiceCatalogRepository(),
             value_stream_lookup=MetricDictionaryValueStreamLookup(),
+            # Feature #480 S-acceptance — the import validates tier/criticality
+            # against the same managed dictionaries that feed the form dropdowns.
+            tier_lookup=MetricDictionaryTierLookup(),
+            criticality_lookup=MetricDictionaryCriticalityLookup(),
         )
     except Exception as exc:  # noqa: BLE001 — surface structured errors to the client
         from services.itsm_imports.errors import ImportValidationError

@@ -52,7 +52,11 @@ class ServiceCatalogCreate(BaseModel):
     migration.
     """
 
-    service_id: str
+    # Feature #480 S1: ``service_id`` is auto-minted by the service layer
+    # when omitted. Callers (frontend create form, programmatic imports)
+    # can leave it None and the server assigns a stable id of the form
+    # ``sc-{value_stream_slug|name_slug}-{nanoid}``.
+    service_id: str | None = None
     name: str
     owner_team: str | None = None
     category: str | None = None
@@ -74,7 +78,11 @@ class ServiceCatalogCreate(BaseModel):
 
     @field_validator("service_id")
     @classmethod
-    def _validate_service_id(cls, value: str) -> str:
+    def _validate_service_id(cls, value: str | None) -> str | None:
+        # Feature #480 S1: the server layer is allowed to mint the id when
+        # callers omit it. We still reject explicit empty strings.
+        if value is None:
+            return value
         if not str(value).strip():
             raise ValueError("service_id cannot be empty")
         return value
@@ -121,17 +129,19 @@ class ServiceCatalogCreate(BaseModel):
     def _normalize_compatibility_aliases(cls, values: Any) -> Any:
         values = dict(values)
 
-        if "service_id" not in values or values.get("service_id") is None:
-            legacy_service_id = values.get("id")
-            if legacy_service_id:
-                values["service_id"] = legacy_service_id
+        # Feature #480 S1: ``service_id`` is optional on create so the
+        # service layer can auto-mint it. Callers may still supply an
+        # explicit id (or fall back to the legacy ``id`` alias).
+        if values.get("service_id") is None and values.get("id") is not None:
+            values["service_id"] = values["id"]
 
-        if values.get("service_id") is None and values.get("id") is None:
-            raise ValueError("service_id is required (or legacy id as fallback).")
-
-        if values.get("id") is None:
-            values["id"] = values.get("service_id")
-        elif values.get("service_id") != values.get("id"):
+        if values.get("service_id") is not None and values.get("id") is None:
+            values["id"] = values["service_id"]
+        elif (
+            values.get("id") is not None
+            and values.get("service_id") is not None
+            and values.get("service_id") != values.get("id")
+        ):
             raise ValueError("service_id and id must match when both are provided.")
 
         if values.get("service_tier") is not None and values.get("tier") is None:

@@ -6,12 +6,23 @@ handles partial-update safety, and delegates persistence to the repository.
 
 from __future__ import annotations
 
+import re
+import secrets
 from typing import Any
 
 from fastapi import HTTPException
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 from pydantic import ValidationError
-from repositories.itsm_service_catalog_repo import ServiceCatalogRepository, ValueStreamLookup
+from repositories.itsm_service_catalog_repo import (
+    ServiceCatalogConflictError,
+    ServiceCatalogRepository,
+    ValueStreamLookup,
+)
+
+# Feature #480 S1 — how many ids we are willing to mint before giving up.
+# A collision is astronomically unlikely (8 random chars), but retrying keeps
+# the create path correct even when a caller seeds predictable ids.
+SERVICE_ID_MINT_ATTEMPTS = 3
 
 
 def _to_catalog_create(payload: Any) -> ServiceCatalogCreate:
@@ -26,6 +37,10 @@ def _http_bad_request(message: str) -> None:
     raise HTTPException(status_code=400, detail=message)
 
 
+def _http_conflict(message: str) -> None:
+    raise HTTPException(status_code=409, detail=message)
+
+
 def _http_not_found(service_id: str) -> None:
     raise HTTPException(status_code=404, detail=f"Service catalog not found: {service_id}")
 
@@ -35,15 +50,56 @@ def _validate_value_stream(value_stream: str, lookup: ValueStreamLookup) -> None
         _http_bad_request(f"value_stream must reference an active value stream: {value_stream}")
 
 
-def _validate_unique_catalog(
+# ---------------------------------------------------------------------------
+# Feature #480 S1 — auto-mint service_id when the client omits it.
+#
+# Format: ``sc-{value_stream_slug|name_slug}-{nanoid}`` where the slug is the
+# normalized ``value_stream`` (falling back to a name-derived slug) and the
+# nanoid is an 8-char URL-safe random token. Total budget = 20 chars.
+# ---------------------------------------------------------------------------
+_NON_SLUG_CHARS = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_segment(value: str | None) -> str:
+    """Return a lowercase slug fit for the service_id prefix.
+
+    - ``None`` / empty → ``"nil"``
+    - Strips non-alphanumeric chars and trims to 8 chars.
+    - Returns ``"nil"`` when the cleaned segment is empty so the prefix
+      is always meaningful for operators reading the id.
+    """
+    if not value:
+        return "nil"
+    lowered = str(value).strip().lower()
+    cleaned = _NON_SLUG_CHARS.sub("-", lowered).strip("-")
+    if not cleaned:
+        return "nil"
+    # Trim to 8 chars to honour the 21-char budget: sc- (3) + slug (8) +
+    # - (1) + nanoid (8) = 20.
+    return cleaned[:8] or "nil"
+
+
+def _generate_service_id(value_stream: str | None, name: str | None) -> str:
+    """Mint a unique ``sc-{slug}-{nanoid}`` id.
+
+    The slug comes from the ``value_stream`` when present, otherwise from the
+    service ``name`` (feature #480 ODD decision #3).
+    """
+
+    slug_source = value_stream or name or ""
+    slug = _slugify_segment(slug_source)
+    nanoid = secrets.token_urlsafe(6)[:8]  # 8 url-safe chars
+    return f"sc-{slug}-{nanoid}"
+
+
+def _validate_unique_name(
     payload: ServiceCatalogCreate,
     repository: ServiceCatalogRepository,
     *,
     exclude_service_id: str | None = None,
 ) -> None:
-    existing = repository.get_by_id(payload.service_id)
-    if isinstance(existing, dict) and payload.service_id != exclude_service_id:
-        _http_bad_request(f"service_id already exists: {payload.service_id}")
+    """Reject a name that already exists within the same service_type."""
+
     finder = getattr(repository, "find_by_type_and_normalized_name", None)
     conflict = (
         finder(
@@ -56,6 +112,39 @@ def _validate_unique_catalog(
     )
     if isinstance(conflict, dict):
         _http_bad_request("name must be unique within service_type")
+
+
+def _validate_service_id_available(service_id: str, repository: ServiceCatalogRepository) -> None:
+    """Reject an explicit service_id that is already taken.
+
+    Historical contract: an explicitly supplied duplicate id is a bad request
+    (HTTP 400) and never overwrites the stored row.
+    """
+
+    existing = repository.get_by_id(service_id)
+    if isinstance(existing, dict):
+        _http_bad_request(f"service_id already exists: {service_id}")
+
+
+def _create_catalog_row(
+    repository: ServiceCatalogRepository,
+    payload: ServiceCatalogCreate,
+) -> dict[str, Any]:
+    """Persist a new catalog row through the create-only primitive.
+
+    ``ServiceCatalogRepository.create`` never merges onto an existing row, so a
+    duplicate ``service_id`` surfaces as :class:`ServiceCatalogConflictError`
+    instead of overwriting the stored row.
+
+    Repositories that predate the create-only primitive — and doubles that
+    only stub the historical ``upsert`` — keep the legacy write path. The
+    capability is probed on the *class* because mocks auto-create instance
+    attributes, which would otherwise hide the missing ``create`` method.
+    """
+
+    if hasattr(type(repository), "create"):
+        return repository.create(payload)
+    return repository.upsert(payload)
 
 
 def list_service_catalogs(*, limit: int = 100, repository: ServiceCatalogRepository | None = None):
@@ -84,8 +173,10 @@ def create_service_catalog(
 ):
     """Create a governed service catalog entry.
 
-    This endpoint is idempotent from repository perspective because WU1 uses
-    MERGE. We still keep strict validation and normalize actor metadata here.
+    ``service_id`` is optional (feature #480 S1): when the caller omits it the
+    server mints ``sc-{value_stream_slug|name_slug}-{nanoid}``. Persistence is
+    create-only — a duplicate id never overwrites the existing row (an
+    explicit duplicate stays a 400, a minted-id collision is a 409).
     """
 
     repository = repository or ServiceCatalogRepository()
@@ -96,8 +187,29 @@ def create_service_catalog(
         _http_bad_request(str(exc))
 
     _validate_value_stream(payload_model.value_stream, value_stream_lookup)
-    _validate_unique_catalog(payload_model, repository)
-    return repository.upsert(payload_model)
+
+    explicit_service_id = (payload_model.service_id or "").strip()
+    if explicit_service_id:
+        _validate_service_id_available(explicit_service_id, repository)
+        _validate_unique_name(payload_model, repository)
+        try:
+            return _create_catalog_row(repository, payload_model)
+        except ServiceCatalogConflictError:
+            # Historical contract: an explicitly supplied duplicate id is a
+            # bad request, never an overwrite.
+            _http_bad_request(f"service_id already exists: {explicit_service_id}")
+
+    for _ in range(SERVICE_ID_MINT_ATTEMPTS):
+        candidate = _generate_service_id(payload_model.value_stream, payload_model.name)
+        minted = payload_model.model_copy(update={"service_id": candidate, "id": candidate})
+        _validate_unique_name(minted, repository)
+        try:
+            return _create_catalog_row(repository, minted)
+        except ServiceCatalogConflictError:
+            # Astronomically unlikely id collision — mint a fresh one.
+            continue
+
+    _http_conflict("could not allocate a unique service_id; please retry")
 
 
 def update_service_catalog(
