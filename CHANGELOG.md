@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **feat(service-catalog): ITIL-aligned create/edit UX (#480)** — Service Catalog creation now returns HTTP 201 with a server-minted `service_id`, while the form presents managed `value_stream`, owner, category, tier, and criticality selectors plus an SLA unit control that preserves the `sla_target_minutes: int` wire contract. The canonical dictionary, category, tier, and criticality vocabularies are seeded idempotently at startup, XLSX imports validate optional tier/criticality columns against the same dictionaries, and the Dictionary-manager CTA deep-links to the existing Administration surface. Documentation is available in `docs/itsm/service-catalog.md`.
+
 ## [1.16.1] — 2026-09-07
 
 ### Added

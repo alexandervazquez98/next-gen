@@ -11,6 +11,10 @@ export const queryKeys = {
   tunnelHealth: (linkId: string) => ["tunnels", "health", linkId] as const,
   categories: () => ["categories"] as const,
   owners: () => ["owners"] as const,
+  // Feature #480 S2/S5 — managed dictionary value lookup keyed by the
+  // managed MetricDictionary key (`value_stream`, `tier`, `criticality`).
+  dictionaryValues: (key: string, active: boolean = true) =>
+    ["dictionary-values", key, { active }] as const,
   // P2 REQ-006: the `includeChildren` boolean is part of the cache key so
   // root-only and raw-mode polls never overwrite each other.
   activeEvents: (options: { includeChildren: boolean } = { includeChildren: false }) =>

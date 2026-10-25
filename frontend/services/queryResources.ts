@@ -143,6 +143,28 @@ export const fetchTunnelHealth = (linkId: string, { signal }: { signal?: AbortSi
 export const fetchCategories = ({ signal }: { signal?: AbortSignal } = {}) =>
   api.get<CategoryRecord[]>("/categories", { signal });
 
+// Feature #480 S2/S5 — managed dictionary value lookup. The backend
+// exposes `GET /api/dictionaries?key=value_stream&active=true` and
+// returns `[{value, label}]`. The frontend wires these into the ITIL
+// create/edit form dropdowns for value_stream / tier / criticality.
+export interface DictionaryValueRecord {
+  value: string;
+  label: string;
+}
+
+export interface FetchDictionaryValuesOptions {
+  signal?: AbortSignal;
+  active?: boolean;
+}
+
+export const fetchDictionaryValues = (
+  key: string,
+  { signal, active = true }: FetchDictionaryValuesOptions = {},
+) => {
+  const params = new URLSearchParams({ key, active: String(active) });
+  return api.get<DictionaryValueRecord[]>(`/dictionaries?${params.toString()}`, { signal });
+};
+
 export interface FetchActiveEventsOptions {
   include_children?: boolean;
   signal?: AbortSignal;

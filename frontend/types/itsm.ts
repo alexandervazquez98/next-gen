@@ -81,7 +81,10 @@ export interface ServiceCatalogResponse extends ServiceCatalogBase {
 }
 
 export interface ServiceCatalogCreatePayload {
-  service_id: string;
+  // Feature #480 S1 — the backend mints the service_id when it is omitted
+  // and returns the assigned id in the 201 response. Sending it is still
+  // allowed for callers that already know the id.
+  service_id?: string;
   name: string;
   owner_team?: string | null;
   category?: string | null;
