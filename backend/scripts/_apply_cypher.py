@@ -27,13 +27,53 @@ class CypherStatementError(Exception):
         super().__init__(f"Cypher statement error: {len(self.errors)} statement(s) failed")
 
 
+def _strip_line_comments(content: str) -> str:
+    """Remove ``//`` and ``--`` line comments that are not inside a string literal.
+
+    Cypher's only line-comment marker is ``//``. Neo4j 5.x rejects a stray
+    ``--`` banner with ``Invalid input '-': expected``, and SQL-style
+    ``--`` banners are common in hand-written migration files. Both markers
+    are stripped here so a comment can never reach the server as part of a
+    statement. Quoted content is preserved verbatim, including comment
+    markers inside a literal (for example a URL).
+    """
+    out: list[str] = []
+    quote: str | None = None
+    for line in content.splitlines():
+        kept: list[str] = []
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote is not None:
+                kept.append(ch)
+                if ch == "\\" and i + 1 < len(line):
+                    kept.append(line[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                kept.append(ch)
+                i += 1
+                continue
+            if ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
+                break
+            if ch == "-" and i + 1 < len(line) and line[i + 1] == "-":
+                break
+            kept.append(ch)
+            i += 1
+        out.append("".join(kept))
+    return "\n".join(out)
+
+
 def _split_statements(content: str) -> list[str]:
-    # Strip // lines and lone -- markers BEFORE splitting on ';' so semicolons inside
+    # Strip comment lines BEFORE splitting on ';' so semicolons inside
     # comment prose cannot orphan trailing non-comment text.
     non_comment_lines = [
-        line
-        for line in content.splitlines()
-        if line.strip() and not line.strip().startswith("//") and line.strip() != "--"
+        line for line in _strip_line_comments(content).splitlines() if line.strip()
     ]
     return [
         cleaned

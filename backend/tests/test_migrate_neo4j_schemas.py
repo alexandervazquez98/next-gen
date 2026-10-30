@@ -6,12 +6,21 @@ regression tests for the refactored ``migrate_ci_event_indexes.py``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import scripts.migrate_ci_event_indexes as ci_runner
 import scripts.migrate_neo4j_schemas as wrapper
-from scripts._apply_cypher import ApplyResult, CypherStatementError, StatementError
+from scripts._apply_cypher import (
+    ApplyResult,
+    CypherStatementError,
+    StatementError,
+    _split_statements,
+    apply_cypher_file,
+)
+
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 # ---------- T5..T7: DRY wrapper ----------
 
@@ -62,6 +71,117 @@ def test_wrapper_exits_0_on_clean_run(tmp_path, monkeypatch):
     monkeypatch.setattr(wrapper, "_MIGRATIONS_DIR", m)
     monkeypatch.setattr(wrapper, "apply_cypher_file", lambda d, fp, *, log=None: ApplyResult(2, []))
     assert wrapper.main() == 0
+
+
+# ---------- Neo4j 5 migration syntax regression ----------
+
+
+class _RecordingSession:
+    def __init__(self):
+        self.queries = []
+
+    def run(self, query, **params):
+        self.queries.append(query)
+        return []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _RecordingDriver:
+    def __init__(self):
+        self.session_instance = _RecordingSession()
+
+    def session(self, **kwargs):
+        return self.session_instance
+
+
+def test_rtu_sensor_schema_uses_neo4j_5_index_syntax():
+    """All non-constrained indexes in migration 001 use Neo4j 5.x ``ON`` syntax."""
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "001_rtu_sensor_schema.cypher"
+    driver = _RecordingDriver()
+
+    result = apply_cypher_file(driver, migration)
+
+    assert result.statements_run == 4
+    index_statements = [
+        query for query in driver.session_instance.queries if query.startswith("CREATE INDEX")
+    ]
+    assert index_statements == [
+        "CREATE INDEX sensor_rtu_addr_type IF NOT EXISTS FOR (s:Sensor) "
+        "ON (s.rtu_id, s.register_addr, s.sensor_type)",
+        "CREATE INDEX sensor_rtu_id IF NOT EXISTS FOR (s:Sensor) ON (s.rtu_id)",
+    ]
+
+
+# ---------- Neo4j 5 migration corpus compatibility ----------
+
+
+def test_split_statements_drops_sql_style_comment_banners():
+    """Banners written with ``--`` are not Cypher comments and must be dropped.
+
+    Neo4j 5.x rejects them with ``Invalid input '-': expected``; the Cypher
+    line comment marker is ``//``.
+    """
+    content = "\n".join(
+        [
+            "-- ── Device Node ──────────────────────────────",
+            "-- Device represents any generic device.",
+            "--",
+            "// a real Cypher comment",
+            "CREATE CONSTRAINT device_id_unique IF NOT EXISTS",
+            "FOR (d:Device) REQUIRE d.id IS UNIQUE;",
+        ]
+    )
+
+    assert _split_statements(content) == [
+        "CREATE CONSTRAINT device_id_unique IF NOT EXISTS FOR (d:Device) REQUIRE d.id IS UNIQUE"
+    ]
+
+
+def test_split_statements_keeps_comment_markers_inside_string_literals():
+    """A ``--`` or ``//`` inside a literal is content, not a comment."""
+    content = "\n".join(
+        [
+            "MATCH (u:User {note: 'a -- b'})",
+            "RETURN u.url AS url;",
+            "// trailing comment",
+        ]
+    )
+
+    assert _split_statements(content) == ["MATCH (u:User {note: 'a -- b'}) RETURN u.url AS url"]
+
+
+def test_migration_corpus_never_emits_a_double_dash_statement():
+    """No migration file may produce a statement starting with ``--``."""
+    offenders = []
+    for path in sorted(_MIGRATIONS_DIR.glob("*.cypher")):
+        for statement in _split_statements(path.read_text(encoding="utf-8")):
+            if statement.lstrip().startswith("--"):
+                offenders.append(f"{path.name}: {statement[:60]}")
+
+    assert offenders == []
+
+
+def test_neo4j_migration_corpus_contains_no_postgres_ddl():
+    """The Neo4j runner must never receive PostgreSQL DDL.
+
+    Neo4j 5.x rejects it with ``Invalid input 'TABLE': expected``.
+    """
+    postgres_ddl = re.compile(
+        r"\b(ALTER\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ADD\s+COLUMN|CREATE\s+INDEX\s+CONCURRENTLY)\b",
+        re.IGNORECASE,
+    )
+    offenders = []
+    for path in sorted(_MIGRATIONS_DIR.glob("*.cypher")):
+        for statement in _split_statements(path.read_text(encoding="utf-8")):
+            if postgres_ddl.search(statement):
+                offenders.append(f"{path.name}: {statement[:80]}")
+
+    assert offenders == []
 
 
 # ---------- T8, T9: regression for refactored migrate_ci_event_indexes.py ----------
