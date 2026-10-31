@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Neo4j 5.x compatibility of the migration corpus (#552)**: migration `001_rtu_sensor_schema.cypher` used Neo4j 4.x `CREATE INDEX ... REQUIRE` syntax for its two non-constrained indexes, so Neo4j 5.15 (the `docker-compose.yml` target) rejected the file with `Invalid input 'REQUIRE': expected "ON"` and the migration wrapper aborted before migrations 002-010. Both indexes now use the Neo4j 5.x `ON` syntax. Two further pre-existing blockers on the same deploy path are fixed as well: the migration splitter now strips SQL-style `--` comment banners (Cypher only supports `//`), which had made `002_generic_device_schema.cypher` fail with `Invalid input '-': expected`, and `007_user_aggregate_breakdown_regions.cypher` no longer carries PostgreSQL DDL inside the Neo4j corpus (`Invalid input 'TABLE': expected`). That PostgreSQL column now has its own idempotent deploy-time migration, `backend/scripts/migrate_user_aggregate_breakdown_regions.py`, wired into `scripts/safe-rebuild.sh`; without it, every database created before #391 PR1 failed with `column "aggregate_breakdown_regions" does not exist` because `create_all` never adds columns to existing tables. Verified against a live Neo4j 5.15.0 Community container: the base revision reproduces the `REQUIRE` failure, and the full corpus (001-007, 009, 010, `itsm_service_catalog`) plus migration 008 apply with exit code 0. 10 regression tests cover the index syntax, comment stripping, and the corpus invariants.
+
 ## [1.16.1] — 2026-09-07
 
 ### Added

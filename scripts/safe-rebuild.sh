@@ -279,6 +279,9 @@ run docker compose exec -T backend python scripts/migrate_icmp_sidecar_metrics.p
 printf 'Applying ICMP availability source migration...\n'
 run docker compose exec -T backend python scripts/migrate_icmp_availability_source.py
 
+printf 'Applying User.aggregate_breakdown_regions column migration...\n'
+run docker compose exec -T backend python scripts/migrate_user_aggregate_breakdown_regions.py
+
 printf 'Applying Neo4j schema migrations (001-007, 009, 010)...\n'
 run docker compose exec -T backend python scripts/migrate_neo4j_schemas.py
 
