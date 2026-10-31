@@ -40,9 +40,22 @@ CATALOG_REQUIRED_HEADERS = (
 
 CATALOG_DISALLOWED_HEADERS = ("sla_target_minutes",)
 
+# Feature #480 S-acceptance — optional controlled-vocabulary columns.
+#
+# The XLSX interface is unchanged (same required headers, same template); the
+# columns below are optional and validated against the very same managed
+# MetricDictionary sources that feed the Service Catalog form dropdowns.
+CATALOG_OPTIONAL_VOCABULARY_HEADERS = ("tier", "criticality")
+
 
 class ValueStreamLookup(Protocol):
     def list_active(self) -> list[dict]: ...
+    def is_active(self, value: str) -> bool: ...
+
+
+class ManagedVocabularyLookup(Protocol):
+    """Minimal seam for a managed dictionary key (``tier``/``criticality``)."""
+
     def is_active(self, value: str) -> bool: ...
 
 
@@ -65,6 +78,8 @@ def parse_catalog_workbook(
     *,
     max_size_bytes: int = DEFAULT_MAX_SIZE_BYTES,
     value_stream_lookup: ValueStreamLookup | None = None,
+    tier_lookup: ManagedVocabularyLookup | None = None,
+    criticality_lookup: ManagedVocabularyLookup | None = None,
 ) -> list[dict]:
     """Parse a catalog workbook into normalized row DTOs.
 
@@ -81,12 +96,21 @@ def parse_catalog_workbook(
     if header_error.has_errors():
         raise header_error
 
+    column_index = {header: idx for idx, header in enumerate(headers) if header}
+
     rows: list[dict] = []
     accumulated = ImportValidationError()
     for visible_row, cells in read_data_rows(wb, CATALOG_SHEET):
         if not any(c.strip() for c in cells):
             continue
-        normalized, row_error = _normalize_catalog_row(visible_row, cells, value_stream_lookup)
+        normalized, row_error = _normalize_catalog_row(
+            visible_row,
+            cells,
+            column_index,
+            value_stream_lookup,
+            tier_lookup,
+            criticality_lookup,
+        )
         if row_error is not None:
             for err in row_error.errors:
                 accumulated.add(row=err.row, field=err.field, code=err.code, reason=err.reason)
@@ -101,7 +125,10 @@ def parse_catalog_workbook(
 def _normalize_catalog_row(
     visible_row: int,
     cells: tuple[str, ...],
+    column_index: dict[str, int],
     value_stream_lookup: ValueStreamLookup | None,
+    tier_lookup: ManagedVocabularyLookup | None = None,
+    criticality_lookup: ManagedVocabularyLookup | None = None,
 ) -> tuple[dict | None, ImportValidationError | None]:
     error = ImportValidationError()
 
@@ -115,6 +142,10 @@ def _normalize_catalog_row(
     raw_service_type = _cell(cells, 4)
     raw_value_stream = _cell(cells, 5)
     raw_active = (_cell(cells, 6) or "true").lower()
+    vocabulary = {
+        header: _cell_by_header(cells, column_index, header)
+        for header in CATALOG_OPTIONAL_VOCABULARY_HEADERS
+    }
 
     if not raw_service_id:
         fail("service_id", "required", "service_id is required")
@@ -152,6 +183,13 @@ def _normalize_catalog_row(
         except Exception:  # noqa: BLE001 — lookup failure must not block validation
             fail("value_stream", "lookup_failed", "value_stream lookup failed")
 
+    # Feature #480 S-acceptance — tier/criticality use the same managed
+    # dictionary sources as the Service Catalog dropdowns.
+    _validate_managed_value(fail, "tier", vocabulary["tier"], tier_lookup, "inactive_tier")
+    _validate_managed_value(
+        fail, "criticality", vocabulary["criticality"], criticality_lookup, "inactive_criticality"
+    )
+
     if error.has_errors():
         return None, error
 
@@ -164,9 +202,29 @@ def _normalize_catalog_row(
             "service_type": raw_service_type,
             "value_stream": raw_value_stream,
             "active": raw_active in {"true", "1", "yes", "y", ""},
+            "tier": vocabulary["tier"] or None,
+            "criticality": vocabulary["criticality"] or None,
         },
         None,
     )
+
+
+def _validate_managed_value(
+    fail,
+    field: str,
+    value: str,
+    lookup: ManagedVocabularyLookup | None,
+    inactive_code: str,
+) -> None:
+    """Validate one managed vocabulary value against its dictionary source."""
+
+    if not value or lookup is None:
+        return
+    try:
+        if not lookup.is_active(value):
+            fail(field, inactive_code, f"{field} '{value}' is not an active {field}")
+    except Exception:  # noqa: BLE001 — lookup failure must not block validation
+        fail(field, "lookup_failed", f"{field} lookup failed")
 
 
 def import_catalog_workbook(
@@ -175,10 +233,16 @@ def import_catalog_workbook(
     actor: str | None,
     repository: Any,
     value_stream_lookup: ValueStreamLookup | None = None,
+    tier_lookup: ManagedVocabularyLookup | None = None,
+    criticality_lookup: ManagedVocabularyLookup | None = None,
     max_size_bytes: int = DEFAULT_MAX_SIZE_BYTES,
 ) -> dict[str, Any]:
     rows = parse_catalog_workbook(
-        payload, max_size_bytes=max_size_bytes, value_stream_lookup=value_stream_lookup
+        payload,
+        max_size_bytes=max_size_bytes,
+        value_stream_lookup=value_stream_lookup,
+        tier_lookup=tier_lookup,
+        criticality_lookup=criticality_lookup,
     )
 
     normalized: list[dict] = []
@@ -208,9 +272,20 @@ def _cell(cells: tuple[str, ...], index: int) -> str:
     return cells[index].strip() if len(cells) > index else ""
 
 
+def _cell_by_header(cells: tuple[str, ...], column_index: dict[str, int], header: str) -> str:
+    """Read an optional column by header name (empty when the column is absent)."""
+
+    index = column_index.get(header)
+    if index is None:
+        return ""
+    return _cell(cells, index)
+
+
 __all__ = [
+    "CATALOG_OPTIONAL_VOCABULARY_HEADERS",
     "CATALOG_SHEET",
     "CATALOG_REF_SHEET",
+    "ManagedVocabularyLookup",
     "ValueStreamLookup",
     "build_catalog_template_workbook",
     "import_catalog_workbook",

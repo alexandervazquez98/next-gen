@@ -259,6 +259,162 @@ class TestCatalogFileGuard:
 
 
 # ---------------------------------------------------------------------------
+# Feature #480 S-acceptance — the XLSX import validates tier/criticality
+# against the same managed dictionaries that feed the form dropdowns.
+# The workbook interface itself is unchanged (same headers, same template).
+# ---------------------------------------------------------------------------
+
+
+class _StubManagedLookup:
+    """Stand-in for ``MetricDictionaryLookup`` scoped to one dictionary key."""
+
+    def __init__(self, active: set[str]) -> None:
+        self._active = active
+
+    def list_active(self) -> list[dict]:
+        return [{"value": v, "label": v.title()} for v in sorted(self._active)]
+
+    def is_active(self, value: str) -> bool:
+        return value in self._active
+
+
+def _build_catalog_workbook_with_vocabulary(
+    rows: list[list[str]],
+    *,
+    tier: str | None = "tier",
+    criticality: str | None = "criticality",
+) -> bytes:
+    headers = [
+        "service_id",
+        "name",
+        "SLA",
+        "description",
+        "service_type",
+        "value_stream",
+        "active",
+    ]
+    if tier:
+        headers.append(tier)
+    if criticality:
+        headers.append(criticality)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Catalog Import"
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    ref = wb.create_sheet("Ref - Value Streams")
+    ref.append(["value", "label"])
+    for stream in ("operate", "deliver"):
+        ref.append([stream, stream.title()])
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+class TestCatalogManagedVocabularyValidation:
+    """tier/criticality are validated against the managed dictionaries."""
+
+    def test_unknown_tier_is_rejected(self):
+        wb_bytes = _build_catalog_workbook_with_vocabulary(
+            [["svc-1", "Net", "30", "Desc", "incident", "operate", "true", "diamond", "high"]]
+        )
+        with pytest.raises(ImportValidationError) as exc:
+            catalog_import.parse_catalog_workbook(
+                wb_bytes,
+                value_stream_lookup=_StubValueStreamLookup(),
+                tier_lookup=_StubManagedLookup({"bronze", "silver", "gold", "platinum"}),
+                criticality_lookup=_StubManagedLookup({"low", "medium", "high", "critical"}),
+            )
+        assert any(e.field == "tier" and e.code == "inactive_tier" for e in exc.value.errors)
+
+    def test_unknown_criticality_is_rejected(self):
+        wb_bytes = _build_catalog_workbook_with_vocabulary(
+            [["svc-1", "Net", "30", "Desc", "incident", "operate", "true", "gold", "catastrophic"]]
+        )
+        with pytest.raises(ImportValidationError) as exc:
+            catalog_import.parse_catalog_workbook(
+                wb_bytes,
+                value_stream_lookup=_StubValueStreamLookup(),
+                tier_lookup=_StubManagedLookup({"bronze", "silver", "gold", "platinum"}),
+                criticality_lookup=_StubManagedLookup({"low", "medium", "high", "critical"}),
+            )
+        assert any(
+            e.field == "criticality" and e.code == "inactive_criticality" for e in exc.value.errors
+        )
+
+    def test_known_tier_and_criticality_are_persisted(self):
+        repository = MagicMock()
+        repository.bulk_create = MagicMock(return_value=[{"service_id": "svc-1"}])
+        wb_bytes = _build_catalog_workbook_with_vocabulary(
+            [["svc-1", "Net", "30", "Desc", "incident", "operate", "true", "gold", "high"]]
+        )
+
+        result = catalog_import.import_catalog_workbook(
+            wb_bytes,
+            actor="admin",
+            repository=repository,
+            value_stream_lookup=_StubValueStreamLookup(),
+            tier_lookup=_StubManagedLookup({"bronze", "silver", "gold", "platinum"}),
+            criticality_lookup=_StubManagedLookup({"low", "medium", "high", "critical"}),
+        )
+
+        assert result["imported_count"] == 1
+        persisted = repository.bulk_create.call_args.args[0]
+        assert persisted[0]["tier"] == "gold"
+        assert persisted[0]["criticality"] == "high"
+
+    def test_workbook_without_vocabulary_columns_keeps_working(self):
+        """The XLSX interface is unchanged: workbooks without tier/criticality import."""
+        repository = MagicMock()
+        repository.bulk_create = MagicMock(return_value=[{"service_id": "svc-1"}])
+        wb_bytes = _build_catalog_workbook(
+            [["svc-1", "Net", "30", "Desc", "incident", "operate", "true"]]
+        )
+
+        result = catalog_import.import_catalog_workbook(
+            wb_bytes,
+            actor="admin",
+            repository=repository,
+            value_stream_lookup=_StubValueStreamLookup(),
+            tier_lookup=_StubManagedLookup({"gold"}),
+            criticality_lookup=_StubManagedLookup({"high"}),
+        )
+
+        assert result["imported_count"] == 1
+        persisted = repository.bulk_create.call_args.args[0]
+        assert persisted[0]["tier"] is None
+        assert persisted[0]["criticality"] is None
+
+    def test_template_headers_are_unchanged(self):
+        """The generated template keeps its existing header contract."""
+        wb_bytes = catalog_import.build_catalog_template_workbook(
+            value_stream_lookup=_StubValueStreamLookup()
+        )
+        wb = load_workbook(BytesIO(wb_bytes))
+        headers = [c.value for c in wb["Catalog Import"][1]]
+        assert headers == [
+            "service_id",
+            "name",
+            "SLA",
+            "description",
+            "service_type",
+            "value_stream",
+            "active",
+        ]
+
+    def test_service_id_import_behavior_is_preserved(self):
+        """service_id stays mandatory in the import (existing behavior)."""
+        wb_bytes = _build_catalog_workbook(
+            [["", "Net", "30", "Desc", "incident", "operate", "true"]]
+        )
+        with pytest.raises(ImportValidationError) as exc:
+            catalog_import.parse_catalog_workbook(wb_bytes)
+        assert any(e.field == "service_id" for e in exc.value.errors)
+
+
+# ---------------------------------------------------------------------------
 # WU 7 — ticket import
 # ---------------------------------------------------------------------------
 

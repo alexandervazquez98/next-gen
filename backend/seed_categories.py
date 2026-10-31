@@ -36,9 +36,32 @@ DEFAULT_CATEGORIES: list[str] = [
     "Other",
 ]
 
+# Feature #480 S4 — canonical ITIL-aligned Service Catalog taxonomy.
+#
+# Resolved by the maintainer (see openspec/changes/feat-service-catalog-itil-ux):
+# the Service Catalog ``category`` dropdown is bound to these eight
+# ServiceNow-aligned values. They are seeded next to the legacy CMDB
+# categories so ``GET /api/categories`` exposes them without removing the
+# legacy vocabulary the CMDB consumer depends on.
+CANONICAL_SERVICE_CATEGORIES: list[str] = [
+    "Infrastructure & Platform",
+    "Application Services",
+    "End User Computing",
+    "IT Security",
+    "Telecommunications",
+    "Business Services",
+    "Workspace",
+    "Consulting & Advisory",
+]
+
+# Everything the boot-time seed writes. The legacy CMDB categories keep their
+# names and icons; the canonical service categories use the generic icon
+# fallback (no CMDB icon mapping exists for them).
+SEEDED_CATEGORIES: list[str] = DEFAULT_CATEGORIES + CANONICAL_SERVICE_CATEGORIES
+
 
 async def seed_categories() -> None:
-    """MERGE every entry in DEFAULT_CATEGORIES as a :Category node.
+    """MERGE every entry in SEEDED_CATEGORIES as a :Category node.
 
     Idempotent: re-running on a stack that already has these categories
     is a no-op (icon_key is preserved unless missing). Prints a short
@@ -52,7 +75,7 @@ async def seed_categories() -> None:
     skipped = 0
 
     with driver.session() as session:
-        for name in DEFAULT_CATEGORIES:
+        for name in SEEDED_CATEGORIES:
             default_icon = get_default_category_icon(name)
             resolved_icon = resolve_category_icon(name, None)
 

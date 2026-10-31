@@ -12,7 +12,64 @@ from typing import Any
 from database import get_db
 from models.itsm import ServiceCatalogCreate, ServiceCatalogUpdate
 
-_CREATE_SERVICE_CATALOG_QUERY = """
+_SERVICE_CATALOG_RETURN_CLAUSE = """
+RETURN
+  sc.id AS id,
+  sc.service_id AS service_id,
+  sc.name AS name,
+  sc.owner_team AS owner_team,
+  sc.category AS category,
+  sc.tier AS tier,
+  sc.service_tier AS service_tier,
+  sc.criticality AS criticality,
+  sc.sla_target_minutes AS sla_target_minutes,
+  sc.sla_minutes AS sla_minutes,
+  sc.description AS description,
+  sc.service_type AS service_type,
+  sc.value_stream AS value_stream,
+  sc.active AS active,
+  sc.created_at AS created_at,
+  sc.updated_at AS updated_at,
+  sc.updated_by AS updated_by
+"""
+
+# Feature #480 S1 — create-only persistence.
+#
+# The legacy create path used MERGE, which silently turned a duplicate
+# ``service_id`` into an update of the existing row. The create path now uses
+# a single create-only statement: the existence guard keeps the CREATE from
+# running when the id is already taken, and the ``service_id`` uniqueness
+# constraint (created by the ITSM migration) is the race backstop. The MERGE
+# variant below is kept for the bulk XLSX import path, whose service_id
+# semantics are unchanged.
+_CREATE_SERVICE_CATALOG_QUERY = (
+    """
+OPTIONAL MATCH (existing:ServiceCatalog {service_id: $service_id})
+WITH existing
+WHERE existing IS NULL
+CREATE (sc:ServiceCatalog {service_id: $service_id})
+SET sc.id = $service_id,
+    sc.name = $name,
+    sc.owner_team = $owner_team,
+    sc.category = $category,
+    sc.tier = $tier,
+    sc.service_tier = $tier,
+    sc.criticality = $criticality,
+    sc.sla_target_minutes = $sla_target_minutes,
+    sc.sla_minutes = $sla_target_minutes,
+    sc.description = $description,
+    sc.service_type = $service_type,
+    sc.value_stream = $value_stream,
+    sc.active = $active,
+    sc.created_at = datetime($created_at),
+    sc.updated_at = datetime($updated_at),
+    sc.updated_by = $updated_by
+"""
+    + _SERVICE_CATALOG_RETURN_CLAUSE
+)
+
+_UPSERT_SERVICE_CATALOG_QUERY = (
+    """
 MERGE (sc:ServiceCatalog {service_id: $service_id})
 ON CREATE SET
   sc.id = $service_id,
@@ -42,25 +99,9 @@ ON MATCH SET
   sc.active = coalesce($active, sc.active),
   sc.updated_at = datetime($updated_at),
   sc.updated_by = $updated_by
-RETURN
-  sc.id AS id,
-  sc.service_id AS service_id,
-  sc.name AS name,
-  sc.owner_team AS owner_team,
-  sc.category AS category,
-  sc.tier AS tier,
-  sc.service_tier AS service_tier,
-  sc.criticality AS criticality,
-  sc.sla_target_minutes AS sla_target_minutes,
-  sc.sla_minutes AS sla_minutes,
-  sc.description AS description,
-  sc.service_type AS service_type,
-  sc.value_stream AS value_stream,
-  sc.active AS active,
-  sc.created_at AS created_at,
-  sc.updated_at AS updated_at,
-  sc.updated_by AS updated_by
 """
+    + _SERVICE_CATALOG_RETURN_CLAUSE
+)
 
 _GET_SERVICE_CATALOG_QUERY = """
 MATCH (sc:ServiceCatalog)
@@ -117,6 +158,29 @@ SET
   sc.updated_by = $updated_by
 RETURN sc.service_id AS service_id, sc.active AS active
 """
+
+
+class ServiceCatalogConflictError(RuntimeError):
+    """Raised when a create would collide with an existing ServiceCatalog row.
+
+    Feature #480 S1: the create path must never degrade into an update when a
+    duplicate ``service_id`` shows up (pre-flight check or unique-constraint
+    violation during the write transaction).
+    """
+
+
+def _is_unique_constraint_violation(exc: Exception) -> bool:
+    """Return True when the Neo4j error is a unique-constraint violation.
+
+    Duck-typed on purpose: the Neo4j driver exposes ``ConstraintError``
+    (subclass of ``ClientError``) with a stable error code, but the concrete
+    class name moved between driver majors.
+    """
+
+    code = getattr(exc, "code", "") or ""
+    if "ConstraintValidationFailed" in code:
+        return True
+    return type(exc).__name__ in {"ConstraintError", "UniqueConstraintError"}
 
 
 class ValueStreamLookup:
@@ -230,6 +294,14 @@ class ServiceCatalogRepository:
             return [self._record(row) for row in result if self._record(row) is not None]
 
     def upsert(self, payload: ServiceCatalogCreate) -> dict[str, Any]:
+        """MERGE-based write (update-on-match) kept for existing callers.
+
+        Feature #480 S1 added :meth:`create` for the HTTP create path, which
+        must never overwrite an existing row. This method keeps its historical
+        upsert semantics (create-or-update) for existing callers and for the
+        bulk XLSX import path.
+        """
+
         payload = (
             payload
             if isinstance(payload, ServiceCatalogCreate)
@@ -238,7 +310,7 @@ class ServiceCatalogRepository:
         now = self._now()
         with self._driver.session() as session:
             row = session.run(
-                _CREATE_SERVICE_CATALOG_QUERY,
+                _UPSERT_SERVICE_CATALOG_QUERY,
                 service_id=payload.service_id,
                 name=payload.name,
                 owner_team=payload.owner_team,
@@ -254,6 +326,53 @@ class ServiceCatalogRepository:
                 updated_at=now,
                 updated_by=payload.updated_by,
             ).single()
+        return self._record(row) or {}
+
+    def create(self, payload: ServiceCatalogCreate) -> dict[str, Any]:
+        """Create-only write for the HTTP create path (feature #480 S1).
+
+        The statement creates the node only when no row with the same
+        ``service_id`` exists, so a duplicate id can never overwrite an
+        existing ServiceCatalog node. Raises
+        :class:`ServiceCatalogConflictError` when the id is taken.
+        """
+
+        payload = (
+            payload
+            if isinstance(payload, ServiceCatalogCreate)
+            else ServiceCatalogCreate(**payload)
+        )
+        if not payload.service_id:
+            raise ValueError("service_id is required to create a ServiceCatalog row")
+        now = self._now()
+        params = {
+            "service_id": payload.service_id,
+            "name": payload.name,
+            "owner_team": payload.owner_team,
+            "category": payload.category,
+            "tier": payload.tier,
+            "criticality": payload.criticality,
+            "sla_target_minutes": payload.sla_target_minutes,
+            "description": payload.description,
+            "service_type": payload.service_type,
+            "value_stream": payload.value_stream,
+            "active": payload.active,
+            "created_at": payload.created_at or now,
+            "updated_at": now,
+            "updated_by": payload.updated_by,
+        }
+
+        with self._driver.session() as session:
+            try:
+                row = session.run(_CREATE_SERVICE_CATALOG_QUERY, **params).single()
+            except Exception as exc:  # noqa: BLE001 — re-raised unless it is a conflict
+                if _is_unique_constraint_violation(exc):
+                    raise ServiceCatalogConflictError(payload.service_id) from exc
+                raise
+
+        if row is None:
+            # The existence guard filtered the statement out: the id is taken.
+            raise ServiceCatalogConflictError(payload.service_id)
         return self._record(row) or {}
 
     def deactivate(self, service_id: str, updated_by: str | None = None) -> dict[str, Any] | None:
@@ -293,7 +412,7 @@ class ServiceCatalogRepository:
             created: list[dict[str, Any]] = []
             for payload_model in normalized:
                 row = tx.run(
-                    _CREATE_SERVICE_CATALOG_QUERY,
+                    _UPSERT_SERVICE_CATALOG_QUERY,
                     service_id=payload_model.service_id,
                     name=payload_model.name,
                     owner_team=payload_model.owner_team,

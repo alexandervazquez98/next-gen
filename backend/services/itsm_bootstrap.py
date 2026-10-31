@@ -189,6 +189,24 @@ def run_service_catalog_migration(
     return len(executable_statements)
 
 
+def run_managed_dictionary_seed(driver: Any | None = None) -> dict[str, int]:
+    """Seed the managed ITSM dictionaries (feature #480 S5).
+
+    ``tier`` (``bronze|silver|gold|platinum``) and ``criticality``
+    (``low|medium|high|critical``) are the controlled vocabularies behind the
+    ITIL-aligned Service Catalog dropdowns. The seed is idempotent (MERGE on
+    ``(dictionary_key, value)``) and shares the lookup seam with the import
+    path.
+
+    Returns:
+        The number of rows seeded per dictionary key.
+    """
+
+    from services.itsm_imports.seed_data import seed_tier_criticality_dictionaries
+
+    return seed_tier_criticality_dictionaries(driver=driver)
+
+
 def run_service_catalog_startup_checks(
     driver: Any | None = None, *, apply_migration: bool = True
 ) -> ItsmPreflightReport | None:
@@ -212,6 +230,14 @@ def run_service_catalog_startup_checks(
             run_service_catalog_migration(driver=driver)
         except Exception:
             logger.exception("ITSM service catalog migration failed; continuing API startup")
+
+    # Feature #480 S5 — seed the managed dictionaries *after* the migration so
+    # the (dictionary_key, value) uniqueness constraint already exists.
+    try:
+        run_managed_dictionary_seed(driver=driver)
+    except Exception:
+        logger.exception("ITSM managed dictionary seed failed; continuing API startup")
+
     return report
 
 

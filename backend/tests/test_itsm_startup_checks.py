@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from services.itsm_bootstrap import (
@@ -85,6 +85,59 @@ class TestItsmServiceCatalogBootstrapPolicy:
         assert _PRECHECK_INVALID_IDENTITY_QUERY.strip() in calls[2]
         assert calls[3] == statements[0]
         assert calls[4] == statements[1]
+
+    def test_startup_sequence_seeds_managed_dictionaries_after_the_migration(self):
+        """Feature #480 S5: production startup seeds tier + criticality.
+
+        The seed must run *after* the migration so the
+        ``(dictionary_key, value)`` uniqueness constraint already exists.
+        """
+        statements = [
+            "CREATE CONSTRAINT test_a IF NOT EXISTS FOR (s:ServiceCatalog) REQUIRE s.service_id IS UNIQUE",
+        ]
+
+        session = MagicMock()
+        session.run.side_effect = [[], [], [], [], [], [], []]
+        driver = MagicMock()
+        session_ctx = MagicMock()
+        session_ctx.__enter__.return_value = session
+        session_ctx.__exit__.return_value = False
+        driver.session.return_value = session_ctx
+
+        with patch(
+            "services.itsm_bootstrap._load_service_catalog_migration_statements",
+            return_value=statements,
+        ):
+            run_service_catalog_startup_checks(driver=driver, apply_migration=True)
+
+        calls = [str(call.args[0]) for call in session.run.call_args_list]
+        seed_statements = [q for q in calls if "MetricDictionary" in q]
+        assert any("'tier'" in q for q in seed_statements), calls
+        assert any("'criticality'" in q for q in seed_statements), calls
+        # Seeding happens after the migration statements.
+        assert calls.index(statements[0]) < min(calls.index(q) for q in seed_statements)
+
+    def test_managed_dictionary_seed_is_idempotent_and_failure_tolerant(self, monkeypatch):
+        """A dictionary seed failure must never block API startup."""
+        monkeypatch.setattr(
+            "services.itsm_bootstrap.run_service_catalog_compatibility_backfill",
+            lambda **_: None,
+        )
+        monkeypatch.setattr(
+            "services.itsm_bootstrap.run_service_catalog_preflight",
+            lambda **_: object(),
+        )
+        monkeypatch.setattr(
+            "services.itsm_bootstrap.run_service_catalog_migration",
+            lambda **_: 0,
+        )
+
+        def _boom(**_):
+            raise RuntimeError("dictionary seed unavailable")
+
+        monkeypatch.setattr("services.itsm_bootstrap.run_managed_dictionary_seed", _boom)
+
+        assert run_service_catalog_startup_checks() is not None
 
 
 class TestItsmMainStartupOrdering:

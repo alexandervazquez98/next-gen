@@ -1,19 +1,20 @@
 """
 Dictionary Router — CRUD endpoints for MetricDictionary nodes.
 """
+
 import csv
 import io
-import openpyxl
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, Form
-from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from typing import Annotated, Any
 
-from models.core import MetricDictionary, AppliedDictionary, DictionaryCreate, DictionaryUpdate
-from services import dictionary_service
+import openpyxl
 import services.metric_service as metric_service
-from services.auth_service import get_current_active_user, check_permission
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from models.core import DictionaryCreate, DictionaryUpdate
 from models.user import User, UserPermission
+from pydantic import BaseModel
+from services import dictionary_service
+from services.auth_service import check_permission, get_current_active_user
 
 router = APIRouter(
     prefix="/dictionaries",
@@ -27,7 +28,7 @@ def _require_editor(current_user: User):
         raise HTTPException(status_code=403, detail="Not authorized to manage dictionaries")
 
 
-def _parse_bulk_csv(content: bytes) -> List[Dict[str, Any]]:
+def _parse_bulk_csv(content: bytes) -> list[dict[str, Any]]:
     lines = content.decode("utf-8", errors="replace").splitlines()
     if len(lines) > 10001:
         raise HTTPException(
@@ -46,10 +47,10 @@ def _parse_bulk_csv(content: bytes) -> List[Dict[str, Any]]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"CSV parse error: {str(e)}",
-        )
+        ) from e
 
 
-def _parse_bulk_xlsx(content: bytes) -> List[Dict[str, Any]]:
+def _parse_bulk_xlsx(content: bytes) -> list[dict[str, Any]]:
     try:
         workbook = openpyxl.load_workbook(filename=io.BytesIO(content), data_only=True)
         worksheet = workbook[workbook.sheetnames[0]]
@@ -57,7 +58,7 @@ def _parse_bulk_xlsx(content: bytes) -> List[Dict[str, Any]]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Excel parse error: {str(e)}",
-        )
+        ) from e
 
     if worksheet.max_row > 10001:
         raise HTTPException(
@@ -71,32 +72,80 @@ def _parse_bulk_xlsx(content: bytes) -> List[Dict[str, Any]]:
         return []
 
     headers = [str(value).strip() if value is not None else "" for value in header_row]
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for i, row in enumerate(rows_iter, start=2):
         values = ["" if value is None else str(value).strip() for value in row]
         if not any(values):
             continue
-        parsed_row = {headers[idx]: values[idx] if idx < len(values) else "" for idx in range(len(headers))}
+        parsed_row = {
+            headers[idx]: values[idx] if idx < len(values) else "" for idx in range(len(headers))
+        }
         parsed_row["row_index"] = i
         rows.append(parsed_row)
 
     return rows
 
 
-@router.get("", response_model=List[Dict[str, Any]])
+CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
+
+
+@router.get("", response_model=list[dict[str, Any]])
 async def get_dictionaries(
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
+    key: str | None = Query(
+        None,
+        description=(
+            "Managed MetricDictionary key (e.g. 'value_stream', 'tier', "
+            "'criticality'). When present the endpoint returns the managed "
+            "value surface [{value, label}] instead of the legacy list."
+        ),
+    ),
+    active: bool = Query(
+        True,
+        description="Filter for the managed value surface. Ignored by the legacy list.",
+    ),
 ):
     """
-    List all MetricDictionaries.
+    List all MetricDictionaries (legacy) or managed dictionary values.
+
+    Feature #480 S2/S5: ``GET /api/dictionaries?key=value_stream&active=true``
+    returns ``[{value, label}]`` — the dropdown source for the ITIL-aligned
+    Service Catalog form. Without ``key`` the legacy dictionary list contract
+    is preserved for the CMDB dictionary manager.
     """
+    if key is not None:
+        return dictionary_service.list_dictionary_values(key, active=active)
     return dictionary_service.list_dictionaries()
+
+
+@router.get("/values", response_model=list[dict[str, Any]])
+async def get_dictionary_values(
+    current_user: CurrentUserDep,
+    key: str = Query(
+        ...,
+        description=(
+            "Managed MetricDictionary key (e.g. 'value_stream', 'tier', "
+            "'criticality'). Returns [{value, label}] rows driven by the "
+            "S2/S5 ITIL-aligned Service Catalog dropdowns."
+        ),
+    ),
+    active: bool = Query(
+        True,
+        description="Filter by the dictionary node's active flag.",
+    ),
+):
+    """Return ``[{value, label}]`` for a managed dictionary key.
+
+    Compatibility alias for the canonical root contract
+    ``GET /api/dictionaries?key=...``.
+    """
+    return dictionary_service.list_dictionary_values(key, active=active)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_dictionary(
     data: DictionaryCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Create a new MetricDictionary.
@@ -119,12 +168,12 @@ async def create_dictionary(
         result = dictionary_service.create_dictionary(data.model_dump())
         return {"message": "Dictionary created", "id": result["id"]}
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
 
 @router.get("/template-csv")
 async def get_template_csv(
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Download a CSV template pre-populated with distinct brand+model pairs
@@ -136,7 +185,9 @@ async def get_template_csv(
     template_sheet = workbook.active
     template_sheet.title = "dictionary_template"
     template_sheet.append(["brand", "model", "name", "polling_interval", "metric_ids"])
-    template_sheet.append(["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"])
+    template_sheet.append(
+        ["ExampleBrand", "ExampleModel", "My Dictionary Name", "60", "cpu-usage,mem-used"]
+    )
 
     reference_sheet = workbook.create_sheet(title="brand_model_reference")
     reference_sheet.append(["brand", "model"])
@@ -156,10 +207,10 @@ async def get_template_csv(
     )
 
 
-@router.get("/{dictionary_id}", response_model=Dict[str, Any])
+@router.get("/{dictionary_id}", response_model=dict[str, Any])
 async def get_dictionary(
     dictionary_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Get a single MetricDictionary by id, including its metric_ids.
@@ -173,8 +224,8 @@ async def get_dictionary(
 @router.get("/{dictionary_id}/preview-ci")
 async def preview_ci(
     dictionary_id: str,
+    current_user: CurrentUserDep,
     ci_id: str = Query(..., description="The CI identifier to preview"),
-    current_user: User = Depends(get_current_active_user),
 ):
     """
     Preview what metrics would apply if a CI is matched to a dictionary.
@@ -223,7 +274,7 @@ async def preview_ci(
 async def update_dictionary(
     dictionary_id: str,
     data: DictionaryUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Update a MetricDictionary.
@@ -252,14 +303,16 @@ async def update_dictionary(
     try:
         result = dictionary_service.update_dictionary(dictionary_id, update_data)
         if not result:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dictionary not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Dictionary not found"
+            )
         return {"message": "Dictionary updated"}
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
 
 class ApplyRequest(BaseModel):
-    ci_ids: List[str] = []
+    ci_ids: list[str] = []
     dry_run: bool = False
 
 
@@ -270,31 +323,31 @@ class ApplyResponse(BaseModel):
 
 
 class PreviewRequest(BaseModel):
-    ci_ids: List[str] = []
+    ci_ids: list[str] = []
 
 
 class PreviewMetricResult(BaseModel):
     metric_id: str
     oid: str
-    value: Optional[str]
+    value: str | None
     status: str  # OK | WARNING | CRITICAL | NO_DATA
 
 
 class CIPreviewResult(BaseModel):
     ci_id: str
     ci_name: str
-    ip: Optional[str]
-    results: List[PreviewMetricResult]
+    ip: str | None
+    results: list[PreviewMetricResult]
 
 
 class PreviewResponse(BaseModel):
-    previews: List[CIPreviewResult]
+    previews: list[CIPreviewResult]
 
 
-@router.get("/{dictionary_id}/target-cis", response_model=List[Dict[str, Any]])
+@router.get("/{dictionary_id}/target-cis", response_model=list[dict[str, Any]])
 async def get_target_cis(
     dictionary_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Return CIs where brand and model exactly match the dictionary's brand+model.
@@ -303,14 +356,14 @@ async def get_target_cis(
     try:
         return dictionary_service.get_target_cis(dictionary_id)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
 @router.post("/{dictionary_id}/apply", response_model=ApplyResponse)
 async def apply_dictionary(
     dictionary_id: str,
     body: ApplyRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Apply a dictionary to specified CI IDs.
@@ -328,14 +381,14 @@ async def apply_dictionary(
         )
         return ApplyResponse(**result)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
 @router.post("/{dictionary_id}/preview", response_model=PreviewResponse)
 async def preview_dictionary(
     dictionary_id: str,
     body: PreviewRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Preview live SNMP readings for a dictionary applied to specified CIs.
@@ -349,13 +402,13 @@ async def preview_dictionary(
         )
         return PreviewResponse(previews=previews)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
 @router.delete("/{dictionary_id}")
 async def delete_dictionary(
     dictionary_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Delete a MetricDictionary and cascade-delete all AppliedDictionary nodes referencing it.
@@ -372,9 +425,10 @@ async def delete_dictionary(
 # Bulk CSV Upload Endpoints
 # ---------------------------------------------------------------------------
 
+
 class BulkValidateResponse(BaseModel):
-    rows: List[Dict[str, Any]]
-    errors: List[Dict[str, Any]]
+    rows: list[dict[str, Any]]
+    errors: list[dict[str, Any]]
     valid_count: int
     error_count: int
 
@@ -382,7 +436,7 @@ class BulkValidateResponse(BaseModel):
 @router.post("/bulk", response_model=BulkValidateResponse)
 async def bulk_upload(
     file: UploadFile,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Parse and validate a CSV file for bulk dictionary creation.
@@ -417,13 +471,13 @@ async def bulk_upload(
 
 
 class BulkValidateSampleRequest(BaseModel):
-    rows: List[Dict[str, Any]]
+    rows: list[dict[str, Any]]
 
 
 @router.post("/bulk/validate-sample")
 async def bulk_validate_sample(
     body: BulkValidateSampleRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Run SNMP polling validation on a 10% random sample of CIs per brand+model.
@@ -441,18 +495,18 @@ async def bulk_validate_sample(
 
 
 class BulkConfirmRequest(BaseModel):
-    rows: List[Dict[str, Any]]
+    rows: list[dict[str, Any]]
 
 
 class BulkConfirmResponse(BaseModel):
-    created: List[Dict[str, Any]]
+    created: list[dict[str, Any]]
     count: int
 
 
 @router.post("/bulk/confirm", response_model=BulkConfirmResponse)
 async def bulk_confirm(
     body: BulkConfirmRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Atomically create all MetricDictionary nodes and HAS_METRIC links
@@ -482,9 +536,9 @@ async def bulk_confirm(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"message": str(e)},
-        )
-    except Exception as e:
+        ) from e
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Bulk creation failed",
-        )
+        ) from None

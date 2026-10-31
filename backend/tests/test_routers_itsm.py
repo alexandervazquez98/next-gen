@@ -7,7 +7,7 @@ Focus:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -173,10 +173,55 @@ class TestItsmServiceCatalogRouter:
                 },
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         assert response.json()["service_id"] == "svc-new"
         created_payload = mock_service.create_service_catalog.call_args.args[0]
         assert created_payload.service_id == "svc-new"
+
+    def test_create_catalog_without_service_id_returns_201_with_assigned_id(self):
+        """S1: the create form may omit service_id; the server assigns one."""
+        _override_current_user(_make_pydantic_user(permissions=[WRITE_PERMISSION]))
+
+        class _CreateOnlyRepository:
+            """Repository double exposing the create-only primitive."""
+
+            def __init__(self):
+                self.get_by_id = MagicMock(return_value=None)
+                self.find_by_type_and_normalized_name = MagicMock(return_value=None)
+                self.created = []
+
+            def create(self, payload):
+                self.created.append(payload)
+                return payload.model_dump()
+
+            def upsert(self, payload):  # pragma: no cover - guarded below
+                raise AssertionError("the create path must not use the legacy upsert write")
+
+        with (
+            patch("services.itsm_service_catalog_service.ServiceCatalogRepository") as repo_cls,
+            patch("services.itsm_service_catalog_service.ValueStreamLookup") as lookup_cls,
+        ):
+            repository = _CreateOnlyRepository()
+            repo_cls.return_value = repository
+            lookup_cls.return_value.is_active.return_value = True
+
+            response = client.post(
+                "/api/itsm/service-catalog",
+                json={
+                    "name": "Core",
+                    "sla_target_minutes": 45,
+                    "description": "Core incident support",
+                    "service_type": "incident",
+                    "value_stream": "operate",
+                },
+            )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["service_id"].startswith("sc-operate-")
+        assert body["id"] == body["service_id"]
+        assert len(repository.created) == 1
+        assert body["id"] == body["service_id"]
 
     def test_update_and_deactivate_catalog_with_write_permission(self):
         _override_current_user(_make_pydantic_user(permissions=[WRITE_PERMISSION]))

@@ -15,6 +15,30 @@ const mocks = vi.hoisted(() => ({
   importCatalogWorkbook: vi.fn(),
 }));
 
+// Feature #480 — the form lookups (value_stream / tier / criticality) are
+// fetched from the HTTP boundary, so the controlled selects are populated
+// the same way the SPA populates them.
+const apiMock = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  put: vi.fn(),
+  delete: vi.fn(),
+}));
+
+vi.mock("../../services/api", async () => {
+  const actual = await vi.importActual<typeof import("../../services/api")>("../../services/api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      get: (...args: unknown[]) => apiMock.get(...args),
+      post: (...args: unknown[]) => apiMock.post(...args),
+      put: (...args: unknown[]) => apiMock.put(...args),
+      delete: (...args: unknown[]) => apiMock.delete(...args),
+    },
+  };
+});
+
 vi.mock("../../services/itsm", async () => {
   const actual = await vi.importActual<typeof import("../../services/itsm")>("../../services/itsm");
   return {
@@ -55,7 +79,18 @@ const renderCatalogRoute = () =>
   );
 
 describe("ItsmServiceCatalogPage — WU 8 governance + import UX", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.get.mockImplementation((endpoint: string) => {
+      if (endpoint === "/dictionaries?key=value_stream&active=true") {
+        return Promise.resolve([
+          { value: "operate", label: "Operate" },
+          { value: "deliver", label: "Deliver" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+  });
 
   it("renders the catalog with Service Management copy and required governance fields", async () => {
     mocks.listServiceCatalog.mockResolvedValueOnce([baseCatalog]);
@@ -89,18 +124,27 @@ describe("ItsmServiceCatalogPage — WU 8 governance + import UX", () => {
     await screen.findByText(/Auth API/);
 
     await user.click(screen.getByRole("button", { name: /new service catalog/i }));
-    await user.type(screen.getByLabelText(/^service id$/i), "svc-chat");
+    // Feature #480 S2: value_stream is a controlled select fed by the
+    // managed dictionary lookup.
+    const valueStream = screen.getByLabelText(/^value stream$/i) as HTMLSelectElement;
+    await waitFor(() => expect(valueStream.options.length).toBeGreaterThan(1));
+    await user.selectOptions(valueStream, "operate");
     await user.type(screen.getByLabelText(/^name$/i), "Chat API");
     await user.type(screen.getByLabelText(/^description$/i), "Chat service");
     await user.selectOptions(screen.getByLabelText(/^service type$/i), "incident");
-    await user.type(screen.getByLabelText(/^value stream$/i), "operate");
-    await user.type(screen.getByLabelText(/^sla target minutes$/i), "20");
+    // Feature #480 S6: the SLA control is a [number][unit-select] pair; the
+    // minutes unit keeps the intended 20-minute target.
+    const slaTarget = screen.getByLabelText(/^sla target$/i);
+    await user.clear(slaTarget);
+    await user.type(slaTarget, "20");
+    await user.selectOptions(screen.getByLabelText(/^sla unit$/i), "minutes");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(mocks.createServiceCatalog).toHaveBeenCalledTimes(1));
     const payload = mocks.createServiceCatalog.mock.calls[0][0];
+    // Feature #480 S1: the backend mints the service_id — it is never sent.
+    expect(payload).not.toHaveProperty("service_id");
     expect(payload).toMatchObject({
-      service_id: "svc-chat",
       name: "Chat API",
       description: "Chat service",
       service_type: "incident",
@@ -117,7 +161,6 @@ describe("ItsmServiceCatalogPage — WU 8 governance + import UX", () => {
     await screen.findByText(/Auth API/);
 
     await user.click(screen.getByRole("button", { name: /new service catalog/i }));
-    await user.type(screen.getByLabelText(/^service id$/i), "svc-bad");
     await user.type(screen.getByLabelText(/^name$/i), "Bad");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
