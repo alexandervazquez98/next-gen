@@ -31,11 +31,11 @@ FOR (r:RTU) REQUIRE r.mqtt_topic IS UNIQUE;
 
 // Composite unique index for sensor identity (upsert target)
 CREATE INDEX sensor_rtu_addr_type IF NOT EXISTS
-FOR (s:Sensor) REQUIRE (s.rtu_id, s.register_addr, s.sensor_type);
+FOR (s:Sensor) ON (s.rtu_id, s.register_addr, s.sensor_type);
 
 // Index for fast sensor lookup by RTU
 CREATE INDEX sensor_rtu_id IF NOT EXISTS
-FOR (s:Sensor) REQUIRE s.rtu_id;
+FOR (s:Sensor) ON (s.rtu_id);
 
 // ── Relationships ─────────────────────────────────────────────────────────────
 
