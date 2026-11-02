@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **feat(backend): canonical PhysicalLink connectivity (#539)** — New and existing PhysicalLinks now use canonical CI→PhysicalLink `CONNECTED_VIA` edges, with idempotent migration 011 backfill. Deleting an endpoint CI removes its affected PhysicalLink. The public node usage count keeps its previous meaning — every relationship incident to the CI — and excludes only the new CI→PhysicalLink `CONNECTED_VIA` edges.
+
  — 2026-09-07
 
 ### Added

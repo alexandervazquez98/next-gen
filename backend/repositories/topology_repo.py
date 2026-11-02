@@ -27,6 +27,11 @@ SUPPORTED_CI_RELATIONSHIP_TYPES = _relationship_types.SUPPORTED_CI_RELATIONSHIP_
 cypher_relationship_union = _relationship_types.cypher_relationship_union
 validate_ci_relationship_type = _relationship_types.validate_ci_relationship_type
 
+# feat-539 / S1: the canonical CI->PhysicalLink edge type. It is an
+# infrastructure relationship, not a CI relationship, so it is excluded from
+# the public node-usage count (see ``get_node_usage``).
+_PHYSICAL_LINK_RELATIONSHIP_TYPE = "CONNECTED_VIA"
+
 
 def get_nodes(
     allowed_locations: list[str] | None = None, is_admin: bool = False
@@ -104,14 +109,42 @@ def upsert_node(node: Node) -> None:
 def delete_node(node_id: str) -> None:
     driver = get_db()
     with driver.session() as session:
-        session.run("MATCH (n:CI {id: $id}) DETACH DELETE n", id=node_id)
+        session.run(
+            """
+            MATCH (n:CI {id: $id})
+            OPTIONAL MATCH (pl:PhysicalLink)
+            WHERE $id IN pl.endpoints
+            WITH n, collect(pl) AS affected_links
+            FOREACH (pl IN affected_links | DETACH DELETE pl)
+            DETACH DELETE n
+            """,
+            id=node_id,
+        )
 
 
 def get_node_usage(node_id: str) -> int:
+    """Count the relationships incident to a CI for the public usage endpoint.
+
+    Pre-#539 this count was "every relationship incident to the CI"
+    (CATEGORIZED_AS, OWNED_BY, HAS_EVENT, CI<->CI links, ...). The canonical
+    PhysicalLink connectivity added ``CONNECTED_VIA`` edges between a CI and a
+    ``:PhysicalLink`` node; those infrastructure edges are the ONLY
+    relationships excluded here, so every pre-existing incident relationship
+    keeps contributing exactly as before. The undirected match plus the
+    ``:PhysicalLink`` check on the matched neighbour excludes both directions
+    of a CI<->PhysicalLink edge (CI->PhysicalLink and PhysicalLink->CI).
+    """
     driver = get_db()
+    query = """
+        MATCH (n:CI {id: $id})-[r]-(other)
+        WHERE NOT (type(r) = $excluded_rel_type AND other:PhysicalLink)
+        RETURN count(r) AS count
+    """
     with driver.session() as session:
         res = session.run(
-            "MATCH (n:CI {id: $id})-[r]-() RETURN count(r) as count", id=node_id
+            query,
+            id=node_id,
+            excluded_rel_type=_PHYSICAL_LINK_RELATIONSHIP_TYPE,
         ).single()
         return res["count"] if res else 0
 

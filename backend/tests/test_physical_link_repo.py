@@ -102,6 +102,24 @@ class TestCreate:
         assert cypher_call["params"]["link_id"] == "pl-fiber-001"
         assert cypher_call["params"]["link_type"] == "fiber"
 
+    def test_create_writes_both_canonical_endpoint_edges_atomically(self, mock_neo4j_driver, repo):
+        """The link node and both CI-to-link edges are one atomic write."""
+        mock_neo4j_driver.mock_session.set_response("create (pl:physicallink", [_link_row()])
+
+        repo.create(
+            link_id="pl-fiber-001",
+            link_type="fiber",
+            endpoints=("ci-router-a", "ci-router-b"),
+        )
+
+        assert len(mock_neo4j_driver.mock_session.queries) == 1
+        query = " ".join(mock_neo4j_driver.mock_session.queries[0]["query"].lower().split())
+        assert "match (endpoint_a:ci {id: $endpoint_a})" in query
+        assert "match (endpoint_b:ci {id: $endpoint_b})" in query
+        assert "create (pl:physicallink)" in query
+        assert "create (endpoint_a)-[:connected_via]->(pl)" in query
+        assert "create (endpoint_b)-[:connected_via]->(pl)" in query
+
 
 # ---------------------------------------------------------------------------
 # T-R2: get_by_id()

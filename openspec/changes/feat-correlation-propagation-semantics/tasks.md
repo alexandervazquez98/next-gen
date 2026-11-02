@@ -63,16 +63,16 @@ Documentation and spec only — no runtime file, relationship whitelist, permiss
 
 Implements REQ-CORR-PROP-9. Out of scope for PR1 and for the T1 documentation reconciliation.
 
-- [ ] 4.1 RED test in `backend/tests/test_physical_link_repo.py`: `PhysicalLinkRepo.create()` writes the two inbound edges `(endpoint_a:CI)-[:CONNECTED_VIA]->(pl)` and `(endpoint_b:CI)-[:CONNECTED_VIA]->(pl)`, and writes no `(:PhysicalLink)-[:CONNECTED_VIA]->(:CI)` edge
-- [ ] 4.2 RED test: `backend/migrations/011_*.cypher` backfills both inbound `CONNECTED_VIA` edges from the stored `pl.endpoints`
-- [ ] 4.3 RED test: applying the backfill twice creates no duplicate edges and no duplicate `:PhysicalLink` nodes (idempotent)
-- [ ] 4.4 RED test in `backend/tests/test_topology_repo_*`: deleting an endpoint CI removes the affected PhysicalLink and its edges atomically, with no dangling endpoint reference
-- [ ] 4.5 RED test in `backend/tests/test_node_service.py` and `backend/tests/test_routers_nodes.py`: `GET /api/nodes/{id}/usage` preserves the pre-#539 count when `CONNECTED_VIA` edges to PhysicalLinks exist — every relationship incident to the CI keeps its prior contribution and only the new CI→PhysicalLink `CONNECTED_VIA` edges are excluded
-- [ ] 4.6 Implement: `PhysicalLinkRepo.create()` writes the node and both inbound `CONNECTED_VIA` edges in the same write
-- [ ] 4.7 Implement: `backend/migrations/011_*.cypher` idempotent backfill
-- [ ] 4.8 Implement: CI deletion removes the affected PhysicalLink and its edges
-- [ ] 4.9 Implement: node usage keeps every pre-existing incident-relationship contribution and excludes only the newly introduced CI→PhysicalLink `CONNECTED_VIA` edges
-- [ ] 4.10 GREEN: focused tests; full backend suite green; PR1 contract tests still green
+- [x] 4.1 RED test in `backend/tests/test_physical_link_repo.py`: `PhysicalLinkRepo.create()` writes the two inbound edges `(endpoint_a:CI)-[:CONNECTED_VIA]->(pl)` and `(endpoint_b:CI)-[:CONNECTED_VIA]->(pl)`, and writes no `(:PhysicalLink)-[:CONNECTED_VIA]->(:CI)` edge
+- [x] 4.2 RED test: `backend/migrations/011_*.cypher` backfills both inbound `CONNECTED_VIA` edges from the stored `pl.endpoints`
+- [x] 4.3 RED test: applying the backfill twice creates no duplicate edges and no duplicate `:PhysicalLink` nodes (idempotent)
+- [x] 4.4 RED test in `backend/tests/test_topology_repo_*`: deleting an endpoint CI removes the affected PhysicalLink and its edges atomically, with no dangling endpoint reference
+- [x] 4.5 RED test in `backend/tests/test_node_service.py` and `backend/tests/test_routers_nodes.py`: `GET /api/nodes/{id}/usage` preserves the pre-#539 count when `CONNECTED_VIA` edges to PhysicalLinks exist — every relationship incident to the CI keeps its prior contribution and only the new CI→PhysicalLink `CONNECTED_VIA` edges are excluded
+- [x] 4.6 Implement: `PhysicalLinkRepo.create()` writes the node and both inbound `CONNECTED_VIA` edges in the same write
+- [x] 4.7 Implement: `backend/migrations/011_*.cypher` idempotent backfill
+- [x] 4.8 Implement: CI deletion removes the affected PhysicalLink and its edges
+- [x] 4.9 Implement: node usage keeps every pre-existing incident-relationship contribution and excludes only the newly introduced CI→PhysicalLink `CONNECTED_VIA` edges
+- [x] 4.10 GREEN: focused tests; full backend suite green; PR1 contract tests still green
 
 ## Phase 5: PR2a2 — status-gated traversal with the `:PhysicalLink` intermediate (S1, S2, S8)
 

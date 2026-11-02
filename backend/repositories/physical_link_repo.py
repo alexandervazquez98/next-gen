@@ -119,10 +119,17 @@ class PhysicalLinkRepo:
         Endpoints are stored as a 2-tuple on the node (``pl.endpoints = [a, b]``
         — Neo4j accepts a Python list and reads it back identically). The
         response projects them as a list to match the frontend DTO.
+
+        The node and its two canonical ``CI -> PhysicalLink`` edges are written
+        by one Cypher statement, so Neo4j commits them atomically. Matching the
+        endpoint CIs also prevents a link from being created if an endpoint is
+        removed after the service-level validation.
         """
         endpoint_a, endpoint_b = endpoints
 
         query = """
+        MATCH (endpoint_a:CI {id: $endpoint_a})
+        MATCH (endpoint_b:CI {id: $endpoint_b})
         CREATE (pl:PhysicalLink)
         SET
             pl.id = $link_id,
@@ -131,6 +138,8 @@ class PhysicalLinkRepo:
             pl.status = $status,
             pl.capacity_gbps = $capacity_gbps,
             pl.install_date = $install_date
+        CREATE (endpoint_a)-[:CONNECTED_VIA]->(pl)
+        CREATE (endpoint_b)-[:CONNECTED_VIA]->(pl)
         RETURN
             pl.id AS id,
             pl.type AS type,
