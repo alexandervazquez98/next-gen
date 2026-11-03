@@ -30,8 +30,10 @@ from services.correlation_propagation_contract import (
     PHYSICAL_LINK_DOWN_BEHAVIOR,
     PHYSICAL_LINK_STATUS_FRESHNESS,
     PHYSICAL_LINK_UNKNOWN_PROPAGATION,
+    PROPAGATING_PHYSICAL_LINK_STATUSES,
     SUPPORTED_TRAVERSAL_RELATIONSHIP_TYPES,
     all_locked_values,
+    propagating_physical_link_statuses,
     should_default_propagate_manages_uses_provides,
     should_generate_descendant_event_on_down,
     should_propagate_unknown_severity_degrade,
@@ -225,6 +227,63 @@ class TestFeatureFlagNames:
     )
     def test_flag_name_ends_with_enabled(self, flag):
         assert flag.endswith("_ENABLED")
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T3 — propagating PhysicalLink statuses (the status gate)
+# ---------------------------------------------------------------------------
+
+
+class TestPropagatingPhysicalLinkStatuses:
+    """The status gate is published by the contract module, not by the repo."""
+
+    def test_propagating_statuses_are_up_and_unknown(self):
+        assert frozenset({"UP", "UNKNOWN"}) == PROPAGATING_PHYSICAL_LINK_STATUSES
+
+    def test_down_and_planned_do_not_propagate(self):
+        assert "DOWN" not in PROPAGATING_PHYSICAL_LINK_STATUSES
+        assert "PLANNED" not in PROPAGATING_PHYSICAL_LINK_STATUSES
+
+    def test_helper_returns_the_sorted_status_list(self):
+        assert propagating_physical_link_statuses() == ["UNKNOWN", "UP"]
+
+    def test_helper_returns_a_copy(self):
+        statuses = propagating_physical_link_statuses()
+        statuses.append("DOWN")
+
+        assert propagating_physical_link_statuses() == ["UNKNOWN", "UP"]
+
+    def test_unknown_propagation_is_consistent_with_decision_1(self):
+        # Decision 1 degrades the severity of a PROPAGATED event, which only
+        # makes sense when an UNKNOWN link still propagates.
+        assert "UNKNOWN" in PROPAGATING_PHYSICAL_LINK_STATUSES
+        assert should_propagate_unknown_severity_degrade() is True
+
+    def test_status_gate_is_consistent_with_the_model_vocabulary(self):
+        # The PhysicalLink status vocabulary comes from the model layer.
+        from models.core import PhysicalLinkStatus
+
+        allowed = set(PhysicalLinkStatus.__args__)
+        assert allowed >= PROPAGATING_PHYSICAL_LINK_STATUSES
+
+
+class TestCorrelationTraversalVocabulary:
+    """The repository's pure-CI traversal vocabulary stays the contract set."""
+
+    def test_repository_uses_the_contract_traversal_vocabulary(self):
+        from repositories.topology_repo import CORRELATION_CI_RELATIONSHIP_TYPES
+
+        assert tuple(sorted(CORRELATION_CI_RELATIONSHIP_TYPES)) == tuple(
+            sorted(CURRENT_TRAVERSAL_RELATIONSHIP_TYPES)
+        )
+
+    def test_repository_does_not_walk_the_physical_link_relationship(self):
+        from repositories.topology_repo import CORRELATION_CI_RELATIONSHIP_TYPES
+
+        assert "CONNECTED_VIA" not in CORRELATION_CI_RELATIONSHIP_TYPES
+
+    def test_public_relationship_whitelist_is_untouched(self):
+        assert "CONNECTED_VIA" not in SUPPORTED_CI_RELATIONSHIP_TYPES
 
 
 # ---------------------------------------------------------------------------

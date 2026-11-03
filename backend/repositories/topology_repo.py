@@ -4,12 +4,14 @@ from __future__ import annotations
 import importlib
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from config import get_icmp_settings
 from database import get_db
 from models.core import Node
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
+from services.correlation_propagation_contract import propagating_physical_link_statuses
 from services.tunnel_health import (
     TUNNEL_MEDIA,
     IcmpReason,
@@ -31,6 +33,180 @@ validate_ci_relationship_type = _relationship_types.validate_ci_relationship_typ
 # infrastructure relationship, not a CI relationship, so it is excluded from
 # the public node-usage count (see ``get_node_usage``).
 _PHYSICAL_LINK_RELATIONSHIP_TYPE = "CONNECTED_VIA"
+
+# ---------------------------------------------------------------------------
+# feat-539 / T3 — status-aware PhysicalLink traversal
+# ---------------------------------------------------------------------------
+# The correlation traversal understands the canonical PhysicalLink crossing:
+#
+#     (ci)-[:CONNECTED_VIA]->(pl:PhysicalLink)<-[:CONNECTED_VIA]-(peer:CI)
+#
+# A crossing is ONE logical hop (two edges, one hop) and is gated by
+# ``pl.status``: only the statuses published by
+# ``services.correlation_propagation_contract`` propagate. The status is read
+# in the SAME Cypher statement that performs the traversal and is passed as a
+# query parameter, so the literals are never duplicated in the Cypher text.
+#
+# The crossing may sit at ANY logical position inside the depth budget, so
+# the traversal is expressed as explicit logical-position variants (one per
+# (link position, total hops) combination) instead of a single link-first
+# pattern. Every Cypher function below renders its patterns from the SAME
+# variant list, so the three traversals cannot drift apart.
+
+#: Relationship types walked by the pure-CI part of the correlation
+#: traversal. This is the pre-#539 traversal vocabulary (3 of the 6 supported
+#: CI relationship types) and is deliberately NOT the public
+#: ``SUPPORTED_CI_RELATIONSHIP_TYPES`` whitelist, which stays untouched.
+CORRELATION_CI_RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "DEPENDS_ON",
+    "HOSTED_ON",
+    "CONNECTS_TO",
+)
+
+#: Logical depth budget of the correlation traversal (unchanged by #539).
+CORRELATION_MAX_DEPTH: int = 3
+
+_CORRELATION_CI_HOP = "ci"
+_CORRELATION_LINK_HOP = "link"
+
+
+@dataclass(frozen=True)
+class CorrelationPathVariant:
+    """One explicit logical-position variant of the correlation traversal.
+
+    Attributes:
+        link_position: 1-based logical position of the PhysicalLink crossing
+            inside the variant, or ``None`` for the pure-CI variant.
+        total_hops: number of logical hops the variant walks.
+        hops: the logical hop sequence (``"ci"`` = one CI->CI hop over
+            ``DEPENDS_ON`` / ``HOSTED_ON`` / ``CONNECTS_TO``; ``"link"`` = one
+            PhysicalLink crossing, which costs exactly ONE logical hop). The
+            pure-CI variant uses ``("ci",)`` because its Cypher pattern is
+            variable length (``*1..depth``).
+        pattern: the rendered Cypher pattern of the variant.
+        ci_variables: the CI node variables of ``pattern``, in traversal
+            order (``ci`` first, ``parent`` last).
+    """
+
+    link_position: int | None
+    total_hops: int
+    hops: tuple[str, ...]
+    pattern: str
+    ci_variables: tuple[str, ...]
+
+
+def correlation_path_variants(
+    max_depth: int = CORRELATION_MAX_DEPTH,
+) -> list[CorrelationPathVariant]:
+    """Return the explicit logical-position variants of the correlation traversal.
+
+    The traversal budget is ``max_depth`` LOGICAL hops. A PhysicalLink
+    crossing consumes exactly one logical hop, so the crossing may sit at any
+    logical position between 1 and ``max_depth``:
+
+    - ``link_position=None`` — the pure-CI variant (the unchanged pre-#539
+      walk over ``DEPENDS_ON`` / ``HOSTED_ON`` / ``CONNECTS_TO``).
+    - ``link_position=1`` — the crossing is the first hop.
+    - ``link_position=2`` — one CI hop, then the crossing.
+    - ``link_position=3`` — two CI hops, then the crossing.
+
+    A path carries at most ONE crossing so that the link metadata
+    (``link_id`` / ``link_status``) stays unambiguous.
+    """
+    depth = max(1, int(max_depth))
+    ci_rel = "|".join(CORRELATION_CI_RELATIONSHIP_TYPES)
+    link_rel = _PHYSICAL_LINK_RELATIONSHIP_TYPE
+
+    variants: list[CorrelationPathVariant] = [
+        CorrelationPathVariant(
+            link_position=None,
+            total_hops=depth,
+            hops=(_CORRELATION_CI_HOP,),
+            pattern=f"(ci)-[:{ci_rel}*1..{depth}]->(parent:CI)",
+            ci_variables=("ci", "parent"),
+        )
+    ]
+
+    for link_position in range(1, depth + 1):
+        for total_hops in range(link_position, depth + 1):
+            hops = (
+                (_CORRELATION_CI_HOP,) * (link_position - 1)
+                + (_CORRELATION_LINK_HOP,)
+                + (_CORRELATION_CI_HOP,) * (total_hops - link_position)
+            )
+            names = ["ci", *[f"h{index}" for index in range(1, len(hops) + 1)]]
+            names[-1] = "parent"
+            parts = ["(ci)"]
+            for index, hop in enumerate(hops, start=1):
+                target = names[index]
+                if hop == _CORRELATION_LINK_HOP:
+                    parts.append(f"-[:{link_rel}]->(pl:PhysicalLink)<-[:{link_rel}]-({target}:CI)")
+                else:
+                    parts.append(f"-[:{ci_rel}]->({target}:CI)")
+            variants.append(
+                CorrelationPathVariant(
+                    link_position=link_position,
+                    total_hops=total_hops,
+                    hops=hops,
+                    pattern="".join(parts),
+                    ci_variables=tuple(names),
+                )
+            )
+
+    return variants
+
+
+def _correlation_parent_branches(max_depth: int = CORRELATION_MAX_DEPTH) -> str:
+    """Render the ``CALL { ... UNION ... }`` branches that yield parent CIs.
+
+    Every branch returns ``(parent, link_id, link_status)``. The pure-CI
+    branch returns ``null`` link metadata; a crossing branch returns the
+    PhysicalLink id and the status read in the SAME statement.
+    """
+    blocks: list[str] = []
+    for variant in correlation_path_variants(max_depth):
+        if variant.link_position is None:
+            blocks.append(
+                "    WITH ci\n"
+                f"    MATCH {variant.pattern}\n"
+                "    RETURN parent, null AS link_id, null AS link_status"
+            )
+        else:
+            blocks.append(
+                "    WITH ci\n"
+                f"    MATCH {variant.pattern}\n"
+                "    WHERE pl.status IN $propagating_link_statuses\n"
+                "    RETURN parent, pl.id AS link_id, pl.status AS link_status"
+            )
+    return "\n    UNION\n".join(blocks)
+
+
+def _correlation_edge_branches(max_depth: int = CORRELATION_MAX_DEPTH) -> str:
+    """Render the ``CALL { ... UNION ... }`` branches that yield CI->CI edges.
+
+    The pure-CI branch projects the relationships of the matched path; a
+    crossing branch projects the CI->CI logical edges explicitly, so a
+    PhysicalLink id NEVER reaches the CI adjacency.
+    """
+    blocks: list[str] = []
+    for variant in correlation_path_variants(max_depth):
+        if variant.link_position is None:
+            blocks.append(
+                "    WITH ci\n"
+                f"    MATCH path={variant.pattern}\n"
+                "    RETURN [rel IN relationships(path) | "
+                "[startNode(rel).id, endNode(rel).id]] AS edges"
+            )
+            continue
+        names = variant.ci_variables
+        edges = ", ".join(f"[{names[i]}.id, {names[i + 1]}.id]" for i in range(len(names) - 1))
+        blocks.append(
+            "    WITH ci\n"
+            f"    MATCH {variant.pattern}\n"
+            "    WHERE pl.status IN $propagating_link_statuses\n"
+            f"    RETURN [{edges}] AS edges"
+        )
+    return "\n    UNION\n".join(blocks)
 
 
 def get_nodes(
@@ -779,40 +955,59 @@ def get_cis_relationship_summary(ci_ids: list[str], allowed_locations=None, is_a
 
 def find_open_parent_event(ci_id: str, max_depth: int = 3) -> dict[str, Any] | None:
     """
-    Traverse parent CIs via DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships up to max_depth levels.
+    Traverse parent CIs via DEPENDS_ON/HOSTED_ON/CONNECTS_TO relationships and
+    status-gated PhysicalLink crossings up to max_depth LOGICAL hops.
     Return the first OPEN/ACK event found on a parent CI, plus root_cause_ci_id.
 
-    Returns dict with keys: {parent_event_id, root_cause_ci_id, correlation_type}
-    or None if no parent has an open event.
+    A PhysicalLink crossing is ONE logical hop and may sit at any logical
+    position inside the budget. Only the PhysicalLink statuses published by
+    ``services.correlation_propagation_contract`` propagate; the status is
+    read in the same statement as the traversal.
 
-    Traversal: DEPENDS_ON, HOSTED_ON, CONNECTS_TO up to max_depth levels.
+    Returns dict with keys: {parent_event_id, root_cause_ci_id, correlation_type}
+    plus the additive PhysicalLink metadata {link_id, link_status} when the
+    parent was reached through a crossing, or None if no parent has an open
+    event.
     """
     driver = get_db()
+    query = f"""
+    MATCH (ci:CI {{id: $ci_id}})
+    CALL {{
+    {_correlation_parent_branches(max_depth)}
+    }}
+    MATCH (parent)-[:HAS_EVENT]->(pe:Event)
+    WHERE pe.status IN ['OPEN', 'ACK']
+    RETURN pe.id AS parent_event_id,
+           pe.ci_id AS parent_ci_id,
+           pe.correlation_type AS correlation_type,
+           pe.root_cause_ci_id AS root_cause_ci_id,
+           link_id,
+           link_status
+    ORDER BY CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC, pe.created_at ASC
+    LIMIT 1
+    """
     with driver.session() as session:
         result = session.run(
-            f"""
-            MATCH (ci:CI {{id: $ci_id}})
-            MATCH (ci)-[r:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..{max_depth}]->(parent:CI)
-            MATCH (parent)-[:HAS_EVENT]->(pe:Event)
-            WHERE pe.status IN ['OPEN', 'ACK']
-            RETURN pe.id AS parent_event_id,
-                   pe.ci_id AS parent_ci_id,
-                   pe.correlation_type AS correlation_type,
-                   pe.root_cause_ci_id AS root_cause_ci_id
-            ORDER BY CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC, pe.created_at ASC
-            LIMIT 1
-            """,
+            query,
             ci_id=ci_id,
+            propagating_link_statuses=propagating_physical_link_statuses(),
         ).single()
 
         if not result:
             return None
 
-        return {
+        parent = {
             "parent_event_id": result["parent_event_id"],
             "root_cause_ci_id": result.get("root_cause_ci_id") or result["parent_ci_id"],
             "correlation_type": result.get("correlation_type"),
         }
+        link_id = result.get("link_id")
+        link_status = result.get("link_status")
+        if link_id:
+            parent["link_id"] = link_id
+        if link_status:
+            parent["link_status"] = link_status
+        return parent
 
 
 def build_open_parent_index(
@@ -820,8 +1015,10 @@ def build_open_parent_index(
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Batched variant of ``find_open_parent_event`` keyed by ``(ci_id, metric_id)``.
 
-    Walks upstream via ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO`` to depth 3 for every
-    requested pair in ONE Cypher pass, mirroring ``find_open_parent_event``.
+    Walks upstream via ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO`` and status-gated
+    PhysicalLink crossings to depth 3 LOGICAL hops for every requested pair in
+    ONE Cypher pass, mirroring ``find_open_parent_event``. A crossing is ONE
+    logical hop and may sit at any logical position inside the budget.
     Non-propagating metrics (``MetricDef.can_propagate = false``) are filtered
     INSIDE the Cypher (``WHERE coalesce(m.can_propagate, true) = true``) so they
     never appear as keys in the returned dict — callers treat a missing key as
@@ -833,34 +1030,40 @@ def build_open_parent_index(
 
     Returns:
         ``{(ci_id, metric_id): {"parent_event_id", "root_cause_ci_id",
-        "correlation_type"}}`` for hits. Missing keys = ROOT. Empty input →
-        empty dict (no query round-trip).
+        "correlation_type"}}`` for hits, plus the additive ``link_id`` /
+        ``link_status`` keys when the parent was reached through a crossing.
+        Missing keys = ROOT. Empty input → empty dict (no query round-trip).
     """
     if not pairs:
         return {}
 
     records = session.run(
-        """
+        f"""
         UNWIND $pairs AS pair
-        MATCH (ci:CI {id: pair.ci_id})
-        MATCH (m:MetricDef {id: pair.metric_id})
+        MATCH (ci:CI {{id: pair.ci_id}})
+        MATCH (m:MetricDef {{id: pair.metric_id}})
         WHERE coalesce(m.can_propagate, true) = true
-        MATCH (ci)-[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3]->(parent:CI)
+        CALL {{
+        {_correlation_parent_branches(CORRELATION_MAX_DEPTH)}
+        }}
         MATCH (parent)-[:HAS_EVENT]->(pe:Event)
         WHERE pe.status IN ['OPEN', 'ACK']
-        WITH pair, pe, parent
+        WITH pair, pe, link_id, link_status
         ORDER BY pair.ci_id, pair.metric_id,
                  CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC,
                  pe.created_at ASC
-        WITH pair, head(collect(pe)) AS parent_event
+        WITH pair, head(collect({{event: pe, link_id: link_id, link_status: link_status}})) AS picked
         RETURN pair.ci_id AS ci_id,
                pair.metric_id AS metric_id,
-               parent_event.id AS parent_event_id,
-               parent_event.ci_id AS parent_ci_id,
-               parent_event.root_cause_ci_id AS root_cause_ci_id,
-               parent_event.correlation_type AS correlation_type
+               picked.event.id AS parent_event_id,
+               picked.event.ci_id AS parent_ci_id,
+               picked.event.root_cause_ci_id AS root_cause_ci_id,
+               picked.event.correlation_type AS correlation_type,
+               picked.link_id AS link_id,
+               picked.link_status AS link_status
         """,
         pairs=[{"ci_id": ci_id, "metric_id": metric_id} for ci_id, metric_id in pairs],
+        propagating_link_statuses=propagating_physical_link_statuses(),
     )
 
     index: dict[tuple[str, str], dict[str, Any]] = {}
@@ -870,37 +1073,48 @@ def build_open_parent_index(
         parent_event_id = row["parent_event_id"]
         if not parent_event_id:
             continue
-        index[(ci_id, metric_id)] = {
+        entry = {
             "parent_event_id": parent_event_id,
             "root_cause_ci_id": row.get("root_cause_ci_id") or row.get("parent_ci_id"),
             "correlation_type": "PROPAGATED",
         }
+        link_id = row.get("link_id")
+        link_status = row.get("link_status")
+        if link_id:
+            entry["link_id"] = link_id
+        if link_status:
+            entry["link_status"] = link_status
+        index[(ci_id, metric_id)] = entry
     return index
 
 
 def get_topology_relations(session, ci_ids: set[str]) -> dict[str, set[str]]:
     """Preload the eligible upstream adjacency graph for observed CIs.
 
-    The query expands each observed CI to the same depth-three relationship
-    boundary as ``build_open_parent_index`` and returns the direct edges from
-    those paths. ``build_cycle_parent_index`` then performs the deterministic
-    in-memory walk without additional Neo4j round-trips.
+    The query expands each observed CI to the same depth-three LOGICAL-hop
+    boundary as ``build_open_parent_index`` and returns the direct CI->CI
+    edges from those paths. A status-gated PhysicalLink crossing contributes
+    a CI->CI edge — the PhysicalLink itself is never part of the adjacency.
+    ``build_cycle_parent_index`` then performs the deterministic in-memory
+    walk without additional Neo4j round-trips.
     """
     safe_ci_ids = sorted(ci_id for ci_id in ci_ids if ci_id)
     if not safe_ci_ids:
         return {}
 
     records = session.run(
-        """
+        f"""
         UNWIND $ci_ids AS ci_id
-        MATCH path=(ci:CI {id: ci_id})
-            -[:DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3]->(:CI)
-        UNWIND relationships(path) AS rel
-        WITH startNode(rel) AS source, endNode(rel) AS parent
-        RETURN DISTINCT source.id AS source_ci_id,
-                        parent.id AS parent_ci_id
+        MATCH (ci:CI {{id: ci_id}})
+        CALL {{
+        {_correlation_edge_branches(CORRELATION_MAX_DEPTH)}
+        }}
+        UNWIND edges AS edge
+        RETURN DISTINCT edge[0] AS source_ci_id,
+                        edge[1] AS parent_ci_id
         """,
         ci_ids=safe_ci_ids,
+        propagating_link_statuses=propagating_physical_link_statuses(),
     )
 
     relations: dict[str, set[str]] = {}

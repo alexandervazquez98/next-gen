@@ -38,13 +38,23 @@ class _FakeSession:
         return _FakeResult(self._rows)
 
 
-def _row(ci_id, metric_id, parent_event_id=None, root_cause_ci_id=None, parent_ci_id=None):
+def _row(
+    ci_id,
+    metric_id,
+    parent_event_id=None,
+    root_cause_ci_id=None,
+    parent_ci_id=None,
+    link_id=None,
+    link_status=None,
+):
     return {
         "ci_id": ci_id,
         "metric_id": metric_id,
         "parent_event_id": parent_event_id,
         "parent_ci_id": parent_ci_id,
         "root_cause_ci_id": root_cause_ci_id,
+        "link_id": link_id,
+        "link_status": link_status,
     }
 
 
@@ -194,6 +204,104 @@ def test_build_open_parent_index_prefers_critical_over_warning():
 
     assert "CASE pe.severity" in session.last_query or "CASE parent.severity" in session.last_query
     assert result[("ci-E", "cpu-load")]["parent_event_id"] == "evt-crit"
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T3 — status-aware PhysicalLink traversal
+# ---------------------------------------------------------------------------
+# The batched cache mirrors ``find_open_parent_event`` and additionally
+# understands the canonical PhysicalLink crossing
+# ``(ci)-[:CONNECTED_VIA]->(pl:PhysicalLink)<-[:CONNECTED_VIA]-(peer:CI)``.
+# A crossing is ONE logical hop and is gated by ``pl.status``.
+
+
+def test_build_open_parent_index_carries_link_metadata():
+    """A parent reached through a PhysicalLink crossing carries link id/status."""
+    session = _FakeSession(
+        [
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-A",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+                link_id="pl-1",
+                link_status="UNKNOWN",
+            ),
+        ]
+    )
+
+    result = build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    assert result[("ci-E", "cpu-load")]["link_id"] == "pl-1"
+    assert result[("ci-E", "cpu-load")]["link_status"] == "UNKNOWN"
+
+
+def test_build_open_parent_index_omits_link_metadata_for_pure_ci_parents():
+    """The pure-CI cache entry keeps its pre-#539 shape (no metadata keys)."""
+    session = _FakeSession(
+        [
+            _row(
+                "ci-E",
+                "cpu-load",
+                parent_event_id="evt-A",
+                root_cause_ci_id="ci-A",
+                parent_ci_id="ci-A",
+            ),
+        ]
+    )
+
+    result = build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    entry = result[("ci-E", "cpu-load")]
+    assert "link_id" not in entry
+    assert "link_status" not in entry
+
+
+def test_build_open_parent_index_query_reads_the_physical_link_status():
+    """``pl.status`` is read in the SAME statement, gated by a query parameter."""
+    session = _FakeSession([])
+
+    build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    query = session.last_query
+    assert "pl.status IN $propagating_link_statuses" in query
+    assert ":PhysicalLink" in query
+    assert "pl.id AS link_id" in query
+    assert "pl.status AS link_status" in query
+
+
+def test_build_open_parent_index_query_has_no_duplicated_status_literal():
+    """The allowed status set is a parameter, not an inline literal."""
+    session = _FakeSession([])
+
+    build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    assert "'UP'" not in session.last_query
+    assert "'UNKNOWN'" not in session.last_query
+
+
+def test_build_open_parent_index_passes_the_contract_statuses_as_a_parameter():
+    """The parameter value comes from the correlation contract module."""
+    from services.correlation_propagation_contract import propagating_physical_link_statuses
+
+    session = _FakeSession([])
+
+    build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    assert session.last_params["propagating_link_statuses"] == propagating_physical_link_statuses()
+
+
+def test_build_open_parent_index_query_supports_every_link_position():
+    """The query carries the explicit logical-position variants."""
+    from repositories.topology_repo import correlation_path_variants
+
+    session = _FakeSession([])
+
+    build_open_parent_index(session, {("ci-E", "cpu-load")})
+
+    for variant in correlation_path_variants(3):
+        assert variant.pattern in session.last_query
 
 
 # ---------------------------------------------------------------------------

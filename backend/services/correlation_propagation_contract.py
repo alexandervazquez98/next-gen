@@ -111,6 +111,27 @@ RelationshipPropagationDefault = Literal[
 ]
 
 # ---------------------------------------------------------------------------
+# PhysicalLink status gate (feat-539 / T3)
+# ---------------------------------------------------------------------------
+
+#: The PhysicalLink statuses that let a correlation propagate across the link.
+#:
+#: - ``UP`` — the link is healthy, the correlation crosses it normally.
+#: - ``UNKNOWN`` — the link state is not known yet; the correlation still
+#:   crosses it, and the later severity slice degrades the propagated event to
+#:   ``WARNING`` (decision 1 above).
+#:
+#: ``DOWN`` and ``PLANNED`` block the crossing: a DOWN link is an outage and a
+#: PLANNED link is not carrying traffic yet.
+#:
+#: This set is the single source of truth for the status gate. The correlation
+#: traversal reads it in the SAME Cypher statement that performs the
+#: traversal and passes it as a query parameter — the literals are never
+#: duplicated in the Cypher text.
+PROPAGATING_PHYSICAL_LINK_STATUSES: Final = frozenset({"UP", "UNKNOWN"})
+
+
+# ---------------------------------------------------------------------------
 # Relationship set registry (used by PR2 / PR3 / PR4 to align traversals)
 # ---------------------------------------------------------------------------
 
@@ -203,6 +224,16 @@ def should_default_propagate_manages_uses_provides() -> bool:
     are added unconditionally or gated by a flag.
     """
     return MANAGES_USES_PROVIDES_DEFAULT == "all_propagate"
+
+
+def propagating_physical_link_statuses() -> list[str]:
+    """Return the PhysicalLink statuses that propagate a correlation.
+
+    The list is sorted so the Cypher parameter it feeds is deterministic, and
+    a fresh list is returned on every call so a caller cannot mutate the
+    contract.
+    """
+    return sorted(PROPAGATING_PHYSICAL_LINK_STATUSES)
 
 
 def all_locked_values() -> dict[str, str]:
