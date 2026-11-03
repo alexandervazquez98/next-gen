@@ -12,6 +12,12 @@ from typing import Any
 from database import get_db
 from postgres_db import SessionLocal
 from repositories.metric_repo import insert_metric_value
+from services.correlation_propagation_events import (
+    DEGRADED_PROPAGATED_SEVERITY,
+    build_degraded_propagated_message,
+    degraded_propagated_markers,
+    degrades_propagated_severity,
+)
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.metric_service import metric_matches_ci
 from services.neo4j_write_guard import (
@@ -64,10 +70,12 @@ GLOBAL_STATS = {
 
 def _count_monitored_cis(session) -> int:
     """Return the stable count of distinct CIs with active metric assignments."""
-    record = session.run("""
+    record = session.run(
+        """
         MATCH (n:CI)-[:HAS_METRIC]->(:MetricDef)
         RETURN count(DISTINCT n) AS cis_monitored
-    """).single()
+    """
+    ).single()
     if not record:
         return 0
     return int(record.get("cis_monitored") or 0)
@@ -77,7 +85,8 @@ def get_collector_status():
     driver = get_db()
     try:
         with driver.session() as session:
-            record = session.run("""
+            record = session.run(
+                """
                 MATCH (c:CollectorStatus {id: 'main'})
                 RETURN c.last_run AS last_run,
                        c.status AS status,
@@ -87,7 +96,8 @@ def get_collector_status():
                        c.metrics_failed AS metrics_failed,
                        c.cycle_duration AS cycle_duration,
                        c.jobs_per_min AS jobs_per_min
-            """).single()
+            """
+            ).single()
             if record:
                 last_run_val = record.get("last_run")
                 last_run_str = (
@@ -209,11 +219,13 @@ async def snmp_collector_loop():
 
 def run_snmp_cycle_sync(driver):
     with driver.session() as session:
-        cis_result = session.run("""
+        cis_result = session.run(
+            """
             MATCH (n:CI)
             WHERE n.ip IS NOT NULL AND n.status <> 'EXCEPTION'
             RETURN n
-        """)
+        """
+        )
         cis = [dict(record["n"]) for record in cis_result]
         logger.info("[Collector] Found %s candidate CIs for monitoring.", len(cis))
 
@@ -510,6 +522,65 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         event_type,
                         writer_context="snmp_service",
                     )
+                # --- Correlation check: only if metric CAN propagate ---
+                # feat-539 / T5: the correlation is resolved BEFORE the
+                # existing-Event lookup, because it decides the Event's
+                # severity (a propagation over an UNKNOWN PhysicalLink is
+                # degraded to WARNING) and because the lookup must be scoped
+                # by the correlation type so a degraded PROPAGATED child is
+                # never selected — and re-severitied — by a ROOT write.
+                correlation_type = "ROOT"
+                propagated_from = None
+                root_cause_ci_id = ci.get("id")
+                link_id = None
+                link_status = None
+
+                if metric_def.get("can_propagate", True):
+                    try:
+                        from repositories.topology_repo import find_open_parent_event
+
+                        parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
+                        if parent_info:
+                            correlation_type = "PROPAGATED"
+                            propagated_from = parent_info["parent_event_id"]
+                            root_cause_ci_id = (
+                                parent_info.get("root_cause_ci_id")
+                                or parent_info["parent_event_id"]
+                            )
+                            link_id = parent_info.get("link_id")
+                            link_status = parent_info.get("link_status")
+                    except Exception as exc:
+                        logger.warning(
+                            "Topology correlation check failed for CI %s metric %s: %s",
+                            ci.get("id"),
+                            metric_def.get("id"),
+                            exc,
+                        )
+                # --- End correlation check ---
+
+                # --- Degraded propagation (feat-539 / T5) ---
+                # Locked decision #1 of issue #539: a propagation that
+                # crossed a PhysicalLink whose status is UNKNOWN is
+                # materialized at WARNING severity and carries the four
+                # degradation markers. The policy is read from the shared
+                # implementation, so this legacy path and the modern SNMP
+                # worker cannot drift apart. The ROOT Event keeps its own
+                # severity; only the propagated child is demoted.
+                degraded = correlation_type == "PROPAGATED" and degrades_propagated_severity(
+                    link_status
+                )
+                if degraded:
+                    event_severity = DEGRADED_PROPAGATED_SEVERITY
+                    event_message = build_degraded_propagated_message(
+                        {"message": message, "link_id": link_id}
+                    )
+                    degradation_markers = degraded_propagated_markers(link_id, link_status)
+                else:
+                    event_severity = severity
+                    event_message = message
+                    degradation_markers = {}
+                # --- End degraded propagation ---
+
                 existing = session.run(
                     """
                     MATCH (existing:Event)
@@ -523,6 +594,8 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         OR ($failure_family IS NULL AND existing.failure_family IS NULL)
                       )
                       AND ($source_protocol IS NULL OR existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = $source_protocol)
+                      AND coalesce(existing.correlation_type, 'ROOT') = $correlation_type
+                      AND ($propagated_from IS NULL OR existing.propagated_from = $propagated_from)
                     RETURN elementId(existing) AS existing_element_id, existing.status AS existing_status
                     LIMIT 1
                 """,
@@ -531,6 +604,8 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     event_type=event_type,
                     failure_family=failure_family,
                     source_protocol=source_protocol,
+                    correlation_type=correlation_type,
+                    propagated_from=propagated_from,
                 ).single()
 
                 if existing:
@@ -538,15 +613,20 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     primary_query = """
                         MATCH (existing:Event)
                         WHERE elementId(existing) = $existing_element_id
-                        SET existing.status = 'OPEN',
+                        WITH existing, existing.status AS previous_status
+                        SET existing.status = CASE WHEN $degraded = true AND previous_status = 'ACK' THEN 'ACK' ELSE 'OPEN' END,
                             existing.last_seen = datetime(),
-                            existing.message = $msg,
-                            existing.severity = $sev,
+                            existing.message = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.message ELSE $msg END,
+                            existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.severity ELSE $sev END,
                             existing.recovered_at = NULL,
                             existing.event_type = $event_type,
                             existing.failure_family = $failure_family,
                             existing.source_protocol = $source_protocol,
                             existing.availability_source = $availability_source,
+                            existing.severity_degraded = coalesce(existing.severity_degraded, $severity_degraded),
+                            existing.degradation_reason = coalesce(existing.degradation_reason, $degradation_reason),
+                            existing.physical_link_id = coalesce(existing.physical_link_id, $physical_link_id),
+                            existing.physical_link_status = coalesce(existing.physical_link_status, $physical_link_status),
                             existing.poll_collector_id = $poll_collector_id
                     """
                     # Fallback Cypher — hand-written (see #340, verify-report
@@ -557,24 +637,34 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     fallback_query = """
                         MATCH (existing:Event)
                         WHERE elementId(existing) = $existing_element_id
-                        SET existing.status = 'OPEN',
+                        WITH existing, existing.status AS previous_status
+                        SET existing.status = CASE WHEN $degraded = true AND previous_status = 'ACK' THEN 'ACK' ELSE 'OPEN' END,
                             existing.last_seen = datetime(),
-                            existing.message = $msg,
-                            existing.severity = $sev,
+                            existing.message = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.message ELSE $msg END,
+                            existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.severity ELSE $sev END,
                             existing.recovered_at = NULL,
                             existing.event_type = $event_type,
                             existing.failure_family = $failure_family,
                             existing.source_protocol = $source_protocol,
-                            existing.availability_source = $availability_source
+                            existing.availability_source = $availability_source,
+                            existing.severity_degraded = coalesce(existing.severity_degraded, $severity_degraded),
+                            existing.degradation_reason = coalesce(existing.degradation_reason, $degradation_reason),
+                            existing.physical_link_id = coalesce(existing.physical_link_id, $physical_link_id),
+                            existing.physical_link_status = coalesce(existing.physical_link_status, $physical_link_status)
                     """
                     primary_params = {
                         "existing_element_id": existing_element_id,
-                        "msg": message,
-                        "sev": severity,
+                        "msg": event_message,
+                        "sev": event_severity,
                         "event_type": event_type,
                         "failure_family": failure_family,
                         "source_protocol": source_protocol,
                         "availability_source": availability_source,
+                        "degraded": degraded,
+                        "severity_degraded": degradation_markers.get("severity_degraded"),
+                        "degradation_reason": degradation_markers.get("degradation_reason"),
+                        "physical_link_id": degradation_markers.get("physical_link_id"),
+                        "physical_link_status": degradation_markers.get("physical_link_status"),
                         "poll_collector_id": POLL_COLLECTOR_ID,
                     }
                     fallback_params = {
@@ -591,32 +681,6 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     )
                 else:
                     snapshot = resolve_event_snapshot(session, ci.get("id"))
-
-                    # --- Correlation check: only if metric CAN propagate ---
-                    correlation_type = "ROOT"
-                    propagated_from = None
-                    root_cause_ci_id = ci.get("id")
-
-                    if metric_def.get("can_propagate", True):
-                        try:
-                            from repositories.topology_repo import find_open_parent_event
-
-                            parent_info = find_open_parent_event(ci.get("id"), max_depth=3)
-                            if parent_info:
-                                correlation_type = "PROPAGATED"
-                                propagated_from = parent_info["parent_event_id"]
-                                root_cause_ci_id = (
-                                    parent_info.get("root_cause_ci_id")
-                                    or parent_info["parent_event_id"]
-                                )
-                        except Exception as exc:
-                            logger.warning(
-                                "Topology correlation check failed for CI %s metric %s: %s",
-                                ci.get("id"),
-                                metric_def.get("id"),
-                                exc,
-                            )
-                    # --- End correlation check ---
 
                     primary_query = """
                         MATCH (n:CI {id: $nid})
@@ -650,7 +714,11 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                             sla_minutes: $sla_minutes,
                             propagated_from: $propagated_from,
                             correlation_type: $correlation_type,
-                            root_cause_ci_id: $root_cause_ci_id
+                            root_cause_ci_id: $root_cause_ci_id,
+                            severity_degraded: $severity_degraded,
+                            degradation_reason: $degradation_reason,
+                            physical_link_id: $physical_link_id,
+                            physical_link_status: $physical_link_status
                         })
                         MERGE (n)-[:HAS_EVENT]->(e)
                         MERGE (e)-[:TRIGGERED_BY]->(m)
@@ -690,7 +758,11 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                             sla_minutes: $sla_minutes,
                             propagated_from: $propagated_from,
                             correlation_type: $correlation_type,
-                            root_cause_ci_id: $root_cause_ci_id
+                            root_cause_ci_id: $root_cause_ci_id,
+                            severity_degraded: $severity_degraded,
+                            degradation_reason: $degradation_reason,
+                            physical_link_id: $physical_link_id,
+                            physical_link_status: $physical_link_status
                         })
                         MERGE (n)-[:HAS_EVENT]->(e)
                         MERGE (e)-[:TRIGGERED_BY]->(m)
@@ -698,8 +770,8 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                     primary_params = {
                         "nid": ci.get("id"),
                         "mid": metric_def["id"],
-                        "sev": severity,
-                        "msg": message,
+                        "sev": event_severity,
+                        "msg": event_message,
                         "event_type": event_type,
                         "failure_family": failure_family,
                         "source_protocol": source_protocol,
@@ -708,6 +780,10 @@ def store_metric_result(ci, metric_def, val, poll_status, err_msg, driver):
                         "propagated_from": propagated_from,
                         "correlation_type": correlation_type,
                         "root_cause_ci_id": root_cause_ci_id,
+                        "severity_degraded": degradation_markers.get("severity_degraded"),
+                        "degradation_reason": degradation_markers.get("degradation_reason"),
+                        "physical_link_id": degradation_markers.get("physical_link_id"),
+                        "physical_link_status": degradation_markers.get("physical_link_status"),
                         **snapshot,
                     }
                     fallback_params = {
