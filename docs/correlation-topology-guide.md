@@ -211,11 +211,11 @@ Issue #539 ships as a chained series of reviewable slices:
 
 - **PR1** — design doc + contract + OpenSpec change + contract tests (no behavior change).
 - **PR2a1** — canonical inbound CI→PhysicalLink `CONNECTED_VIA` edges, idempotent `011` backfill, deletion repair, preserved pre-#539 `/api/nodes/{id}/usage` count.
-- **PR2a2** — `:CONNECTED_VIA` traversal with the `:PhysicalLink` intermediate and status gate (locked decisions #1, #2).
+- **PR2a2** — `:CONNECTED_VIA` traversal with the `:PhysicalLink` intermediate and status gate (locked decisions #1, #2), and the rollout flag wired so the crossing is default-off.
 - **PR2b1** — modern SNMP path: separate `WARNING` `PROPAGATED` Event for `UNKNOWN` links, with idempotency guards.
 - **PR2b2** — legacy path and leased writer aligned to the modern propagation semantics.
 - **PR2c1** — atomic PhysicalLink `UP → DOWN` transition and `physical_link_down` Event write.
-- **PR2c2** — DOWN Event wired into the polling bridge, the event-pruner extension that closes a stale OPEN `physical_link_down` Event, and the rollout flag.
+- **PR2c2** — DOWN Event wired into the polling bridge and the event-pruner extension that closes a stale OPEN `physical_link_down` Event, plus flipping the rollout flag on once the chain is complete.
 - **PR3** — `:MANAGES` / `:USES` / `:PROVIDES` traversal (locked decision #4).
 - **PR4** — `:CONNECTS_TO` `medium` predicate (separate decision, follows PR3).
 

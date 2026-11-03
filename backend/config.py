@@ -350,6 +350,9 @@ class EventPruneSettings(BaseModel):
 # Re-export ``MetricRetentionSettings`` from the service module so callers
 # can ``from config import MetricRetentionSettings`` — mirroring how
 # ``EventPruneSettings`` is the canonical entry point for prune settings.
+from services.correlation_propagation_contract import (  # noqa: E402, F401
+    FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
+)
 from services.retention_service import MetricRetentionSettings  # noqa: E402, F401
 
 
@@ -524,6 +527,20 @@ class PollingPipelineSettings(BaseModel):
     # snmp-engine container, no code redeploy required.
     enable_topology_rca: bool = True
 
+    # The #539 PhysicalLink correlation chain: a correlation that crosses a
+    # :PhysicalLink node, gated on the link's status, with the degraded
+    # WARNING PROPAGATED child for an UNKNOWN link. When false, the
+    # traversal walks the pre-#539 pure-CI vocabulary only and the PhysicalLink
+    # crossing is not rendered at all, so BOTH the modern SNMP engine and the
+    # legacy engine behave exactly as they did before #539.
+    #
+    # Default off, as the reconciled contract, the correlation guide and the
+    # OpenSpec proposal all promise: the chain is flipped on only after the
+    # whole reconciled chain (PR2a1 -> PR2c2) has landed and CI is green.
+    # Operator kill-switch: toggle + restart the snmp-engine container, no
+    # code redeploy required.
+    enable_physical_link_correlation: bool = False
+
     target_cycle_seconds: int = Field(default=900, ge=1)
     worker_count: int = Field(default=8, ge=1)
     db_writer_count: int = Field(default=1, ge=1)
@@ -553,6 +570,9 @@ class PollingPipelineSettings(BaseModel):
             backpressure_enabled=_env_bool("POLLING_BACKPRESSURE_ENABLED"),
             metadata_cache_enabled=_env_bool("POLLING_METADATA_CACHE_ENABLED"),
             enable_topology_rca=_env_bool("ENABLE_TOPOLOGY_RCA", default=True),
+            enable_physical_link_correlation=_env_bool(
+                FEATURE_FLAG_PHYSICAL_LINK_CORRELATION, default=False
+            ),
             target_cycle_seconds=int(os.getenv("POLLING_TARGET_CYCLE_SECONDS", "900")),
             worker_count=int(os.getenv("POLLING_WORKERS", "8")),
             db_writer_count=int(os.getenv("POLLING_DB_WRITERS", "1")),

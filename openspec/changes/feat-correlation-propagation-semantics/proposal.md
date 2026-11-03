@@ -63,13 +63,14 @@ PR1 (this PR) — design doc + contract + OpenSpec + contract tests, no behavior
 PR2a1 — canonical inbound CI→PhysicalLink CONNECTED_VIA edges, idempotent 011 backfill,
         deletion repair, preserved pre-#539 /api/nodes/{id}/usage count
 PR2a2 — :CONNECTED_VIA traversal with the :PhysicalLink intermediate and status gate,
-        link/severity metadata carried through the correlation caches
+        link/severity metadata carried through the correlation caches, and the rollout
+        flag wired so the crossing is default-off
 PR2b1 — modern SNMP path: separate WARNING PROPAGATED Events for UNKNOWN links,
         with idempotency guards
 PR2b2 — legacy path and leased writer aligned to the modern propagation semantics
 PR2c1 — atomic PhysicalLink UP→DOWN transition and physical_link_down Event write
 PR2c2 — DOWN Event wired into the polling bridge, the event-pruner extension for stale
-        OPEN physical_link_down Events, and the rollout flag
+        OPEN physical_link_down Events, and flipping the rollout flag on
 PR3 — :MANAGES / :USES / :PROVIDES traversal (locked decision #4)
 PR4 — :CONNECTS_TO medium predicate (separate decision, follows PR3)
 ```
@@ -193,11 +194,11 @@ Single PR, within the 400-line review budget with size exception justified by th
 ## Future PRs (out of scope for PR1)
 
 - **PR2a1** — canonical inbound CI→PhysicalLink `CONNECTED_VIA` edges + idempotent `011` backfill + deletion repair + preserved pre-#539 `/api/nodes/{id}/usage` count. ~400-600 LoC.
-- **PR2a2** — `:CONNECTED_VIA` traversal with the `:PhysicalLink` intermediate and status gate + re-query sub-query + severity/link metadata through the correlation caches. ~400-600 LoC.
+- **PR2a2** — `:CONNECTED_VIA` traversal with the `:PhysicalLink` intermediate and status gate + re-query sub-query + severity/link metadata through the correlation caches + the rollout flag wired so the crossing is default-off. ~400-600 LoC.
 - **PR2b1** — modern SNMP path: separate `WARNING` `PROPAGATED` Events for `UNKNOWN` links + idempotency guards. ~300-500 LoC.
 - **PR2b2** — legacy path and leased writer aligned to the modern propagation semantics. ~200-400 LoC.
 - **PR2c1** — atomic `UP → DOWN` transition + `physical_link_down` Event write. ~300-500 LoC.
-- **PR2c2** — DOWN Event wired into the polling bridge + event-pruner extension for stale OPEN `physical_link_down` Events + rollout flag. ~150-250 LoC.
+- **PR2c2** — DOWN Event wired into the polling bridge + event-pruner extension for stale OPEN `physical_link_down` Events + flipping the rollout flag on. ~150-250 LoC.
 - **PR3** — `:MANAGES | :USES | :PROVIDES` added to the four traversals. ~200-400 LoC.
 - **PR4** — `:CONNECTS_TO medium` predicate (excludes `vpn | sd_wan | satellite`). ~200-300 LoC.
 

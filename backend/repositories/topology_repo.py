@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from config import get_icmp_settings
+from config import get_icmp_settings, get_polling_pipeline_settings
 from database import get_db
 from models.core import Node
 from polling.icmp_measurements import ICMP_JITTER_METRIC_ID, ICMP_LATENCY_METRIC_ID
@@ -156,6 +156,25 @@ def correlation_path_variants(
     return variants
 
 
+def _physical_link_correlation_enabled() -> bool:
+    """Return True when the #539 PhysicalLink crossing is enabled.
+
+    The rollout flag NAME is owned by
+    ``services.correlation_propagation_contract`` and the env parsing lives in
+    ``config``, following the same pattern as the existing
+    ``ENABLE_TOPOLOGY_RCA`` kill-switch. The flag defaults to OFF, exactly as
+    the reconciled contract, the correlation guide and the OpenSpec proposal
+    promise: the chain is flipped on only after the whole reconciled chain
+    (PR2a1 -> PR2c2) has landed and CI is green.
+
+    While the flag is off the traversal renders ONLY the pre-#539 pure-CI walk,
+    so the modern SNMP engine AND the legacy engine behave exactly as they
+    did before #539 — no PhysicalLink crossing, no status gate, no degraded
+    child.
+    """
+    return get_polling_pipeline_settings().enable_physical_link_correlation
+
+
 def _correlation_parent_branches(max_depth: int = CORRELATION_MAX_DEPTH) -> str:
     """Render the ``CALL { ... UNION ... }`` branches that yield parent CIs.
 
@@ -172,6 +191,8 @@ def _correlation_parent_branches(max_depth: int = CORRELATION_MAX_DEPTH) -> str:
                 "    RETURN parent, null AS link_id, null AS link_status"
             )
         else:
+            if not _physical_link_correlation_enabled():
+                continue
             blocks.append(
                 "    WITH ci\n"
                 f"    MATCH {variant.pattern}\n"
@@ -197,6 +218,8 @@ def _correlation_edge_branches(max_depth: int = CORRELATION_MAX_DEPTH) -> str:
                 "    RETURN [rel IN relationships(path) | "
                 "[startNode(rel).id, endNode(rel).id]] AS edges"
             )
+            continue
+        if not _physical_link_correlation_enabled():
             continue
         names = variant.ci_variables
         edges = ", ".join(f"[{names[i]}.id, {names[i + 1]}.id]" for i in range(len(names) - 1))
