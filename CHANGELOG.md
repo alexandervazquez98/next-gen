@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **feat(backend): canonical PhysicalLink connectivity (#539)** — New and existing PhysicalLinks now use canonical CI→PhysicalLink `CONNECTED_VIA` edges, with idempotent migration 011 backfill. Deleting an endpoint CI removes its affected PhysicalLink. The public node usage count keeps its previous meaning — every relationship incident to the CI — and excludes only the new CI→PhysicalLink `CONNECTED_VIA` edges.
+- **feat(backend): status-gated PhysicalLink correlation traversal (#539)** — The correlation traversal now crosses a PhysicalLink as ONE logical hop, `(ci)-[:CONNECTED_VIA]->(pl:PhysicalLink)<-[:CONNECTED_VIA]-(peer:CI)`, and may do so at any logical position inside the existing depth-3 budget. The link's `status` is read in the same Cypher statement that performs the traversal: `UP` and `UNKNOWN` propagate, while `DOWN` and `PLANNED` block the crossing. The `:PhysicalLink` intermediate is mandatory, so the dormant CI→CI `CONNECTED_VIA` seed edges in the Neo4j bootstrap are never misread as link hops, and PhysicalLink ids never enter the CI adjacency. The crossing's `link_id` and `link_status` now travel with the correlation result, so the severity slice can degrade an `UNKNOWN` crossing without re-querying the link. The pre-#539 pure-CI traversal and the depth-3 budget are unchanged.
 
  — 2026-09-07
 

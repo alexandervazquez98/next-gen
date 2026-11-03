@@ -142,6 +142,98 @@ class TestFindOpenParentEvent:
         # Should traverse relationships with variable length *1..2 for max_depth=2
         assert "*1..2" in query
 
+    def test_find_open_parent_event_returns_the_physical_link_metadata(self):
+        """
+        A parent reached through a status-gated PhysicalLink crossing carries
+        the link id and the link status that the traversal already read.
+        """
+        from repositories.topology_repo import find_open_parent_event
+
+        from backend.tests.conftest import MockNeo4jSession
+
+        parent_event_record = {
+            "parent_event_id": "evt-parent-001",
+            "parent_ci_id": "ci-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+            "link_id": "pl-1",
+            "link_status": "UNKNOWN",
+        }
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match (ci)-[", [parent_event_record])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("repositories.topology_repo.get_db", return_value=mock_driver):
+            result = find_open_parent_event("ci-child-001", max_depth=3)
+
+        assert result is not None
+        assert result["link_id"] == "pl-1"
+        assert result["link_status"] == "UNKNOWN"
+
+    def test_find_open_parent_event_without_a_link_keeps_the_legacy_shape(self):
+        """
+        A pure-CI parent keeps the pre-#539 result shape — the link metadata
+        keys are absent, so legacy consumers are unaffected.
+        """
+        from repositories.topology_repo import find_open_parent_event
+
+        from backend.tests.conftest import MockNeo4jSession
+
+        parent_event_record = {
+            "parent_event_id": "evt-parent-001",
+            "parent_ci_id": "ci-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+        }
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_response("match (ci)-[", [parent_event_record])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("repositories.topology_repo.get_db", return_value=mock_driver):
+            result = find_open_parent_event("ci-child-001", max_depth=3)
+
+        assert result == {
+            "parent_event_id": "evt-parent-001",
+            "root_cause_ci_id": "ci-parent-001",
+            "correlation_type": "ROOT",
+        }
+
+    def test_find_open_parent_event_query_gates_on_the_physical_link_status(self):
+        """
+        The status is read in the SAME statement through a query parameter
+        whose value comes from the correlation contract module.
+        """
+        from repositories.topology_repo import find_open_parent_event
+        from services.correlation_propagation_contract import (
+            propagating_physical_link_statuses,
+        )
+
+        from backend.tests.conftest import MockNeo4jSession
+
+        mock_session = MockNeo4jSession()
+        mock_session.set_default_response([])
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("repositories.topology_repo.get_db", return_value=mock_driver):
+            find_open_parent_event("ci-child-001", max_depth=3)
+
+        query = mock_session.queries[0]["query"]
+        params = mock_session.queries[0]["params"]
+        assert "pl.status IN $propagating_link_statuses" in query
+        assert ":PhysicalLink" in query
+        assert params["propagating_link_statuses"] == propagating_physical_link_statuses()
+
 
 # ---------------------------------------------------------------------------
 # Task 4.2 — Correlation type assignment: ROOT vs PROPAGATED

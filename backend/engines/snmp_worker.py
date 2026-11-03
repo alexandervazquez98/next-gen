@@ -307,11 +307,20 @@ def _resolve_correlation(cache, ci_id, metric_id):
         root_cause_ci_id = parent.get("root_cause_ci_id")
         if not root_cause_ci_id:
             return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
-        return {
+        resolved = {
             "correlation_type": "PROPAGATED",
             "propagated_from": parent_event_id,
             "root_cause_ci_id": root_cause_ci_id,
         }
+        # feat-539 / T3: carry the PhysicalLink metadata the traversal already
+        # read so the later severity slice does not need another query.
+        link_id = parent.get("link_id")
+        link_status = parent.get("link_status")
+        if link_id:
+            resolved["link_id"] = link_id
+        if link_status:
+            resolved["link_status"] = link_status
+        return resolved
     return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
 
 
