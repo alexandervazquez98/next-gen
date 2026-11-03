@@ -1510,3 +1510,136 @@ def test_attach_dependents_to_roots_does_not_create_child_events():
     # accidentally re-introduce CREATE — we verify that the rows are
     # routed to the existing helper, which the existing test pins down.
     assert len(rec.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T4 — the modern SNMP path emits a separate WARNING PROPAGATED
+# child when the propagation crosses an UNKNOWN PhysicalLink.
+#
+# The ROOT Event keeps its own severity; the child is degraded to WARNING and
+# keeps the ROOT CI as its root cause.
+# ---------------------------------------------------------------------------
+
+
+def _t4_poll_record(node_id, metric_id, **overrides):
+    """Poll record for one (CI, metric) pair observed by the modern worker."""
+    rec = {
+        "node_id": node_id,
+        "metric_id": metric_id,
+        "protocol": "ICMP",
+        "ip": "192.168.1.1",
+        "community": "public",
+        "oid": None,
+        "port": 161,
+        "metric_name": metric_id,
+        "criticality": 3,
+        "metric_kind": "availability",
+        "availability_source": "PING",
+        "interval": 60,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def _t4_payload_rows(queries):
+    """Every row carried by every UNWIND payload of the captured queries."""
+    rows = []
+    for call in queries:
+        if "UNWIND" not in call["query"]:
+            continue
+        for value in call["params"].values():
+            if isinstance(value, list):
+                rows.extend(item for item in value if isinstance(item, dict))
+    return rows
+
+
+def test_unknown_link_crossing_degrades_the_child_but_not_the_root(monkeypatch):
+    """End-to-end: the ROOT stays CRITICAL, the UNKNOWN-link child is WARNING.
+
+    The parent CI goes down in the same cycle, so the ROOT Event is
+    materialized with its own CRITICAL severity. The dependent CI resolves
+    through an UNKNOWN PhysicalLink crossing and therefore gets a separate
+    PROPAGATED child at WARNING severity — the degradation applies only to
+    the child, never to the ROOT.
+    """
+    import config as _config
+
+    monkeypatch.setenv("ENABLE_TOPOLOGY_RCA", "true")
+    monkeypatch.setattr(_config, "_polling_pipeline_settings", None)
+
+    from tests.conftest import MockNeo4jSession
+
+    parent_id = "ci-parent"
+    child_id = "ci-child"
+    metric_id = "PING-CHECK"
+    parent_event_id = "evt-parent-root"
+
+    mock_session = MockNeo4jSession()
+    mock_session.set_default_response([])
+    mock_session.set_response(
+        "match",
+        [
+            _t4_poll_record(parent_id, metric_id),
+            _t4_poll_record(child_id, metric_id),
+        ],
+    )
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=None)
+
+    # The rebuilt cache resolves the dependent through an UNKNOWN PhysicalLink.
+    rebuilt_cache = {
+        (child_id, metric_id): {
+            "parent_event_id": parent_event_id,
+            "root_cause_ci_id": parent_id,
+            "link_id": "pl-1",
+            "link_status": "UNKNOWN",
+        }
+    }
+
+    icmp_settings = _config.get_icmp_settings().model_copy(update={"debounce_count": 1})
+
+    with (
+        patch("engines.snmp_worker.driver", mock_driver),
+        patch("engines.snmp_worker.SessionLocal", return_value=MagicMock()),
+        patch("engines.snmp_worker.bulk_insert_metrics"),
+        patch("engines.snmp_worker.fetch_icmp_ping", return_value=0.0),
+        patch("engines.snmp_worker.get_icmp_settings", return_value=icmp_settings),
+        patch(
+            "engines.snmp_worker.build_open_parent_index",
+            side_effect=[{}, rebuilt_cache],
+        ),
+        patch(
+            "engines.snmp_worker.get_topology_relations",
+            return_value={child_id: {parent_id}},
+        ),
+    ):
+        from engines.snmp_worker import poll_snmp
+
+        poll_snmp()
+
+    rows = _t4_payload_rows(mock_session.queries)
+
+    # The parent ROOT keeps its own CRITICAL severity.
+    parent_roots = [
+        row
+        for row in rows
+        if row.get("node_id") == parent_id
+        and row.get("metric_id") == metric_id
+        and row.get("correlation_type") == "ROOT"
+    ]
+    assert parent_roots, "the parent ROOT event must be materialized"
+    assert parent_roots[0]["severity"] == "CRITICAL", "the ROOT keeps its own severity"
+
+    # The dependent gets a separate PROPAGATED child degraded to WARNING.
+    degraded_calls = [call for call in mock_session.queries if "degraded_rows" in call["query"]]
+    assert len(degraded_calls) == 1, "expected one degraded-child write"
+    degraded_rows = degraded_calls[0]["params"]["degraded_rows"]
+    assert len(degraded_rows) == 1
+    child_row = degraded_rows[0]
+    assert child_row["node_id"] == child_id
+    assert child_row["severity"] == "WARNING"
+    assert child_row["root_cause_ci_id"] == parent_id
+    assert child_row["root_cause_ci_id"] != child_row["link_id"]
+    assert child_row["link_id"] == "pl-1"
