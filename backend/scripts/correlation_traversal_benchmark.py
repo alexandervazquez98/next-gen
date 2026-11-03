@@ -42,6 +42,9 @@ from repositories.topology_repo import (  # noqa: E402
     CORRELATION_MAX_DEPTH,
     _correlation_parent_branches,
 )
+from services.correlation_propagation_contract import (  # noqa: E402
+    propagating_physical_link_statuses,
+)
 
 #: The performance budget from the reconciled contract: at most this much
 #: ADDED latency, in milliseconds, for the ``re_query_per_correlation`` decision
@@ -178,13 +181,14 @@ def _seed(session, prefix: str, ci_count: int, link_count: int) -> list[str]:
 
 def _measure(session, query: str, ci_ids: list[str], iterations: int) -> dict[str, float]:
     samples: list[float] = []
+    statuses = propagating_physical_link_statuses()
     for _ in range(3):  # warm-up
         for ci_id in ci_ids:
-            list(session.run(query, ci_id=ci_id, propagating_link_statuses=["UNKNOWN", "UP"]))
+            list(session.run(query, ci_id=ci_id, propagating_link_statuses=statuses))
     for _ in range(iterations):
         for ci_id in ci_ids:
             started = time.perf_counter()
-            list(session.run(query, ci_id=ci_id, propagating_link_statuses=["UNKNOWN", "UP"]))
+            list(session.run(query, ci_id=ci_id, propagating_link_statuses=statuses))
             samples.append((time.perf_counter() - started) * 1000)
     return {
         "n": len(samples),
@@ -227,10 +231,9 @@ def main(argv: list[str] | None = None) -> int:
             "physical_link_count": args.physical_link_count,
         },
     )
-    if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        print(json.dumps(report, indent=2, sort_keys=True))
+    # The report is already machine-readable; --json is kept for interface
+    # compatibility with the other benchmark scripts in this directory.
+    print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["within_budget"] else 1
 
 

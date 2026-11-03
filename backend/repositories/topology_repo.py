@@ -289,8 +289,8 @@ def delete_node(node_id: str) -> None:
             """
             MATCH (n:CI {id: $id})
             OPTIONAL MATCH (pl:PhysicalLink)
-            WHERE $id IN pl.endpoints
-            WITH n, collect(pl) AS affected_links
+            WHERE (n)-[:CONNECTED_VIA]->(pl) OR $id IN pl.endpoints
+            WITH n, collect(DISTINCT pl) AS affected_links
             FOREACH (pl IN affected_links | DETACH DELETE pl)
             DETACH DELETE n
             """,
@@ -977,13 +977,16 @@ def find_open_parent_event(ci_id: str, max_depth: int = 3) -> dict[str, Any] | N
     }}
     MATCH (parent)-[:HAS_EVENT]->(pe:Event)
     WHERE pe.status IN ['OPEN', 'ACK']
+      AND coalesce(pe.correlation_type, 'ROOT') = 'ROOT'
     RETURN pe.id AS parent_event_id,
            pe.ci_id AS parent_ci_id,
            pe.correlation_type AS correlation_type,
            pe.root_cause_ci_id AS root_cause_ci_id,
            link_id,
            link_status
-    ORDER BY CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC, pe.created_at ASC
+    ORDER BY CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC,
+             pe.created_at ASC,
+             link_id IS NULL ASC
     LIMIT 1
     """
     with driver.session() as session:
@@ -1048,10 +1051,12 @@ def build_open_parent_index(
         }}
         MATCH (parent)-[:HAS_EVENT]->(pe:Event)
         WHERE pe.status IN ['OPEN', 'ACK']
+          AND coalesce(pe.correlation_type, 'ROOT') = 'ROOT'
         WITH pair, pe, link_id, link_status
         ORDER BY pair.ci_id, pair.metric_id,
                  CASE pe.severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END ASC,
-                 pe.created_at ASC
+                 pe.created_at ASC,
+                 link_id IS NULL ASC
         WITH pair, head(collect({{event: pe, link_id: link_id, link_status: link_status}})) AS picked
         RETURN pair.ci_id AS ci_id,
                pair.metric_id AS metric_id,
@@ -1197,8 +1202,9 @@ def current_cycle_parent_candidates(
     """Enumerate the (ci_id, metric_id, event_type) tuples that COULD become ROOT.
 
     Pure helper — in-memory complement to ``build_open_parent_index`` (same
-    vocabulary: depth-three ``DEPENDS_ON|HOSTED_ON|CONNECTS_TO*1..3`` walk over
-    OPEN/ACK parents) but with NO Neo4j I/O. The caller already owns the
+    vocabulary: a depth-three walk over ``DEPENDS_ON``/``HOSTED_ON``/
+    ``CONNECTS_TO`` steps AND status-gated PhysicalLink crossings, restricted
+    to OPEN/ACK ROOT parents) but with NO Neo4j I/O. The caller already owns the
     pre-built ``build_open_parent_index`` cache and uses it in
     ``engines.correlation.cycle_root_candidates`` to filter the actual
     PROPAGATED rows. This helper exists to:

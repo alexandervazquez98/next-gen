@@ -156,7 +156,18 @@ def _enumerate_paths(
                     _walk(peer, chain + [peer], (link_id, status))
 
     _walk(ci_id, [], (None, None))
-    paths.sort(key=lambda item: (len(item[0]), item[0], item[1]))
+    # The sort key must be TOTAL-ORDERED: two paths can visit the same CI chain
+    # (one purely, one through a PhysicalLink), and their link metadata tuples
+    # start with ``None`` on the pure path. Comparing ``None`` against a str
+    # raises TypeError, so the nullable metadata is normalised to "".
+    paths.sort(
+        key=lambda item: (
+            len(item[0]),
+            item[0],
+            item[1][0] or "",
+            item[1][1] or "",
+        )
+    )
     return paths
 
 
@@ -807,3 +818,103 @@ class TestCycleParentIndexHonoursLinkAwareAdjacency:
         result = build_cycle_parent_index(observations, relations)
 
         assert result == {("ci-child", "cpu-load"): "ci-root"}
+
+
+# ---------------------------------------------------------------------------
+# Dual-path resolution is deterministic (review finding MAJOR-1)
+# ---------------------------------------------------------------------------
+
+
+class TestDualPathResolutionPrefersTheCrossing:
+    """MAJOR-1: a CI reachable BOTH purely and through a link reaches the same
+    parent event twice, once with link metadata and once without.
+
+    Before the fix the final ORDER BY had no tiebreaker, so the pure-CI row
+    always won the tie and the link metadata was dropped. The consequence was
+    silent: no degraded WARNING child was created for such a CI, because the
+    traversal never reported the crossed link.
+    """
+
+    def test_batch_index_ordering_prefers_the_crossing_row_on_a_tie(self):
+        graph = _Graph()
+        graph.add_ci_relationship("ci-child", "ci-parent")
+        graph.add_physical_link("pl-1", "ci-child", "ci-parent", status="UNKNOWN")
+        graph.add_event("ci-parent", "evt-parent")
+        session = _GraphSession(graph)
+
+        build_open_parent_index(session, {("ci-child", "cpu-load")})
+
+        query = session.queries[0]["query"]
+        # The tiebreaker must come AFTER the event choice (severity, created_at)
+        # so a more severe event still wins over a crossing row.
+        assert "link_id IS NULL ASC" in query
+        assert query.index("pe.created_at ASC") < query.index("link_id IS NULL ASC")
+
+    def test_single_lookup_ordering_prefers_the_crossing_row_on_a_tie(self):
+        graph = _Graph()
+        graph.add_ci_relationship("ci-child", "ci-parent")
+        graph.add_physical_link("pl-1", "ci-child", "ci-parent", status="UNKNOWN")
+        graph.add_event("ci-parent", "evt-parent")
+        session = _GraphSession(graph)
+        driver = _FakeDriver(session)
+
+        with patch("repositories.topology_repo.get_db", return_value=driver):
+            find_open_parent_event("ci-child", max_depth=3)
+
+        query = session.queries[0]["query"]
+        assert "link_id IS NULL ASC" in query
+        assert query.index("pe.created_at ASC") < query.index("link_id IS NULL ASC")
+
+
+# ---------------------------------------------------------------------------
+# A PROPAGATED child is never a correlation parent (review finding MAJOR-2)
+# ---------------------------------------------------------------------------
+
+
+class TestPropagatedEventsAreNeverCorrelationParents:
+    """MAJOR-2: the traversal matched ANY OPEN/ACK event on the parent CI,
+    including a degraded PROPAGATED child.
+
+    The worker then refused to enrich a non-ROOT parent and refused to create
+    a degraded child without link metadata, so the CI behind such a parent
+    produced NO event at all and appeared in no ROOT's affected_ci_ids — the
+    failure vanished from the operator feed.
+
+    A correlation parent must always be a ROOT event: that is what carries the
+    authoritative root cause and the blast radius.
+    """
+
+    def test_batch_index_parent_match_excludes_propagated_events(self):
+        graph = _Graph()
+        graph.add_physical_link("pl-1", "ci-child", "ci-parent", status="UNKNOWN")
+        graph.add_event("ci-parent", "evt-parent")
+        session = _GraphSession(graph)
+
+        build_open_parent_index(session, {("ci-child", "cpu-load")})
+
+        query = session.queries[0]["query"]
+        assert "coalesce(pe.correlation_type, 'ROOT') = 'ROOT'" in query
+
+    def test_single_lookup_parent_match_excludes_propagated_events(self):
+        graph = _Graph()
+        graph.add_physical_link("pl-1", "ci-child", "ci-parent", status="UNKNOWN")
+        graph.add_event("ci-parent", "evt-parent")
+        session = _GraphSession(graph)
+        driver = _FakeDriver(session)
+
+        with patch("repositories.topology_repo.get_db", return_value=driver):
+            find_open_parent_event("ci-child", max_depth=3)
+
+        query = session.queries[0]["query"]
+        assert "coalesce(pe.correlation_type, 'ROOT') = 'ROOT'" in query
+
+    def test_a_root_event_is_still_matched(self):
+        """The filter must keep every ROOT event matchable."""
+        graph = _Graph()
+        graph.add_physical_link("pl-1", "ci-child", "ci-parent", status="UNKNOWN")
+        graph.add_event("ci-parent", "evt-parent")
+        session = _GraphSession(graph)
+
+        result = build_open_parent_index(session, {("ci-child", "cpu-load")})
+
+        assert ("ci-child", "cpu-load") in result

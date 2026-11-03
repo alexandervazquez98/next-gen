@@ -506,3 +506,23 @@ def test_get_node_usage_excludes_physicallink_edge_in_both_directions(monkeypatc
 
     # The neighbour of the anchored CI is the PhysicalLink in both directions.
     assert _usage_predicate_counts(clause, params, "CONNECTED_VIA", ("PhysicalLink",)) is False
+
+
+def test_delete_node_resolves_affected_links_through_the_canonical_edges(monkeypatch):
+    """feat-539: the canonical CONNECTED_VIA edges are the connectivity source of truth.
+
+    The `endpoints` property stays in the predicate as a fallback for a link
+    created before the canonical edges existed (migration 011 backfills them),
+    so a pre-migration link can still be cleaned up.
+    """
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.delete_node("ci-001")
+
+    query = " ".join(session.run.call_args.args[0].lower().split())
+    assert "(n)-[:connected_via]->(pl)" in query
+    # The legacy fallback must survive, so a pre-migration link is still removed.
+    assert "$id in pl.endpoints" in query
