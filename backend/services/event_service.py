@@ -247,6 +247,14 @@ def _public_event_summary(summary: dict[str, Any]) -> dict[str, Any]:
         # `value is not None` filter handles that).
         "affected_ci_ids",
         "affected_count",
+        # feat-539 / T4: the explicit degradation markers of a PROPAGATED
+        # child that crossed a PhysicalLink in UNKNOWN status. Only the
+        # degraded child carries them, so an ordinary PROPAGATED child (and
+        # every ROOT) stays free of these keys.
+        "severity_degraded",
+        "degradation_reason",
+        "physical_link_id",
+        "physical_link_status",
     }
     result = {
         key: value for key, value in summary.items() if key in allowed_keys and value is not None
@@ -1101,6 +1109,7 @@ def get_events(
             AND (
                 $include_children
                 OR coalesce(e.correlation_type, 'ROOT') = 'ROOT'
+                OR coalesce(e.severity_degraded, false) = true
             )
             OPTIONAL MATCH (e)-[:TRIGGERED_BY]->(m:MetricDef)
             RETURN e, ci, m
