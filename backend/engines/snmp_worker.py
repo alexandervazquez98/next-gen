@@ -40,6 +40,10 @@ from repositories.topology_repo import (  # noqa: E402
     build_open_parent_index,
     get_topology_relations,
 )
+from services.correlation_propagation_contract import (  # noqa: E402
+    propagating_physical_link_statuses,
+    should_propagate_unknown_severity_degrade,
+)
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock  # noqa: E402
 from services.neo4j_write_guard import (  # noqa: E402
     is_poll_collector_id_undefined_error,
@@ -58,6 +62,34 @@ from services.polling_event_lifecycle import (  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T4 — degraded PROPAGATED child Events (locked decision #1)
+# ---------------------------------------------------------------------------
+#
+# A propagation that crosses a PhysicalLink whose status is UNKNOWN is
+# materialized as a SEPARATE ``PROPAGATED`` Event at WARNING severity. The
+# ROOT Event keeps its own severity — the degradation applies only to the
+# child. The child stays linked to the affected CI and keeps ``root_cause_ci_id``
+# pointing at the ROOT CI, never at the PhysicalLink.
+#
+# The policy itself is NOT hardcoded here: it is read from
+# ``services.correlation_propagation_contract`` (REQ-CORR-PROP-5).
+
+#: The severity a degraded ``PROPAGATED`` child carries.
+DEGRADED_PROPAGATED_SEVERITY = "WARNING"
+
+#: The PhysicalLink status that degrades a propagated child's severity.
+#: It MUST be part of the propagating status set published by
+#: ``services.correlation_propagation_contract`` — a status outside that set
+#: blocks the crossing entirely, so it can never reach the severity layer.
+DEGRADING_PHYSICAL_LINK_STATUS = "UNKNOWN"
+
+#: Marker written on the degraded child so the operator feed can expose the
+#: explicitly degraded row without having to guess which children are
+#: degraded and which are ordinary propagated children.
+DEGRADED_PROPAGATED_REASON = "PHYSICAL_LINK_UNKNOWN"
 
 
 def configure_worker_runtime_logging() -> None:
@@ -307,11 +339,20 @@ def _resolve_correlation(cache, ci_id, metric_id):
         root_cause_ci_id = parent.get("root_cause_ci_id")
         if not root_cause_ci_id:
             return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
-        return {
+        resolved = {
             "correlation_type": "PROPAGATED",
             "propagated_from": parent_event_id,
             "root_cause_ci_id": root_cause_ci_id,
         }
+        # feat-539 / T3: carry the PhysicalLink metadata the traversal already
+        # read so the later severity slice does not need another query.
+        link_id = parent.get("link_id")
+        link_status = parent.get("link_status")
+        if link_id:
+            resolved["link_id"] = link_id
+        if link_status:
+            resolved["link_status"] = link_status
+        return resolved
     return {"correlation_type": "ROOT", "propagated_from": None, "root_cause_ci_id": ci_id}
 
 
@@ -361,6 +402,243 @@ def _update_propagated_root_events(session, propagated_rows):
             len(propagated_rows),
             updated_roots,
         )
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T4 — the degraded PROPAGATED child Event
+# ---------------------------------------------------------------------------
+#
+# Before #539 the modern SNMP path never materialized a PROPAGATED child Event:
+# it only enriched the ROOT Event with the affected CI. Locked decision #1 of
+# issue #539 changes that for ONE case only — a propagation that crossed a
+# PhysicalLink whose status is UNKNOWN. Such a crossing is propagation-eligible
+# (the contract publishes UNKNOWN as a propagating status) but the link state
+# is not confirmed, so the child is materialized separately at WARNING severity
+# while the ROOT keeps its own severity.
+#
+# Everything else is unchanged: a pure-CI parent still only enriches the ROOT,
+# and an UP link still propagates at the parent's severity.
+
+
+def _degrades_propagated_severity(link_status: Any) -> bool:
+    """Return True when the crossed PhysicalLink degrades the child severity.
+
+    The policy is read from ``services.correlation_propagation_contract`` — the
+    decision string never appears in this module (REQ-CORR-PROP-5). The
+    degrading status must also belong to the propagating status set published
+    by the contract, so a status that blocks the crossing can never reach the
+    severity layer.
+    """
+    if not link_status:
+        return False
+    if not should_propagate_unknown_severity_degrade():
+        return False
+    status = str(link_status).strip().upper()
+    if status != DEGRADING_PHYSICAL_LINK_STATUS:
+        return False
+    return status in propagating_physical_link_statuses()
+
+
+def _build_degraded_propagated_message(row: dict[str, Any]) -> str:
+    """Return the operator-facing message of a degraded propagated child."""
+    base = str(row.get("message") or "").strip()
+    link_id = str(row.get("link_id") or "").strip() or "unknown"
+    suffix = (
+        f"Propagation degraded to {DEGRADED_PROPAGATED_SEVERITY}: "
+        f"PhysicalLink {link_id} status is {DEGRADING_PHYSICAL_LINK_STATUS}"
+    )
+    return f"{base} ({suffix})" if base else suffix
+
+
+def _degraded_propagated_rows(rows) -> list[dict[str, Any]]:
+    """Return one degraded-child payload row per degraded propagation.
+
+    A row qualifies when it resolved as ``PROPAGATED`` through a PhysicalLink
+    whose status is UNKNOWN. The child Event identity is
+    ``(ci_id, metric_id, event_type, root event id)``: the same failure
+    observed twice in one cycle yields ONE payload row, and the Neo4j write
+    reuses the module's existing ``OPTIONAL MATCH`` + ``head(collect(...))`` +
+    ``FOREACH(CREATE)`` deduplication machinery so a repeated poll updates the
+    child instead of creating a second one.
+    """
+    selected: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("correlation_type") != "PROPAGATED":
+            continue
+        if not _degrades_propagated_severity(row.get("link_status")):
+            continue
+        node_id = row.get("node_id")
+        metric_id = row.get("metric_id")
+        event_type = row.get("event_type")
+        propagated_from = row.get("propagated_from")
+        root_cause_ci_id = row.get("root_cause_ci_id")
+        if not (node_id and metric_id and event_type and propagated_from and root_cause_ci_id):
+            continue
+        key = (node_id, metric_id, event_type, propagated_from)
+        if key in selected:
+            continue
+        selected[key] = {
+            "node_id": node_id,
+            "metric_id": metric_id,
+            "event_type": event_type,
+            "propagated_from": propagated_from,
+            "root_cause_ci_id": root_cause_ci_id,
+            "correlation_type": "PROPAGATED",
+            "severity": DEGRADED_PROPAGATED_SEVERITY,
+            "message": _build_degraded_propagated_message(row),
+            "source_protocol": row.get("source_protocol"),
+            "failure_family": row.get("failure_family"),
+            "availability_source": row.get("availability_source"),
+            "link_id": row.get("link_id"),
+            "link_status": DEGRADING_PHYSICAL_LINK_STATUS,
+            "degradation_reason": DEGRADED_PROPAGATED_REASON,
+        }
+    return list(selected.values())
+
+
+def _create_degraded_propagated_events(session, rows) -> int:
+    """Materialize the separate WARNING PROPAGATED children of UNKNOWN crossings.
+
+    The child Event is linked to the affected CI (``HAS_EVENT``), carries the
+    ROOT CI as its ``root_cause_ci_id`` — never the PhysicalLink id — and is
+    emitted at ``WARNING`` severity. The ROOT Event is never matched by this
+    query: the ``OPTIONAL MATCH`` predicate only accepts an event whose
+    ``correlation_type`` is ``PROPAGATED``, so the ROOT keeps its own severity.
+
+    Locking: the caller (``_refresh_*_events``) already acquired the
+    ``(ci_id, metric_id, event_type)`` advisory triplet lock for these rows
+    BEFORE its own Event write, and the lock is transaction-scoped, so this
+    write runs under the same lock. This function must therefore never
+    acquire the lock itself.
+
+    The write is exception-safe: a Neo4j failure is logged and swallowed so a
+    degraded child can never abort the polling cycle.
+
+    Returns the number of degraded child rows written.
+    """
+    degraded_rows = _degraded_propagated_rows(rows)
+    if not degraded_rows:
+        return 0
+    primary_query = """
+        UNWIND $degraded_rows AS row
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id})
+        WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+          AND coalesce(existing.correlation_type, 'ROOT') = 'PROPAGATED'
+          AND existing.propagated_from = row.propagated_from
+          AND existing.event_type = row.event_type
+        WITH row, n, m, existing
+        ORDER BY existing.created_at DESC
+        WITH row, n, m, head(collect(existing)) AS existing
+        WITH row, n, m, existing, existing.status AS previous_status
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                event_type: row.event_type, status: 'OPEN', severity: row.severity,
+                message: row.message, source_protocol: row.source_protocol,
+                failure_family: row.failure_family,
+                availability_source: row.availability_source,
+                created_at: datetime(), last_seen: datetime(), ack: false,
+                correlation_type: 'PROPAGATED',
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id,
+                severity_degraded: true,
+                degradation_reason: row.degradation_reason,
+                physical_link_id: row.link_id,
+                physical_link_status: row.link_status,
+                poll_collector_id: $poll_collector_id
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.status = CASE WHEN previous_status = 'ACK' THEN 'ACK' ELSE 'OPEN' END,
+                existing.severity = row.severity,
+                existing.message = row.message, existing.last_seen = datetime(),
+                existing.ack = CASE WHEN previous_status = 'ACK' THEN existing.ack ELSE false END,
+                existing.recovered_at = NULL,
+                existing.root_cause_ci_id = row.root_cause_ci_id,
+                existing.severity_degraded = true,
+                existing.degradation_reason = row.degradation_reason,
+                existing.physical_link_id = row.link_id,
+                existing.physical_link_status = row.link_status,
+                existing.poll_collector_id = $poll_collector_id
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """
+    # Fallback Cypher — hand-written (see #340, verify-report CRITICAL #1) so
+    # no dangling comma survives when the ``poll_collector_id`` reference is
+    # dropped. The property is the LAST entry of the CREATE map and the LAST
+    # assignment of the SET clause, so removing it leaves valid Cypher.
+    fallback_query = """
+        UNWIND $degraded_rows AS row
+        MATCH (n:CI {id: row.node_id})
+        MATCH (m:MetricDef {id: row.metric_id})
+        OPTIONAL MATCH (n)-[:HAS_EVENT]->(existing:Event {metric_id: row.metric_id})
+        WHERE existing.status IN ['OPEN', 'ACK', 'RECOVERED']
+          AND coalesce(existing.correlation_type, 'ROOT') = 'PROPAGATED'
+          AND existing.propagated_from = row.propagated_from
+          AND existing.event_type = row.event_type
+        WITH row, n, m, existing
+        ORDER BY existing.created_at DESC
+        WITH row, n, m, head(collect(existing)) AS existing
+        WITH row, n, m, existing, existing.status AS previous_status
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+            CREATE (created:Event {
+                id: randomUUID(), ci_id: row.node_id, metric_id: row.metric_id,
+                event_type: row.event_type, status: 'OPEN', severity: row.severity,
+                message: row.message, source_protocol: row.source_protocol,
+                failure_family: row.failure_family,
+                availability_source: row.availability_source,
+                created_at: datetime(), last_seen: datetime(), ack: false,
+                correlation_type: 'PROPAGATED',
+                propagated_from: row.propagated_from,
+                root_cause_ci_id: row.root_cause_ci_id,
+                severity_degraded: true,
+                degradation_reason: row.degradation_reason,
+                physical_link_id: row.link_id,
+                physical_link_status: row.link_status
+            })
+            MERGE (n)-[:HAS_EVENT]->(created)
+            MERGE (created)-[:TRIGGERED_BY]->(m)
+        )
+        FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
+            SET existing.status = CASE WHEN previous_status = 'ACK' THEN 'ACK' ELSE 'OPEN' END,
+                existing.severity = row.severity,
+                existing.message = row.message, existing.last_seen = datetime(),
+                existing.ack = CASE WHEN previous_status = 'ACK' THEN existing.ack ELSE false END,
+                existing.recovered_at = NULL,
+                existing.root_cause_ci_id = row.root_cause_ci_id,
+                existing.severity_degraded = true,
+                existing.degradation_reason = row.degradation_reason,
+                existing.physical_link_id = row.link_id,
+                existing.physical_link_status = row.link_status
+            MERGE (n)-[:HAS_EVENT]->(existing)
+            MERGE (existing)-[:TRIGGERED_BY]->(m)
+        )
+    """
+    try:
+        run_with_cypher_param_fallback(
+            session,
+            primary_query,
+            {"degraded_rows": degraded_rows, "poll_collector_id": POLL_COLLECTOR_ID},
+            fallback_query,
+            {"degraded_rows": degraded_rows},
+            is_poll_collector_id_undefined_error,
+            logger,
+        )
+    except Exception as exc:
+        logger.warning(
+            "topology_rca_degraded_propagated_write_failed rows=%s error=%s",
+            len(degraded_rows),
+            exc,
+        )
+        return 0
+    return len(degraded_rows)
 
 
 def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=None):
@@ -414,6 +692,7 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
                 OR (existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
               )
               AND (existing.failure_family = 'SNMP_NO_RESPONSE' OR existing.failure_family IS NULL)
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -460,6 +739,7 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
                 OR (existing.event_type IS NULL AND existing.message STARTS WITH 'Metric Collection Failed:')
               )
               AND (existing.failure_family = 'SNMP_NO_RESPONSE' OR existing.failure_family IS NULL)
+              AND coalesce(existing.correlation_type, 'ROOT') = 'ROOT'
               AND (existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
             WITH row, n, m, head(collect(existing)) AS existing
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
@@ -497,7 +777,13 @@ def _refresh_snmp_collection_failures(session, failures, cache=None, lock_db=Non
             logger,
         )
 
-    # Keep PROPAGATED children from creating their own child events.
+    # feat-539 / T4: a propagation that crossed a PhysicalLink with status
+    # UNKNOWN is materialized as a SEPARATE PROPAGATED child Event at WARNING
+    # severity. The ROOT Event keeps its own severity. The write runs under
+    # the triplet lock acquired above.
+    _create_degraded_propagated_events(session, propagated_rows)
+
+    # Keep ordinary PROPAGATED children from creating their own child events.
     # Instead, attach affected-CI metadata to the ROOT event.
     _update_propagated_root_events(session, propagated_rows)
 
@@ -650,7 +936,13 @@ def _refresh_icmp_availability_events(session, updates, cache=None, lock_db=None
             logger,
         )
 
-    # Keep PROPAGATED children from creating their own child events.
+    # feat-539 / T4: a propagation that crossed a PhysicalLink with status
+    # UNKNOWN is materialized as a SEPARATE PROPAGATED child Event at WARNING
+    # severity. The ROOT Event keeps its own severity. The write runs under
+    # the triplet lock acquired above.
+    _create_degraded_propagated_events(session, propagated_rows)
+
+    # Keep ordinary PROPAGATED children from creating their own child events.
     # Instead, attach affected-CI metadata to the ROOT event.
     _update_propagated_root_events(session, propagated_rows)
 
@@ -827,7 +1119,13 @@ def _refresh_icmp_latency_events(session, updates, cache=None, lock_db=None):
             logger,
         )
 
-    # Keep PROPAGATED children from creating their own child events.
+    # feat-539 / T4: a propagation that crossed a PhysicalLink with status
+    # UNKNOWN is materialized as a SEPARATE PROPAGATED child Event at WARNING
+    # severity. The ROOT Event keeps its own severity. The write runs under
+    # the triplet lock acquired above.
+    _create_degraded_propagated_events(session, propagated_rows)
+
+    # Keep ordinary PROPAGATED children from creating their own child events.
     # Instead, attach affected-CI metadata to the ROOT event.
     _update_propagated_root_events(session, propagated_rows)
 
@@ -956,7 +1254,13 @@ def _refresh_icmp_jitter_events(session, updates, cache=None, lock_db=None):
             logger,
         )
 
-    # Keep PROPAGATED children from creating their own child events.
+    # feat-539 / T4: a propagation that crossed a PhysicalLink with status
+    # UNKNOWN is materialized as a SEPARATE PROPAGATED child Event at WARNING
+    # severity. The ROOT Event keeps its own severity. The write runs under
+    # the triplet lock acquired above.
+    _create_degraded_propagated_events(session, propagated_rows)
+
+    # Keep ordinary PROPAGATED children from creating their own child events.
     # Instead, attach affected-CI metadata to the ROOT event.
     _update_propagated_root_events(session, propagated_rows)
 
@@ -1085,7 +1389,13 @@ def _refresh_icmp_packet_loss_events(session, updates, cache=None, lock_db=None)
             logger,
         )
 
-    # Keep PROPAGATED children from creating their own child events.
+    # feat-539 / T4: a propagation that crossed a PhysicalLink with status
+    # UNKNOWN is materialized as a SEPARATE PROPAGATED child Event at WARNING
+    # severity. The ROOT Event keeps its own severity. The write runs under
+    # the triplet lock acquired above.
+    _create_degraded_propagated_events(session, propagated_rows)
+
+    # Keep ordinary PROPAGATED children from creating their own child events.
     # Instead, attach affected-CI metadata to the ROOT event.
     _update_propagated_root_events(session, propagated_rows)
 

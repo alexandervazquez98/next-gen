@@ -221,6 +221,16 @@ class EventFeedSummary(BaseModel):
     # the legacy contract for pre-P0 ROOT events.
     affected_ci_ids: list[str] | None = None
     affected_count: int | None = None
+    # feat-539 / T4: explicit degradation markers of a PROPAGATED child that
+    # crossed a PhysicalLink whose status was UNKNOWN. The child is emitted
+    # at WARNING severity while its ROOT keeps its own severity, and these
+    # fields make that degradation explicit in the API payload instead of
+    # implicit. They are absent on every ROOT and on every ordinary
+    # PROPAGATED child.
+    severity_degraded: bool | None = None
+    degradation_reason: str | None = None
+    physical_link_id: str | None = None
+    physical_link_status: str | None = None
 
 
 class AffectedCI(BaseModel):

@@ -184,6 +184,38 @@ def test_neo4j_migration_corpus_contains_no_postgres_ddl():
     assert offenders == []
 
 
+# ---------- feat-539 / S1: canonical PhysicalLink connectivity ----------
+
+
+def test_physical_link_connected_via_migration_backfills_existing_links_idempotently():
+    """Migration 011 MERGEs both endpoint edges for links whose endpoint CIs exist."""
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "011_physical_link_connected_via.cypher"
+    )
+    statements = _split_statements(migration.read_text(encoding="utf-8"))
+
+    assert len(statements) == 1
+    statement = " ".join(statements[0].lower().split())
+    assert "match (pl:physicallink)" in statement
+    assert "where size(pl.endpoints) = 2" in statement
+    assert "match (endpoint_a:ci {id: endpoint_a_id})" in statement
+    assert "match (endpoint_b:ci {id: endpoint_b_id})" in statement
+    assert "merge (endpoint_a)-[:connected_via]->(pl)" in statement
+    assert "merge (endpoint_b)-[:connected_via]->(pl)" in statement
+    assert "create " not in statement
+    assert "delete " not in statement
+
+    driver = _RecordingDriver()
+    first_run = apply_cypher_file(driver, migration)
+    second_run = apply_cypher_file(driver, migration)
+
+    assert first_run.statements_run == 1
+    assert second_run.statements_run == 1
+    assert driver.session_instance.queries[0] == driver.session_instance.queries[1]
+
+
 # ---------- T8, T9: regression for refactored migrate_ci_event_indexes.py ----------
 
 

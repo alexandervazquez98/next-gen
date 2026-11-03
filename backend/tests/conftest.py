@@ -74,6 +74,31 @@ def test_secret_key() -> str:
     return TEST_SECRET_KEY
 
 
+@pytest.fixture(autouse=True)
+def _physical_link_correlation_enabled(monkeypatch):
+    """Run the suite with the #539 PhysicalLink correlation rollout flag ON.
+
+    The flag ships DEFAULT-OFF in production: the reconciled contract, the
+    correlation guide and the OpenSpec proposal all promise the chain is
+    flipped on only after PR2a1 -> PR2c2 has landed and CI is green. The
+    shipped default-off behaviour is pinned by
+    ``tests/test_correlation_propagation_rollout_flag.py``, which overrides
+    this fixture with the same name to keep the flag OFF.
+
+    The flag is read through ``config.get_polling_pipeline_settings()``, which
+    caches its value; the cached object is dropped so the env change takes
+    effect for this test.
+    """
+    import config
+    from services.correlation_propagation_contract import (
+        FEATURE_FLAG_PHYSICAL_LINK_CORRELATION,
+    )
+
+    monkeypatch.setenv(FEATURE_FLAG_PHYSICAL_LINK_CORRELATION, "true")
+    monkeypatch.setattr(config, "_polling_pipeline_settings", None, raising=False)
+    yield
+
+
 @pytest.fixture
 def sample_user_data() -> dict:
     """Minimal user payload for tests."""

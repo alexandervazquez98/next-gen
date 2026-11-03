@@ -129,6 +129,7 @@ PROTECTED_EVENT_WRITERS = {
 EXEMPT_EVENT_EMITTERS = {
     "engines/cli_worker.py": "CLI_POLL_ALERT operational health emitter, not polling triplet deduplication",
     "services/backup_service.py": "SYSTEM/BACKUP administrative status emitter, not metric polling deduplication",
+    "scripts/correlation_traversal_benchmark.py": "Latency measurement tool: it seeds throwaway Event nodes under its own unique run prefix and removes exactly those nodes, so it never produces a polling event and never participates in event deduplication",
 }
 
 _CLAUSE_START_RE = re.compile(r"\b(?:CREATE|MERGE|FOREACH)\b", re.IGNORECASE)

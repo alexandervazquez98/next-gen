@@ -140,14 +140,27 @@ def create_physical_link(
             )
 
     repo = _get_repo()
-    return repo.create(
-        link_id=payload["id"],
-        link_type=link_type,
-        endpoints=(endpoint_a, endpoint_b),
-        status=status,
-        capacity_gbps=payload.get("capacity_gbps"),
-        install_date=payload.get("install_date"),
-    )
+    try:
+        return repo.create(
+            link_id=payload["id"],
+            link_type=link_type,
+            endpoints=(endpoint_a, endpoint_b),
+            status=status,
+            capacity_gbps=payload.get("capacity_gbps"),
+            install_date=payload.get("install_date"),
+        )
+    except RuntimeError as exc:
+        # The repository matches both endpoint CIs in the same statement that
+        # creates the link, so it finds no row when an endpoint was deleted
+        # between the existence check above and this write. That is a
+        # conflict with the caller's intent, not a server fault.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "endpoint_removed_concurrently",
+                "endpoints": [endpoint_a, endpoint_b],
+            },
+        ) from exc
 
 
 def get_physical_link(link_id: str) -> dict[str, Any] | None:

@@ -1,3 +1,4 @@
+import re
 from unittest.mock import MagicMock
 
 
@@ -319,3 +320,209 @@ def test_create_update_node_rejects_invalid_public_ip(monkeypatch):
     except HTTPException as exc:
         raised = exc.status_code == 400
     assert raised, "expected HTTP 400 on invalid public_ip"
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / S1 — canonical PhysicalLink connectivity
+# ---------------------------------------------------------------------------
+
+
+def _run_usage_query(monkeypatch, count=4):
+    """Run ``get_node_usage`` against a mocked session and return its call data."""
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    result = MagicMock()
+    result.single.return_value = {"count": count}
+    session.run.return_value = result
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    usage = topology_repo.get_node_usage("ci-001")
+
+    query = " ".join(session.run.call_args.args[0].lower().split())
+    params = session.run.call_args.kwargs
+    return usage, query, params
+
+
+def _usage_where_clause(query):
+    """Extract the normalized WHERE clause of the usage query."""
+    where = re.search(r"\bwhere\b(.*?)\breturn\b", query, re.DOTALL)
+    assert where, "expected a WHERE clause on the usage query"
+    return where.group(1).strip()
+
+
+def _usage_predicate_counts(clause, params, rel_type, other_labels):
+    """Evaluate the usage WHERE clause for one incident relationship.
+
+    Supported grammar (the boolean subset used by the usage query): an
+    optional ``not (...)`` wrapper around a conjunction of a relationship-type
+    comparison (``type(r) = $param``) and node label checks
+    (``<variable>:<Label>``). ``n`` is the anchored CI (labels ``{"CI"}``) and
+    ``other`` is the matched neighbour. Any other predicate shape must extend
+    this evaluator instead of silently passing.
+    """
+    text = clause.strip()
+    negated = False
+    if text.startswith("not ("):
+        negated = True
+        text = text[len("not (") :].rstrip()
+        assert text.endswith(")"), f"unterminated NOT(...) in {clause!r}"
+        text = text[:-1]
+    assert " or " not in text, f"unsupported OR predicate in {clause!r}"
+
+    variables = {"n": {"CI"}, "other": set(other_labels)}
+    included = True
+    for atom in re.split(r"\s+and\s+", text):
+        atom = atom.strip()
+        type_match = re.fullmatch(r"type\(r\)\s*=\s*\$([a-z_][a-z0-9_]*)", atom)
+        if type_match:
+            condition = rel_type == params[type_match.group(1)]
+        else:
+            label_match = re.fullmatch(r"([a-z_][a-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)", atom)
+            assert label_match, f"unsupported predicate atom: {atom!r}"
+            variable, label = label_match.group(1), label_match.group(2)
+            assert variable in variables, f"unsupported predicate variable: {variable!r}"
+            # Labels are compared case-insensitively: the query text is
+            # normalized to lowercase before it reaches this evaluator.
+            condition = label.lower() in {known.lower() for known in variables[variable]}
+        included = bool(condition) and included
+    return (not included) if negated else included
+
+
+def test_delete_node_removes_physical_link_listing_the_deleted_endpoint(monkeypatch):
+    """Deleting an endpoint CI removes its PhysicalLink and incident edges atomically."""
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.delete_node("ci-001")
+
+    assert session.run.call_count == 1
+    query = " ".join(session.run.call_args.args[0].lower().split())
+    assert "match (n:ci {id: $id})" in query
+    assert "match (pl:physicallink)" in query
+    assert "$id in pl.endpoints" in query
+    assert "detach delete pl" in query
+    assert "detach delete n" in query
+    assert query.index("detach delete pl") < query.index("detach delete n")
+
+
+def test_get_node_usage_preserves_incident_relationship_count_except_physicallink_edges(
+    monkeypatch,
+):
+    """feat-539 / S1: usage keeps the pre-#539 "every incident relationship" count.
+
+    Before #539 ``get_node_usage`` counted EVERY relationship incident to the
+    CI (CATEGORIZED_AS, OWNED_BY, HAS_EVENT, CI<->CI links, ...). The canonical
+    CI->PhysicalLink connectivity added ``CONNECTED_VIA`` edges between a CI
+    and a ``:PhysicalLink`` node; those infrastructure edges are the ONLY
+    relationships excluded from the public count, in both directions.
+    """
+    usage, query, params = _run_usage_query(monkeypatch)
+
+    assert usage == 4
+    assert params["id"] == "ci-001"
+
+    # 1. Pre-#539 semantics: EVERY relationship incident to the CI is counted,
+    #    so the matched endpoint is NOT narrowed to :CI.
+    assert "match (n:ci {id: $id})-[r]-" in query
+    assert "-(:ci)" not in query
+    assert "count(r)" in query
+
+    # 2. Both directions of an incident relationship are matched, so a
+    #    PhysicalLink->CI edge is excluded just like a CI->PhysicalLink edge.
+    assert "-[r]->" not in query
+    assert "<-[r]-" not in query
+
+    # 3. The only exclusion is a CONNECTED_VIA relationship touching a
+    #    :PhysicalLink, expressed as a parameterized type check conjoined with
+    #    the PhysicalLink label check.
+    clause = _usage_where_clause(query)
+    assert "not (" in clause
+    assert ":physicallink" in clause
+    type_param = re.search(r"type\(r\)\s*=\s*\$([a-z_][a-z0-9_]*)", clause)
+    assert type_param, "expected a parameterized relationship-type check"
+    assert params[type_param.group(1)] == "CONNECTED_VIA"
+    assert re.search(
+        r"type\(r\)\s*=\s*\$[a-z_][a-z0-9_]*\s+and\s+[a-z_][a-z0-9_]*:physicallink", clause
+    ) or re.search(
+        r"[a-z_][a-z0-9_]*:physicallink\s+and\s+type\(r\)\s*=\s*\$[a-z_][a-z0-9_]*", clause
+    ), "the relationship-type check and the PhysicalLink check must be conjoined"
+
+
+def test_get_node_usage_excludes_only_physicallink_connected_via_edges(monkeypatch):
+    """feat-539 / S1: only the CI<->PhysicalLink infrastructure edges are dropped.
+
+    Every other incident relationship keeps its pre-#539 contribution: the
+    non-CI targets (CATEGORIZED_AS, OWNED_BY, HAS_EVENT, HAS_METRIC), the
+    CI<->CI links, and even a ``CONNECTED_VIA`` edge that does not touch a
+    ``:PhysicalLink``.
+    """
+    _, query, params = _run_usage_query(monkeypatch)
+    clause = _usage_where_clause(query)
+
+    # (relationship type, labels of the matched neighbour, counted in the usage)
+    fixtures = (
+        ("CATEGORIZED_AS", ("Category",), True),
+        ("OWNED_BY", ("OwnerGroup",), True),
+        ("HAS_EVENT", ("Event",), True),
+        ("HAS_METRIC", ("MetricDef",), True),
+        ("CONNECTS_TO", ("CI",), True),
+        ("CONNECTED_VIA", ("CI",), True),
+        ("OWNED_BY", ("PhysicalLink",), True),
+        ("CONNECTED_VIA", ("PhysicalLink",), False),
+    )
+
+    for rel_type, other_labels, counted in fixtures:
+        included = _usage_predicate_counts(clause, params, rel_type, other_labels)
+        assert (
+            included is counted
+        ), f"{rel_type} -> {other_labels} counted={counted}, predicate says {included}"
+
+
+def test_get_node_usage_excludes_physicallink_edge_in_both_directions(monkeypatch):
+    """feat-539 / S1: the exclusion is direction-agnostic.
+
+    The canonical edge is written as ``(:CI)-[:CONNECTED_VIA]->(:PhysicalLink)``
+    but the reversed ``(:PhysicalLink)-[:CONNECTED_VIA]->(:CI)`` edge must be
+    excluded as well.
+    """
+    _, query, params = _run_usage_query(monkeypatch)
+    clause = _usage_where_clause(query)
+
+    # The incident relationship is matched undirected, so both orientations of
+    # the CI<->PhysicalLink edge reach the same predicate.
+    assert "-[r]->" not in query
+    assert "<-[r]-" not in query
+
+    # The label check applies to the MATCHED NEIGHBOUR (the PhysicalLink), not
+    # to the anchored CI, so the reversed orientation is excluded too.
+    label_variables = re.findall(r"([a-z_][a-z0-9_]*)\s*:\s*physicallink", clause)
+    assert label_variables, "expected a PhysicalLink label check"
+    assert (
+        "n" not in label_variables
+    ), "the PhysicalLink check must target the matched neighbour, not the anchored CI"
+
+    # The neighbour of the anchored CI is the PhysicalLink in both directions.
+    assert _usage_predicate_counts(clause, params, "CONNECTED_VIA", ("PhysicalLink",)) is False
+
+
+def test_delete_node_resolves_affected_links_through_the_canonical_edges(monkeypatch):
+    """feat-539: the canonical CONNECTED_VIA edges are the connectivity source of truth.
+
+    The `endpoints` property stays in the predicate as a fallback for a link
+    created before the canonical edges existed (migration 011 backfills them),
+    so a pre-migration link can still be cleaned up.
+    """
+    from repositories import topology_repo
+
+    driver, session = _mock_driver()
+    monkeypatch.setattr(topology_repo, "get_db", lambda: driver)
+
+    topology_repo.delete_node("ci-001")
+
+    query = " ".join(session.run.call_args.args[0].lower().split())
+    assert "(n)-[:connected_via]->(pl)" in query
+    # The legacy fallback must survive, so a pre-migration link is still removed.
+    assert "$id in pl.endpoints" in query

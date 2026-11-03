@@ -96,6 +96,68 @@ def test_resolve_correlation_uses_ci_metric_pair_key():
 
 
 # ---------------------------------------------------------------------------
+# feat-539 / T3 — the PhysicalLink metadata reaches the modern correlation cache
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_correlation_carries_the_link_metadata():
+    """A cache entry produced by a PhysicalLink crossing keeps link id/status.
+
+    The severity slice (T4) consumes the status that the traversal already
+    read, so it must not need another query.
+    """
+    cache = {
+        ("ci-E", "cpu-load"): {
+            "parent_event_id": "evt-A",
+            "root_cause_ci_id": "ci-A",
+            "correlation_type": "PROPAGATED",
+            "link_id": "pl-1",
+            "link_status": "UNKNOWN",
+        }
+    }
+
+    result = _resolve_correlation(cache, "ci-E", "cpu-load")
+
+    assert result["correlation_type"] == "PROPAGATED"
+    assert result["link_id"] == "pl-1"
+    assert result["link_status"] == "UNKNOWN"
+
+
+def test_resolve_correlation_without_link_metadata_keeps_the_legacy_shape():
+    """A pure-CI cache entry does not grow any new key."""
+    cache = {("ci-E", "cpu-load"): {"parent_event_id": "evt-A", "root_cause_ci_id": "ci-A"}}
+
+    result = _resolve_correlation(cache, "ci-E", "cpu-load")
+
+    assert result == {
+        "correlation_type": "PROPAGATED",
+        "propagated_from": "evt-A",
+        "root_cause_ci_id": "ci-A",
+    }
+
+
+def test_resolve_correlation_root_keeps_the_legacy_shape_for_link_entries():
+    """A ROOT resolution never carries link metadata."""
+    cache = {
+        ("ci-E", "cpu-load"): {
+            "parent_event_id": "evt-A",
+            "root_cause_ci_id": "ci-A",
+            "link_id": "pl-1",
+            "link_status": "UP",
+        }
+    }
+    cache[("ci-E", "cpu-load")].pop("root_cause_ci_id")
+
+    result = _resolve_correlation(cache, "ci-E", "cpu-load")
+
+    assert result == {
+        "correlation_type": "ROOT",
+        "propagated_from": None,
+        "root_cause_ci_id": "ci-E",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Task 4 — propagated rows enrich root metadata instead of creating child Events
 # ---------------------------------------------------------------------------
 # Each _refresh_* helper accepts an optional ``cache`` parameter (default empty

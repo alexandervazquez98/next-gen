@@ -451,3 +451,40 @@ class TestUpdateStatus:
         )
         assert row["status"] == "UP"
         assert row["id"] == "pl-1"
+
+
+class TestCreateConcurrentEndpointRemoval:
+    """feat-539: an endpoint removed between validation and the write is a 409.
+
+    The repository matches both endpoint CIs in the same statement that creates
+    the link, so it can find no row when an endpoint was deleted concurrently.
+    That is a conflict with the caller's intent, not a server fault: the
+    previous bare RuntimeError surfaced as a 500.
+    """
+
+    def test_create_returns_409_when_the_repo_cannot_match_the_endpoints(
+        self, ci_existence_map, monkeypatch
+    ):
+        from services import physical_link_service as svc
+
+        ci_existence_map["ci-a"] = True
+        ci_existence_map["ci-b"] = True
+
+        class _FailingRepo(_RepoStub):
+            def create(self, **kwargs):
+                raise RuntimeError("Failed to create PhysicalLink")
+
+        monkeypatch.setattr(svc, "_get_repo", lambda: _FailingRepo())
+
+        user = _operator_with_edit()
+        with pytest.raises(HTTPException) as exc:
+            svc.create_physical_link(
+                payload={
+                    "id": "pl-x",
+                    "type": "fiber",
+                    "endpoints": ["ci-a", "ci-b"],
+                },
+                current_user=user,
+            )
+        assert exc.value.status_code == 409
+        assert "endpoint_removed_concurrently" in str(exc.value.detail)
