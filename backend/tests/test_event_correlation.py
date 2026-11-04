@@ -1643,3 +1643,13 @@ def test_unknown_link_crossing_degrades_the_child_but_not_the_root(monkeypatch):
     assert child_row["root_cause_ci_id"] == parent_id
     assert child_row["root_cause_ci_id"] != child_row["link_id"]
     assert child_row["link_id"] == "pl-1"
+    assert child_row["link_status"] == "UNKNOWN"
+    assert child_row["degradation_reason"] == "PHYSICAL_LINK_UNKNOWN"
+
+    # feat-539 / T5: the four degradation markers still travel with the
+    # child after the decision moved into the shared implementation.
+    degraded_query = degraded_calls[0]["query"]
+    assert "severity_degraded: true" in degraded_query
+    assert "degradation_reason: row.degradation_reason" in degraded_query
+    assert "physical_link_id: row.link_id" in degraded_query
+    assert "physical_link_status: row.link_status" in degraded_query

@@ -584,7 +584,13 @@ def test_event_writer_threshold_breach_refresh_updates_open_or_ack_events_withou
         not in breach_query["query"]
     )
     assert "created_at: datetime(), last_seen: datetime()" in breach_query["query"]
-    assert "SET existing.severity = row.severity" in breach_query["query"]
+    # feat-539 / T5: the severity update preserves an already-degraded child,
+    # so no writer can erase the explicit WARNING downgrade of a degraded
+    # PROPAGATED child. An ordinary event still takes the row's severity.
+    assert (
+        "existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true "
+        "THEN existing.severity ELSE row.severity END" in breach_query["query"]
+    )
     assert (
         "existing.created_at = coalesce(existing.created_at, existing.last_seen, datetime())"
         in breach_query["query"]
@@ -1327,3 +1333,162 @@ def test_event_writer_uses_collection_recovery_message_for_threshold_breach_reco
         "e.created_at = coalesce(e.created_at, e.last_seen, datetime())" in recovery_query["query"]
     )
     assert "row.collection_recovery_message" in recovery_query["query"]
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T5 — the leased / queued writer must produce the SAME degraded
+# ``PROPAGATED`` child as the modern SNMP worker and the legacy SNMP path.
+#
+# Locked decision #1 of issue #539 (``degrade_severity_and_propagate``): a
+# propagation that crosses a PhysicalLink whose status is ``UNKNOWN`` is
+# materialized at ``WARNING`` severity and carries the four degradation
+# markers. The ROOT Event keeps its own severity.
+#
+# The leased writer receives the correlation metadata from the envelope, so
+# the PhysicalLink crossing travels in ``metadata.link_id`` /
+# ``metadata.link_status`` — the same vocabulary the correlation cache uses.
+# ---------------------------------------------------------------------------
+
+LEASED_ROOT_CI_ID = "ci-root"
+LEASED_AFFECTED_CI_ID = "ci-1"
+LEASED_ROOT_EVENT_ID = "evt-root"
+LEASED_LINK_ID = "pl-unknown-1"
+
+
+def _propagated_metadata(link_status: str = "UNKNOWN") -> dict:
+    """Envelope metadata describing a propagation over a PhysicalLink."""
+    return {
+        "name": "cpu",
+        "criticality": 3,
+        "critical": 90,
+        "operator": ">=",
+        "correlation_type": "PROPAGATED",
+        "propagated_from": LEASED_ROOT_EVENT_ID,
+        "root_cause_ci_id": LEASED_ROOT_CI_ID,
+        "link_id": LEASED_LINK_ID,
+        "link_status": link_status,
+    }
+
+
+def test_leased_writer_creates_a_degraded_warning_propagated_child():
+    """An ``UNKNOWN`` crossing yields a ``WARNING`` child with the four markers."""
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(
+        driver,
+        [{**_event_row(97.0, metadata=_propagated_metadata())}],
+    )
+
+    breach_query = next(
+        q
+        for q in driver.mock_session.queries
+        if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"]
+    )
+    row = breach_query["params"]["rows"][0]
+
+    assert row["correlation_type"] == "PROPAGATED"
+    # The metric breached CRITICAL, but the crossing is not confirmed.
+    assert row["severity"] == "WARNING"
+    assert row["severity_degraded"] is True
+    assert row["degradation_reason"] == "PHYSICAL_LINK_UNKNOWN"
+    assert row["physical_link_id"] == LEASED_LINK_ID
+    assert row["physical_link_status"] == "UNKNOWN"
+    # The root cause is the ROOT CI, never the PhysicalLink.
+    assert row["root_cause_ci_id"] == LEASED_ROOT_CI_ID
+    assert row["root_cause_ci_id"] != row["physical_link_id"]
+
+    # The markers reach the Event node itself.
+    assert "severity_degraded: row.severity_degraded" in breach_query["query"]
+    assert "degradation_reason: row.degradation_reason" in breach_query["query"]
+    assert "physical_link_id: row.physical_link_id" in breach_query["query"]
+    assert "physical_link_status: row.physical_link_status" in breach_query["query"]
+
+
+def test_leased_writer_never_erases_a_degraded_child():
+    """A degraded child keeps its severity, its markers and its acknowledgement.
+
+    Three guards protect the degraded child:
+
+    * the existing-Event matcher is scoped by the correlation type, so a
+      ``PROPAGATED`` child is never selected by a ``ROOT`` write;
+    * the severity update preserves an already-degraded child, so no writer
+      can erase the explicit ``WARNING`` downgrade;
+    * the acknowledgement survives the refresh.
+    """
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(
+        driver,
+        [{**_event_row(97.0, metadata=_propagated_metadata())}],
+    )
+
+    queries = driver.mock_session.queries
+    breach_query = next(
+        q
+        for q in queries
+        if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"]
+    )["query"]
+
+    # The degraded severity is sticky: an already-degraded child keeps its
+    # own severity instead of being re-severitied by a later poll.
+    assert (
+        "existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true "
+        "THEN existing.severity ELSE row.severity END" in breach_query
+    )
+    # The markers are sticky too.
+    assert (
+        "existing.severity_degraded = coalesce(existing.severity_degraded, row.severity_degraded)"
+        in breach_query
+    )
+    assert (
+        "existing.degradation_reason = coalesce(existing.degradation_reason, row.degradation_reason)"
+        in breach_query
+    )
+    assert (
+        "existing.physical_link_id = coalesce(existing.physical_link_id, row.physical_link_id)"
+        in breach_query
+    )
+    assert (
+        "existing.physical_link_status = coalesce(existing.physical_link_status, row.physical_link_status)"
+        in breach_query
+    )
+    # The acknowledgement survives the refresh.
+    assert (
+        "existing.ack = CASE WHEN existing.status = 'ACK' THEN existing.ack ELSE false END"
+        in breach_query
+    )
+
+    # The collection-failure write is scoped by the correlation type too, so
+    # it can never select a degraded PROPAGATED child.
+    collection_query = next(
+        q for q in queries if "row.event_type = 'COLLECTION_FAILURE'" in q["query"]
+    )["query"]
+    assert (
+        "coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')"
+        in collection_query
+    )
+    assert "severity_degraded: row.severity_degraded" in collection_query
+
+
+def test_leased_writer_does_not_degrade_a_confirmed_up_link():
+    """A confirmed-``UP`` crossing keeps the metric's own severity."""
+    from polling.event_writer import batch_update_events
+
+    driver = MockNeo4jDriver()
+    batch_update_events(
+        driver,
+        [{**_event_row(97.0, metadata=_propagated_metadata(link_status="UP"))}],
+    )
+
+    breach_query = next(
+        q
+        for q in driver.mock_session.queries
+        if "row.is_breach AND row.event_type <> 'COLLECTION_FAILURE'" in q["query"]
+    )
+    row = breach_query["params"]["rows"][0]
+
+    assert row["correlation_type"] == "PROPAGATED"
+    assert row["severity"] == "CRITICAL"
+    assert not row.get("severity_degraded")

@@ -280,8 +280,7 @@ def test_degraded_child_write_runs_under_the_event_writer_triplet_lock():
 def test_degradation_policy_is_read_from_the_correlation_contract(monkeypatch):
     """The contract helper decides whether the severity is degraded."""
     monkeypatch.setattr(
-        snmp_worker,
-        "should_propagate_unknown_severity_degrade",
+        "services.correlation_propagation_contract.should_propagate_unknown_severity_degrade",
         lambda: False,
     )
     session = _session()
@@ -292,11 +291,22 @@ def test_degradation_policy_is_read_from_the_correlation_contract(monkeypatch):
 
 
 def test_the_policy_literal_never_appears_in_the_worker_source():
-    """REQ-CORR-PROP-5: the decision string lives only in the contract module."""
+    """REQ-CORR-PROP-5: the decision string lives only in the contract module.
+
+    The worker reaches the decision through the shared degraded-propagation
+    module (``services.correlation_propagation_events``), which is the ONE
+    implementation every writer that can materialize a degraded child uses.
+    """
     source = SNMP_WORKER_SOURCE.read_text(encoding="utf-8")
 
     assert "degrade_severity_and_propagate" not in source
-    assert "services.correlation_propagation_contract" in source
+    assert "correlation_propagation_events" in source
+    # The shared module is the one that reads the contract.
+    shared_source = (
+        SNMP_WORKER_SOURCE.parents[1] / "services" / "correlation_propagation_events.py"
+    ).read_text(encoding="utf-8")
+    assert "correlation_propagation_contract" in shared_source
+    assert "degrade_severity_and_propagate" not in shared_source
 
 
 # ---------------------------------------------------------------------------

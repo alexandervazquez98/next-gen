@@ -8,6 +8,12 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from services.correlation_propagation_events import (
+    DEGRADED_PROPAGATED_SEVERITY,
+    build_degraded_propagated_message,
+    degraded_propagated_markers,
+    degrades_propagated_severity,
+)
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock
 from services.polling_event_lifecycle import (
     EVENT_TYPE_AVAILABILITY,
@@ -275,6 +281,30 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
 
         recover_non_collection_event = numeric is not None and not is_breach
 
+        # feat-539 / T5 — a propagation that crossed a PhysicalLink whose
+        # status is UNKNOWN is materialized at WARNING severity and carries
+        # the four degradation markers. The policy is read from the shared
+        # implementation, so this writer and the two SNMP engines agree on
+        # the degraded child instead of each restating the decision.
+        correlation_type = metadata.get("correlation_type") or "ROOT"
+        propagated_from = metadata.get("propagated_from")
+        root_cause_event_id = metadata.get("root_cause_event_id")
+        root_cause_ci_id = metadata.get("root_cause_ci_id") or envelope.get("ci_id")
+        link_id = metadata.get("link_id")
+        link_status = metadata.get("link_status")
+
+        degraded = correlation_type == "PROPAGATED" and degrades_propagated_severity(link_status)
+        if degraded:
+            event_severity = DEGRADED_PROPAGATED_SEVERITY
+            event_message = build_degraded_propagated_message(
+                {"message": message, "link_id": link_id}
+            )
+            degradation_markers = degraded_propagated_markers(link_id, link_status)
+        else:
+            event_severity = severity
+            event_message = message
+            degradation_markers = {}
+
         rows.append(
             {
                 "idempotency_key": envelope.get("idempotency_key"),
@@ -282,8 +312,9 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
                 "metric_id": metric_id,
                 "value": display_value,
                 "status": severity if is_breach else "OK",
-                "severity": severity,
+                "severity": event_severity,
                 "message": message,
+                "event_message": event_message,
                 "is_breach": is_breach,
                 "event_type": event_type,
                 "failure_family": failure_family,
@@ -293,10 +324,15 @@ def build_event_rows(envelopes: Iterable[Mapping[str, Any]]) -> list[dict[str, A
                 "recover_non_collection_event": recover_non_collection_event,
                 "collection_recovery_message": collection_recovery_message,
                 "observed_at": _value(envelope.get("observed_at")),
-                "correlation_type": metadata.get("correlation_type") or "ROOT",
-                "propagated_from": metadata.get("propagated_from"),
-                "root_cause_event_id": metadata.get("root_cause_event_id"),
-                "root_cause_ci_id": metadata.get("root_cause_ci_id") or envelope.get("ci_id"),
+                "correlation_type": correlation_type,
+                "propagated_from": propagated_from,
+                "root_cause_event_id": root_cause_event_id,
+                "root_cause_ci_id": root_cause_ci_id,
+                "link_id": link_id,
+                "severity_degraded": degradation_markers.get("severity_degraded"),
+                "degradation_reason": degradation_markers.get("degradation_reason"),
+                "physical_link_id": degradation_markers.get("physical_link_id"),
+                "physical_link_status": degradation_markers.get("physical_link_status"),
                 "business_service_id": metadata.get("business_service_id"),
                 "business_service_name": metadata.get("business_service_name"),
                 "business_service_tier": metadata.get("business_service_tier"),
@@ -447,14 +483,26 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
                 OR (row.failure_family IS NULL AND existing.failure_family IS NULL)
               )
               AND (row.source_protocol IS NULL OR existing.source_protocol IS NULL OR toUpper(existing.source_protocol) = row.source_protocol)
+              AND coalesce(existing.correlation_type, 'ROOT') = coalesce(row.correlation_type, 'ROOT')
+              AND (
+                coalesce(row.correlation_type, 'ROOT') <> 'PROPAGATED'
+                OR (
+                  (row.propagated_from IS NULL OR existing.propagated_from = row.propagated_from)
+                  AND (row.root_cause_event_id IS NULL OR existing.root_cause_event_id = row.root_cause_event_id)
+                  AND (row.root_cause_ci_id IS NULL OR existing.root_cause_ci_id = row.root_cause_ci_id)
+                )
+              )
             WITH row, n, m, head(collect(existing)) AS existing
+            WITH row, n, m, existing, existing.status AS previous_status
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
                 CREATE (created:Event {
                     id: randomUUID(), ci_id: row.ci_id, metric_id: row.metric_id, status: 'OPEN',
                     event_type: row.event_type, failure_family: row.failure_family, source_protocol: row.source_protocol,
                     availability_source: row.availability_source,
-                    severity: row.severity, message: row.message, created_at: datetime(), last_seen: datetime(), ack: false,
+                    severity: row.severity, message: row.event_message, created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type, propagated_from: row.propagated_from, root_cause_ci_id: row.root_cause_ci_id,
+                    severity_degraded: row.severity_degraded, degradation_reason: row.degradation_reason,
+                    physical_link_id: row.physical_link_id, physical_link_status: row.physical_link_status,
                     business_service_id: row.business_service_id, business_service_name: row.business_service_name,
                     business_service_tier: row.business_service_tier, owner_t1: row.owner_t1, owner_t2: row.owner_t2,
                     owner_t3: row.owner_t3, impacted_users: row.impacted_users, site: row.site,
@@ -466,11 +514,19 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
                 MERGE (created)-[:TRIGGERED_BY]->(m)
             )
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
-                SET existing.status = 'OPEN', existing.severity = row.severity, existing.message = row.message,
-                    existing.last_seen = datetime(), existing.ack = false, existing.recovered_at = NULL,
+                SET existing.status = CASE WHEN row.severity_degraded = true AND previous_status = 'ACK' THEN 'ACK' ELSE 'OPEN' END,
+                    existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.severity ELSE row.severity END,
+                    existing.message = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.message ELSE row.event_message END,
+                    existing.last_seen = datetime(),
+                    existing.ack = CASE WHEN row.severity_degraded = true AND previous_status = 'ACK' THEN existing.ack ELSE false END,
+                    existing.recovered_at = NULL,
                     existing.event_type = row.event_type, existing.failure_family = row.failure_family,
                     existing.source_protocol = row.source_protocol,
                     existing.availability_source = row.availability_source,
+                    existing.severity_degraded = coalesce(existing.severity_degraded, row.severity_degraded),
+                    existing.degradation_reason = coalesce(existing.degradation_reason, row.degradation_reason),
+                    existing.physical_link_id = coalesce(existing.physical_link_id, row.physical_link_id),
+                    existing.physical_link_status = coalesce(existing.physical_link_status, row.physical_link_status),
                     existing.poll_collector_id = row.poll_collector_id
                 MERGE (n)-[:HAS_EVENT]->(existing)
                 MERGE (existing)-[:TRIGGERED_BY]->(m)
@@ -503,10 +559,12 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
                 CREATE (created:Event {
                     id: randomUUID(), ci_id: row.ci_id, metric_id: row.metric_id, event_type: row.event_type, status: 'OPEN',
-                    severity: row.severity, message: row.message, source_protocol: row.source_protocol,
+                    severity: row.severity, message: row.event_message, source_protocol: row.source_protocol,
                     availability_source: row.availability_source, created_at: datetime(), last_seen: datetime(), ack: false,
                     correlation_type: row.correlation_type, propagated_from: row.propagated_from,
                     root_cause_event_id: row.root_cause_event_id, root_cause_ci_id: row.root_cause_ci_id,
+                    severity_degraded: row.severity_degraded, degradation_reason: row.degradation_reason,
+                    physical_link_id: row.physical_link_id, physical_link_status: row.physical_link_status,
                     business_service_id: row.business_service_id,
                     business_service_name: row.business_service_name, business_service_tier: row.business_service_tier,
                     owner_t1: row.owner_t1, owner_t2: row.owner_t2, owner_t3: row.owner_t3,
@@ -518,8 +576,8 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
                 MERGE (created)-[:TRIGGERED_BY]->(m)
             )
             FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |
-                SET existing.severity = row.severity,
-                    existing.message = row.message,
+                SET existing.severity = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.severity ELSE row.severity END,
+                    existing.message = CASE WHEN coalesce(existing.severity_degraded, false) = true THEN existing.message ELSE row.event_message END,
                     existing.source_protocol = row.source_protocol,
                     existing.availability_source = row.availability_source,
                     existing.created_at = coalesce(existing.created_at, existing.last_seen, datetime()),
@@ -530,6 +588,10 @@ def batch_update_events(driver, envelopes: Iterable[Mapping[str, Any]], lock_db=
                     existing.propagated_from = coalesce(existing.propagated_from, row.propagated_from),
                     existing.root_cause_event_id = coalesce(existing.root_cause_event_id, row.root_cause_event_id),
                     existing.root_cause_ci_id = coalesce(existing.root_cause_ci_id, row.root_cause_ci_id),
+                    existing.severity_degraded = coalesce(existing.severity_degraded, row.severity_degraded),
+                    existing.degradation_reason = coalesce(existing.degradation_reason, row.degradation_reason),
+                    existing.physical_link_id = coalesce(existing.physical_link_id, row.physical_link_id),
+                    existing.physical_link_status = coalesce(existing.physical_link_status, row.physical_link_status),
                     existing.business_service_id = coalesce(existing.business_service_id, row.business_service_id),
                     existing.business_service_name = coalesce(existing.business_service_name, row.business_service_name),
                     existing.business_service_tier = coalesce(existing.business_service_tier, row.business_service_tier),

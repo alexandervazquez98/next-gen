@@ -132,6 +132,32 @@ PROPAGATING_PHYSICAL_LINK_STATUSES: Final = frozenset({"UP", "UNKNOWN"})
 
 
 # ---------------------------------------------------------------------------
+# Degraded propagated child vocabulary (feat-539 / T5)
+# ---------------------------------------------------------------------------
+#
+# Locked decision #1 (``degrade_severity_and_propagate``) has three
+# implementation values that every writer needs. They live here — beside the
+# propagating status set above — so the decision string, the degrading status
+# and the degradation reason each have exactly ONE owner and are never
+# duplicated in a writer.
+
+#: The severity a degraded ``PROPAGATED`` child carries. The ROOT Event keeps
+#: its own severity; only the child is demoted.
+DEGRADED_PROPAGATED_SEVERITY: Final = "WARNING"
+
+#: The PhysicalLink status that degrades a propagated child's severity.
+#: It MUST be part of :data:`PROPAGATING_PHYSICAL_LINK_STATUSES` — a status
+#: outside that set blocks the crossing entirely, so it can never reach the
+#: severity layer.
+DEGRADING_PHYSICAL_LINK_STATUS: Final = "UNKNOWN"
+
+#: The value written to the ``degradation_reason`` marker of a degraded
+#: ``PROPAGATED`` child, so the operator feed can expose the explicit
+#: downgrade without having to guess which children are degraded.
+DEGRADED_PROPAGATED_REASON: Final = "PHYSICAL_LINK_UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
 # Relationship set registry (used by PR2 / PR3 / PR4 to align traversals)
 # ---------------------------------------------------------------------------
 

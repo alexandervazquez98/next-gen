@@ -2,6 +2,8 @@ import importlib
 import sys
 from unittest.mock import MagicMock, patch
 
+from tests.conftest import MockNeo4jDriver
+
 
 def _load_snmp_service_module():
     sys.modules.pop("services.snmp_service", None)
@@ -493,3 +495,190 @@ def test_store_metric_result_persists_poll_collector_id_on_event_create(mock_neo
         f"poll_collector_id MUST match the cached POLL_COLLECTOR_ID; "
         f"got={create_event['params']['poll_collector_id']!r}, expected={POLL_COLLECTOR_ID!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# feat-539 / T5 — the legacy SNMP path must produce the SAME degraded
+# ``PROPAGATED`` child as the modern SNMP worker.
+#
+# Locked decision #1 of issue #539 (``degrade_severity_and_propagate``): a
+# propagation that crosses a PhysicalLink whose status is ``UNKNOWN`` is
+# materialized as a ``PROPAGATED`` Event at ``WARNING`` severity, carrying the
+# four degradation markers. The ROOT Event keeps its own severity and the
+# child's ``root_cause_ci_id`` keeps pointing at the ROOT CI — never at the
+# PhysicalLink.
+#
+# Before this slice the legacy path created the ``PROPAGATED`` child with the
+# metric's own severity and no markers at all, so the same failure produced
+# two children with two severities depending on which engine ran.
+# ---------------------------------------------------------------------------
+
+LEGACY_ROOT_CI_ID = "ci-root"
+LEGACY_AFFECTED_CI_ID = "ci-child"
+LEGACY_ROOT_EVENT_ID = "evt-root"
+LEGACY_LINK_ID = "pl-unknown-1"
+LEGACY_METRIC_ID = "cpu"
+
+
+def _unknown_link_parent():
+    """The correlation result of a crossing over an ``UNKNOWN`` PhysicalLink."""
+    return {
+        "parent_event_id": LEGACY_ROOT_EVENT_ID,
+        "root_cause_ci_id": LEGACY_ROOT_CI_ID,
+        "correlation_type": "ROOT",
+        "link_id": LEGACY_LINK_ID,
+        "link_status": "UNKNOWN",
+    }
+
+
+def _legacy_store_metric_result(driver, parent=None):
+    """Drive the legacy SNMP writer for one breaching metric.
+
+    ``parent`` is the correlation result the topology lookup returns; ``None``
+    means the CI has no open parent event (the pre-#539 ROOT case).
+    """
+    snmp_service = _load_snmp_service_module()
+    session = driver.mock_session
+    session.set_response("MATCH (existing:Event)", [])
+    session.set_response("MATCH (ci:CI", [])
+
+    fake_pg = _make_context_mock()
+
+    with (
+        patch("services.snmp_service.SessionLocal", return_value=fake_pg),
+        patch("services.snmp_service.insert_metric_value"),
+        patch(
+            "repositories.topology_repo.find_open_parent_event",
+            return_value=parent,
+        ),
+    ):
+        snmp_service.store_metric_result(
+            {"id": LEGACY_AFFECTED_CI_ID, "ip": "10.0.0.2", "name": "Switch"},
+            {
+                "id": LEGACY_METRIC_ID,
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
+            "97",
+            "OK",
+            None,
+            driver,
+        )
+    return session
+
+
+def test_legacy_path_creates_a_degraded_warning_propagated_child(mock_neo4j_driver):
+    """An ``UNKNOWN`` crossing yields a ``WARNING`` child with the four markers."""
+    session = _legacy_store_metric_result(mock_neo4j_driver, _unknown_link_parent())
+
+    create_event = next(q for q in session.queries if "CREATE (e:Event" in q["query"])
+    params = create_event["params"]
+
+    assert params["correlation_type"] == "PROPAGATED"
+    # The metric breached CRITICAL, but the crossing is not confirmed, so the
+    # child is degraded to WARNING.
+    assert params["sev"] == "WARNING"
+    assert params["severity_degraded"] is True
+    assert params["degradation_reason"] == "PHYSICAL_LINK_UNKNOWN"
+    assert params["physical_link_id"] == LEGACY_LINK_ID
+    assert params["physical_link_status"] == "UNKNOWN"
+
+
+def test_legacy_degraded_child_names_the_root_ci_and_never_the_physical_link(
+    mock_neo4j_driver,
+):
+    """The child stays on the affected CI and keeps the ROOT CI as its root cause."""
+    session = _legacy_store_metric_result(mock_neo4j_driver, _unknown_link_parent())
+
+    create_event = next(q for q in session.queries if "CREATE (e:Event" in q["query"])
+    params = create_event["params"]
+
+    # The child is hosted by the affected CI (the CI whose metric failed).
+    assert params["nid"] == LEGACY_AFFECTED_CI_ID
+    # The root cause is the ROOT CI; the PhysicalLink id lives in its own
+    # marker field and never leaks into root_cause_ci_id.
+    assert params["root_cause_ci_id"] == LEGACY_ROOT_CI_ID
+    assert params["propagated_from"] == LEGACY_ROOT_EVENT_ID
+    assert params["root_cause_ci_id"] != params["physical_link_id"]
+
+
+def test_legacy_degraded_child_is_idempotent_and_keeps_the_operator_acknowledgement(
+    mock_neo4j_driver,
+):
+    """A repeated poll updates the same child and never erases its degradation."""
+    first = _legacy_store_metric_result(mock_neo4j_driver, _unknown_link_parent())
+    first_create = next(q for q in first.queries if "CREATE (e:Event" in q["query"])
+    assert first_create["params"]["sev"] == "WARNING"
+
+    # Second poll: the child already exists and the operator acknowledged it.
+    second_driver = MockNeo4jDriver()
+    second_session = second_driver.mock_session
+    second_session.set_response(
+        "MATCH (existing:Event)",
+        [{"existing_status": "ACK", "existing_element_id": "el-degraded"}],
+    )
+    second_session.set_response("MATCH (ci:CI", [])
+
+    snmp_service = _load_snmp_service_module()
+    fake_pg = _make_context_mock()
+    with (
+        patch("services.snmp_service.SessionLocal", return_value=fake_pg),
+        patch("services.snmp_service.insert_metric_value"),
+        patch(
+            "repositories.topology_repo.find_open_parent_event",
+            return_value=_unknown_link_parent(),
+        ),
+    ):
+        snmp_service.store_metric_result(
+            {"id": LEGACY_AFFECTED_CI_ID, "ip": "10.0.0.2", "name": "Switch"},
+            {
+                "id": LEGACY_METRIC_ID,
+                "name": "cpu",
+                "protocol": "SNMP",
+                "criticality": 3,
+                "critical": 90,
+                "operator": ">=",
+            },
+            "97",
+            "OK",
+            None,
+            second_driver,
+        )
+
+    # The same failure observed twice yields ONE child: no second CREATE.
+    assert [q for q in second_session.queries if "CREATE (e:Event" in q["query"]] == []
+
+    update = next(
+        q
+        for q in second_session.queries
+        if "elementId(existing) = $existing_element_id" in q["query"]
+    )
+    # The refreshed child keeps its degraded severity and its markers ...
+    assert update["params"]["sev"] == "WARNING"
+    assert update["params"]["severity_degraded"] is True
+    # ... and the operator acknowledgement survives the refresh.
+    assert "previous_status = 'ACK'" in update["query"]
+
+
+def test_legacy_root_write_never_clobbers_a_degraded_child(mock_neo4j_driver):
+    """The legacy existing-Event lookup is scoped by the correlation type.
+
+    The modern SNMP worker already guards its ROOT write with
+    ``coalesce(existing.correlation_type, 'ROOT') = 'ROOT'`` so a degraded
+    ``PROPAGATED`` child can never be selected and re-severitied. The legacy
+    path must use the same pattern, otherwise a later ROOT write for the same
+    ``(ci_id, metric_id)`` selects the degraded child and erases its explicit
+    ``WARNING`` downgrade.
+    """
+    session = _legacy_store_metric_result(mock_neo4j_driver, _unknown_link_parent())
+
+    lookup = next(
+        q
+        for q in session.queries
+        if "MATCH (existing:Event)" in q["query"] and "LIMIT 1" in q["query"]
+    )
+    assert "coalesce(existing.correlation_type, 'ROOT') = $correlation_type" in lookup["query"]
+    assert lookup["params"]["correlation_type"] == "PROPAGATED"

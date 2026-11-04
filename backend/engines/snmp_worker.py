@@ -40,9 +40,12 @@ from repositories.topology_repo import (  # noqa: E402
     build_open_parent_index,
     get_topology_relations,
 )
-from services.correlation_propagation_contract import (  # noqa: E402
-    propagating_physical_link_statuses,
-    should_propagate_unknown_severity_degrade,
+from services.correlation_propagation_events import (  # noqa: E402
+    DEGRADED_PROPAGATED_REASON,
+    DEGRADED_PROPAGATED_SEVERITY,
+    DEGRADING_PHYSICAL_LINK_STATUS,
+    build_degraded_propagated_message,
+    degrades_propagated_severity,
 )
 from services.event_lock import POLL_COLLECTOR_ID, acquire_event_triplet_lock  # noqa: E402
 from services.neo4j_write_guard import (  # noqa: E402
@@ -74,22 +77,18 @@ logger = logging.getLogger(__name__)
 # child. The child stays linked to the affected CI and keeps ``root_cause_ci_id``
 # pointing at the ROOT CI, never at the PhysicalLink.
 #
-# The policy itself is NOT hardcoded here: it is read from
-# ``services.correlation_propagation_contract`` (REQ-CORR-PROP-5).
+# The policy itself is NOT hardcoded here: it lives in
+# ``services.correlation_propagation_contract`` (locked decision #1) and is
+# applied by ``services.correlation_propagation_events``, the ONE shared
+# implementation every writer that can materialize a degraded ``PROPAGATED``
+# child uses (feat-539 / T5).
 
-#: The severity a degraded ``PROPAGATED`` child carries.
-DEGRADED_PROPAGATED_SEVERITY = "WARNING"
-
-#: The PhysicalLink status that degrades a propagated child's severity.
-#: It MUST be part of the propagating status set published by
-#: ``services.correlation_propagation_contract`` — a status outside that set
-#: blocks the crossing entirely, so it can never reach the severity layer.
-DEGRADING_PHYSICAL_LINK_STATUS = "UNKNOWN"
-
-#: Marker written on the degraded child so the operator feed can expose the
-#: explicitly degraded row without having to guess which children are
-#: degraded and which are ordinary propagated children.
-DEGRADED_PROPAGATED_REASON = "PHYSICAL_LINK_UNKNOWN"
+# The degraded severity, the degrading PhysicalLink status and the marker
+# written on the degraded child (so the operator feed can expose the
+# explicitly degraded row without having to guess which children are degraded
+# and which are ordinary propagated children) are owned by
+# ``services.correlation_propagation_contract`` and imported from the shared
+# degraded-propagation module above — a writer never restates them.
 
 
 def configure_worker_runtime_logging() -> None:
@@ -428,26 +427,17 @@ def _degrades_propagated_severity(link_status: Any) -> bool:
     degrading status must also belong to the propagating status set published
     by the contract, so a status that blocks the crossing can never reach the
     severity layer.
+
+    The decision itself is shared with the legacy SNMP path and the leased
+    writer through ``services.correlation_propagation_events`` (feat-539 /
+    T5), so the three writers cannot drift apart.
     """
-    if not link_status:
-        return False
-    if not should_propagate_unknown_severity_degrade():
-        return False
-    status = str(link_status).strip().upper()
-    if status != DEGRADING_PHYSICAL_LINK_STATUS:
-        return False
-    return status in propagating_physical_link_statuses()
+    return degrades_propagated_severity(link_status)
 
 
 def _build_degraded_propagated_message(row: dict[str, Any]) -> str:
     """Return the operator-facing message of a degraded propagated child."""
-    base = str(row.get("message") or "").strip()
-    link_id = str(row.get("link_id") or "").strip() or "unknown"
-    suffix = (
-        f"Propagation degraded to {DEGRADED_PROPAGATED_SEVERITY}: "
-        f"PhysicalLink {link_id} status is {DEGRADING_PHYSICAL_LINK_STATUS}"
-    )
-    return f"{base} ({suffix})" if base else suffix
+    return build_degraded_propagated_message(row)
 
 
 def _degraded_propagated_rows(rows) -> list[dict[str, Any]]:
